@@ -163,17 +163,6 @@ contains
 !  Data input type operations
 !  **************************
 
-   move_to_next_item 
-   ! Move to the next item. Get a new line if the current buffer is exhausted
-      .system_update
-      if (.buffer.exhausted) then
-         do
-            .read_line
-            if (.buffer.not_empty) exit
-         end
-      end
-   end
-
    read_line(ignore_end_of_file) 
    ! Read a line into the buffer from the input file
    ! If "ignore_end_of_file" is present and TRUE, it is not
@@ -204,26 +193,66 @@ contains
       end
    end
 
+   move_to_next_item 
+   ! Move to the next item. Get a new line if the current buffer is exhausted
+      .system_update
+      if (.buffer.exhausted) then            ! No more line items to read
+         .move_to_next_nonblank_line
+      end
+   end
+
    move_to_previous_item 
    ! Move to the previous item in the input file. Backspace a line if required.
       .system_update
-      if ( .buffer.item==1) then            ! If next item to be read is item 1
-         do
-            .backspace_line
-            .system_update
-            if (.buffer.not_empty) exit
-         end
-         .move_to_item( .buffer.n_items)    ! move to last item on previous line
+      if (.next_line_item==1) then           ! If next item to be read is item 1
+         .move_to_previous_nonblank_line
+         .move_to_last_item_on_line          ! move to last item on previous line
       else
-         .move_to_item( .buffer.item)       ! move to the last read item
+         .move_to_previous_item_on_line      ! move to the last read item
       end
    end
       
-   move_to_item(number) 
-   ! Move the cursor over to the *update* of item "number"
-      INT :: number
+   move_to_next_nonblank_line
+   ! Move to the next non blank line in the file
+      do
+         .read_line
+         if (.buffer.not_empty) exit
+      end
+   end
+      
+   move_to_previous_nonblank_line
+   ! Move to the last non blank line in the file
+      do
+         .backspace_line
+         .system_update
+         if (.buffer.not_empty) exit
+      end
+   end
+
+   move_to_last_item_on_line
+   ! Move the cursor over to the beginning of the last item on the line
+      INT :: item
       .system_update
-      .buffer.move_to_item(number)
+      item = .last_line_item
+      .move_to_line_item(item) 
+   end
+      
+   move_to_previous_item_on_line
+   ! Move the cursor over to the beginning of the previous item on the
+      INT :: item
+      .system_update
+      item = .previous_line_item
+      .move_to_line_item(item) 
+   end
+      
+   move_to_line_item(number) 
+   ! Move the cursor over to the beginning of the item with index "number"
+   ! on the current line
+      INT :: number
+      INT :: n
+      .system_update
+      n = number
+      .buffer.move_to_item(n)
    end
 
    look_for( search, from_update)
@@ -240,11 +269,27 @@ contains
          end_record = .record
          .read_line(ignore_end_of_file=TRUE)
          if (.record == end_record) then
-            .move_to_line( update_record)
+            .move_to_record(update_record)
             exit
          end
       end
    end
+
+   get_next_item(word)
+   ! Get the next item in the file
+      STR :: word
+      .system_update
+      .move_to_next_item
+      .buffer.get_str(word)
+   end
+
+  read_str(word) 
+  ! Read a str into "word"
+    STR :: word
+    .system_update
+    .move_to_next_item
+    .buffer.get_str(word)
+  end
 
   read_chr(chr) 
   ! Read a character into "chr"
@@ -257,15 +302,6 @@ contains
       DIE("Expecting 1 character, not this: "// word.trim)
     end
     chr = word
-  end
-
-  read_str(word) 
-  ! Read a str into "word"
-    STR :: word
-    STR :: error_message
-    .system_update
-    .move_to_next_item
-    .buffer.get_str(word)
   end
 
   read_dbl(value)
@@ -538,48 +574,54 @@ contains
 
    backspace_line 
    ! Reprocess previously input line
-      INT :: lastline
       .system_update
-      lastline = .record-1
-      .move_to_line(lastline) 
+      .move_to_record(.record-1) 
    end
 
    skip_line
    ! Skip the next line in the input file
-      INT :: nextline
       .system_update
-      nextline = .record+1
-      .move_to_line(nextline) 
+      .move_to_record(.record+1) 
    end
 
    move_to_line(line) 
-   ! Move to the requested line in the input file
+   ! Move to be positioned *before* the start of the requested "line"
+   ! in the input file
       INT :: line
+      ENSURE(line>=1,"line number must be non-negative")
+      .move_to_record(line-1)
+   end
+
+   move_to_record(rec) 
+   ! Move to the requested record "rec" in the input file.
+   ! Remember: .record is the last processed record.
+      INT :: rec 
+      ENSURE(rec>=0,"record number must be non-negative")
       .system_update
-      DIE_IF(line<1,"line number must be positive")
-      if (line<(.record+1)) then
+      if (rec<(.record+1)) then
          do 
             backspace(unit=.unit,iostat=.io_status)
             DIE_IF(.io_status>0,"backspace error")
-            .record = max(0,.record-1)
+         !  .record = max(0,.record-1)
+            .record = .record-1
             .system_update
-            if (line==(.record+1)) exit
+            if (rec==(.record+1)) exit
          end
-      else if (line>(.record+1)) then
+      else if (rec>(.record+1)) then
          do 
             read(unit=.unit,fmt="()",iostat=.io_status)
             DIE_IF(.io_status>0,"read error")
             .record = .record + 1
             .system_update
-            if (line==(.record+1)) exit
+            if (rec==(.record+1)) exit
          end
       end
       .read_line
    end
 
-!  ***********************************
-!  Inquiry methods inherited from FILE
-!  ***********************************
+!  ***************
+!  Inquiry methods
+!  ***************
 
    exists result(res)
    ! Returns true if the file exists on the file system
@@ -625,6 +667,30 @@ contains
       res = NOT res
    end
 
+   next_line_item result (res)
+   ! Return the index of the next item to be processed on the line
+      INT :: res
+      res = .buffer.next_item
+   end
+
+   previous_line_item  result (res)
+   ! Return the index of the previous item to be processed on the line
+      INT :: res
+      res = .buffer.item
+   end
+
+   last_line_item  result (res)
+   ! Return the index of the final item on the line
+      INT :: res
+      res = .buffer.n_items
+   end
+
+   n_line_items result (res)
+   ! Return the number of items on the line
+      INT :: res
+      res = .buffer.n_items
+   end
+
    position result(res) 
    ! Return record position of the file
       INT :: res
@@ -633,10 +699,11 @@ contains
    end
 
    line_number result(res) 
-   ! Return the input file line number
+   ! Return the input file line number which is being processed,
+   ! or will be processed next.
       INT :: res
       .system_update
-      res = .record
+      res = .record + 1
    end
 
    end_of_file result(res)
