@@ -336,7 +336,8 @@ sub get_includes {
   }
   my $line;
   while ($line=<FILE>) {
-    if ($line =~ /^\s*(\#|\?\?)*\s*include\s+[\"\']([^\"\']+)[\"\']/i) {
+    if ($line =~ m'include'io &&
+        $line =~ /^\s*(\#|\?\?)*\s*include\s+[\"\']([^\"\']+)[\"\']/io) {
        $inc = $2;
        $inchead="";
        if (! open(INC, $inc)) {          # include file doesnt exist
@@ -349,11 +350,11 @@ sub get_includes {
        close(INC);
        push(@incs, $inchead . $inc);
     }
-    $line =~ /^\s*use\s+(\w+)/i &&
+    $line =~ /^\s*use\s+(\w+)/io &&
             do {push(@modules, &$ModCase("$1"))};
-    $line =~ /^\s*module\s+(\w+)/i && 
+    $line =~ /^\s*module\s+(\w+)/io && 
             do {push(@moddefs, &$ModCase("$1")) if not (lc($1) eq "procedure")};
-    $line =~ /^\s*program\s+(\w+)/i && 
+    $line =~ /^\s*program\s+(\w+)/io && 
             do {$prog = &$ModCase($1)};
   }
   close(FILE);
