@@ -1858,7 +1858,7 @@ sub html_do_new_routine_scope {
   if (defined $5) { $attr = ' ::: <A CLASS="ATTR">'.$5.'</A>' } else { $attr = '' }
 
   # Link get_from to the place where it's inherited from, if applicable.
-  if ($attr =~ m'get_from[(]([^),]*)([),])') {
+  if ($attr =~ m'get_from'o && $attr =~ m'get_from[(]([^),]*)([),])'o) {
      if (defined $tonto_type_info{$1}) {
         $tmp = lc $1;
         $attr = $PREMATCH . 
@@ -2699,19 +2699,24 @@ sub analyse_new_end_scope {
           my $i = 0;
           my $found = 0;
           my $inh;
+
+          for ($i=0; $i <= $#inherit; $i++) {
+            $inh = $inherit[$i];
+            $inh =~ s/\s*$//o;
+            $inh =~ s/\s*:::.*//o;
+            $inh = &convert_inherited_type_arg_macros($inh);
+            $inherit[$i] = $inh;
+          }
+          $inh = $inherit[0];
                                       # Start looking for the interface
           while (<GETFILE>) {        
+             $filelinenum{$foohandle}++;
              chomp;
              $_  =~ s/\s*$//o;
              $_  =~ s/\s*:::.*//o;
              $_ = &convert_inherited_type_arg_macros($_);
-             $inh = $inherit[$i];
-             $inh =~ s/\s*$//o;
-             $inh =~ s/\s*:::.*//o;
-             $inh = &convert_inherited_type_arg_macros($inh);
-             $filelinenum{$foohandle}++;
-             if    ($_ ne $inh)     { $i=0 }
-             elsif ($i <  @inherit) { $i++ }
+             if    ($_ ne $inh)     { $i=0; $inh = $inherit[$i]; }
+             elsif ($i <  @inherit) { $i++; $inh = $inherit[$i]; }
              if    ($i == @inherit) { $found = 1; last }
           }
           if ($found==0) {
