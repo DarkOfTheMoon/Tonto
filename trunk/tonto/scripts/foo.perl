@@ -463,9 +463,11 @@ LINE: while (<FOOFILE>) {
 
 	# Change some TYPE declarations #########################
 
-        foreach $pattern (keys %subst) {
-	    $inp =~ s/$pattern/$subst{$pattern}/;
-        }
+	if ($inp !~ /^[ ]*[uU][sS][eE][ ]+.*/s) { # don't substitute use line.
+		foreach $pattern (keys %subst) {
+		    $inp =~ s/$pattern/$subst{$pattern}/;
+        	}
+	}
 
         $inp =~ s/OPMAT[(]:,:[)]/OPMAT/;    # Remove OPMAT conversion ... this
         $inp =~ s/OPVEC[(]:[)]/OPVEC/;      # should be changed!
