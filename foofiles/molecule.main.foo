@@ -228,11 +228,13 @@ contains
       end
    end
 
-   put_CX_data(CX_file)
+   put_CX_data(CX_file,special_pos,special_label)
    ! Output information that Crystal Explorer requires to file "CX_file".
    ! NOTE: this requires a CIF file to have been read, and a valid data block
    ! name to be stored in the cif object.
      CX_file :: TEXTFILE*
+     special_pos :: MAT{REAL}, optional
+     special_label :: STR, optional
    ENSURE(.cluster.created,"no cluster data")
    ENSURE(.cluster.info_made,"no cluster information")
    ENSURE(.cluster.crystal.created,"no cluster crystal data")
@@ -250,7 +252,7 @@ contains
      stdout.text("Crystal Explorer data")
      stdout.show("begin crystal ",CX_label)
      .cluster.crystal.put_CX(CX_label)  ! Crystal data
-     .cluster.put_CX(CX_label)          ! Cluster/fragment positions
+     .cluster.put_CX(CX_label,special_pos,special_label)          ! Cluster/fragment positions
      stdout.text("end crystal")
      if (.isosurface.created) then
      if (.isosurface.atom.created) then ! Isosurface information
@@ -3793,6 +3795,7 @@ contains
         case ("test_e_field_matrices         "); main.test_E_field_matrices
         case ("test_inv_sqrt_s               "); main.test_inv_sqrt_S
         case ("test_rchf_s                   "); main.test_rchf_S
+        case ("make_periodic_fmm_levels      "); main.make_periodic_fmm_levels
         case  default ;               UNKNOWN(word)
       end
    end
@@ -4107,6 +4110,227 @@ contains
      end
      H.destroy
      eri_archive.write(v)
+   end
+
+!*******************************************************************************
+
+   make_effective_charges(charges,positions)
+   ! Make a list of effective point charges that accurately represents the total
+   ! charge of the unit cell.  Includes contributions from electrons and nuclei.
+   ! NOTE: this is normally called on a .saved fragment
+     charges :: VEC{REAL}, target
+     positions :: MAT{REAL}, target
+   ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
+   ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
+   ENSURE(.atom.created,"Need a list of atoms")
+   ENSURE(.dftgrid.created,"no DFT grid")
+   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.n_atom,"charges has wrong size")
+     ch,wt,rho,deficit :: VEC{REAL}*
+     pt :: MAT{REAL}*
+     shift,pos3 :: VEC{REAL}(3)
+     n_pt,n,f,l,i,i1 :: INT
+     Z,val :: REAL
+     ! Make the effective electronic charges "ch" and positions "pt"
+     n_pt = .dftgrid.n_pts*.n_atom
+     ch.create(n_pt); pt.create(n_pt,3)
+     wt.create(n_pt); rho.create(n_pt)
+     .dftgrid.make_grid(pt,wt,.atom)
+     .make_density_grid(rho,pt)
+     ch = -rho*wt
+     rho.destroy; wt.destroy
+     ! Assign the charges to the full "charges" and "positions" arrays, including
+     ! the atomic charges. Assign the atomic charge to balance the electronic
+     ! charge in case the DFT integration grid is poor.
+     deficit.create(.n_atom)
+     n_pt = .dftgrid.n_pts
+     l = 0
+     do n = 1,.n_atom
+        f = l + 1
+        l = l + n_pt
+        Z = ZERO
+        i1 = f + n - 1 
+        do i = f,l
+           val = ch(i)
+           Z = Z + val
+           i1 = i1 + 1
+           charges(i1) = val
+           positions(1,i1) = pt(i,1)
+           positions(2,i1) = pt(i,2)
+           positions(3,i1) = pt(i,3)
+        end
+        i1 = f + n - 1 
+        charges(i1) = -Z ! ensure neutral atom
+        positions(:,i1) = .atom(n).pos
+        deficit(n) = .atom(n).atomic_number + Z
+     end
+     stdout.set_real_style("e")
+     stdout.flush
+     stdout.text("Deficit charges:")
+     stdout.put(deficit,"column")
+     stdout.show("sum of deficit charges =",sum(deficit))
+     stdout.show("sum of charges         =",sum(charges))
+     deficit.destroy
+     stdout.flush
+     stdout.text("Charges:")
+     stdout.flush
+     stdout.put(charges,"column")
+     stdout.flush
+     stdout.text("Positions:")
+     stdout.flush
+     stdout.put(positions,"transpose")
+     stdout.set_real_style("f")
+     pt.destroy; ch.destroy
+   end
+
+   make_unit_cell_point_charges(charges,positions)
+   ! Make a list of point charges that accurately represents the total charge of
+   ! the unit cell.  Includes contributions from electrons and nuclei.
+   ! NOTE: this is normally called on a .saved fragment
+     charges :: VEC{REAL}, target
+     positions :: MAT{REAL}, target
+   ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
+   ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
+   ENSURE(.atom.created,"Need a list of atoms")
+   ENSURE(.dftgrid.created,"no DFT grid")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.crystal.Z.is_int(TOL(3)), "must have an integer number of fragments in the unit cell")
+   ENSURE(.crystal.frag_atom_for_frag_cell_atom.created,"fragment cell map not created")
+   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.crystal.n_unit_cell_atoms,"charges has wrong size")
+     ch,wt,rho,deficit :: VEC{REAL}*
+     pos,pt,uc_pos :: MAT{REAL}*
+     shift,pos3 :: VEC{REAL}(3)
+     n_pt,Z,n,f,l,s :: INT
+     e_sum,n_sum :: REAL
+     ! Make the effective electronic charges for the fragment.
+     n_pt = .dftgrid.n_pts*.n_atom
+     deficit.create(.n_atom)
+     ch.create(n_pt); pos.create(3,n_pt)
+     wt.create(n_pt); pt.create(n_pt,3); rho.create(n_pt)
+     .dftgrid.make_grid(pt,wt,.atom)
+     .make_density_grid(rho,pt)
+     ch = -rho*wt
+     pos = transpose(pt)
+     ! Work out the deficit charge for each atom, which is the charge that can
+     ! be ascribed to the dft integration grid point at the atomic nucleus. It
+     ! should normally be negative because near the nucleus the density should
+     ! be evaluated in the midpoint of the region but it is evaluated closer to
+     ! the nucleus and hence is larger than it should be (?). Thats my
+     ! explanation anyhow --- dylan
+     Z = .crystal.Z
+     n_pt = .dftgrid.n_pts
+     l = 0
+     do n = 1,.n_atom
+        f = l + 1
+        l = l + n_pt
+        deficit(n) = .atom(n).atomic_number + sum(ch(f:l))
+     end
+     stdout.flush
+     stdout.text("Deficit charges:")
+     stdout.put(deficit,"column")
+     stdout.show("sum of deficit charges =",sum(deficit))
+     stdout.show("Z times sum of deficit =",Z*sum(deficit))
+     rho.destroy; pt.destroy; wt.destroy
+     ! When added to any fractional position, "shift" will convert that
+     ! position to be such that the centre of the fragment molecule is at the
+     ! centre of the unit cell. 
+     shift = .centre_of_atoms ! The fragment molecule centre
+     .crystal.unitcell.change_into_fractional(shift)
+     shift = [HALF,HALF,HALF] - shift
+     ! Use symmetry to generate the effective electronic charges and their
+     ! positions in the whole unit cell. This assumes that the fragment cell is
+     ! generated from the *whole* fragment by .crystal.Z symops.
+     .crystal.unitcell.change_into_fractional(pos)
+     n_pt = .dftgrid.n_pts*.n_atom
+     l = 0
+     do n = 1,Z
+        f = l + 1
+        l = l + n_pt
+        charges(f:l) = ch
+        positions(:,f:l) = pos
+        s = .crystal.symop_for_frag_cell_atom(1+(n-1)*Z)
+        .crystal.transform_geometry(positions(:,f:l),op=s)
+        ! Shift the positions so that they are relative to the fragment molecule
+        ! centre before changing to the unit cell -- so the unit cell surrounds
+        ! the central fragment molecule.
+        positions(:,f:l) = positions(:,f:l) + spread(shift,dim=2,ncopies=n_pt)
+        .crystal.put_to_unit_cell(positions(:,f:l))
+        positions(:,f:l) = positions(:,f:l) - spread(shift,dim=2,ncopies=n_pt)
+        .crystal.unitcell.change_from_fractional(positions(:,f:l))
+     end
+     pos.destroy; ch.destroy
+     ! Sum electron charges
+     n_pt = n_pt*Z
+     e_sum = sum(charges(1:n_pt))
+     stdout.show("sum of electrn charges =",e_sum)
+     ! Add the nuclear charges to the list. Don't forget to add the deficit
+     ! charges.
+     do n = 1,.crystal.n_unit_cell_atoms
+        f = .crystal.frag_atom_for_unit_cell_atom(n)
+        charges(n_pt+n) = .atom(f).atomic_number - deficit(f)
+        pos3 = .atom(f).pos
+        .crystal.unitcell.change_into_fractional(pos3)
+        pos3 = pos3 + shift
+        .crystal.put_to_unit_cell(pos3)
+        pos3 = pos3 - shift
+        .crystal.unitcell.change_from_fractional(pos3)
+        positions(:,n_pt+n) = pos3
+     end
+     deficit.destroy
+     n_sum = sum(charges(n_pt+1:))
+     stdout.show("sum of nuclear charges =",n_sum)
+   end
+ 
+   make_periodic_fmm_levels
+   ! Make a multipole representation of the entire crystal, from the charge
+   ! density of the unit cell.
+      self :: target
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.atom.created,"Need a list of atoms")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.saved.created,"Need a saved fragment")
+   ENSURE(.saved.dftgrid.created,"Need saved DFT grid")
+   ENSURE(.saved.molecular_orbitals.created,"Need saved molecular orbitals")
+      fmm :: PERIODIC_FMM_LEVEL*
+      charges :: VEC{REAL}*
+      positions :: MAT{REAL}*
+      level_max,l_max,n_pts,n_charges :: INT
+      main :: MOLECULE.MAIN*
+      ! Get the level the depth, from the crystallite size
+      fmm.create(self)
+      level_max = fmm.level_max
+      fmm.destroy
+      ! Create the hierarchy of crystal multipoles and determine the maximum
+      ! multipole order l_max
+      .periodic_fmm_level.create(0,level_max,self)
+      .periodic_fmm_level.set_all_levels
+      l_max = maxval(.periodic_fmm_level(:).l_max)
+      .periodic_fmm_level.put
+      ! Assign the natural orbitals ready to evaluate charges
+      .saved.assign_natural_orbitals
+      ! Make the effective charges
+      main => .saved
+      n_charges = (.saved.dftgrid.n_pts+1)*.saved.n_atom
+      charges.create(n_charges)
+      positions.create(3,n_charges)
+      main.make_effective_charges(charges,positions)
+      .periodic_fmm_level(0).make_positions_and_charges(charges,positions)
+      positions.destroy; charges.destroy
+      .periodic_fmm_level(0).make_initial_subbox_multipoles(l_max) 
+      .periodic_fmm_level(0).put
+      .periodic_fmm_level.make_all_subbox_multipoles
+      stop
+      ! Create the list of point charges and their positions.
+      n_charges = (.saved.dftgrid.n_pts+1)*.crystal.n_unit_cell_atoms
+      .periodic_fmm_level(0).charges.create(n_charges)
+      .periodic_fmm_level(0).positions.create(3,n_charges)
+      ! Evaluate charges and positions
+      main => .saved
+      main.make_unit_cell_point_charges(.periodic_fmm_level(0).charges,.periodic_fmm_level(0).positions)
+      main => self
+    ! main.put_CX_data(stdout,.periodic_fmm_level(0).positions,"Xe")
+      .periodic_fmm_level(0).make_initial_subbox_multipoles(l_max) 
+      main.put_CX_data(stdout,.periodic_fmm_level(0).subbox_centres_list,"Xe")
+      .periodic_fmm_level(0).put
    end
 
 end
