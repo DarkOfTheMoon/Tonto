@@ -4431,17 +4431,20 @@ sub dots_to_html {
          $match =~ s/\./\\./g; $match =~ s/\?/\\?/g;
          $match =~ s/\*/\\*/g; $match =~ s/\+/\\+/g;
          $Y =~ "(.*?\\.)$rout$match";
-         my $the_arg = $1;
+#         my $the_arg = $1;
+         if (defined $1) {
+           $Y = $1;
+         } else {
+           $Y = '';
+         }
    
          if (&has_field($arg, $rout)) {              # $rout is a type field component
 
             if ($in_comment) {
-               $Y = $the_arg
-                  . "</A><A CLASS=\"TYPEFIELD\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
+               $Y .= "</A><A CLASS=\"TYPEFIELD\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
                   . $rout . "</A><A CLASS=\"COMMENT\">" .  $post;
             } else {
-               $Y = $the_arg 
-                  . "<A CLASS=\"TYPEFIELD\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
+               $Y .= "<A CLASS=\"TYPEFIELD\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
                   . $rout . "</A>" .  $post;
             }
    
@@ -4449,12 +4452,10 @@ sub dots_to_html {
 
             if (defined $tonto_type_info{$arg_type}) {
             if ($in_comment) {
-               $Y = $the_arg
-                  . "</A><A CLASS=\"ROUTINE\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
+               $Y .= "</A><A CLASS=\"ROUTINE\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
                   . $rout . "</A><A CLASS=\"COMMENT\">" .  $post;
             } else {
-               $Y = $the_arg
-                  . "<A CLASS=\"ROUTINE\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
+               $Y .= "<A CLASS=\"ROUTINE\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
                   . $rout . "</A>" .  $post;
             }
             }
