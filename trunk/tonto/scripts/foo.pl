@@ -2391,8 +2391,9 @@ sub fortran_convert_array_of_arrays {
 
   my $fortran_out = $_[0];
 
-  $fortran_out =~ s/\]\[/).element(/go; 
-  $fortran_out =~ s/([a-zA-Z0-9])\[/$1.element(/go; 
+  $fortran_out =~ s/\]\[([^]]*)\]/].element($1)/go; 
+  $fortran_out =~ s/\)\[([^]]*)\]/).element($1)/go; 
+  $fortran_out =~ s/(\w)\[([^]]*)\]/$1.element($2)/go; 
 
   return ($fortran_out);
 
@@ -3323,8 +3324,8 @@ sub fortran_do_routine_scope {
    if ( ! $routine{$current_rout_name}{in_routine_body} ) {
       my $comment;
       ($fortran_out,$comment) = &split_by_comment($fortran_out);
-      &fortran_change_square_brackets;
       $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
+      &fortran_change_square_brackets;
       $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
       &fortran_change_variable_declarations;
       ######## lines that contain a dot. ###########
@@ -3538,9 +3539,8 @@ sub fortran_do_routine_body {
      my $comment;
      ($fortran_out,$comment) = &split_by_comment($fortran_out);
    
-     &fortran_change_square_brackets;
-   
      $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
+     &fortran_change_square_brackets;
      $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
    
      ######## lines that contain a dot. ###########
@@ -3599,6 +3599,7 @@ sub fortran_do_program_scope {
   &fortran_add_include_files;
   &fortran_change_use_statements;
   &fortran_change_square_brackets;
+  $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
 
   $fortran_out .= $comment; 
 }
@@ -3743,6 +3744,7 @@ sub fortran_do_module_scope {
    &fortran_change_use_statements;
 #print "-----> out = $fortran_out";
    &fortran_change_square_brackets;
+   $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
    $fortran_out .= $comment; 
 
 }
@@ -4154,7 +4156,7 @@ sub module_colon_to_fortran {
     return $X;
   }
 
-  if ($X =~ /^(\s*)([A-Z][A-Z0-9{,}.]+):(\w+)/) { # A routine call
+  if ($X =~ /^(\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # A routine call
      my $pre = $1;
      my $rout_type = $2; 
      my $rout = $3; 
