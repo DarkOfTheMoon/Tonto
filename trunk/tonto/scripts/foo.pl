@@ -112,7 +112,7 @@ my @scope = undef;            # The nested list of current scoping units.
 
 ################################################################################
 my %called_routines;          # The Tonto module name, and fortran name of called routines.
-my %used_modules;             # The list of used modules/types
+my %used_modules;             # The list of variables types used NOTENECESARILY method-called
 my %function_res_type;        # Types of function results.
 my %tonto_type;               # All types defined in $typesfile AND the types of their components
 my %module_type;              # All types defined within the module, *not* $typesfile, AND components
@@ -173,11 +173,18 @@ my $html_synopsis_found = 0;
 my $html_GNU_found = 0;
 
 ## -----------------------------------------------------------------------------
-## Set up some tonto type information, including array substitution information
+## Hack some function return values. This should be done properly by writing
+## this kind of info to file, as the foo code is processed.
 ## -----------------------------------------------------------------------------
 
 $function_res_type{"INT_to_str"} = 'STR';
+$function_res_type{"INT_factorial"} = 'REAL';
+$function_res_type{"INT_double_factorial"} = 'REAL';
 $function_res_type{"REAL_to_str"} = 'STR';
+
+## -----------------------------------------------------------------------------
+## Set up some tonto type information, including array substitution information
+## -----------------------------------------------------------------------------
 
 @tonto_intrinsic_functions = (
     'abs',
@@ -2206,8 +2213,9 @@ sub fortran_add_stack_macro {
 
   if ($routine{$name}{first_active_line}) {
      if ( ! defined $routine{$name}{pure}) {
-        $pre_out = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")";
+        $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")\n";
      }
+        $pre_out .= "   START_TIMER(\"$module_full_name:${routine{$name}{real_name}}\")";
      if (defined $routine{$name}{fortran_ensure_statements}) {
         $pre_out .= $routine{$name}{fortran_ensure_statements};
         $routine{$name}{fortran_ensure_statements} = undef;
@@ -2235,14 +2243,14 @@ sub fortran_process_return {
   if ($fortran_out =~ '.return') {
 
     if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
-      if    (defined $routine{$name}{pure})  { }
-      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; UNSTACK; return; end if/o; }
-      else                                   { $fortran_out =~ s/[)] *return */) then; CHECK; return; end if/o; }
+      if    (defined $routine{$name}{pure})  { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
+      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; UNSTACK; return; end if/o; }
+      else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; CHECK; return; end if/o; }
     }
     elsif ($fortran_out =~ '(?:^|;) *return *' ) {
-      if    (defined $routine{$name}{pure})  { }
-      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/UNSTACK; return/o; }
-      else                                   { $fortran_out =~ s/return/CHECK; return/o; }
+      if    (defined $routine{$name}{pure})  { $fortran_out =~ s/return/STOP_TIMER; return/o; }
+      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; UNSTACK; return/o; }
+      else                                   { $fortran_out =~ s/return/STOP_TIMER; CHECK; return/o; }
     }
   }
 }
@@ -2896,13 +2904,14 @@ sub fortran_do_new_end_scope {
         $skip_fortran_out = 1; return;
      }
      if    (defined $routine{$name}{pure})  { 
-        $fortran_out =~ s/end */end $oldscopeunit/; 
+        # $fortran_out =~ s/end */end $oldscopeunit/; 
+        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
      }
      elsif (defined $routine{$name}{leaky}) { 
-        $fortran_out =~ s/(\s*)end */   UNSTACK\n$1end $oldscopeunit/; 
+        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1UNSTACK\n$1end $oldscopeunit/; 
      }
      else                                     { 
-        $fortran_out =~ s/(\s*)end */   CHECK\n$1end $oldscopeunit/; 
+        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1CHECK\n$1end $oldscopeunit/; 
      }
   } 
 
