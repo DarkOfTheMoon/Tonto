@@ -2121,7 +2121,7 @@ sub fortran_dump_interface {
   }
   print INTFILE "";
 
-  foreach $rout (keys %overload_count) {
+  foreach $rout (sort keys %overload_count) {
       next if (defined $routine{$rout}{inlined_by_foo});
       next if ($do_usd && ! defined $usd{$rout});
       $cnt = $overload_count{$rout}-1;
@@ -2198,7 +2198,7 @@ sub fortran_dump_use {
   my ($mod,$fort_mod,$fort_typ,$fort_fun);
 
   # Loop over the TONTO modules $mod to which the called routines belong
-  foreach $mod (keys %called_routines) { 
+  foreach $mod (sort keys %called_routines) { 
 
       print USEFILE " ";
 
@@ -2209,7 +2209,7 @@ sub fortran_dump_use {
 
       # Loop over all routines $rout called which belong to module $mod
       # The name $rout may be overloaded, of course. 
-      foreach $rout (keys %{$called_routines{$mod}}) {
+      foreach $rout (sort keys %{$called_routines{$mod}}) {
          # This is the mangled fortran module name of the called routine
          $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
          $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
