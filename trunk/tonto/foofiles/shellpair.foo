@@ -1,0 +1,215 @@
+!-------------------------------------------------------------------------------
+!
+! SHELLPAIR : pair of gaussian SHELLs, incorporating stored intermediate data
+! valuable for integral evaluation.
+!
+! (c) Dylan Jayatilaka, October 2000
+!
+! $Id$
+!-------------------------------------------------------------------------------
+
+module SHELLPAIR
+
+   use TYPES
+   use SYSTEM
+   use INT
+   use IVEC
+   use IMAT
+   use IMAT3
+   use VEC
+   use MAT
+   use MAT3
+   use CMAT
+   use CMAT3
+   use TEXTFILE
+   use RYS
+   use GAUSSIAN2
+   use SHELL
+   use SHELL1
+
+   implicit none         
+
+#include "macros"
+#include "shellpair.int"
+
+contains
+
+  create [leaky]
+  ! Creates a shell2 object
+    PTR :: self
+    nullify(self)
+    allocate(self)
+    ADD_MEM(SHELLPAIR_SIZE)
+    .nullify_ptr_part
+  end
+
+  create(shell_a,shell_b) [leaky]
+  ! Create a copy of a shell1 objects
+    PTR :: self
+    SHELL1, IN :: shell_a,shell_b
+    .create
+    .copy(shell_a,shell_b)
+  end
+
+  create(shell_a,shell_b,pos_a,pos_b) [leaky]
+  ! Create a copy of a shell1 objects with positions
+    PTR :: self
+    SHELL, IN :: shell_a,shell_b
+    VEC(3), IN :: pos_a,pos_b
+    .create
+    .copy(shell_a,shell_b,pos_a,pos_b)
+  end
+
+  destroy [leaky]
+  ! Destroys a shell2 object
+    PTR :: self
+    if (.destroyed) return
+    .destroy_ptr_part
+    DELETE_MEM(SHELLPAIR_SIZE)
+    deallocate(self)
+  end
+
+  nullify_ptr_part
+  ! Nullify the pointer parts of self
+     .a.nullify_ptr_part
+     .b.nullify_ptr_part
+     nullify(.exponent_sum)
+     nullify(.exponent_inv)
+     nullify(.cc_prefactor)
+     nullify(.pair_center)
+     nullify(.center_diff)
+  end
+
+  destroy_ptr_part
+  ! Destroy the pointer parts of self
+     .a.destroy_ptr_part
+     .b.destroy_ptr_part
+     .exponent_sum.destroy
+     .exponent_inv.destroy
+     .cc_prefactor.destroy
+     .pair_center.destroy
+     .center_diff.destroy
+  end
+
+  created result(res)
+  ! Returns true if self has been created
+    PTR :: self
+    BIN :: res
+    res = associated(self)
+  end
+
+  destroyed result(res)
+  ! Returns true if self has *not* been created
+    PTR :: self
+    BIN :: res
+    res = NOT associated(self)
+  end
+
+  copy(ab) [leaky]
+  ! Copy the using shellpair "ab"
+  ! NOTE : ensure the ptr parts have been destroyed beforehand.
+    SHELLPAIR, IN :: ab
+    .a.copy(ab.a)
+    .b.copy(ab.b)
+    .make_precalculated_data
+  end
+
+  copy(shell_a,shell_b) [leaky]
+  ! Copy the shell2 using shell1 objects
+    SHELL1, IN :: shell_a,shell_b
+    .a.copy(shell_a)
+    .b.copy(shell_b)
+    .make_precalculated_data
+  end
+
+  copy(shell_a,shell_b,pos_a,pos_b) [leaky]
+  ! Copy the shell2 using shell objects and positions
+    SHELL, IN :: shell_a,shell_b
+    VEC, IN :: pos_a,pos_b
+    .a.copy(shell_a,pos_a)
+    .b.copy(shell_b,pos_b)
+    .make_precalculated_data
+  end
+
+  copy_a(shell_a,pos_a) [leaky]
+  ! Copy the "a" shell of the shell2 objects from "shell_a" and "pos_a"
+    SHELL, IN :: shell_a
+    VEC, IN :: pos_a
+    .a.copy(shell_a,pos_a)
+  end
+
+  copy_b(shell_b,pos_b) [leaky]
+  ! Copy the "b" shell of the shell2 objects from "shell_b" and "pos_b"
+    SHELL, IN :: shell_b
+    VEC, IN :: pos_b
+    .b.copy(shell_b,pos_b)
+  end
+
+  set(shell_a,shell_b)
+  ! Set the shell2 using shell1 objects
+    SHELL1, IN :: shell_a,shell_b
+    .a.set(shell_a)
+    .b.set(shell_b)
+    .make_precalculated_data
+  end
+
+  set(shell_a,shell_b,pos_a,pos_b)
+  ! Copy the shell2 using shell objects
+    SHELL, IN :: shell_a,shell_b
+    VEC, IN :: pos_a,pos_b
+    .a.set(shell_a,pos_a)
+    .b.set(shell_b,pos_b)
+    .make_precalculated_data
+  end
+
+  unnormalize
+  ! Unnormalize each shell
+    .a.unnormalize
+    .b.unnormalize
+  end
+
+  make_precalculated_data [leaky]
+  ! Precalculate some data for the 1/r_{12} electron repulsion integrals
+    VEC(3) :: Apos,Bpos,AB,At,b_Bpos,P
+    DBL :: b_cc,b_r2ab,r2ab,a,b,inv,norm,ab_sum,ab_inv
+    INT :: ag,bg,i
+    .n_gaussian_pairs = .a.n_cc*.b.n_cc
+    .l_max = max(.a.l,.b.l)
+    .l_min = min(.a.l,.b.l)
+    .l_sum = .a.l + .b.l
+    .exponent_sum.create(.n_gaussian_pairs)
+    .exponent_inv.create(.n_gaussian_pairs)
+    .cc_prefactor.create(.n_gaussian_pairs)
+    .pair_center.create(3,.n_gaussian_pairs)
+    .center_diff.create(3,.n_gaussian_pairs)
+    Apos = .a.pos
+    Bpos = .b.pos
+    AB = Apos - Bpos
+    ! Make sure "a" center has higher momoentum
+    if (.a.l > .b.l) then; At = Apos
+    else;                  At = Bpos
+    end
+    r2ab = dot_product(AB,AB)
+    norm = sqrt(TWOPI5ON2)
+    i = 0
+    do bg = 1,.b.n_cc
+      b      = .b.ex(bg)
+      b_r2ab = b*r2ab
+      b_cc   = .b.cc(bg) * norm
+      b_Bpos = b*Bpos
+      do ag = 1,.a.n_cc
+        i = i + 1
+        a = .a.ex(ag)
+        ab_sum = a + b
+        ab_inv = ONE/ab_sum
+        P = (b_Bpos + a*Apos) * ab_inv
+        .exponent_sum(i)  = ab_sum
+        .exponent_inv(i)  = ab_inv
+        .cc_prefactor(i)  = b_cc*.a.cc(ag) *ab_inv*sqrt(ab_inv)* exp(-a*b_r2ab*ab_inv)
+        .pair_center(:,i) = P
+        .center_diff(:,i) = P - At
+      end
+    end
+  end
+
+end
