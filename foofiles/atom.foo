@@ -11,8 +11,8 @@ module ATOM
    use TYPES
    use SYSTEM
    use STR
-   use BUFFER
    use INT
+   use BUFFER
    use TEXTFILE
    use VEC
    use MAT
@@ -35,6 +35,9 @@ module ATOM
 !   INT :: atomic_number
 !   ! The atomic number
 !
+!   STR :: axis_system
+!   ! Specifies the coordiante axis system
+!
 !   VEC(3) :: pos
 !   ! Atom position
 !
@@ -52,7 +55,7 @@ module ATOM
 !
 !   end
 
-   !  Periodic Table
+   !  The Periodic Table
 
    CHR(2), private :: element_symbols(103) = (/ &
     "H ",                                                                                "He", &
@@ -79,8 +82,7 @@ module ATOM
       1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,                      &
                     1.30d0,1.30d0,1.30d0,1.30d0,1.30d0,1.30d0  /)
 
-   !  Abundance weighted atomic masses taken from the WWW to be the same
-   !  as Turbomol
+   !  Abundance weighted atomic masses taken from the WWW to be the same as Turbomol
 
    VEC(92) :: atomic_masses = (/ &
        1.007970d0,   4.002600d0, &
@@ -128,7 +130,9 @@ module ATOM
                 0.0000, 10.6300,  9.1000,  8.4170, 10.5500, 14.1000,  8.3000 /)
 
 
+   ! X-ray dispersion correction factors.
    ! First element is f', second is f".  Cr wavelength = 2.291A.
+
    CVEC(92) :: dispersion_correction_Cr = (/ &
      (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),  (0.0d0, 0.0d0), &
      (0.0d0, 0.1d0),   (0.0d0, 0.1d0),   (0.1d0, 0.1d0),   (0.1d0, 0.2d0),  (0.1d0, 0.3d0), &
@@ -150,7 +154,9 @@ module ATOM
      (-9d0, 22d0),     (-10d0, 23d0),    (-11d0, 24d0),    (-12d0, 26d0),   (-13d0, 27d0), &
      (-15d0, 28d0),    (-17d0, 27d0)/)
 
+   ! X-ray dispersion correction factors.
    ! First element is f', second is f".  Cu wavelength = 1.542A.
+
    CVEC(92) :: dispersion_correction_Cu = (/ &
      (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),  (0.0d0, 0.0d0),   (0.0d0, 0.0d0), &
      (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.1d0),  (0.0d0, 0.1d0),   (0.1d0, 0.1d0), &
@@ -172,7 +178,9 @@ module ATOM
      (-5d0, 11d0),     (-5d0, 11d0),     (-5d0, 12d0),    (-5d0, 12d0),     (-5d0, 13d0), &
      (-5d0, 14d0),     (-5d0, 15d0) /)
 
+   ! X-ray dispersion correction factors.
    ! First element is f', second is f".  Mo wavelength = 0.7107A.
+
    CVEC(92) :: dispersion_correction_Mo = (/ &
      (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),  &
      (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),   (0.0d0, 0.0d0),  &
@@ -221,10 +229,10 @@ contains
   copy(atom)
   ! Make self a copy of atom.
     ATOM :: atom
-    self.label = atom.label
-    self.atomic_number = atom.atomic_number
-    self.pos = atom.pos
-    self.thermal_tensor = atom.thermal_tensor
+    .label = atom.label
+    .atomic_number = atom.atomic_number
+    .pos = atom.pos
+    .thermal_tensor = atom.thermal_tensor
     if (associated(atom.basis)) self.basis => atom.basis
   end
 
@@ -279,99 +287,159 @@ contains
 !  Input methods
 !  *************
 
-   read(in)
-   ! Read an ATOM in standard order from "in'
-      TEXTFILE :: in
-      .read_label_and_pos(in)
-      .read_basis(in)
+   read [leaky]
+   ! Read data from "stdin" using keyword style input.
+      STR :: word
+      read_loop: do             ! Loop over keywords
+         stdin.read(word)
+         if (stdin.end_of_file) exit read_loop
+         if (word=="end")       exit read_loop
+         .process(word)      
+      end do read_loop
+!     .update
    end
 
-  read_label_and_pos(in)
-  ! Read an ATOM label followed by three coordinates (without basis set), 
-  ! from "in"
-    TEXTFILE :: in
-    INT :: lensym,z
-    STR :: symbol
-    BIN :: err
-    in.read(.label)            ! Input atom label
-    if (.label.is_int) then    ! The label must be the atomic number
-      z = .label.to_int
-      .atomic_number = z
-    else                       ! First part of the label is the element symbol
-      lensym = .label.scan("123456789 ")-1
-      err = lensym>2 OR lensym==0
-      DIE_IF(err,"unacceptable atom symbol, "// trim(.label))
-      symbol = .label(1:lensym)
-      symbol(1:1).to_upper_case
-      symbol(2:2).to_lower_case
-      if (any(element_symbols==symbol(1:2))) then
-        do z=1,size(element_symbols)
-          if (element_symbols(z)==symbol(1:2)) exit
-        end
-        .atomic_number = z
+   process(word) [leaky]
+   ! Process a keyword "word". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case, 
+   ! the sequence is processed as if it were a separate file.
+      STR(*) :: word
+      if (word.includes(" ")) then
+         stdin.redirect([word])
+         .read
       else
-        DIE("unknown element symbol: "//trim(symbol))
+         select case (word)
+            case("end");            ! exit surrounding loop
+            case("atom");           .read
+            case("units");          .read_units
+            case("label");          .read_label
+            case("axis_system");    .read_axis_system
+            case("pos");            .read_pos
+            case("thermal_tensor"); .read_thermal_tensor
+            case("basis_label");    .read_basis_label
+            case("basis");          .read_basis
+            case default;           DIE("unknown keyword, "//trim(word))
+         end
       end
-    end
-    in.read(.pos)                  ! read the coordinates
-  end
-
-   read_basis(in)
-   ! Read an ATOM basis set from "in"
-      TEXTFILE :: in
-      if (NOT associated(.basis)) .basis.create 
-      .basis.read(in)
    end
 
-   read_basis_label(in) [leaky]
-   ! Read only the ATOM basis set label from "in"
-      TEXTFILE :: in
-      .basis.create 
-      .basis.read_label(in)
+   process(keyword) [leaky]
+   ! Process each of the words in the "keyword" list.
+      STRVEC :: keyword
+      INT :: k,n_key
+      n_key = size(keyword)
+      do k = 1,n_key
+         if (keyword(k)=="end") exit 
+         .process(keyword(k)) 
+      end
+      ENSURE(k>=n_key,"unprocessed words remain in the keyword list")
+!     .update
    end
 
-   read_basis_shellvec(in) [leaky]
-   ! Read only the ATOM basis shell vector part from "in"
-      TEXTFILE :: in
-      .basis.create 
-      .basis.read_shellvec(in)
+   read_units
+   ! Read a string which describes the units to be used
+      stdin.set_default_units(stdin.next_str)
    end
 
-   read_thermal_tensor(in,crystal)
-   ! Read thermal parameters from "in", assumed in crystal axis system using
-   ! fractional coordinates. "crystal" contains the crystal axis information.
+   read_label
+   ! Read an ATOM label followed by three coordinates (without basis set)
+   ! from "stdin". 
+      INT :: lensym,z
+      STR :: symbol
+      BIN :: error
+      stdin.read(.label)         ! Input atom label
+      if (.label.is_int) then    ! The label must be the atomic number
+         z = .label.to_int
+         .atomic_number = z
+      else                       ! First part of the label is the element symbol
+         lensym = .label.scan("123456789 ")-1
+         error = lensym>2 OR lensym==0
+         DIE_IF(error,"unacceptable atom symbol, "// trim(.label))
+         symbol = .label(1:lensym)
+         symbol(1:1).to_upper_case
+         symbol(2:2).to_lower_case
+         if (any(element_symbols==symbol(1:2))) then
+            do z=1,size(element_symbols)
+               if (element_symbols(z)==symbol(1:2)) exit
+            end
+           .atomic_number = z
+         else
+            DIE("unknown element symbol: "//trim(symbol))
+         end
+      end
+   end
+
+   read_axis_system
+   ! Read a string which describes the axis system. Currently allowed,
+   ! is "cartesian" or "crystal".
+      stdin.read(.axis_system)   
+   end
+
+   read_pos
+   ! Read the ATOM coordinates from "stdin". 
+      stdin.read(.pos)   
+!     if (present(crystal)) .rotate_pos_from(crystal)
+   end
+
+   read_basis [leaky]
+   ! Read an ATOM basis set from "stdin"
+      if (.basis.destroyed) .basis.create 
+      .basis.read
+   end
+
+   read_basis_label [leaky]
+   ! Read only the ATOM basis set label from "stdin"
+      if (.basis.destroyed) .basis.create 
+      .basis.read_label
+   end
+
+   read_thermal_tensor
+   ! Read thermal parameters from "stdin". These are normally in the crystal axis system.
    ! The thermal tensors are assumed to be in units (angstrom^2); the expansion
    ! of the thermal smearing terperature factor term is:
    !              TF = exp ( -2\pi^2 U_{ij} h_i h_j a^*_i a^*_j )
    ! where (h) are the miller indices and (a^*) are the reciprocal lattice
    ! constants in angstrom^{-2}.
-      TEXTFILE :: in
-      CRYSTAL :: crystal
-      STR :: coords
-      BIN :: err
-      in.read(.thermal_tensor(1,1)) ! Units must be angstrom^2
-      in.read(.thermal_tensor(2,2)) ! unless over-ridden in in.default_units
-      in.read(.thermal_tensor(3,3)) ! ... see below
-      in.read(.thermal_tensor(1,2)) 
-      in.read(.thermal_tensor(1,3)) 
-      in.read(.thermal_tensor(2,3)) 
+      BIN :: unknown_unit
+      stdin.read(.thermal_tensor(1,1)) ! Units must be angstrom^2
+      stdin.read(.thermal_tensor(2,2)) ! unless over-ridden by stdin.default_units
+      stdin.read(.thermal_tensor(3,3)) ! ... see below
+      stdin.read(.thermal_tensor(1,2)) 
+      stdin.read(.thermal_tensor(1,3)) 
+      stdin.read(.thermal_tensor(2,3)) 
       .thermal_tensor(2,1) = .thermal_tensor(1,2)
       .thermal_tensor(3,1) = .thermal_tensor(1,3)
       .thermal_tensor(3,2) = .thermal_tensor(2,3)
-      if (in.default_units==" ") &
-      .thermal_tensor.convert_from("angstrom^2",err)
-      DIE_IF(err,"error occurred in converting units")
-      .thermal_tensor_from_crystal(crystal)
+      if (stdin.default_units==" ") &
+         .thermal_tensor.convert_from("angstrom^2",unknown_unit)
+      DIE_IF(unknown_unit,"Error occurred in converting units")
+!     if (present(crystal)) .rotate_thermal_tensor_from(crystal)
    end
 
-   thermal_tensor_from_crystal(crystal)
+   change_axis_system_to(kind,crystal)
+   ! Change the axis system for the position and thermal tensors
+   ! to "kind", either crystal or cartesian.
+      STR(*), IN :: kind
+      CRYSTAL, IN :: crystal
+      select case (kind)
+         case ("cartesian")
+            .pos = matmul(crystal.direct_cell_matrix,.pos)
+            .thermal_tensor_from(crystal)
+         case ("crystal")
+            .pos = matmul(crystal.inverse_cell_matrix,.pos)
+            .thermal_tensor_to(crystal)
+         case default; DIE("unknown axis kind, "//trim(kind))
+      end
+   end
+
+   thermal_tensor_from(crystal)
    ! Change thermal parameters in the crystal axis system to get them in
    ! cartesian axis system
       CRYSTAL, IN :: crystal
       .thermal_tensor.change_basis(crystal.direct_U_cell_matrix)
    end
 
-   thermal_tensor_to_crystal(crystal)
+   thermal_tensor_to(crystal)
    ! Change thermal parameters in the cartesian axis system to get them in
    ! the crystal axis system
      CRYSTAL, IN :: crystal
@@ -379,43 +447,39 @@ contains
                     crystal.reciprocal_U_cell_matrix)
    end
 
-   put(out)
-   ! Put out the atom information to file "out"
-      TEXTFILE :: out
-      out.text("Atom data\n")
-      out.show("Label                  =",.label)
-      out.show("Atom coordinates       =",.pos)
-      out.show("Atomic No.             =",.atomic_number)
-      out.show("Chemical symbol        =",trim(.chemical_symbol))
-      out.show("No. of shells          =",.n_shell)
-      out.show("No. of basis functions =",.n_bf)
-      out.show("No. of primitives      =",.n_prim)
-      out.flush
-      out.text("Basis set\n")
-      .basis.put(out)
+!  **************
+!  Output methods
+!  **************
+
+   put
+   ! Put out the atom information to file "stdout"
+      stdout.flush
+      stdout.show("Label                  =",.label)
+      stdout.show("Atom coordinates       =",.pos(1),.pos(2),.pos(3))
+      stdout.show("Atomic No.             =",.atomic_number)
+      stdout.show("Chemical symbol        =",trim(.chemical_symbol))
+      if (.basis.created) .basis.put
    end 
 
-  put_thermal_tensor(out)
+  put_thermal_tensor
   ! Output the thermal tensor.  Does not put a header or carriage return.
   ! Only outputs the 6 independent ones, not all 9.
-    TEXTFILE :: out
-    out.put(.thermal_tensor(1,1))
-    out.put(.thermal_tensor(2,2)) 
-    out.put(.thermal_tensor(3,3)) 
-    out.put(.thermal_tensor(1,2)) 
-    out.put(.thermal_tensor(1,3)) 
-    out.put(.thermal_tensor(2,3)) 
+    stdout.put(.thermal_tensor(1,1))
+    stdout.put(.thermal_tensor(2,2)) 
+    stdout.put(.thermal_tensor(3,3)) 
+    stdout.put(.thermal_tensor(1,2)) 
+    stdout.put(.thermal_tensor(1,3)) 
+    stdout.put(.thermal_tensor(2,3)) 
   end
 
-   put_natural_orbitals(out)
+   put_natural_orbitals
    ! Put out the current associated molecular orbitals to file "out"
-      TEXTFILE :: out
-      out.flush
-      out.text("Natural orbital occupations:")
-      out.put( .occupation, format="column")
-      out.flush
-      out.text("Natural orbitals:")
-      out.put( .natural_orbitals)
+      stdout.flush
+      stdout.text("Natural orbital occupations:")
+      stdout.put( .occupation, format="column")
+      stdout.flush
+      stdout.text("Natural orbitals:")
+      stdout.put( .natural_orbitals)
    end
 
 !  ***************

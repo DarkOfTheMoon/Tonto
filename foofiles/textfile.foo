@@ -30,9 +30,8 @@
 ! Note that the input buffer is limited to size BSTR_SIZE, set in the
 ! "macros" file.
 !
-! Updates the entry in std_system at start of every routine.
-! Update the entry in std_system whenever record number is changed.
-! Create and destory routines excepted.
+! The system information in "tonto" is updated whenever a I/O operation 
+! or a buffer operation is performed.
 !
 ! (c) dylan jayatilaka, university of western australia, december 1999
 !
@@ -309,6 +308,18 @@ contains
       .saved => saved
    end
 
+   unsave [leaky]
+   ! Revert to previously saved textfile settings. Note that this 
+   ! is not the same as reverting to a previously saved textfile
+      TEXTFILE, PTR :: saved
+      UNITNUMBER :: unitnumber
+      ENSURE(.saved.created,"no previous settings")
+      saved => .saved
+      self  = saved
+      DELETE_MEM(TEXTFILE_SIZE)
+      deallocate(saved)       
+   end
+
    redirect(name) [leaky]
    ! Save all the info for the current file in ".saved", and open a new textfile.
    ! This is used for input, or output redirection. The new file retains
@@ -319,12 +330,13 @@ contains
       saved => self
       .create(name)
       .saved => saved
-      .use_saved_style
+      .use_style(saved)
+      .open(for=.saved.action)
    end
 
    redirect(internal) [leaky]
    ! Save all the info for the current file in ".saved", and open a new 
-   ! internal textfile. This is used for input, or output redirection. 
+   ! internal textfile. This is used for *only* input redirection. 
    ! The new file retains the style settings of the saved file
       PTR :: self
       STRVEC :: internal
@@ -332,30 +344,37 @@ contains
       saved => self
       .create(internal)
       .saved => saved
-      .use_saved_style
+      .use_style(saved)
    end
 
-   use_saved_style
-   ! Revert to the previously saved style settings
-      ENSURE(.saved.created,"no previous settings")
-      .default_units = .saved.default_units
-      .labels        = .saved.labels
-      .margin        = .saved.margin
-      .fields        = .saved.fields
-      .int_width     = .saved.int_width
-      .dbl_width     = .saved.dbl_width
-      .dbl_precision = .saved.dbl_precision
-      .dbl_style     = .saved.dbl_style
+   use_style(saved)
+   ! Revert to the previously saved style settings, including
+   ! any default units.
+      TEXTFILE :: saved
+      .default_units = saved.default_units
+      .labels        = saved.labels
+      .margin        = saved.margin
+      .fields        = saved.fields
+      .int_width     = saved.int_width
+      .dbl_width     = saved.dbl_width
+      .dbl_precision = saved.dbl_precision
+      .dbl_style     = saved.dbl_style
+      .default_units = saved.default_units
    end
 
-   unsave [leaky]
-   ! Revert to the previously saved textfile
+   revert [leaky]
+   ! Revert to the previously saved textfile, but keep current style
+   ! settings, including any default_units settings.
       TEXTFILE, PTR :: saved
       UNITNUMBER :: unitnumber
       ENSURE(.saved.created,"no previous settings")
       saved => .saved
-      .internal.destroy         ! Do not destroy .saved recursively ...
-      unitnumber.free(.unit)
+      if (.internal.created) then
+         .internal.destroy      ! Do not destroy .saved recursively ...
+      else
+         unitnumber.free(.unit)
+      end
+      saved.use_style(self)
       self  = saved
       DELETE_MEM(TEXTFILE_SIZE)
       deallocate(saved)         ! instead, just deallocate it
@@ -481,10 +500,10 @@ contains
          .io_status = 1
          if (NOT .ignore_end_of_file) then   ! Do not ignore end of file
             if(.saved.created) then          ! Automatically return to saved file
-               .unsave                       ! Get back previous settings
+               .revert                       ! Get back previous settings
                .io_status = 2                ! Set soft end-of-file
              else
-               DIE("End of file")            ! Die if nothing to unsave
+               DIE("unexpected end of file") ! Die if nothing to unsave
              end
          end
       end
@@ -514,10 +533,10 @@ contains
           .io_status = 1
            if (NOT .ignore_end_of_file) then ! This end shouldnt be ignored
              if(.saved.created) then         ! It's OK, go back to saved file
-               .unsave
+               .revert
                .io_status = 2                ! Set soft end-of-file
              else 
-               DIE("End of file")            ! Die if nothing saved
+               DIE("unexpected end of file") ! Die if nothing saved
              end
            end
         case (2)                             ! Some error, but not end of file.
@@ -779,8 +798,10 @@ contains
     value.convert_from(units,unknown_unit)
     if (NOT .end_of_file AND unknown_unit) &
     .move_to_previous_item                        ! No units, move back one item
-    if (.default_units/=" " AND unknown_unit) &
+    if (.default_units/=" " AND unknown_unit) then 
     value.convert_from(.default_units)            ! Convert from assumed default units
+    .default_units = " "
+    end
     .ignore_end_of_file = FALSE
   end
 
@@ -929,8 +950,10 @@ contains
       v.convert_from(units,unknown_unit)
       if (NOT .end_of_file AND unknown_unit) &
       .move_to_previous_item                ! No units, move back one item
-      if (.default_units/=" " AND unknown_unit) &
+      if (.default_units/=" " AND unknown_unit) then
       v.convert_from(.default_units)        ! Convert from assumed default units
+      .default_units = " "
+      end
       .ignore_end_of_file = FALSE
    end
 
@@ -1006,8 +1029,10 @@ contains
       m.convert_from(units,unknown_unit)
       if (NOT .end_of_file AND unknown_unit) &
       .move_to_previous_item                ! No units, move back one item
-      if (.default_units/=" " AND unknown_unit) &
+      if (.default_units/=" " AND unknown_unit) then
       m.convert_from(.default_units)        ! Convert from assumed default units
+      .default_units = " "
+      end
       .ignore_end_of_file = FALSE
    end
 
@@ -2472,11 +2497,15 @@ contains
    ! See if .io_status>1, indicating the end of file has been found. 
    ! Reset .io_status if the .ignore_end_of_file was set, indicating 
    ! that the end of file was anticipated as a possibility.
-   ! Reset .io_status if the file ended and was usaved (i.e. a soft ending).
+   ! Reset .io_status if the file ended and was usaved (i.e. a soft ending),
+   ! and move back one item.
       BIN :: res
       res = .io_status>0
       if (.io_status==1 AND .ignore_end_of_file) .io_status = 0
-      if (.io_status==2)                         .io_status = 0
+      if (.io_status==2) then
+         .io_status = 0
+         .move_to_previous_item
+      end
    end
 
    at_end_of_file result(res)
@@ -2524,11 +2553,11 @@ contains
 
   update_system_info
   ! Lets the system know info about the file being read, in case of error.
-    std_system.io_file_name   = .name
-    std_system.io_file_action = .action
-    std_system.io_file_record = .record
-    std_system.io_file_buffer = .buffer.buffer_str
-    std_system.io_file_pos    = .buffer.pos
+    tonto.io_file_name   = .name
+    tonto.io_file_action = .action
+    tonto.io_file_record = .record
+    tonto.io_file_buffer = .buffer.buffer_str
+    tonto.io_file_pos    = .buffer.pos
   end
 
 end
