@@ -77,6 +77,7 @@ my $getfile = "";             # The inheritance file.
 my $fortranfile = "";         # The .fortran file produced
 my $fortranintfile = "";      # The .int file produced
 my $fortranusefile = "";      # The .use file produced
+my $routcallfile= "";         # The .usr file produced
 my $htmlshortfile = "";       # This is the short .html file produced
 my $htmllongfile  = "";       # This is the long .html file produced
 my $tidyfile = "";            # The tidied up foo file
@@ -98,6 +99,7 @@ my $do_html = 0;              # Translate to HTML
 my $do_inherit = 0;           # Whether to follow inheritance inclusion
 my $do_unknown = 1;           # Set TRUE if UNKNOWN construct is made
 my $do_generic = 1;           # Set TRUE if generic interfaces are to be used
+my $do_routine_calls = 0;     # Set TRUE if routine calls are to be stored
 my $do_tidy    = 0;           # Set TRUE if preprocessor will tidy code
 
 ################################################################################
@@ -112,6 +114,7 @@ my @scope = undef;            # The nested list of current scoping units.
 
 ################################################################################
 my %called_routines;          # The Tonto module name, and fortran name of called routines.
+my %routine_calls;            # The list of routine calls for each routine
 my %used_modules;             # The list of variables types used NOTENECESARILY method-called
 my %function_res_type;        # Types of function results.
 my %tonto_type;               # All types defined in $typesfile AND the types of their components
@@ -318,6 +321,7 @@ close FOOFILE;
 #print "Second pass ...";
 $pass = 2;
 open(FOOFILE, $foofile);           # SECOND PASS: Loop over the .foo file lines 
+if ($do_routine_calls) { open(RCFILE, ">$routcallfile"); }
 &start_foofile(*FOOFILE,$foofile); # and get the procedure interfaces.
 #$foohandle  = *FOOFILE;            # and generate the fortran/HTML lines
 #$oldhandle  = $foohandle;
@@ -339,6 +343,7 @@ if ($do_fortran) { &fortran_end; }
 if ($do_html)    { &html_end;    }
 if ($do_tidy)    { &tidy_end;    }
 close FOOFILE;                     # All done
+if ($do_routine_calls) { close RCFILE; }
 
 #################################################################################
 ## >>>>> END END END END END END
@@ -366,15 +371,16 @@ sub analyse_command_arguments {
        $arg = shift;
        $_ = $arg;
        if (/^-/) {
-           /^-types\b/      && do { $typesfile      = shift; next; };
-           /^-fortran\b/    && do { $fortranfile    = shift; next; };
-           /^-fortranint\b/ && do { $fortranintfile = shift; next; };
-           /^-fortranuse\b/ && do { $fortranusefile = shift; next; };
-           /^-htmlshort\b/  && do { $htmlshortfile  = shift; next; };
-           /^-htmllong\b/   && do { $htmllongfile   = shift; next; };
-           /^-nogeneric\b/  && do { $do_generic     = 0;     next; };
-           /^-generic\b/    && do { $do_generic     = 1;     next; };
-           /^-tidy\b/       && do { $do_tidy        = 1;     next; };
+           /^-types\b/          && do { $typesfile      = shift; next; };
+           /^-fortran\b/        && do { $fortranfile    = shift; next; };
+           /^-fortranint\b/     && do { $fortranintfile = shift; next; };
+           /^-fortranuse\b/     && do { $fortranusefile = shift; next; };
+           /^-htmlshort\b/      && do { $htmlshortfile  = shift; next; };
+           /^-htmllong\b/       && do { $htmllongfile   = shift; next; };
+           /^-nogeneric\b/      && do { $do_generic     = 0;     next; };
+           /^-generic\b/        && do { $do_generic     = 1;     next; };
+           /^-routine_calls\b/  && do { $routcallfile   = shift; next; };
+           /^-tidy\b/           && do { $do_tidy        = 1;     next; };
            warn "\n Error : unexpected argument $arg\n";
            $argerr=1;
        }
@@ -423,7 +429,7 @@ sub analyse_command_arguments {
       if ($fortranintfile ne '' || $fortranusefile ne '') {
            warn "\n Error : must specify -fortran option";
            $argerr=1;
-     }
+      }
    }
    
    if ($typesfile eq "") { 
@@ -443,6 +449,10 @@ sub analyse_command_arguments {
 
    if ($do_tidy) {
       $tidyfile = $foofile_head_name.'.tidy';
+   }
+
+   if ($routcallfile ne "") {
+      $do_routine_calls = 1;
    }
    
    return if ($argerr==0);
@@ -2594,6 +2604,11 @@ sub fortran_do_new_program_scope {
   $fortran_out  = "program run_${module_fort_name}";
   $fortran_out .= "\n\n" . 
                   "#  include \"${fortranusefile}\"";
+
+  if ($do_routine_calls && $pass==2) {
+     $current_rout_name = lc($module_full_name);
+     print RCFILE "$current_rout_name";
+  }
 }
 
 ################################################################################
@@ -3624,10 +3639,11 @@ sub html_do_program_scope {
 # The line is within the scope of a program.
 sub fortran_do_program_scope {
 
-  $name = $module_name;
-  $current_rout_name = $module_name;
+  $name = lc($module_name);
+  $current_rout_name = lc($module_name);
   %routine = ();
   $routine{$name}{real_name} = $name;
+  $routine{$name}{short_name} = $name;
 
   my $comment;
   ($fortran_out,$comment) = &split_by_comment($fortran_out);
@@ -4384,6 +4400,16 @@ sub dots_to_fortran {
           }
           $called_routines{$arg_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
           $called_routines{$arg_type}{$rout}{fortran_type_name} = $fortran_type_name;
+          if ($do_routine_calls && $pass==2) {
+             my $call = "$arg_type:$rout";
+             my $short_name = $routine{$current_rout_name}{short_name};
+           # if (! defined($current_rout_name)) { die "short name not defined"; }
+           # if (! defined($short_name)) { die "short name not defined"; }
+             if (! &routine_calls_this_routine($short_name,$call)) {
+                print RCFILE "   $call";
+                push @{$routine_calls{$short_name}}, $call;
+             }
+          }
           if ($do_generic) {                      # Underscore, always generic
             $underscore = '_';
           } else {
@@ -5151,6 +5177,10 @@ sub analyse_rout_name {
        $current_type_name = undef;
     } 
 
+    if ($do_routine_calls && $pass==2) {
+        print RCFILE "$short_name:";
+    }
+
 }
 
 ################################################################################
@@ -5413,4 +5443,24 @@ sub tidy_start {
 # End the tidy stuff, and close the tidy file.
 sub tidy_end {
   close TIDYFILE;
+}
+
+################################################################################
+# Return TRUE if the routine with name $name calls the routine called $call
+sub routine_calls_this_routine {
+    my $name = $_[0];
+    my $call = $_[1];
+
+    if (! defined $routine_calls{$name}) { return(0); }
+    if (! defined @{$routine_calls{$name}}) { return(0); }
+
+    my($arg,$has);
+    $has = 0;
+
+    foreach $arg (@{$routine_calls{$name}}) {
+       next if ($arg ne $call);
+       $has = 1;
+       last;
+    }
+    return ($has);
 }
