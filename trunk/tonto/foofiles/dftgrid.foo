@@ -85,19 +85,17 @@ contains
      nullify(.reference_atom_weights)
    end
 
-!   created result(res)
-!   ! Returns true if self has been created
-!      self :: PTR
-!      res :: BIN
-!      res = associated(self)
-!   end
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
 
-!   destroyed result(res)
-!   ! Return TRUE if object is destroyed
-!      self :: PTR
-!      res :: BIN
-!      res = NOT associated(self)
-!   end
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
 
    create_copy(d) ::: leaky
    ! Create a copy a dftgrid "d"
@@ -367,13 +365,41 @@ contains
 !  Grid integration methods
 !  ************************
 
+   integrate(f,pos,scale) result(res)
+   ! Integrate the vector function "f" over a single atomic grid centered at
+   ! "pos" and possibly rescaled by "scale" (which is usually taken to be the
+   ! Bragg-Slater radius). The purpose of the "scale" is only to possibly
+   ! increase the accuracy of the integration.
+      interface
+         f(r) result(res)
+            r :: VEC{REAL}(3)
+            res :: REAL
+         end
+      end
+      pos :: VEC{REAL}(3)
+      scale :: REAL, IN, optional
+      res :: REAL
+   ENSURE(.finalized,"call the set_grid_data routine")
+      n :: INT
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      pt.create(.n_pts,3);  wt.create(.n_pts)
+      .get_atom_grid
+      .rescale_displace(pt,wt,pos,scale)
+      res = ZERO
+      do n = 1,.n_pts
+         res = res + wt(n)*f(pt(n,:))
+      end
+      wt.destroy;  pt.destroy
+   end
+
    integrate(f,atom) result(res)
    ! Integrate the vector function "f" over grids defined for the atoms
    ! in the VEC{ATOM} "atom".
       interface
-   f(r) result(res)
-       r :: VEC{REAL}(3)
-      res :: REAL
+         f(r) result(res)
+            r :: VEC{REAL}(3)
+            res :: REAL
          end
       end
       atom :: VEC{ATOM}
@@ -414,7 +440,7 @@ contains
    ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
       n_pt,n,a,b :: INT
       pt,pos,a_grid,b_grid :: MAT{REAL}*
-      wt,scale,v_grid :: VEC{REAL}*
+      wt,v_grid :: VEC{REAL}*
       ans = ZERO
       n_pt = .n_pts
       pt.create(n_pt,3);  wt.create(n_pt)
@@ -424,14 +450,12 @@ contains
       .get_atom_grid
       if (g.a.pos.equals(g.b.pos)) then
          pos.create(1,3); pos(1,:) = g.a.pos
-         scale.create(1); scale(:) = ONE
       else
          pos.create(2,3); pos(1,:) = g.a.pos
                           pos(2,:) = g.b.pos
-         scale.create(2); scale(:) = ONE
       end
       do n = 1,pos.dim1
-         .rescale_displace_partition(pt,wt,n,pos,scale)
+         .rescale_displace_partition(pt,wt,n,pos)
          call V(v_grid,pt)
          v_grid = wt*v_grid
          g.a.make_grid(a_grid,pt)
@@ -443,7 +467,6 @@ contains
          end
          end
       end
-      scale.destroy
       pos.destroy
       b_grid.destroy; a_grid.destroy
       v_grid.destroy
@@ -887,6 +910,40 @@ contains
       end
    end
 
+   rescale_displace(pt,wt,disp,scale) ::: private
+   ! Rescales the original single atom grid according to the "scale" factor (if
+   ! present), then displaces the grid from the origin to the position "disp".
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      pt :: MAT{REAL}
+      wt :: VEC{REAL}
+      disp :: VEC{REAL}(3), IN
+      scale :: REAL, IN, optional
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim1==.n_pts, "pt incorrectly dimensioned")
+   ENSURE(pt.dim2==3,      "pt incorrectly dimensioned")
+   ENSURE(wt.dim==.n_pts,  "wt incorrectly dimensioned")
+   ENSURE(.reference_atom_points.created,"atom grid destroyed, call get_atom_grid")
+   ENSURE(.reference_atom_weights.created,"atom weight grid not created")
+   ENSURE(.reference_atom_points.dim1==.n_pts,"points incorrectly dimensioned")
+   ENSURE(.reference_atom_points.dim2==3,     "points incorrectly dimensioned")
+   ENSURE(.reference_atom_weights.dim==.n_pts, "weights incorrectly dimensioned")
+      n :: INT
+      alpha :: REAL
+      pt = .reference_atom_points
+      wt = .reference_atom_weights
+      ! Rescale the grid according to Becke's method
+      if (present(scale)) then
+         alpha = scale
+         wt = alpha*alpha*alpha*wt
+         pt = alpha*pt
+      end
+      ! Displace
+      do n = 1,.n_pts
+          pt(n,:) = pt(n,:) + disp
+      end
+   end
+
    rescale_displace_partition(pt,wt,a,atom) ::: private
    ! Rescales the original single atom grid to adjust it to the atom size, then
    ! displaces the grid from the origin to the position of "atom" number "a",
@@ -906,30 +963,16 @@ contains
    ENSURE(pt.dim2==3,      "pt incorrectly dimensioned")
    ENSURE(wt.dim==.n_pts,  "wt incorrectly dimensioned")
    ENSURE(a>=1 AND a<= size(atom),"`a' argument out of range")
-   ENSURE(.reference_atom_points.created,"atom point grid not created")
-   ENSURE(.reference_atom_weights.created,"atom weight grid not created")
-   ENSURE(.reference_atom_points.dim1==.n_pts,"points incorrectly dimensioned")
-   ENSURE(.reference_atom_points.dim2==3,     "points incorrectly dimensioned")
-   ENSURE(.reference_atom_weights.dim==.n_pts, "weights incorrectly dimensioned")
       n, m, n_atom, i, j, ii :: INT
-      posa,posi,posj,rij,rai,raj,rni,rnj :: VEC{REAL}(3)
-      dij,dai,daj,dni,dnj,uij,vij, bsri, bsrj, chi, wij, aij, h, s, alpha :: REAL
+      posi,posj,rij,rni,rnj :: VEC{REAL}(3)
+      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s,alpha :: REAL
       partition :: MAT{REAL}*
       symbol :: STR
-      pt = .reference_atom_points
-      wt = .reference_atom_weights
       symbol = atom(a).chemical_symbol     ! <-- Rescale the grid according to Becke's method
-      if (symbol == "H") then
-         alpha =      atom(a).bragg_slater_radius
-      else
-         alpha = HALF*atom(a).bragg_slater_radius
+      if (symbol=="H") then; alpha =      atom(a).bragg_slater_radius
+      else;                  alpha = HALF*atom(a).bragg_slater_radius
       end
-      wt = alpha*alpha*alpha*wt
-      pt = alpha*pt
-      posa = atom(a).pos                   ! <-- Displace the grid
-      do n = 1,.n_pts
-          pt(n,:) = pt(n,:) + posa
-      end
+      .rescale_displace(pt,wt,atom(a).pos,alpha) 
       m = .becke_m_partition_power         ! <-- Partition the grid, below
       n_atom = size(atom)                  ! Number of atoms
       partition.create(.n_pts,n_atom) ! Create partition array
@@ -946,10 +989,6 @@ contains
               aij = wij/(wij*wij - ONE)
               rij = posi-posj
               dij = sqrt(dot_product(rij,rij))
-            ! rai = posa-posi
-            ! raj = posa-posj
-            ! dai = sqrt(dot_product(rai,rai))
-            ! daj = sqrt(dot_product(raj,raj))
               do n = 1,.n_pts
                   rni = pt(n,:) - posi
                   rnj = pt(n,:) - posj
@@ -979,7 +1018,7 @@ contains
    ! Rescales the original single atom grid according to the "scale" factors for
    ! that position "pos", then displaces the grid from the origin to the
    ! position "pos(a,:)", and partition it to work with all the other positions,
-   ! returning the grid ("pt","wt") = ("pt0" + disp, partition*"wt0") The
+   ! returning the grid ("pt","wt") = ("pt0" + disp, partition*"wt0"). The
    ! weights are altered according to a Becke-like atomic partition function
    ! where the scales are re-interpreted as mean extents.
    ! NOTE : all the positions in "atom" must be distinct!!!!!!
@@ -989,42 +1028,33 @@ contains
       wt :: VEC{REAL}
       a :: INT, IN
       pos :: MAT{REAL}, IN
-      scale :: VEC{REAL}
+      scale :: VEC{REAL}, IN, optional
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim1==.n_pts, "pt incorrectly dimensioned")
    ENSURE(pt.dim2==3,      "pt incorrectly dimensioned")
    ENSURE(wt.dim==.n_pts,  "wt incorrectly dimensioned")
    ENSURE(a>=1 AND a<= pos.dim1,"`a' argument out of range")
-   ENSURE(.reference_atom_points.created,"atom point grid not created")
-   ENSURE(.reference_atom_weights.created,"atom weight grid not created")
-   ENSURE(.reference_atom_points.dim1==.n_pts,"points incorrectly dimensioned")
-   ENSURE(.reference_atom_points.dim2==3,     "points incorrectly dimensioned")
-   ENSURE(.reference_atom_weights.dim==.n_pts, "weights incorrectly dimensioned")
       n, m, n_centers, i, j, ii :: INT
       disp,rij,rni,rnj :: VEC{REAL}(3)
-      dij,dni,dnj,uij,vij, bsri, bsrj, chi, wij, aij, h, s, alpha :: REAL
+      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
       posi,posj :: VEC{REAL}(3)
       partition :: MAT{REAL}*
-      pt = .reference_atom_points
-      wt = .reference_atom_weights
-      ! Rescale the grid according to Becke's method
-      alpha = scale(a)
-      wt = alpha*alpha*alpha*wt
-      pt = alpha*pt
-      disp = pos(a,:)                      ! <-- Displace the grid
-      do n = 1,.n_pts
-          pt(n,:) = pt(n,:) + disp
+                                         ! <-- Rescale the grid according to Becke's method
+      if (present(scale)) then; .rescale_displace(pt,wt,pos(a,:),scale(a)) 
+      else;                     .rescale_displace(pt,wt,pos(a,:))
       end
-      m = .becke_m_partition_power         ! <-- Partition the grid, below
-      n_centers = pos.dim1                 ! Number of integration (atom) centres
+      m = .becke_m_partition_power       ! <-- Partition the grid, below
+      n_centers = pos.dim1               ! Number of integration (atom) centres
       partition.create(.n_pts,n_centers) ! Create partition array
       partition = ONE
       do i = 1,n_centers
-          bsri = scale(i)
+          bsri = ONE
+          if (present(scale)) bsri = scale(i)
           posi = pos(i,:)
           do j = 1,n_centers
               if (i==j) cycle
-              bsrj = scale(j)
+              bsrj = ONE
+              if (present(scale)) bsrj = scale(j)
               chi = bsri/bsrj
               wij = (chi - ONE)/(chi + ONE)
               aij = wij/(wij*wij - ONE)
@@ -1055,14 +1085,13 @@ contains
       partition.destroy
    end
 
-   get_atom_grid ::: private, leaky
+   get_atom_grid ::: leaky
    ! Ensure the atom grid has been made.
-      if (.reference_atom_points.destroyed) then
-        ENSURE(.reference_atom_weights.destroyed,"inconsistently allocated atom weights")
-        .reference_atom_points.create(.n_pts,3)
-        .reference_atom_weights.create(.n_pts)
-        .make_atom_grid(.reference_atom_points,.reference_atom_weights)
-      end
+      if (.reference_atom_points.created) return
+      ENSURE(.reference_atom_weights.destroyed,"inconsistently allocated atom weights")
+      .reference_atom_points.create(.n_pts,3)
+      .reference_atom_weights.create(.n_pts)
+      .make_atom_grid(.reference_atom_points,.reference_atom_weights)
    end
 
    make_atom_grid(pt,wt) ::: private
@@ -2000,9 +2029,9 @@ contains
    end
 
    d_u_b88_exchange_functional(p_a,p_b,np_a,np_b,local_a,local_b,non_local_a,non_local_b)
-    ! Return the derivatives of the Becke 88 exchange functional.
-    ! These equations are essentially the same as in the appendix of JCP 98(7)
-    ! 5612-5626.
+   ! Return the derivatives of the Becke 88 exchange functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
       p_a,p_b :: VEC{REAL}, IN
       np_a,np_b :: MAT{REAL}, IN
       local_a,local_b :: VEC{REAL}
@@ -2119,19 +2148,15 @@ contains
      np_a,np_b :: MAT{REAL}, IN
      c_f,a,b,c,d,fac,pa,pb,p,npanpa,npbnpb,npanpb,p_third :: REAL
      gamma,a_b_omega,delta,pa_pb_n,fi :: REAL
-     i,start,step :: INT
+     i :: INT
      c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
      a = 0.04918
      b = 0.132
      c = 0.2533
      d = 0.349
      fac = TWO**(11*THIRD)*c_f
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
-       f = ZERO
-     end
-     do i=start,size(p_a),step
+     if (tonto.do_in_parallel) f = ZERO
+     parallel do i = 1,size(p_a)
        pa = p_a(i)
        pb = p_b(i)
        p = pa + pb
@@ -2150,7 +2175,7 @@ contains
        fi = fi + a_b_omega*(12/NINE*p*p - pa_pb_n*(47-SEVEN*delta))*npanpb
        f(i) = fi
      end
-     tonto_parallel.sum_vectors(f)
+     if (tonto.do_in_parallel) tonto.parallel_sum(f)
    end
 
    d_u_lyp_correlation_functional(p_a,p_b,np_a,np_b,local_a,local_b,non_local_a,non_local_b)
@@ -2269,9 +2294,9 @@ contains
    end
 
    d_r_b88_exchange_functional(p,np,local,non_local)
-    ! Return the derivatives of the Becke 88 exchange functional.
-    ! These equations are essentially the same as in the appendix of JCP 98(7)
-    ! 5612-5626.
+   ! Return the derivatives of the Becke 88 exchange functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
       p :: VEC{REAL}, IN
       np :: MAT{REAL}, IN
       local :: VEC{REAL}
@@ -2360,19 +2385,15 @@ contains
      np :: MAT{REAL}, IN
      c_f,a,b,c,d,fac,p_i,npnp,p_third :: REAL
      gamma,a_b_omega,delta,p2,fi :: REAL
-     i,start,step :: INT
+     i :: INT
      c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
      a = 0.04918
      b = 0.132
      c = 0.2533
      d = 0.349
      fac = TWO**(11*THIRD)*c_f
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
-       f = ZERO
-     end
-     do i=start,size(p),step
+     if (tonto.do_in_parallel) f = ZERO
+     parallel do i = 1,size(p)
        p_i = HALF*p(i)
        p2 = p_i*p_i
        npnp = QUARTER*dot_product(np(i,:),np(i,:))
@@ -2385,7 +2406,7 @@ contains
             -a_b_omega*fac*TWO*p_i**(14*THIRD)
        f(i) = fi
      end
-     tonto_parallel.sum_vectors(f)
+     if (tonto.do_in_parallel) tonto.parallel_sum(f)
    end
 
    d_r_lyp_correlation_functional(p,np,local,non_local)
@@ -2426,6 +2447,19 @@ contains
          -abw9_pa*e*(3*delta+9)*pa*pa*pa/pa_third
        non_local(i,:) = abw9_pa*pa*npa*(6+14*delta)
      end
+   end
+
+   v010(grid,pt) ::: selfless, public
+   ! This is the function being integrated
+      grid :: VEC{REAL}
+      pt :: MAT{REAL}
+   ENSURE(grid.dim==pt.dim1,"incompatible grid an pt")
+      i :: INT
+      r :: VEC{REAL}(3)
+      do i = 1,grid.dim
+         r = pt(i,:) - [ZERO,ONE,ZERO]
+         grid(i) = ONE/r.norm
+      end
    end
 
 end

@@ -167,6 +167,8 @@ my @inherited_type_arg;       # This list of INHERITED type arguments -- and arg
 my $n_define_type;
 my @old_define_type;          # Explicitly define type substitutions (also non-type substitutions).
 my @new_define_type;          # 
+my @old_expand_type;          # Explicitly define type substitutions (also non-type substitutions).
+my @new_expand_type;          # 
 
 my $name;
 my %linenum;                  # line nummber for each filehandle.
@@ -1192,6 +1194,7 @@ sub is_intrinsic_scalar_type_name {
 # Return whether the given $type_name is a fortran intrinsic type
 sub is_array_head_type_name {
    my  $head_name = $_[0];
+   if (! defined $head_name)    { return 0; }
    if ($head_name eq 'VEC'  ||
        $head_name eq 'MAT'  ||
        $head_name eq 'MAT3' ||
@@ -1391,6 +1394,7 @@ sub process_foo_line {
        elsif ($newscopeunit eq 'empty-end')      { &do_new_end_scope; }
        elsif ($newscopeunit eq 'named-end')      { &do_new_end_scope; }
        elsif ($newscopeunit eq 'do')             { &do_new_do_scope; }
+       elsif ($newscopeunit eq 'parallel do')    { &do_new_parallel_do_scope; }
        elsif ($newscopeunit eq 'if')             { &do_new_if_scope; }
        elsif ($newscopeunit eq 'select')         { &do_new_select_scope; }
        elsif ($newscopeunit eq 'forall')         { &do_new_forall_scope; }
@@ -1539,6 +1543,8 @@ sub find_new_scoping_unit {
   if ($scopeunit eq 'function' || $scopeunit eq 'subroutine' || $scopeunit eq 'program') {
     if ($_[0] =~ m'do'o && $_[0] =~ m'(?:^|:) *do *(?= [a-zA-Z]|$|[\#!;])'o) { # do
         $newscopeunit = 'do';
+    } elsif ($_[0] =~ m'parallel do'o && $_[0] =~ m'(?:^|:) *parallel do *(?= [a-zA-Z]|$|[\#!;])'o) { # parallel do
+        $newscopeunit = 'parallel do';
     } elsif ($_[0] =~ m'if'o && $_[0] =~ m'^ *if *[(][^;]*[)] *then(?=(?: *$)|(?: *[!;]))'o) { # if
         $newscopeunit = 'if';
     } elsif ($_[0] =~ m'interface'o && $_[0] =~ m'^ *interface *(?=[a-zA-Z]|$)'o) { # interface
@@ -1575,9 +1581,11 @@ sub find_new_scoping_unit {
       }
     }
   } elsif ($scopeunit eq 'type') {
-  } elsif ($scopeunit eq 'do' || $scopeunit eq 'if' || $scopeunit eq 'select') {
+  } elsif ($scopeunit eq 'do' || $scopeunit eq 'parallel do' || $scopeunit eq 'if' || $scopeunit eq 'select') {
     if ($_[0] =~ m'do'o && $_[0] =~ m'(?:^|:) *do *(?= [a-zA-Z]|$|[\#!;])'o) { # do
         $newscopeunit = 'do';
+    } elsif ($_[0] =~ m'parallel do'o && $_[0] =~ m'(?:^|:) *parallel do *(?= [a-zA-Z]|$|[\#!;])'o) { # parallel do
+        $newscopeunit = 'parallel do';
     } elsif ($_[0] =~ m'if'o && $_[0] =~ m'^ *if *[(][^;]*[)] *then(?=(?: *$)|(?: *[!;]))'o) { # if
         $newscopeunit = 'if';
     } elsif ($_[0] =~ m'select'o && $_[0] =~ m'^ *select *[a-zA-Z]'o) { # select
@@ -2424,11 +2432,12 @@ sub convert_inherited_type_arg_macros {
 
    if ($routine{$name}{inherited}) {
 
-      my ($i,$narg,$arg,$newarg);
+      my ($i,$j,$narg,$arg,$newarg);
 
       if ($n_define_type>0) {
-#print "YUP, line= $input_line";
-#print "YUP, line= $fortran_out";
+      
+# print "YUP, line= $input_line";
+# print "YUP, line= $fortran_out";
          for ($i=1; $i<=$n_define_type ; $i++) {
             $arg    = $old_define_type[$i];
             $newarg = $new_define_type[$i];
@@ -2436,11 +2445,29 @@ sub convert_inherited_type_arg_macros {
             $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
             $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
             $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
-#print "arg = $arg";
-#print "newarg = $newarg";
             $fortran_out =~ s/${arg}/${newarg}/g;
+# print "arg = $arg";
+# print "newarg = $newarg";
+# print "YUP, line= $fortran_out";
+            my @old = @{$old_expand_type[$i]};
+            my @new = @{$new_expand_type[$i]};
+            $narg = ($#old<$#new?$#old:$#new);
+            if ($narg>0) {
+# print "INNER narg = $narg";
+               for ($j=1; $j<=$narg ; $j++) {
+                  $arg    = $old[$j];
+                  $newarg = $new[$j];
+                  $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g;
+                  $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
+                  $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
+                  $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
+# print "arg = $arg";
+# print "newarg = $newarg";
+                  $fortran_out =~ s/${arg}/${newarg}/g;
+               }
+            }
          }
-#print "YUP, fort= $fortran_out";
+# print "YUP, fort= $fortran_out";
       }
  
       if (! $routine{$name}{in_routine_body}) {
@@ -2458,7 +2485,7 @@ sub convert_inherited_type_arg_macros {
             for ($i=1; $i<=$narg ; $i++) {
                $arg    = $inherited_type_arg[$i];
                $newarg = $type_arg[$i];
-               $fortran_out =~ s/\b${arg}\b/${newarg}/;
+               $fortran_out =~ s/\b${arg}/${newarg}/;
             }
          }
          # Remove len= specifiers in everything which is not an array of STR
@@ -2781,8 +2808,8 @@ sub analyse_new_end_scope {
 
           for ($i=0; $i <= $#inherit; $i++) {
             $inh = $inherit[$i];
-            $inh =~ s/\s*$//o;
-            $inh =~ s/\s*:::.*//o;
+            $inh =~ s/\s*$//o;           # Remove spaces
+            $inh =~ s/\s*:::.*//o;       # Remove special foo attributes
             $inh = &convert_inherited_type_arg_macros($inh);
             $inherit[$i] = $inh;
           }
@@ -3015,6 +3042,15 @@ sub fortran_do_new_end_scope {
      }
   }
 
+  elsif ($oldscopeunit eq 'parallel do') {
+        $fortran_out =~ s/end\s*/end do/;
+        $fortran_out =~ /^(\s*)/; 
+  print "mod = $module_full_name";
+        $fortran_out .= "\n" . $1 . "UNLOCK_PARALLEL_DO(\"" .
+                        $module_full_name . ":" .
+                        $routine{$current_rout_name}{real_name} . "\")";
+  }
+
   elsif ($fortran_out =~ /end\s*(?:$|!)/) { # not named end
         $fortran_out =~ s/end\s*/end $oldscopeunit/;
   }
@@ -3024,7 +3060,6 @@ sub fortran_do_new_end_scope {
 ################################################################################
 # The line is the start of a subroutine or function.
 sub analyse_new_routine_scope {
-  my ($pre,$attr,$rout_type,$name,$real_name);
 
   # Expecting a subroutine/function line
   &analyse_rout_name($_[0]);
@@ -3044,6 +3079,33 @@ sub analyse_new_routine_scope {
 # Process a new do scope.
 sub do_new_do_scope {
    if ($do_html)    { $html_do_indent = 1; }
+}
+
+################################################################################
+# Process a new do scope.
+sub do_new_parallel_do_scope {
+   if ($do_fortran) { &fortran_do_new_parallel_do_scope; }
+   if ($do_html)    { $html_do_indent = 1; }
+}
+
+################################################################################
+# Process new 'module' scope to Fortran.
+sub fortran_do_new_parallel_do_scope {
+  if ($fortran_out =~ /^(\s*)parallel\s do                    # do part
+                        (?:\s+(\w+)\s*=\s*(\S+)\s*,\s*(\S+))? # variable and limits
+                        (?:\s*,\s*(\S+))?                     # stride part
+                        (\s*$|\s*!.*$)/x) {
+      if (defined $2 && defined $5) {
+         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,$5),$4,PARALLEL_DO_STRIDE($5)$6";
+      }
+      elsif (defined $2) {
+         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,1),$4,PARALLEL_DO_STRIDE(1)$6";
+      }
+  print "mod = $module_full_name";
+      $fortran_out .= "\n" . $1 . "LOCK_PARALLEL_DO(\"" .
+                      $module_full_name . ":" .
+                      $routine{$current_rout_name}{real_name} ."\")";
+  }
 }
 
 ################################################################################
@@ -4348,8 +4410,9 @@ sub module_colon_to_fortran {
      }
   }
 
-  while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call, NOT following .
+  while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
      my $pre = $PREMATCH;
+     next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
      if ($last eq '.') { next };
 #print "X = $X";
@@ -5165,6 +5228,8 @@ sub analyse_rout_name {
     $n_define_type = 0;
     @old_define_type = undef;
     @new_define_type = undef;
+    @old_expand_type = undef;
+    @new_expand_type = undef;
 
     # Store the indent
     $routine{$name}{indent} = $indent; 
@@ -5182,6 +5247,9 @@ sub analyse_rout_name {
 
     # Analyse routine attributes (after the ::: specifier)
     if ($attr ne '') {
+      $attr =~ s/(get_from.*)[)]\s*,/$1,/;        # remove last bracket
+      $attr =~ s/(get_from.*)[)]\s*$/$1/;         # remove last bracket
+#print "attr   =$attr";
       my @tmp = split(/\s*,?\s+/,$attr);
       foreach (@tmp) {
         /^leaky/            && do { $routine{$name}{leaky}=1;            next}; # has a memeory leak
@@ -5198,7 +5266,7 @@ sub analyse_rout_name {
         /^always_elemental/ && do { $routine{$name}{always_elemental}=1;        # must always be elemental
                                     $routine{$name}{pure}=1;             next};
         /^recursive/        && do { $routine{$name}{recursive}=1;        next}; # recursive
-        /^get_from/         && do { /[(]\s*([^ )]*)[)]?/; # remove brackets
+        /^get_from/         && do { /[(]\s*([^ ]*)/; # remove first brackets
                                     $routine{$name}{inherited}=1;               # inherited routine
                                     $routine{$name}{parent_module}=$1;          # where inherited from
                                     $inherit_string = "";                       # the inherit match string
@@ -5208,20 +5276,31 @@ sub analyse_rout_name {
                                                                          next}; # 
         /^template/         && do { $routine{$name}{template}=1;         next}; # will be inherited, treated above
         /^inlined_by_foo/   && do { $routine{$name}{inlined_by_foo}=1;   next}; # will manually inlined
-        /^alias/            && do { $n_define_type++;
-                                    my $n = $n_define_type;
-                                    $_ =~ /^[^(]*[(]\s*([\w{,}.]+)\s*=>\s*([\w{,}.]+)\s*[)]/;
-                                    $old_define_type[$n] = $1;
-                                    $new_define_type[$n] = $2;
-                                                                         next};
+#       /^alias/            && do { $n_define_type++;
+#                                   my $n = $n_define_type;
+#                                   $_ =~ /^[^(]*[(]\s*([\w{,}.]+)\s*=>\s*([\w{,}.]+)\s*[)]/;
+#                                   $old_define_type[$n] = $1;
+#                                   $new_define_type[$n] = $2;
+#                                                                        next};
         '=>'                && do { $n_define_type++;                           # A=>B aliases
                                     my $n = $n_define_type;
-                                    $_ =~ /([^ ]*)=>([^ )]*)[)]?/;
-                                    $old_define_type[$n] = $1;
-                                    $new_define_type[$n] = $2;
+                                    $_ =~ /([^ ]*)\s*=>\s*([^ ]*)/;
+                                    my $old = $1;
+                                    my $new = $2;
+                                    $old_define_type[$n] = $old;
+                                    $new_define_type[$n] = $new;
+                                    my %info; my @type_arg; 
+                                    %info = &analyse_type_name($old,0);
+                                    @type_arg = @{$info{type_arg}};
+                                    $old_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
+                                    %info = &analyse_type_name($new,0);
+                                    @type_arg = @{$info{type_arg}};
+                                    $new_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
 #print "---alias-----";
-#print "old=$1";
-#print "new=$2";
+#print "X      =$X";
+#print "_      =$_";
+#print "old    =$old";
+#print "new    =$new";
 #print "-------------";
                                                                          next};
         &report_error("unexpected routine attribute, \"$_\".");

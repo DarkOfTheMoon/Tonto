@@ -1,7 +1,8 @@
 module PARALLEL
 
 #ifdef MPI
-  use mpi
+!  Note the capital USE, which prevents dependencies being generated
+   USE mpi
 #endif
 
   implicit none
@@ -11,14 +12,18 @@ contains
    initialise
    ! Initialise the parallel environment.
 #ifdef MPI
+     .is_parallel = TRUE
+     .do_parallel_lock = " "
+     .master_rank = 0
      call MPI_init(.mpi_status)
-     call MPI_comm_size(MPI_COMM_WORLD,.nprocs,.mpi_status)
-     call MPI_comm_rank(MPI_COMM_WORLD,.rank,.mpi_status)
-     .do_parallel = TRUE
+     call MPI_comm_size(MPI_COMM_WORLD,.n_processors,.mpi_status)
+     call MPI_comm_rank(MPI_COMM_WORLD,.processor_rank,.mpi_status)
 #else
-     .nprocs = 1
-     .rank = 0
-     .do_parallel = FALSE
+     .is_parallel = FALSE
+     .do_parallel_lock = " "
+     .master_rank = 0
+     .n_processors = 1
+     .processor_rank = 0
 #endif
    end
 
@@ -27,395 +32,401 @@ contains
 #ifdef MPI
      call MPI_finalize(.mpi_status)
 #endif
-     .do_parallel = FALSE
+     .is_parallel = FALSE
    end
 
-!*******************************************************************************
-! Inquiry routines.
-!*******************************************************************************
+!*****************
+! Inquiry routines
+!*****************
 
-   n_proc result (res) ::: pure
-   ! Return the number of processors available.
+   is_master_processor result (res) ::: pure
+   ! Return TRUE if this is the master processor. The index of the master
+   ! processor is normally 0.
+     self :: IN
+     res :: BIN
+     res = .processor_rank == .master_rank
+   end
+
+   master_processor result (res) ::: pure
+   ! Return the index of the master processor, which is normally 0.
      self :: IN
      res :: INT
-     if (.do_parallel) then
-       res = .nprocs
-     else
-       res = 1
-     end
+     res = .master_rank
    end
 
-   this_proc result (res) ::: pure
+   this_processor result (res) ::: pure
    ! Return the index of this processor.  First index is zero!
      self :: IN
      res :: INT
-     if (.do_parallel) then
-       res = .rank
-     else
-       res = 0
+     if (.is_parallel) then; res = .processor_rank
+     else;                   res = 0
      end
    end
 
-!*******************************************************************************
-! Summation routines.
-!*******************************************************************************
+! ****************************************************************************
+! Parallel do loops: simple parallel loops are implemented in the preprocessor
+! ****************************************************************************
 
-   sum_symmetric_matrices(mat)
-   ! This routine adds the versions of "mat" from all processors, and gives the
-   ! result to all processors.  The lower triangle of the resultant symmetric
-   ! matrix is forced to be the same as the upper triangle.
-     mat :: MAT{REAL}, INOUT
-     invec,outvec :: VEC{REAL}*
-     tri_size :: INT
-     if (.do_parallel) then
-       .mpi_status = 0
-       tri_size = mat.tri_size
-       invec.create(tri_size)
-       outvec.create(tri_size)
-       mat.compress_to_triangle(invec)
-#ifdef MPI
-       call MPI_ALLREDUCE(invec,outvec,tri_size,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-       mat.uncompress_from_triangle(outvec)
-       outvec.destroy
-       invec.destroy
-     else
-       ! do nothing, just return what we were given.
+   parallel_do_start(first,stride) result (res) ::: pure
+   ! Return the starting index to be used in a parallel do statement. The
+   ! "first" index and the loop "stride" can optionally be supplied, if they are
+   ! not equal to 1.  In this model, each processor skips through the whole
+   ! length of the loop.  This should be load balanced --- assuming there is no
+   ! systematic dependence in the work for each element of the loop which
+   ! depends on a multiple of the number of processors. See the "do_stride"
+   ! routine.
+     self :: IN
+     first,stride :: INT, IN, optional
+     res :: INT
+     f,s :: INT
+     f = 1
+     if (present(first)) f = first
+     s = 1
+     if (present(stride)) s = stride
+     if (.do_in_parallel) then; res = f + s*tonto.processor_rank
+     else;                      res = f
      end
    end
 
-   sum_matrices(mat)
-   ! This routine adds the versions of "mat" from all processors, and gives the
-   ! result to all processors.
-     mat :: MAT{REAL}, INOUT
-     tempmat :: MAT{REAL}*
-     if (.do_parallel) then
-       .mpi_status = 0
-       tempmat.create(mat.dim1,mat.dim2)
-#ifdef MPI
-       call MPI_ALLREDUCE(mat,tempmat,mat.dim,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
-       mat = tempmat
-#else
-       DIE("wtf?")
-#endif
-       tempmat.destroy
-     else
-       ! do nothing, just return what we were given.
+   parallel_do_stride(stride) result (res) ::: pure
+   ! Return the stride to be used in a parallel do statement.  The "stride"
+   ! length can be optionally supplied, if it is not 1.
+     self :: IN
+     stride :: INT, IN, optional
+     res :: INT
+     s :: INT
+     s = 1
+     if (present(stride)) s = stride
+     if (.do_in_parallel) then; res = s*tonto.n_processors
+     else;                      res = s
      end
    end
 
-   sum_matrices(mat)
-   ! This routine adds the versions of "mat" from all processors, and gives the
-   ! result to all processors.
-     mat :: MAT{CPX}, INOUT
-     tempmat :: MAT{CPX}*
-     if (.do_parallel) then
-       .mpi_status = 0
-       tempmat.create(mat.dim1,mat.dim2)
-#ifdef MPI
-       call MPI_ALLREDUCE(mat,tempmat,mat.dim,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
-       mat = tempmat
-#else
-       DIE("wtf?")
-#endif
-       tempmat.destroy
-     else
-       ! do nothing, just return what we were given.
-     end
-   end
-
-   sum_vectors(vec)
-   ! This routine adds the versions of "vec" from all processors, and gives the
-   ! result to all processors.
-     vec :: VEC{REAL}, INOUT
-     tempvec :: VEC{REAL}*
-     if (.do_parallel) then
-       .mpi_status = 0
-       tempvec.create(vec.dim)
-#ifdef MPI
-       call MPI_ALLREDUCE(vec,tempvec,vec.dim,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
-       vec = tempvec
-#else
-       DIE("wtf?")
-#endif
-       tempvec.destroy
-     else
-       ! do nothing, just return what we were given.
-     end
-   end
-
-   sum_vectors(vec)
-   ! This routine adds the versions of "vec" from all processors, and gives the
-   ! result to all processors.
-     vec :: VEC{CPX}, INOUT
-     tempvec :: VEC{CPX}*
-     if (.do_parallel) then
-       .mpi_status = 0
-       tempvec.create(vec.dim)
-#ifdef MPI
-       call MPI_ALLREDUCE(vec,tempvec,vec.dim,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
-       vec = tempvec
-#else
-       DIE("wtf?")
-#endif
-       tempvec.destroy
-     else
-       ! do nothing, just return what we were given.
-     end
-   end
-
-!*******************************************************************************
-! Broadcast variables to all processors.
-!*******************************************************************************
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: INT
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,1,MPI_INTEGER,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: STR
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,len(var),MPI_CHARACTER,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: REAL
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,1,MPI_DOUBLE_PRECISION,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: CPX
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,1,MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: BIN
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,1,MPI_LOGICAL,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: VEC{REAL}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_PRECISION,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: VEC{INT}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_INTEGER,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: VEC{CPX}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT{REAL}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_PRECISION,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT{INT}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_INTEGER,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT{CPX}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT3{REAL}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_PRECISION,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT3{INT}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_INTEGER,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT3{CPX}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT4{REAL}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_PRECISION,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT4{CPX}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   broadcast(var,proc)
-   ! Broadcast variable "var" from processor "proc" to all the other processors.
-     var :: MAT5{CPX}
-     proc :: INT, IN
-     if (.do_parallel) then
-       .mpi_status = 0
-#ifdef MPI
-       call MPI_BCAST(var,size(var),MPI_DOUBLE_COMPLEX,proc,MPI_COMM_WORLD,.mpi_status)
-#else
-       DIE("wtf?")
-#endif
-     end
-   end
-
-   do_io result (res)
-   ! Return whether or not this processor should do the I/O operation.
+   do_in_parallel result (res) ::: pure
+   ! Return TRUE if we are allowed to start to implement a given do-loop in
+   ! parallel. NOTE: Once you have parallelised a loop, remember to prevent
+   ! further parallelisation, using the ".lock_parallel_do" method. This is
+   ! typically used as the first statement after the parallel do loop is
+   ! entered.
+     self :: IN
      res :: BIN
-     res = .rank == 0 OR (NOT .do_parallel)
+     res = .is_parallel AND .do_parallel_lock==" "
+   end
+
+   lock_parallel_do(name)
+   ! Sets the parallel do-loop lock to the "name" of the locking routine.
+   ! Only the routine with the same "name" may unlock the loop. WARNING: This
+   ! assumes that the names of the routines are all distinct. NOTE: It is
+   ! currently an error if the routine is recursive, or if there are nested
+   ! parallel loops.
+      name :: STR
+   ENSURE(name/=.do_parallel_lock,"recursive parallel routines not allowed")
+      if (.do_parallel_lock==" ") .do_parallel_lock = name
+   end
+
+   unlock_parallel_do(name)
+   ! Allow parallelisation again, if the name matches the original.
+      name :: STR
+      if (.do_parallel_lock==name) .do_parallel_lock = " "
+   end
+
+!*******************
+! Summation routines
+!*******************
+
+   parallel_sum(vec) ::: template
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+     vec :: VEC_TYPE, INOUT
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+     tmp :: VEC_TYPE*
+     .mpi_status = 0
+#ifdef MPI
+     allocate(tmp(size(vec)))
+     call MPI_ALLREDUCE(vec,tmp,size(vec),MPI_TYPE,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+     vec = tmp
+     deallocate(tmp)
+#else
+     DIE("wtf?")
+#endif
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+! These matrix summations may not be implemented, because the fortran 90
+! interfaces might be missing from the MPICH MPI implementation; we could work
+! around this by using temporary one dimensional arrays, but that would be
+! inefficient.
+
+   parallel_sum(mat) ::: template
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+     mat :: MAT_TYPE, INOUT
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+     tmp :: MAT_TYPE*
+     .mpi_status = 0
+#ifdef MPI
+     allocate(tmp(size(mat,1),size(mat,2)))
+     call MPI_ALLREDUCE(mat,tmp,mat.dim,MPI_TYPE,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+     mat = tmp
+     deallocate(tmp)
+#else
+     DIE("wtf?")
+#endif
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, MAT_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, MAT_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat,is_symmetric)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors. If "is_symmetric" is TRUE, only the lower half of
+   ! the "mat" is summed; The upper triangle is forced to be the same as the
+   ! lower triangle.
+     mat :: MAT{REAL}, INOUT
+     is_symmetric :: BIN, IN
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+     invec,outvec :: VEC{REAL}*
+     tri_size,dim :: INT
+     .mpi_status = 0
+#ifdef MPI
+     if (NOT is_symmetric) then
+        .parallel_sum(mat)
+     else
+        dim = size(mat,1)
+        tri_size = dim*(dim+1)/2
+        allocate(invec(tri_size))
+        allocate(outvec(tri_size))
+        .compress_to_triangle(invec,mat)
+        call MPI_ALLREDUCE(invec,outvec,tri_size,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,.mpi_status)
+        .uncompress_from_triangle(outvec,mat)
+        deallocate(outvec)
+        deallocate(invec)
+     end
+#else
+     DIE("wtf?")
+#endif
+   end
+
+! These should be inherited, but aren't, for decoupling reasons
+
+   compress_to_triangle(tr,mat)
+   ! Converts the lower triangle of matrix "mat" to the triangle "tr".
+   ! using row order.
+      mat :: MAT{REAL}
+      tr :: VEC{REAL}
+      ij,i,j :: INT
+      ij = 0
+      do i = 1,size(mat,1)
+         do j = 1,i
+            tr(ij+j) = mat(i,j)
+         end
+         ij = ij+i
+      end
+   end
+
+   uncompress_from_triangle(tr,mat)
+   ! Converts the triangle "tr" into the symmetric matrix "mat".
+      tr :: VEC{REAL}
+      mat :: MAT{REAL}
+      tmp :: REAL
+      ij,i,j :: INT
+      ij = 0
+      do i = 1,size(mat,1)
+         do j = 1,i
+            tmp = tr(ij+j)
+            mat(j,i) = tmp
+            mat(i,j) = tmp
+         end
+         ij = ij+i
+      end
+   end
+
+! *************************************
+! Broadcast variables to all processors
+! *************************************
+
+   broadcast(var,processor) ::: template
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+     var :: VAR_TYPE
+     processor :: INT, IN, optional
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
+     proc :: INT
+     proc = 0
+     if (present(processor)) proc = processor
+     .mpi_status = 0
+#ifdef MPI
+     call MPI_BCAST(var,LEN,MPI_TYPE,proc,MPI_COMM_WORLD,.mpi_status)
+#else
+     DIE("wtf?")
+#endif
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+! Comment: there may be problems implementing higher order array broadcasts,
+! because the interfaces may be missing from the MPI module implementation; we
+! could work around this by using temporary one dimensional arrays, but that
+! would be inefficient.
+
+   IO_is_allowed result (res)
+   ! Return whether or not this processor is allowed to do the I/O operation.
+   ! Here, only the master processor does I/O in a parallel job.
+     res :: BIN
+     res = .is_master_processor OR (NOT .is_parallel)
    end
 
    synchronise_processors
    ! Synchronise all processors at this point.
+   ENSURE(.is_parallel,"must be in a parallel enviornoment")
 #ifdef MPI
      call MPI_BARRIER(MPI_COMM_WORLD,.mpi_status)
 #endif

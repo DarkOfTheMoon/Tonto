@@ -177,19 +177,17 @@ contains
       .atom_group.destroy
    end
 
-!   created result(res)
-!   ! Returns true if self has been created
-!      self :: PTR
-!      res :: BIN
-!      res = associated(self)
-!   end
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
 
-!   destroyed result(res)
-!   ! Returns true if self has not been created
-!      self :: PTR
-!      res :: BIN
-!      res = NOT associated(self)
-!   end
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
 
    save ::: leaky
    ! Save everything about "self" in ".saved".
@@ -319,6 +317,7 @@ contains
       .CIF_data_block_name = " "
       .CX_file_name = " "
       if (.atom.created) then
+        .name = .chemical_formula
         .mult = .default_multiplicity
         .set_atom_info
       end
@@ -549,7 +548,7 @@ contains
       NO_kind = .natural_orbitals.spinorbital_kind
       .occupation_numbers.destroy
       .occupation_numbers.create(.n_bf,NO_kind)
-      .occupation_numbers.zero
+      .occupation_numbers.set_to_zero
       .set_scf_occupations(NO_kind)
    end
 
@@ -561,7 +560,7 @@ contains
       NO_kind = .natural_orbitals.spinorbital_kind
       .occupation_numbers.destroy
       .occupation_numbers.create(NO_kind)
-      .occupation_numbers.zero
+      .occupation_numbers.set_to_zero
       .set_scf_occupations(NO_kind)
    end
 
@@ -1367,7 +1366,7 @@ contains
      if (do_archive) .archive_density_matrix
      ! Save the delta density matrix if needed later for incremental Fock build
      if (do_delta_archive) then
-        D_old.to_scaled(-ONE,D_old)
+        D_old.to_scaled(D_old,-ONE)
         D_old.plus(.density_matrix)
         .archive(D_old,"delta_density_matrix")
      end
@@ -1679,8 +1678,8 @@ contains
          write_archive = TRUE
          group = FALSE
       else
-         calc_it = .scfdata.direct
-         write_archive = NOT .scfdata.direct
+         calc_it = .scfdata.using_direct_scf
+         write_archive = NOT .scfdata.using_direct_scf
          group = .scfdata.scf_kind=="noninteracting-group-rhf"
       end
       if (NOT calc_it) then
@@ -1705,18 +1704,17 @@ contains
      S :: MAT{REAL}, target
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.basis_info_made, "no basis info")
-     q,fa,la,fb,lb,start,step :: INT
+     q,fa,la,fb,lb :: INT
      sh :: SHELL2
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) S = ZERO
-     do q=start,.n_shell_pairs,step
+     if (tonto.do_in_parallel) S = ZERO
+     parallel do q = 1,.n_shell_pairs
        .get_shell_pair(sh,q,fa,la,fb,lb)
        sh.make_overlap(S(fa:la,fb:lb))
        sh.destroy_ptr_part
      end
-     tonto_parallel.sum_symmetric_matrices(S)
-     S.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(S,is_symmetric=TRUE)
+     else;                           S.symmetric_reflect
+     end
    end
 
 !   make_rxhf_overlap_matrix(S)
@@ -1736,16 +1734,16 @@ contains
 !     stdout.text("here")
 !     n_shell_pairs = .cluster.atom.n_shell_pairs
 !     stdout.show("n_shell_pairs = ",n_shell_pairs)
-!     start = 1 + tonto_parallel.this_proc
-!     step = tonto_parallel.n_proc
-!     if (tonto_parallel.do_parallel) S = ZERO
+!     start = 1 + tonto.processor_rank
+!     step = tonto.n_processors
+!     if (tonto.do_parallel) S = ZERO
 !     do q = start,n_shell_pairs,step
 !       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
 !       sh.make_overlap(S(fa:la,fb:lb))
 !       sh.destroy_ptr_part
 !     end
 !     stdout.text("here2")
-!     tonto_parallel.sum_symmetric_matrices(S)
+!     tonto.sum_symmetric_matrices(S)
 !     S.symmetric_reflect
 !   end
 
@@ -2076,8 +2074,8 @@ contains
       arch :: ARCHIVE
       write_archive,calc_it :: BIN
       arch.set(.name,"kinetic_matrix")
-      calc_it = .scfdata.direct
-      write_archive = NOT .scfdata.direct
+      calc_it = .scfdata.using_direct_scf
+      write_archive = NOT .scfdata.using_direct_scf
       if (NOT calc_it) then
         if (arch.exists) then
           arch.read(T)
@@ -2088,10 +2086,10 @@ contains
         end
       end
       if (calc_it) then
-         if      (.scfdata.nddo) then;  .make_nddo_kinetic_matrix(T)
-         else if (.scfdata.nudo) then;  .make_nudo_kinetic_matrix(T)
-         else if (.scfdata.group) then; .make_group_kinetic_matrix(T)
-         else;                          .make_kinetic_matrix(T)
+         if      (.scfdata.using_NDDO) then; .make_NDDO_kinetic_matrix(T)
+         else if (.scfdata.using_NUDO) then; .make_NUDO_kinetic_matrix(T)
+         else if (.scfdata.group)      then; .make_group_kinetic_matrix(T)
+         else;                               .make_kinetic_matrix(T)
          end
       end
       if (write_archive) arch.write(T)
@@ -2102,21 +2100,20 @@ contains
      T :: MAT{REAL}
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
-     q,fa,la,fb,lb,start,step :: INT
+     q,fa,la,fb,lb :: INT
      sh :: SHELL2
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) T = ZERO
-     do q=start,.n_shell_pairs,step
+     if (tonto.do_in_parallel) T = ZERO
+     parallel do q = 1,.n_shell_pairs
        .get_shell_pair(sh,q,fa,la,fb,lb)
        sh.get_kei(T(fa:la,fb:lb))
        sh.destroy_ptr_part
      end
-     tonto_parallel.sum_symmetric_matrices(T)
-     T.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(T,is_symmetric=TRUE)
+     else;                           T.symmetric_reflect
+     end
    end
 
-   make_nddo_kinetic_matrix(T)
+   make_NDDO_kinetic_matrix(T)
    ! Calculate the NDDO kinetic energy matrix "T".
      T :: MAT{REAL}
    ENSURE(.basis_info_made, "no basis info")
@@ -2133,7 +2130,7 @@ contains
      T.symmetric_reflect
    end
 
-   make_nudo_kinetic_matrix(T)
+   make_NUDO_kinetic_matrix(T)
    ! Calculate the NUDO kinetic energy matrix "T". NUDO = neglect of unconnected
    ! differential overlap.
      T :: MAT{REAL}
@@ -2177,8 +2174,8 @@ contains
       T_archive,S_archive :: ARCHIVE
       S_archive.set(.name,"overlap_matrix")
       T_archive.set(.name,"kinetic_matrix")
-      calc_it = .scfdata.direct
-      write_archive = NOT .scfdata.direct
+      calc_it = .scfdata.using_direct_scf
+      write_archive = NOT .scfdata.using_direct_scf
       if (NOT calc_it) then
         if ((S_archive.exists) AND (T_archive.exists)) then
           S_archive.read(S)
@@ -2190,10 +2187,10 @@ contains
         end
       end
       if (calc_it) then
-         if      (.scfdata.nddo) then;  .make_nddo_kinetic_overlap(T,S)
-         else if (.scfdata.nudo) then;  .make_nudo_kinetic_overlap(T,S)
-         else if (.scfdata.group) then; .make_group_kinetic_overlap(T,S)
-         else;                          .make_kinetic_overlap(T,S)
+         if      (.scfdata.using_NDDO) then; .make_NDDO_kinetic_overlap(T,S)
+         else if (.scfdata.using_NUDO) then; .make_NUDO_kinetic_overlap(T,S)
+         else if (.scfdata.group) then;      .make_group_kinetic_overlap(T,S)
+         else;                               .make_kinetic_overlap(T,S)
          end
       end
       if (write_archive) then
@@ -2218,7 +2215,7 @@ contains
      T.symmetric_reflect
    end
 
-   make_nddo_kinetic_overlap(T,S)
+   make_NDDO_kinetic_overlap(T,S)
    ! Calculate the NDDO kinetic energy matrix "T" and overlap integral matrix
    ! "S"
      T,S :: MAT{REAL}
@@ -2237,7 +2234,7 @@ contains
      T.symmetric_reflect
    end
 
-   make_nudo_kinetic_overlap(T,S)
+   make_NUDO_kinetic_overlap(T,S)
    ! Calculate the NUDO kinetic energy matrix "T" and overlap integral matrix
    ! "S"
      T,S :: MAT{REAL}
@@ -2288,8 +2285,8 @@ contains
       arch :: ARCHIVE
       write_archive,calc_it :: BIN
       arch.set(.name,"nuclear_matrix")
-      calc_it = .scfdata.direct
-      write_archive = NOT .scfdata.direct
+      calc_it = .scfdata.using_direct_scf
+      write_archive = NOT .scfdata.using_direct_scf
       if (NOT calc_it) then
         if (arch.exists) then
           arch.read(Z)
@@ -2300,11 +2297,11 @@ contains
         end
       end
       if (calc_it) then
-         if      (.scfdata.nddo)  then; .make_nddo_nuclear_matrix(Z)
-         else if (.scfdata.nudo)  then; .make_nudo_nuclear_matrix(Z)
-         else if (.scfdata.group) then; .make_group_nuclear_matrix(Z)
-         else if (.scfdata.pie)   then; .make_pie_nuclear_matrix(Z)
-         else;                          .make_nuclear_matrix(Z)
+         if      (.scfdata.using_NDDO)  then; .make_NDDO_nuclear_matrix(Z)
+         else if (.scfdata.using_NUDO)  then; .make_NUDO_nuclear_matrix(Z)
+         else if (.scfdata.using_PIE)   then; .make_PIE_nuclear_matrix(Z)
+         else if (.scfdata.group)       then; .make_group_nuclear_matrix(Z)
+         else;                                .make_nuclear_matrix(Z)
          end
       end
       if (write_archive) arch.write(Z)
@@ -2317,12 +2314,10 @@ contains
    ENSURE(.atom.created,  "no atom list")
      atom1 :: ATOM*
      Z_c :: MAT{REAL}*
-     q,c,fa,la,fb,lb,start,step :: INT
+     q,c,fa,la,fb,lb :: INT
      sh :: SHELL2
      Z = ZERO
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do q=start,.n_shell_pairs,step
+     parallel do q = 1,.n_shell_pairs
        .get_shell_pair(sh,q,fa,la,fb,lb)
        Z_c.create(sh.a.n_comp,sh.b.n_comp)
        do c = 1,.n_atom
@@ -2334,8 +2329,9 @@ contains
        Z_c.destroy
        sh.destroy_ptr_part
      end
-     tonto_parallel.sum_symmetric_matrices(Z)
-     Z.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(Z,is_symmetric=TRUE)
+     else;                           Z.symmetric_reflect
+     end
    end
 
    make_nuclear_matrix(Z,nuclei)
@@ -2365,7 +2361,7 @@ contains
      Z.symmetric_reflect
    end
 
-   make_nddo_nuclear_matrix(Z)
+   make_NDDO_nuclear_matrix(Z)
    ! Calculate the NDDO nuclear attraction matrix "Z"
      Z :: MAT{REAL}
    ENSURE(.basis_info_made, "no basis info")
@@ -2392,7 +2388,7 @@ contains
      Z.symmetric_reflect
    end
 
-   make_nddo_nuclear_matrix(Z,nuclei)
+   make_NDDO_nuclear_matrix(Z,nuclei)
    ! Calculate the NDDO nuclear attraction matrix "Z" only for a
    ! specified list of nuclei.
      Z :: MAT{REAL}
@@ -2421,7 +2417,7 @@ contains
      Z.symmetric_reflect
    end
 
-   make_nudo_nuclear_matrix(Z)
+   make_NUDO_nuclear_matrix(Z)
    ! Calculate the NUDO nuclear attraction matrix "Z"
      Z :: MAT{REAL}
    ENSURE(.basis_info_made, "no basis info")
@@ -2448,7 +2444,7 @@ contains
      Z.symmetric_reflect
    end
 
-   make_nudo_nuclear_matrix(Z,nuclei)
+   make_NUDO_nuclear_matrix(Z,nuclei)
    ! Calculate the NUDO nuclear attraction matrix "Z" only for a specified
    ! list of "nuclei".
      Z :: MAT{REAL}
@@ -2538,7 +2534,7 @@ contains
      Z.symmetric_reflect
    end
 
-   make_pie_nuclear_matrix(Z)
+   make_PIE_nuclear_matrix(Z)
    ! Calculate the PIE nuclear attraction matrix "Z". In this scheme the three
    ! center nuclear attraction integrals are approximated by a diatom projective
    ! scheme. See Mayer, CPL 332, 381 (2000).
@@ -2588,12 +2584,10 @@ contains
    ENSURE(charges.dim==points.dim1,"inconsistent charges and points arrays")
    ENSURE(points.dim2==3,"wrong 2nd dimension, points array")
      Z_c :: MAT{REAL}*
-     q,c,fa,la,fb,lb,start,step :: INT
+     q,c,fa,la,fb,lb :: INT
      sh :: SHELL2
      Z = ZERO
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do q = start,.n_shell_pairs,step
+     parallel do q = 1,.n_shell_pairs
        .get_shell_pair(sh,q,fa,la,fb,lb)
        Z_c.create(sh.a.n_comp,sh.b.n_comp)
        do c = 1,charges.dim
@@ -2603,8 +2597,9 @@ contains
        Z_c.destroy
        sh.destroy_ptr_part
      end
-     tonto_parallel.sum_symmetric_matrices(Z)
-     Z.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(Z,is_symmetric=TRUE)
+     else;                           Z.symmetric_reflect
+     end
    end
 
    get_core_matrix(H,nuclei)
@@ -2617,8 +2612,8 @@ contains
       arch :: ARCHIVE
       write_archive,calc_it :: BIN
       arch.set(.name,"core_matrix")
-      calc_it = .scfdata.direct OR present(nuclei)
-      write_archive = NOT .scfdata.direct
+      calc_it = .scfdata.using_direct_scf OR present(nuclei)
+      write_archive = NOT .scfdata.using_direct_scf
       if (NOT calc_it) then
         if (arch.exists) then
           arch.read(H)
@@ -3428,20 +3423,16 @@ contains
      nabla_a_grid,nabla_b_grid :: MAT3{REAL}*
      pt,np,a_grid,b_grid,non_local :: MAT{REAL}*
      wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
-     q,fa,la,fb,lb,sa,sb,n_pt,start,step :: INT
+     q,fa,la,fb,lb,sa,sb,n_pt :: INT
      atom1,atom2,i,j,a,b,z,n_comp_a,n_comp_b :: INT
      thresh,KK :: REAL
      ! n :: INT
      ! nabla_phiaphib :: REAL
      thresh = 1.0e-30
 
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
-       K = ZERO
-     end
+     if (tonto.do_in_parallel) K = ZERO
 
-     do q = start,.no_of_atom_pairs,step
+     parallel do q = 1,.no_of_atom_pairs
        atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
        atom2 = q - atom1*(atom1-1)/2
        if (atom1/=atom2) then
@@ -3551,8 +3542,9 @@ contains
        pt.destroy
      end
 
-     K.symmetric_reflect
-     tonto_parallel.sum_symmetric_matrices(K)
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(K,is_symmetric=TRUE)
+     else;                           K.symmetric_reflect
+     end
    end
 
    add_local_ex_corr_matrix(K)
@@ -3568,18 +3560,14 @@ contains
      pos1,pos2 :: VEC{REAL}(3)
      pt,a_grid,b_grid :: MAT{REAL}*
      wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
-     q,fa,la,fb,lb,sa,sb,n_pt,start,step :: INT
+     q,fa,la,fb,lb,sa,sb,n_pt :: INT
      atom1,atom2,i,j,a,b,n_comp_a,n_comp_b :: INT
      thresh :: REAL
      thresh = 1.0e-30
 
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
-       K = ZERO
-     end
+     if (tonto.do_in_parallel) K = ZERO
 
-     do q = start,.no_of_atom_pairs,step
+     parallel do q = 1,.no_of_atom_pairs
        atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
        atom2 = q - atom1*(atom1-1)/2
        if (atom1/=atom2) then
@@ -3658,8 +3646,9 @@ contains
        pt.destroy
      end
 
-     K.symmetric_reflect
-     tonto_parallel.sum_symmetric_matrices(K)
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(K,is_symmetric=TRUE)
+     else;                           K.symmetric_reflect
+     end
    end
 
    r_KS_energy_correction result(res)
@@ -3960,19 +3949,17 @@ contains
      nabla_a_grid,nabla_b_grid :: MAT3{REAL}*
      pt,np_a,np_b,a_grid,b_grid,non_local_a,non_local_b :: MAT{REAL}*
      wt,p_a,p_b,local_a,local_b,a_grid_a,b_grid_b,phia_phib :: VEC{REAL}*
-     q,fa,la,fb,lb,sa,sb,n_pt,start,step :: INT
+     q,fa,la,fb,lb,sa,sb,n_pt :: INT
      atom1,atom2,i,j,a,b,z,n,n_comp_a,n_comp_b :: INT
      thresh,nabla_phiaphib,KKa_ab,KKb_ab :: REAL
      thresh = 1.0e-30
 
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
+     if (tonto.do_in_parallel) then
        Ka = ZERO
        Kb = ZERO
      end
 
-     do q = start,.no_of_atom_pairs,step
+     parallel do q = 1,.no_of_atom_pairs
        atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
        atom2 = q - atom1*(atom1-1)/2
        if (atom1/=atom2) then
@@ -4095,10 +4082,13 @@ contains
        pt.destroy
      end
 
-     Ka.symmetric_reflect
-     Kb.symmetric_reflect
-     tonto_parallel.sum_symmetric_matrices(Ka)
-     tonto_parallel.sum_symmetric_matrices(Kb)
+     if (tonto.do_in_parallel) then
+        tonto.parallel_sum(Ka,is_symmetric=TRUE)
+        tonto.parallel_sum(Kb,is_symmetric=TRUE)
+     else
+        Ka.symmetric_reflect
+        Kb.symmetric_reflect
+     end
    end
 
    add_local_ex_corr_matrix(Ka,Kb)
@@ -4111,7 +4101,7 @@ contains
      sh :: SHELL2
      pt,a_grid,b_grid,KKa,KKb :: MAT{REAL}*
      wt,p_a,p_b,local_a,local_b,a_grid_a,b_grid_b,phia_phib :: VEC{REAL}*
-     q,fa,la,fb,lb,a,b,n_pt,start,step :: INT
+     q,fa,la,fb,lb,a,b,n_pt :: INT
      THRESH :: REAL
      THRESH = TOL(90)
      n_pt = .dftgrid.n_pts*.n_atom
@@ -4145,13 +4135,11 @@ contains
      wt.destroy
 
      phia_phib.create(n_pt)
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) then
+     if (tonto.do_in_parallel) then
        Ka = ZERO
        Kb = ZERO
      end
-     do q = start,.n_shell_pairs,step
+     parallel do q = 1,.n_shell_pairs
         .get_shell_pair(sh,q,fa,la,fb,lb)
         a_grid.create(n_pt,sh.a%n_comp)
         b_grid.create(n_pt,sh.b%n_comp)
@@ -4174,10 +4162,13 @@ contains
         a_grid.destroy
         sh.destroy_ptr_part
      end
-     tonto_parallel.sum_symmetric_matrices(Ka)
-     tonto_parallel.sum_symmetric_matrices(Kb)
-     Ka.symmetric_reflect
-     Kb.symmetric_reflect
+     if (tonto.do_in_parallel) then
+        tonto.parallel_sum(Ka,is_symmetric=TRUE)
+        tonto.parallel_sum(Kb,is_symmetric=TRUE)
+     else
+        Ka.symmetric_reflect
+        Kb.symmetric_reflect
+     end
 
      phia_phib.destroy
      local_b.destroy
@@ -4607,7 +4598,7 @@ contains
        stdout.show("Skipping electron repulsion integrals less than ",.scfdata.eri_limit)
        stdout.set_real_style("f")
      end
-     if (.scfdata.nddo) then
+     if (.scfdata.using_NDDO) then
         do q = 1, .n_shell_quartets
           .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
           if (atom_a==atom_b AND atom_c==atom_d) then
@@ -4633,7 +4624,7 @@ contains
           ERI.destroy
           sh4.destroy_ptr_part
         end
-     else if (.scfdata.nudo) then
+     else if (.scfdata.using_NUDO) then
         do q = 1, .n_shell_quartets
           .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
           if (.atom.bonded(atom_a,atom_b) AND .atom.bonded(atom_c,atom_d)) then
@@ -4727,7 +4718,7 @@ contains
        stdout.text("Skipping electron repulsion integrals less than " // trim(cutoff) // ".")
      end
      do q = 1, .n_shell_quartets
-       if (.scfdata.nddo) then
+       if (.scfdata.using_NDDO) then
          .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
          if (atom_a==atom_b AND atom_c==atom_d) then
            .get_shell_quartet(sh4,q,a,b,c,d)
@@ -4735,7 +4726,7 @@ contains
            skipped = skipped + 1
            cycle
          end
-       else if (.scfdata.nudo) then
+       else if (.scfdata.using_NUDO) then
          .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
          if (.atom.bonded(atom_a,atom_b) AND .atom.bonded(atom_c,atom_d)) then
            .get_shell_quartet(sh4,q,a,b,c,d)
@@ -4777,7 +4768,7 @@ contains
      ind_archive.file.write(.n_shell_quartets + 1 )
    end
 
-!   make_r_pie_JK_direct(J,K,P)
+!   make_r_PIE_JK_direct(J,K,P)
 !   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a
 !   ! symmetric density matrix "P" directly, using the projective integral
 !   ! expansions (PIE) method. See Mayer, CPL 332, p. 381-388 (2000), eqn (12).
@@ -4961,7 +4952,7 @@ contains
       res :: VEC{CPX}, OUT
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
-      k_max,k,fa,fb,la,lb,q,atom_a,atom_b,start,step :: INT
+      k_max,k,fa,fb,la,lb,q,atom_a,atom_b :: INT
       sh :: SHELL2
       ft_ab :: MAT3{CPX}*
       dens_ba :: MAT{REAL}*
@@ -4969,9 +4960,7 @@ contains
       k_max = size(k_pts,1)
       res = ZERO
       cutoff = TOL(10) / .n_shell_pairs
-      start = 1 + tonto_parallel.this_proc
-      step = tonto_parallel.n_proc
-      do q=start,.n_shell_pairs,step
+      parallel do q = 1,.n_shell_pairs
          .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
          if (sh.skip_ft(cutoff)) then
            sh.destroy_ptr_part
@@ -4995,7 +4984,7 @@ contains
          ft_ab.destroy
          sh.destroy_ptr_part
       end
-      tonto_parallel.sum_vectors(res)
+      if (tonto.do_in_parallel) tonto.parallel_sum(res)
    end
 
    make_ft(res,dens,k_pts)
@@ -7600,14 +7589,14 @@ contains
       if (.mult/=1) .scfdata.scf_kind = "uhf"
       .scfdata.using_fock_diis = TRUE
       .scfdata.using_MO_diis = TRUE
-      .scfdata.direct = FALSE
+      .scfdata.using_direct_scf = FALSE
       .scfdata.diis.set_archive_root_name(.name)
    end
 
    make_molecule_from_atom(n,mol) ::: leaky
    ! Make a fully fledged molecule "mol" from a single atom "n" in self
    ! The new molecule is ready for an SCF calculation.
-       n :: INT
+      n :: INT
       mol :: MOLECULE
    ENSURE(n<=.n_atom,"atom number n too big")
       mol.nullify_ptr_part
@@ -7616,7 +7605,6 @@ contains
       mol.atom(1).group = 0 ! does not belong to a group
       mol.atom(1).pos = (/ZERO,ZERO,ZERO/)
       mol.set_defaults
-      mol.name = trim(.atom(n).chemical_name)
       mol.basis => .basis ! WARNING: dont destroy basis of mol !
       mol.slaterbasis => .slaterbasis
       mol.coppensbasis => .coppensbasis
@@ -7677,7 +7665,7 @@ contains
      .put_scf_results
      do
        if (.scfdata.scf_done) exit
-       .extrapolate_fock_matrix
+       .accelerate_fock_matrix
        .update_molecular_orbitals
        .schmidt_orthonormalise_MOs
        .make_scf_density_matrix
@@ -7685,6 +7673,7 @@ contains
        .update_scfdata
        .update_scfdata_error
        .put_scf_results
+     ! if (.scfdata.diis.iteration==2) .test_average_energy
      end
      .archive_scf_results
      .cleanup_scf
@@ -7807,10 +7796,67 @@ contains
      .make_fock_matrix
      .make_constraint_data
      .initialise_scfdata
-     .add_constraint
+     .add_constraint_to_fock_matrix
      .initialise_scfdata_error
      .scfdata.diis.cleanup
    end
+
+
+!   test_average_energy
+!   ! Test the avergae energy for UEDIIS
+!     D,F,C,W :: OPMATRIX*
+!     if (.name/="h2o-") return
+!       F.create(.n_bf,"unrestricted")
+!       D.create(.n_bf,"unrestricted")
+!       W.create(.n_bf,"unrestricted")
+!       C.create(.n_bf,"unrestricted")
+!       D.set_to_zero
+!       .unarchive(W,"DIIS,density_matrix,1")
+!     ! D.plus_scaled(W,fac=0.3d0)
+!       D.alpha = D.alpha + 0.3d0*W.alpha
+!       D.beta  = D.beta  + 0.4d0*W.beta 
+!       .unarchive(W,"DIIS,density_matrix,2")
+!     ! D.plus_scaled(W,fac=0.7d0)
+!       D.alpha = D.alpha + 0.7d0*W.alpha
+!       D.beta  = D.beta  + 0.6d0*W.beta 
+!       F.set_to_zero
+!       .unarchive(W,"DIIS,fock_matrix,1")
+!       .unarchive(C,"DIIS,fock_matrix,1")
+!     ! F.plus_scaled(W,fac=0.3d0)
+!       F.alpha = F.alpha + 0.3d0*(W.alpha-C.beta) + 0.4d0*C.beta
+!       F.beta  = F.beta  + 0.4d0*(W.beta 
+!       .unarchive(W,"DIIS,fock_matrix,2")
+!     ! F.plus_scaled(W,fac=0.7d0)
+!       F.alpha = F.alpha + 0.7d0*W.alpha
+!       F.beta  = F.beta  + 0.6d0*W.beta 
+!       stdout.text("===in MOLECULE, averaged energy:")
+!       stdout.put(.scf_electronic_energy(D,F))
+!       stdout.flush
+!       stdout.put(.scf_electronic_energies(D,F))
+!       stdout.flush
+!       W.destroy
+!       D.destroy
+!       F.destroy
+!!!       F.create(.n_bf,"restricted")
+!!!       D.create(.n_bf,"restricted")
+!!!       W.create(.n_bf,"restricted")
+!!!       D.set_to_zero
+!!!       .unarchive(W,"DIIS,density_matrix,1")
+!!!       D.plus_scaled(W,fac=0.3d0)
+!!!       .unarchive(W,"DIIS,density_matrix,2")
+!!!       D.plus_scaled(W,fac=0.7d0)
+!!!       F.set_to_zero
+!!!       .unarchive(W,"DIIS,fock_matrix,1")
+!!!       F.plus_scaled(W,fac=0.3d0)
+!!!       .unarchive(W,"DIIS,fock_matrix,2")
+!!!       F.plus_scaled(W,fac=0.7d0)
+!!!       stdout.text("===averaged energy:")
+!!!       stdout.put(.scf_electronic_energy(D,F))
+!!!       stdout.flush
+!!!       W.destroy
+!!!       D.destroy
+!!!       F.destroy
+!   end
 
 !  ************
 !  Embedded SCF
@@ -7834,7 +7880,7 @@ contains
        if (.scfdata.scf_done) exit
    !  stderr.show("iteration =",.scfdata.iteration)
        .add_cluster_projector(.fock_matrix,.molecular_orbitals)
-       .extrapolate_fock_matrix
+       .accelerate_fock_matrix
        ! Get back the fragment MO's
    !  stderr.text("unarchive and update MOs:")
        .unarchive_molecular_orbitals
@@ -8120,7 +8166,7 @@ contains
        if (.scfdata.scf_done) exit
    !  stderr.show("iteration =",.scfdata.iteration)
        .add_cluster_projector(.fock_matrix,.molecular_orbitals)
-       .extrapolate_fock_matrix
+       .accelerate_fock_matrix
        ! Get back the fragment MO's
    !  stderr.text("unarchive and update MOs:")
        .unarchive_molecular_orbitals
@@ -8594,24 +8640,24 @@ contains
      do
        .put_scf_results        ! Banner and 0th iteration results
        do
-         .extrapolate_fock_matrix
+         .accelerate_fock_matrix
          .update_molecular_orbitals
          .schmidt_orthonormalise_MOs
          .make_scf_density_matrix
          .make_fock_matrix
          .make_constraint_data
-         .save_constraint_for_diis
-         .update_scfdata
-         .add_constraint
+         .update_scfdata       ! Add constraint after so we don't stuff energies
+         .add_constraint_to_fock_matrix
          .update_scfdata_error
          .put_scf_results
          if (.scfdata.scf_done) exit
        end
        .scfdata.update_lambda
        if (.scfdata.exceeded_lambda_max) exit
-
-       .reset_constraint_stuff
+       .reset_for_next_lambda
+     ! .scfdata.reset_for_next_lambda(.fock_matrix)
        .update_scfdata_error
+     ! .scfdata.reset_iteration_count
      end
      .cleanup_scf
      .crystal.put_reflection_data
@@ -8637,24 +8683,19 @@ contains
       end
    end
 
-   add_constraint
+   add_constraint_to_fock_matrix
    ! Make the constraint matrix for wavefunction fitting and add it to the fock
    ! matrix to obtain the effective fock matrix.
      ENSURE(.scfdata.created,"no scf data")
      ENSURE(.fock_matrix.created,"no fock matrix")
      ENSURE(.fock_matrix.any_created,"no fock matrix")
-
      C :: OPMATRIX*
-     arch :: ARCHIVE
      C.create(.n_bf,.scfdata.spinorbital_kind)
      .make_constraint(C)
      ! Now add in the contribution
-     .fock_matrix.plus_scaled(.scfdata.lambda,C)
-
-     ! Write the compressed constraint to disk.
-     C.compress
-     arch.set(.name,"constraint_matrix")
-     arch.write(C.triangle)
+     .fock_matrix.plus_scaled(C,.scfdata.lambda)
+     ! Save the constraint matrix for acceleration of multiple fits
+     .archive(C,"constraint_matrix")
      C.destroy
    end
 
@@ -8685,11 +8726,11 @@ contains
             tmp.create(.n_bf,.scfdata.spinorbital_kind)
             .make_r_constraint(tmp.alpha)
             tmp.beta = tmp.alpha
-            C.to_scaled(ONE/.crystal.F_chi2,tmp)
+            C.to_scaled(tmp,ONE/.crystal.F_chi2)
             .crystal.assign_pnd
             .make_pnd_constraint(tmp.alpha)
             tmp.beta = -tmp.alpha
-            C.plus_scaled(ONE/.crystal.F_chi2,tmp)
+            C.plus_scaled(tmp,ONE/.crystal.F_chi2)
             tmp.destroy
       end 
    end  
@@ -8809,120 +8850,112 @@ contains
      fac_times_alpha.destroy
    end
 
-   save_constraint_for_diis
-   ! ?
-     arch :: ARCHIVE
-     C_tri :: VEC{REAL}*
-     if (NOT .scfdata.apply_fock_diis) return
+!   save_constraint_for_diis
+!   ! ?
+!     arch :: ARCHIVE
+!     C_tri :: VEC{REAL}*
+!     if (NOT .scfdata.apply_fock_diis) return
+!
+!     ! Read in the matrix from disk
+!     arch.set(.name,"constraint_matrix")
+!     C_tri.create(.density_matrix.l_compress(.scfdata.spinorbital_kind))
+!     arch.read(C_tri)
+!     arch.close
+!     arch.delete
+!
+!     ! Save the constraint matrix to disk with a different name
+!     .scfdata.diis.save_item(C_tri,"constraint",.scfdata.diis.new)
+!     C_tri.destroy
+!
+!     ! Save the density matrix to disk with a different name
+!     .scfdata.diis.save_item(.density_matrix,"density_matrix",.scfdata.diis.new)
+!   end
 
-     ! Read in the matrix from disk
-     arch.set(.name,"constraint_matrix")
-     C_tri.create(.density_matrix.l_compress(.scfdata.spinorbital_kind))
-     arch.read(C_tri)
-     arch.close
-     arch.delete
+!   reset_constraint_stuff
+!   ! Recalculates the Fock and error matrices so they apply to the new value of
+!   ! lambda, ".scfdata.lambda_step". This can be done if at each iteration the
+!   ! density matrix and the constraint are saved to disk.
+!     arch :: ARCHIVE
+!     i :: INT
+!     error,density_matrix,F,C :: OPMATRIX*
+!     C_tri,Fa,Fb,ea,eb :: VEC{REAL}*
+!     !F,C :: MAT{REAL}*
+!     scf_kind :: STR
+!     if (NOT .scfdata.apply_fock_diis) return
+!     F.create(.n_bf,.scfdata.spinorbital_kind)
+!     density_matrix.create(.n_bf,.scfdata.spinorbital_kind)
+!     error.create(.n_bf,.scfdata.spinorbital_kind)
+!     C_tri.create(density_matrix.l_compress)
+!     F.compress
+!     select case (.scfdata.scf_kind)
+!       case ("xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
+!         do i = 1,.scfdata.diis.dimension-1
+!         ! Read in the constraint
+!         .scfdata.diis.get_item(C_tri,"constraint",i)
+!         ! Read in the Fock
+!         Fa => F.triangle.alpha
+!         Fb => F.triangle.alpha
+!         .scfdata.diis.get_item(Fa,"fock_matrix,alpha",i)
+!         .scfdata.diis.get_item(Fb, "fock_matrix,beta", i)
+!         ! Read in the density matrix
+!         .scfdata.diis.get_item(density_matrix,"density_matrix",i)
+!         ! Scale the Fock matrix to the new lambda
+!         F.triangle = F.triangle + .scfdata.lambda_step*C_tri
+!         F.uncompress
+!         .make_diis_error(error,F,density_matrix)
+!         error.compress
+!         F.compress
+!         ea => error.triangle.alpha
+!         eb => error.triangle.beta
+!         .scfdata.diis.save_item(ea,"fock_error,alpha",i)
+!         .scfdata.diis.save_item(eb, "fock_error,beta", i)
+!         error.uncompress
+!         end
+!       case ("rhf","rks")
+!         do i=1,.scfdata.diis.dimension-1
+!         ! Read in the constraint
+!         .scfdata.diis.get_item(C_tri,"constraint",i)
+!         ! Read in the Fock
+!         .scfdata.diis.get_item(F.triangle,"fock_matrix",i)
+!         ! Read in the density matrix
+!         .scfdata.diis.get_item(density_matrix,"density_matrix",i)
+!         ! Scale the Fock matrix to the new lambda
+!         F.triangle = F.triangle + .scfdata.lambda_step*C_tri
+!         F.uncompress
+!         .make_diis_error(error,F,density_matrix)
+!         error.compress
+!         F.compress
+!         .scfdata.diis.save_item(error.triangle,"fock_error",i)
+!         error.uncompress
+!         end
+!       case default; DIE(.scfdata.scf_kind.trim//" not implemented")
+!     end  
+!     .scfdata.diis.remake_diis_lhs(error.triangle,F.triangle)
+!     error.destroy
+!     density_matrix.destroy
+!     .unarchive_density_matrix
+!     F.destroy
+!     C_tri.destroy
+!     C.create(.n_bf,.scfdata.spinorbital_kind)
+!     ! The current Fock matrix is for the old lambda, so let's make it for the
+!     ! new lambda.
+!     C.compress
+!     arch.set(.name,"constraint_matrix")
+!     arch.read(C.triangle)
+!   !stdout.text("resetconstraint",flush=1)  
+!   !stdout.put(C.triangle)  
+!     C.uncompress
+!     .fock_matrix.plus_scaled(C,.scfdata.lambda_step)
+!     C.destroy
+!   end
 
-     ! Save the constraint matrix to disk with a different name
-     .scfdata.diis.save_item(C_tri,"constraint",.scfdata.diis.new)
-     C_tri.destroy
-
-     ! Save the density matrix to disk with a different name
-     .scfdata.diis.save_item(.density_matrix,"density",.scfdata.diis.new)
-   end
-
-   reset_constraint_stuff
-   ! Recalculates the Fock and error matrices so they apply
-   !to the new value of lambda.
-     arch :: ARCHIVE
-     i :: INT
-     error,density,F,C :: OPMATRIX*
-     F_tri,C_tri :: VEC{REAL}*
-     !F,C :: MAT{REAL}*
-     scf_kind,name :: STR
-     if (NOT .scfdata.apply_fock_diis) return
-
-     F.create(.n_bf,.scfdata.spinorbital_kind)
-
-     density.create(.n_bf,.scfdata.spinorbital_kind)
-     error.create(.n_bf,.scfdata.spinorbital_kind)
-     C_tri.create(density.l_compress)
-     !F_tri.create(density.l_compress)
-     F.compress
-     name = .scfdata.diis.archive.name
-
-     select case (.scfdata.scf_kind)
-       case ("xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
-         do i=1,.scfdata.diis.dimension-1
-         ! Read in the constraint
-         .scfdata.diis.get_item(C_tri,"constraint",i)
-         ! Read in the Fock
-         !.scfdata.diis.get_parameter_item(i,F_tri)
-         .scfdata.diis.archive.set_name(name.trim//",alpha")
-         .scfdata.diis.get_parameter_item(i,F.triangle.alpha)
-         .scfdata.diis.archive.set_name(name.trim//",beta")
-         .scfdata.diis.get_parameter_item(i,F.triangle.beta)
-         .scfdata.diis.archive.set_name(name.trim)
-         ! Read in the density matrix
-         .scfdata.diis.get_item(density,"density",i)
-
-         ! Scale the Fock matrix to the new lambda
-         !F_tri = F_tri + .scfdata.lambda_step*C_tri
-         F.triangle = F.triangle + .scfdata.lambda_step*C_tri
-
-         F.uncompress
-
-         .make_diis_error(error,F,density)
-         error.compress
-         F.compress
-         .scfdata.diis.save_pair(F.triangle,error.triangle,i)
-         error.uncompress
-         end
-       case default; 
-         do i=1,.scfdata.diis.dimension-1
-         ! Read in the constraint
-         .scfdata.diis.get_item(C_tri,"constraint",i)
-         ! Read in the Fock
-         !.scfdata.diis.get_parameter_item(i,F_tri)
-         .scfdata.diis.get_parameter_item(i,F.triangle)
-         ! Read in the density matrix
-         .scfdata.diis.get_item(density,"density",i)
-
-         ! Scale the Fock matrix to the new lambda
-         !F_tri = F_tri + .scfdata.lambda_step*C_tri
-         F.triangle = F.triangle + .scfdata.lambda_step*C_tri
-
-         F.uncompress
-
-         .make_diis_error(error,F,density)
-         error.compress
-         F.compress
-         .scfdata.diis.save_pair(F.triangle,error.triangle,i)
-         error.uncompress
-         end
-       end  
-     .scfdata.diis.remake_diis_matrix(error.triangle.dim)
-     error.destroy
-     density.destroy
-     !F_tri.destroy
-     .unarchive_density_matrix
-
-     F.destroy
-     C_tri.destroy
-
-     C.create(.n_bf,.scfdata.spinorbital_kind)
-
-     ! The current Fock matrix is for the old lambda, so let's make it for the
-     ! new lambda.
-     C.compress
-     arch.set(.name,"constraint_matrix")
-     arch.read(C.triangle)
-   !stdout.text("resetconstraint",flush=1)  
-   !stdout.put(C.triangle)  
-     C.uncompress
-     .fock_matrix.plus_scaled(.scfdata.lambda_step,C)
-
-     C.destroy
-     !C_tri.destroy
+   reset_for_next_lambda
+   ! Reset the iteration counters for the next lambda iteration.
+   ! Also reset the fock matrices on disk.
+      S :: MAT{REAL}*
+      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+      .scfdata.reset_for_next_lambda(.fock_matrix,S)
+      S.destroy
    end
 
 !  ********************************
@@ -9231,15 +9264,15 @@ contains
      res = .scf_energy(.density_matrix,.fock_matrix)
    end
 
-   scf_energy(P) result (res)
-   ! Evaluates the total SCF energy (including nuclear) as a trace of
-   ! "P" with the fock matrix ".fock_matrix".
-     P :: OPMATRIX
-     res :: REAL
-   ENSURE(.fock_matrix.created,    "no fock matrix")
-   ENSURE(.fock_matrix.any_created,"no fock matrix")
-     res = .scf_energy(P,.fock_matrix)
-   end
+!   scf_energy(P) result (res)
+!   ! Evaluates the total SCF energy (including nuclear) as a trace of
+!   ! "P" with the fock matrix ".fock_matrix".
+!     P :: OPMATRIX
+!     res :: REAL
+!   ENSURE(.fock_matrix.created,    "no fock matrix")
+!   ENSURE(.fock_matrix.any_created,"no fock matrix")
+!     res = .scf_energy(P,.fock_matrix)
+!   end
 
    scf_energy(P,F) result (res)
    ! Evaluates the total SCF energy (including nuclear) as a trace of
@@ -9381,6 +9414,43 @@ contains
      end
    end
 
+   scf_electronic_energies result (res) ::: leaky
+   ! Evaluates the SCF electronic energies as a trace of density "P" with
+   ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
+   ! energies.
+     res :: VEC{REAL}*
+     res => .scf_electronic_energies(.density_matrix,.fock_matrix)
+   end
+
+   scf_electronic_energies(P,F) result (res) ::: leaky
+   ! Evaluates the SCF electronic energies as a trace of density "P" with
+   ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
+   ! energies.
+     P,F :: OPMATRIX
+     res :: VEC{REAL}*
+     scf_kind :: STR
+     Fr :: MAT{REAL}*
+     Fc :: MAT{CPX}*
+     scf_kind = .scfdata.scf_kind
+     select case (scf_kind)
+        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
+           res.create(1)
+           Fr.create(.n_bf,.n_bf)
+           Fr = F.restricted; .add_core_hamiltonian(Fr)
+           res(1) = HALF * P.restricted.trace_product_with(Fr)
+           Fr.destroy
+        case ("uhf","uks","xray_uhf","xray_uks","rohf","pnd_uhf","xray_pnd_uhf")
+           res.create(2)
+           Fr.create(.n_bf,.n_bf);
+           Fr = F.alpha; .add_core_hamiltonian(Fr)
+           res(1) = HALF * P.alpha.trace_product_with(Fr)
+           Fr = F.beta; .add_core_hamiltonian(Fr)
+           res(2) = HALF * P.beta.trace_product_with(Fr)
+           Fr.destroy
+        case default; DIE("unknown or unimplemented scf kind, "//trim(scf_kind))
+     end
+   end
+
    expectation(X) result (res)
    ! Evaluates the expectation value of the matrix of the operator X
    ! with the current density matrix
@@ -9409,6 +9479,40 @@ contains
 ! Archiving routines
 ! ******************
 
+   archive(opmatrix,archive_name,genre,with_lambda)
+   ! Save "opmatrix" to an archive on disk with name "archive_name". The genre
+   ! is guessed from "opmatrix" unless "genre" is present.
+     opmatrix :: OPMATRIX
+     archive_name :: STR
+     genre :: STR, optional
+     with_lambda :: BIN, optional
+     archive :: ARCHIVE
+     avec_lambda :: BIN
+     avec_lambda = FALSE
+     if (present(with_lambda)) avec_lambda = with_lambda
+     archive.set(.name,archive_name)
+     archive.write(opmatrix,genre)
+     if (avec_lambda) then
+        if (.scfdata.created) then
+        if (.scfdata.scf_kind.includes("xray_")) then
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.write(opmatrix,genre)
+        end
+        end
+     end
+   end
+
+   archive(opvector,archive_name,genre)
+   ! Save "opvector" to an archive on disk with name "archive_name". The genre
+   ! is guessed from "opvector" unless "genre" is present.
+     opvector :: OPVECTOR
+     archive_name :: STR
+     genre :: STR, optional
+     archive :: ARCHIVE
+     archive.set(.name,archive_name)
+     archive.write(opvector,genre)
+   end
+
    archive_scf_results
    ! Save the SCF results in various archives on disk
       .archive_density_matrix
@@ -9424,12 +9528,7 @@ contains
      archive :: ARCHIVE
      name = "density_matrix"
      if (present(archive_name)) name = archive_name
-     .archive(.density_matrix,name)
-     if (.scfdata.created) then
-     if (.scfdata.scf_kind.includes("xray_")) then
-        .archive(.density_matrix,trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
-     end
-     end
+     .archive(.density_matrix,name,with_lambda=TRUE)
    end
 
    archive_molecular_orbitals(archive_name)
@@ -9439,12 +9538,7 @@ contains
      archive :: ARCHIVE
      name = "molecular_orbitals"
      if (present(archive_name)) name = archive_name
-     .archive(.molecular_orbitals,name)
-     if (.scfdata.created) then
-     if (.scfdata.scf_kind.includes("xray_")) then
-        .archive(.molecular_orbitals,trim(name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
-     end
-     end
+     .archive(.molecular_orbitals,name,with_lambda=TRUE)
    end
 
    archive_orbital_energies(archive_name)
@@ -9489,26 +9583,6 @@ contains
      .archive(.occupation_numbers,name)
    end
 
-   archive(opmatrix,archive_name)
-   ! Save "opmatrix" to an archive on disk with name "archive_name". The kind is
-   ! guessed from "opmatrix".
-     opmatrix :: OPMATRIX
-     archive_name :: STR
-     archive :: ARCHIVE
-     archive.set(.name,archive_name)
-     archive.write(opmatrix)
-   end
-
-   archive(opvector,archive_name)
-   ! Save "opvector" to an archive on disk with name "archive_name". The kind is
-   ! guessed from "opvector".
-     opvector :: OPVECTOR
-     archive_name :: STR
-     archive :: ARCHIVE
-     archive.set(.name,archive_name)
-     archive.write(opvector)
-   end
-
    get_scf_results ::: leaky
    ! Get the SCF results in from archives. Do not get the density matrix,
    ! because it can/should be generated from the orbitals, depending on the kind
@@ -9520,89 +9594,88 @@ contains
      .unarchive_orbital_energies(genre=a_kind)
    end
 
+   unarchive(opmatrix,archive_name,genre) ::: leaky
+   ! Recover the "opmatrix" from an archive on disk with name "archive_name".
+   ! The kind is guessed from "opmatrix".
+     opmatrix :: OPMATRIX
+     archive_name :: STR
+     genre :: STR, optional
+   ENSURE(opmatrix.any_created,"no opmatrix genre created")
+     archive :: ARCHIVE
+     archive.set(.name,archive_name)
+     archive.read(opmatrix,genre)
+   end
+
+   unarchive(opvector,archive_name,genre) ::: leaky
+   ! Recover the "opvector" from an archive on disk with name "archive_name".
+   ! The kind is guessed from "opvector".
+     opvector :: OPVECTOR
+     archive_name :: STR
+     genre :: STR, optional
+   ENSURE(opvector.any_created,"no opvector genre created")
+     archive :: ARCHIVE
+     archive.set(.name,archive_name)
+     archive.read(opvector,genre)
+   end
+
    unarchive_density_matrix(archive_name,genre) ::: leaky
    ! Recover the density matrix from an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.density_matrix.created,"no density matrix")
+     name :: STR
      name = "density_matrix"
      if (present(archive_name)) name = archive_name
-     if (present(genre)) then; a_kind = genre
-     else;                            a_kind = .density_matrix.spinorbital_kind
-     end
-     archive.set(.name,name,genre=a_kind)
-     archive.read(.density_matrix)
+     .unarchive(.density_matrix,name,genre)
    end
 
    unarchive_molecular_orbitals(archive_name,genre) ::: leaky
    ! Save the molecular orbitals and energies in an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.molecular_orbitals.created,"no molecular orbitals")
+     name :: STR
      name = "molecular_orbitals"
      if (present(archive_name)) name = archive_name
-     if (present(genre)) then; a_kind = genre
-     else;                            a_kind = .molecular_orbitals.spinorbital_kind
-     end
-     archive.set(.name,name,a_kind)
-     archive.read(.molecular_orbitals)
+     .unarchive(.molecular_orbitals,name,genre)
    end
 
    unarchive_orbital_energies(archive_name,genre) ::: leaky
    ! Save the orbitals energies in an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.orbital_energies.created,"no orbital energies")
+     name :: STR
      name = "orbital_energies"
      if (present(archive_name)) name = archive_name
-     if (present(genre)) then; a_kind = genre
-     else;                            a_kind = .orbital_energies.spinorbital_kind
-     end
-     archive.set(.name,name,a_kind)
-     archive.read(.orbital_energies)
+     .unarchive(.orbital_energies,name,genre)
    end
 
    unarchive_fock_matrix(archive_name,genre) ::: leaky
    ! Save the fock matrix in an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.fock_matrix.created,"no fock matrix")
+     name :: STR
      name = "fock_matrix"
      if (present(archive_name)) name = archive_name
-     if (present(genre)) then; a_kind = genre
-     else;                            a_kind = .fock_matrix.spinorbital_kind
-     end
-     archive.set(.name,name,a_kind)
-     archive.read(.fock_matrix)
+     .unarchive(.fock_matrix,name,genre)
    end
 
    unarchive_natural_orbitals(archive_name,genre) ::: leaky
    ! Recover the natural orbitals from an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.natural_orbitals.created,"no natural orbitals")
+     name :: STR
      name = "natural_orbitals"
      if (present(archive_name)) name = archive_name
-     if (present(genre))          then; a_kind = genre
-     else if (.natural_orbitals.created) then; a_kind = .natural_orbitals.spinorbital_kind
-     else; DIE("unknown archive kind")
-     end
-     archive.set(.name,name,a_kind)
-     archive.read(.natural_orbitals)
+     .unarchive(.natural_orbitals,name,genre)
    end
 
    unarchive_occupation_numbers(archive_name,genre) ::: leaky
    ! Recover the natural orbital occupation numbers from an archive on disk
      archive_name,genre :: STR, optional
-     name,a_kind :: STR
-     archive :: ARCHIVE
+   ENSURE(.occupation_numbers.created,"no occupation numbers")
+     name :: STR
      name = "occupation_numbers"
      if (present(archive_name)) name = archive_name
-     if (present(genre)) then; a_kind = genre
-     else;                            a_kind = .occupation_numbers.spinorbital_kind
-     end
-     archive.set(.name,name,a_kind)
-     archive.read(.occupation_numbers)
+     .unarchive(.occupation_numbers,name,genre)
    end
 
    archive_exists(archive_name,genre) result (res)
@@ -9641,6 +9714,8 @@ contains
       archive.set(.name,"density_matrix");       archive.delete_all_genres
       archive.set(.name,"molecular_orbitals");   archive.delete_all_genres
       archive.set(.name,"orbital_energies");     archive.delete_all_genres
+      archive.set(.name,"J_matrix");             archive.delete_all_genres
+      archive.set(.name,"K_matrix");             archive.delete_all_genres
       .delete_tmp_scf_archives
       .delete_old_scf_archives
    end
@@ -9657,7 +9732,7 @@ contains
       archive :: ARCHIVE
       archive.set(.name,"delta_density_matrix");   archive.delete_all_genres
       archive.set(.name,"constraint_matrix");      archive.delete_all_genres
-      .scfdata.cleanup_diis
+      .scfdata.diis.cleanup
    end
 
    delete_scf_density_archive
@@ -9836,7 +9911,7 @@ contains
       select case (initial_density)
          case("core                ") ; .make_core_guess
          case("fock                ") ; .make_fock_guess
-         case("atom                ") ; .make_atom_guess
+         case("promolecule         ") ; .make_atom_guess
          case("group               ") ; .make_group_guess
          case("restricted          ") ; .make_density_guess
          case("unrestricted        ") ; .make_density_guess
@@ -9910,7 +9985,11 @@ contains
    ! corresponding to these initial orbitals.
    ENSURE(.scfdata.scf_kind/="rohf","atom guess not available for ROHF")
       .get_atom_density
+  stdout.text("atom density matrix:")
+  stdout.put(.density_matrix.restricted)
       .make_fock_matrix       ! Make a fock matrix (only to get MO's)
+  stdout.text("atom fock matrix:")
+  stdout.put(.fock_matrix.restricted)
       .make_fock_guess        ! Get a reasonable set of starting MO's
    end
 
@@ -9919,8 +9998,8 @@ contains
    ! writes to the arch.
      arch :: ARCHIVE
      write_archive,calc_it :: BIN
-     calc_it = .scfdata.direct
-     write_archive = NOT .scfdata.direct
+     calc_it = .scfdata.using_direct_scf
+     write_archive = NOT .scfdata.using_direct_scf
      if (NOT calc_it) then
        arch.set(.name,"atom_density_matrix", genre="restricted")
        if (arch.exists) then
@@ -9943,9 +10022,8 @@ contains
    make_atom_density ::: leaky
    ! Make a ".density matrix" from the sum of atomic densities
    ! if output is present and FALSE the density matrix is not archived
-     k,l,kl,a,b,start,step :: INT
+     k,l,kl,a,b :: INT
      mol :: MOLECULE*
-     old_do_parallel :: BIN
      first,last :: VEC{INT}*
      atom_kind :: VEC{VEC_{INT}}*
      .density_matrix.destroy
@@ -9953,13 +10031,7 @@ contains
      .density_matrix.restricted = ZERO
      .atom.make_atom_basis_fn_limits(first,last)
      .atom.make_atom_kind_list(atom_kind)
-
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     old_do_parallel = tonto_parallel.do_parallel
-     tonto_parallel.do_parallel = FALSE
-
-     do k=start,size(atom_kind),step ! Do an SCF for every different kind of atom
+     do k = 1,size(atom_kind) ! Do an SCF for every different kind of atom
        mol.create
        l = atom_kind(k).element(1)
        .make_molecule_from_atom(l,mol)
@@ -9968,11 +10040,14 @@ contains
          ! suite.
          mol.scfdata.convergence = TOL(7)
          mol.scfdata.output = FALSE
+       ! mol.scfdata.output = TRUE
+       ! mol.scfdata.using_fock_diis = TRUE
+       ! mol.scfdata.diis.set_genre("ediis")
          mol.scfdata.using_fock_diis = FALSE
          mol.scfdata.using_MO_diis = FALSE
          mol.scfdata.using_rough_convergence = FALSE
-         mol.scfdata.direct = TRUE
-         mol.scf
+         mol.scfdata.using_direct_scf = TRUE
+         mol.scf                             ! <<<<<<< SCF <<<<<<
          mol.make_ao_density_matrix
          mol.pointgroup.create("oh")
          mol.symmetrise(mol.density_matrix)
@@ -9992,9 +10067,10 @@ contains
        mol.delete_scf_archives
        mol.destroy
      end
-
-     tonto_parallel.do_parallel = old_do_parallel
-     tonto_parallel.sum_symmetric_matrices(.density_matrix.restricted)
+   ! if (tonto.do_in_parallel) then; tonto.parallel_sum(.density_matrix.restricted,is_symmetric=TRUE)
+   ! else;                           .density_matrix.restricted.symmetric_reflect
+   ! end
+     .density_matrix.restricted.symmetric_reflect
 
      atom_kind.destroy
      last.destroy
@@ -10032,8 +10108,8 @@ contains
    ! are the columns of orbitals from each group and also make the
    ! ".occupation_numbers" vector set to 2 for the occupied group MO's.
    ! If output is present and FALSE the density matrix is not archived
-     MOs :: BIN, OPTIONAL
-     output :: BIN, OPTIONAL
+     MOs :: BIN, optional
+     output :: BIN, optional
    ENSURE(.atom_group.created,"no atom_group info")
      do_output,do_MOs :: BIN
      g,n_g,a,b,aa,bb,faa,laa,fbb,lbb,fa,la,fb,lb, ms,mf, no :: INT
@@ -10064,7 +10140,7 @@ contains
        if (mol.no_of_electrons >= 1) then
          mol.scfdata.convergence = 0.0001
          mol.scfdata.output = TRUE
-         mol.scfdata.direct = TRUE
+         mol.scfdata.using_direct_scf = TRUE
          if (size(.atom_group(g).element)>1) &
          mol.scfdata.initial_density = "atom"
          mol.scf
@@ -10242,11 +10318,21 @@ contains
      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
      R.create(.n_bf,.n_bf); R.to_inverse_sqrt_of(S)
      H.create(.n_bf,.n_bf); H = fock_matrix
+  stdout.text("S:")
+  stdout.put(S)
+  stdout.text("R:")
+  stdout.put(R)
      S.to_product_of(R,H)
      H.to_product_of(S,R)
+  stdout.text("H:")
+  stdout.put(H)
      H.solve_eigenproblem(MO_energies,MO)
      H.to_product_of(R,MO)
      MO = H
+  stdout.text("MO:")
+  stdout.put(MO)
+  stdout.text("MO_energies:")
+  stdout.put(MO_energies)
      H.destroy
      R.destroy
      S.destroy
@@ -10291,124 +10377,92 @@ contains
    ! density_matrix, and return the error "length".  Useful for reporting the
    ! error length.
       length :: REAL
-      error :: OPMATRIX*
-      tri :: INT
-      tri = .n_bf.triangle
-      error.create(.n_bf,.scfdata.spinorbital_kind)
-      .make_diis_error(error)
-      error.compress
-      if (.scfdata.scf_kind == "gchf") then
-         length = sqrt(dot_product(error.square,error.square))
-      else
-         length = sqrt(dot_product(error.triangle,error.triangle))
-      end
-      error.destroy
+   ENSURE(.fock_matrix.created,"no fock matrix")
+   ENSURE(.fock_matrix.any_created,"no fock matrix")
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.any_created,"no density matrix")
+      S :: MAT{REAL}*
+      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+      .scfdata.diis.set_diis_error_length(.fock_matrix,.density_matrix,S)
+      length = .scfdata.diis.error_length
+ ! stdout.show("diis error =",length)
+ ! write(*,*) "diis error =",length
+      S.destroy
    end
 
-   make_diis_error(error,F,D)
-   ! Make the SCF "error" vector from the current fock_matrix and
-   ! density_matrix.
-      error :: OPMATRIX*
-      F,D :: OPMATRIX*, optional
-      fock_matrix,density_matrix :: OPMATRIX*
-      fock_matrix => .fock_matrix
-      if (present(F)) fock_matrix => F
-      density_matrix => .density_matrix
-      if (present(D)) density_matrix => D
-      select case (.scfdata.scf_kind)
-         case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
-            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.restricted)
-         case ("rohf")
-            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.alpha)
-         case ("uhf","uks","xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
-            .make_r_diis_error(error.alpha,fock_matrix.alpha,density_matrix.alpha)
-            .make_r_diis_error(error.beta, fock_matrix.beta, density_matrix.beta)
-         case ("gchf")
-            .make_gc_diis_error(error.general_complex,fock_matrix.general_complex,density_matrix.general_complex)
-         case default;  DIE("unknown kind, "//trim(.scfdata.scf_kind))
-      end
-   end
+!   make_diis_error(error,F,D)
+!   ! Make the SCF "error" vector from the current fock_matrix and
+!   ! density_matrix.
+!      error :: OPMATRIX*
+!      F,D :: OPMATRIX*, optional
+!      fock_matrix,density_matrix :: OPMATRIX*
+!      fock_matrix => .fock_matrix
+!      if (present(F)) fock_matrix => F
+!      density_matrix => .density_matrix
+!      if (present(D)) density_matrix => D
+!      select case (.scfdata.scf_kind)
+!         case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
+!            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.restricted)
+!         case ("rohf")
+!            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.alpha)
+!         case ("uhf","uks","xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
+!            .make_r_diis_error(error.alpha,fock_matrix.alpha,density_matrix.alpha)
+!            .make_r_diis_error(error.beta, fock_matrix.beta, density_matrix.beta)
+!         case ("gchf")
+!            .make_gc_diis_error(error.general_complex,fock_matrix.general_complex,density_matrix.general_complex)
+!         case default;  DIE("unknown kind, "//trim(.scfdata.scf_kind))
+!      end
+!   end
 
-   extrapolate_fock_matrix
-   ! Extrapolate the fock matrix, currently only using DIIS.
-     error :: OPMATRIX*
+   accelerate_fock_matrix
+   ! Accelerate the convergence of the fock matrix, currently only using DIIS.
      scf_kind :: STR
-     Fr,Pr :: MAT{REAL}*
-     Fc,Pc :: MAT{CPX}*
-     err_len :: REAL
-     name :: STR
-     tri :: INT
-     tri = .n_bf.triangle
-     if (NOT .scfdata.apply_fock_diis) return
+     S :: MAT{REAL}*
+     J,C :: OPMATRIX*
+     energy :: VEC{REAL}*
+     if (NOT .scfdata.using_fock_diis) return
+     S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+     energy => .scf_electronic_energies
      scf_kind = .scfdata.scf_kind
      select case (scf_kind)
        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
-          error.create(.n_bf,"restricted")
-          Fr  => .fock_matrix.restricted
-          Pr  => .density_matrix.restricted
-          .make_r_diis_error(error.restricted,Fr,Pr)
-          error.compress
-          err_len = error.triangle.norm
-          .fock_matrix.compress
-          .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          .fock_matrix.uncompress
+          .scfdata.diis.accelerate(.fock_matrix,.density_matrix,S,energy)
        case ("rohf")
-          error.create(.n_bf,"restricted")
-          Fr  => .fock_matrix.restricted
-          Pr  => .density_matrix.alpha ! ??? really ???
-          .make_r_diis_error(error.restricted,Fr,Pr)
-          error.compress
-          err_len = error.triangle.norm
-          .fock_matrix.compress("restricted")
-          .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          .fock_matrix.uncompress
+          .scfdata.diis.accelerate(.fock_matrix,.density_matrix,S,energy)
        case ("uhf","uks","xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
-          name = .scfdata.diis.archive.name
-          ! Do alpha part first .... pretend restricted is alpha ...
-          error.create(.n_bf,"restricted")
-          .scfdata.diis.archive.set_name(name.trim//",alpha")
-          Fr  => .fock_matrix.alpha
-          Pr  => .density_matrix.alpha
-          .make_r_diis_error(error.restricted,Fr,Pr)
-          error.compress("restricted")
-          err_len = error.triangle.norm
-          .fock_matrix.restricted => .fock_matrix.alpha
-          .fock_matrix.compress("restricted")
-          .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          .fock_matrix.uncompress
-          .fock_matrix.alpha => .fock_matrix.restricted
-          nullify(.fock_matrix.restricted)
-          error.destroy
-          ! Now do beta part ...
-          error.create(.n_bf,"restricted")
-          .scfdata.diis.archive.set_name(name.trim//",beta")
-          .scfdata.diis.n_vec = .scfdata.diis.n_vec - 1 ! reset n_vec as it was
-          Fr  => .fock_matrix.beta
-          Pr  => .density_matrix.beta
-          .make_r_diis_error(error.restricted,Fr,Pr)
-          error.compress("restricted")
-          err_len = sqrt(error.triangle.norm**2 + err_len**2)
-          .fock_matrix.restricted => .fock_matrix.beta
-          .fock_matrix.compress("restricted")
-          .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          .fock_matrix.uncompress
-          .fock_matrix.beta => .fock_matrix.restricted
-          nullify(.fock_matrix.restricted)
-          .scfdata.diis.archive.set_name(name.trim) ! put back archive name
+          J.create(.n_bf,"unrestricted")
+          .unarchive(J,"J_matrix",genre="unrestricted")
+     ! stdout.put(energy,"column")
+     ! stdout.text("J.alpha:")
+     ! stdout.put(J.alpha)
+     ! stdout.text("J.beta:")
+     ! stdout.put(J.beta)
+          .scfdata.diis.accelerate(.fock_matrix,.density_matrix,S,energy,J)
+          J.destroy
        case ("gchf")
-          error.create(.n_bf,"general_complex")
-          Fc  => .fock_matrix.general_complex
-          Pc  => .density_matrix.general_complex
-          .make_gc_diis_error(error.general_complex,Fc,Pc)
-          error.compress
-          err_len = error.square.norm
-          .fock_matrix.compress
-          .scfdata.diis.extrapolate(.fock_matrix.square,error.square)
-          .fock_matrix.uncompress
+        DIE("not yet implemented")
+        ! error.create(.n_bf,"general_complex")
+        ! Fc  => .fock_matrix.general_complex
+        ! Pc  => .density_matrix.general_complex
+        ! .make_gc_diis_error(error.general_complex,Fc,Pc)
+        ! error.compress
+        ! err_len = error.square.norm
+        ! .fock_matrix.compress
+        ! .scfdata.diis.extrapolate_fock(.fock_matrix.square,error.square)
+        ! .fock_matrix.uncompress
        case default;          DIE("unknown SCF kind, "//trim(scf_kind))
      end
-     .scfdata.set_diis_error(err_len)
-     error.destroy
+     energy.destroy
+     S.destroy
+   ! .scfdata.diis.nullify_matrices
+     .scfdata.set_diis_error(.scfdata.diis.error_length)
+     ! Save the constraint matrix for acceleration of multiple fits
+     if (.scfdata.scf_kind.includes("xray_")) then
+        C.create(.n_bf,.scfdata.spinorbital_kind)
+        .unarchive(C,"constraint_matrix")
+        .scfdata.diis.save_current_item(C,"constraint_matrix")
+        C.destroy
+     end
    end
 
    make_r_diis_error(error,F,P)
@@ -10504,7 +10558,7 @@ contains
    ENSURE(P.created,"no density matrix")
    ENSURE(P.created(.scfdata.spinorbital_kind),"incompatible density")
      direct :: BIN
-     direct = .scfdata.direct
+     direct = .scfdata.using_direct_scf
      if (NOT direct) .get_ERI_integrals
      select case (.scfdata.scf_kind)
         case ("rhf","xray_rhf","embedded_rhf")
@@ -10895,10 +10949,12 @@ contains
    ENSURE(P.beta.created, "no density matrix")
    ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
    ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
-     J,Ka,Kb,Pab :: MAT{REAL}*
+     J,K :: OPMATRIX*
      do_direct,add_core,add_r12 :: BIN
      F.destroy("unrestricted")
      F.create("unrestricted")
+     J.create(.n_bf,"unrestricted")
+     K.create(.n_bf,"unrestricted")
      do_direct= FALSE
      add_core = TRUE
      add_r12  = TRUE
@@ -10906,26 +10962,21 @@ contains
      if (present(core))   add_core = core
      if (present(r12))    add_r12  = r12
      if (add_r12) then
-        J.create(.n_bf,.n_bf)
-        Ka.create(.n_bf,.n_bf)
-        Kb.create(.n_bf,.n_bf)
-        Pab.create(.n_bf,.n_bf)
-        Pab  = P.alpha + P.beta
-        if (do_direct) then; .make_u_JK_direct(J,Ka,Kb,Pab,P.alpha,P.beta)
-        else;                .make_u_JK_disk(J,Ka,Kb,Pab,P.alpha,P.beta)
+        if (do_direct) then; .make_u_JK_direct(J,K,P)
+        else;                DIE("disk UHF not implemented")
         end
-        Pab.destroy
-        F.alpha = J - Ka
-        F.beta = J - Kb
-        Kb.destroy
-        Ka.destroy
-        J.destroy
+        F.alpha = J.alpha + J.beta - K.alpha
+        F.beta  = J.alpha + J.beta - K.beta
      else
         F.alpha = ZERO
         F.beta  = ZERO
      end
      if (add_core) .add_core_hamiltonian(F.alpha)
      if (add_core) .add_core_hamiltonian(F.beta)
+     .archive(J,"J_matrix") ! Archive these for DIIS ... maybe
+     .archive(K,"K_matrix")
+     K.destroy
+     J.destroy
    end
 
    make_ro_fock(P,F,direct,core,r12) ::: leaky
@@ -11252,7 +11303,7 @@ contains
      !sh4 :: SHELL4
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
-     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
+     fa,fb,fc,fd,la,lb,lc,ld :: INT
      factor,cutoff,P_max,IP_max :: REAL
      skip :: BIN
      J = ZERO
@@ -11264,9 +11315,7 @@ contains
      .make_max_density_elements(max_P,P)
      P_max = maxval(max_P)
      IP_max = maxval(max_I) * P_max
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do ab=start,.n_shell_pairs,step
+     parallel do ab = 1,.n_shell_pairs
        if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
@@ -11300,10 +11349,13 @@ contains
      .weight_diagonal_blocks(J,TWO)
      .blockwise_symmetric_fold(K)
      J = TWO*J
-     tonto_parallel.sum_symmetric_matrices(J)
-     tonto_parallel.sum_symmetric_matrices(K)
-     J.symmetric_reflect
-     K.symmetric_reflect
+     if (tonto.do_in_parallel) then
+        tonto.parallel_sum(J,is_symmetric=TRUE)
+        tonto.parallel_sum(K,is_symmetric=TRUE)
+     else
+        J.symmetric_reflect
+        K.symmetric_reflect
+     end
    end
 
    make_r_J_direct(J,P)
@@ -11313,7 +11365,7 @@ contains
      max_I,max_P :: VEC{REAL}*
      sh4 :: SHELL4
      ab,cd,aa,bb,cc,dd :: INT
-     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
+     fa,fb,fc,fd,la,lb,lc,ld :: INT
      factor,cutoff,P_max,IP_max :: REAL
      skip :: BIN
      J = ZERO
@@ -11324,9 +11376,7 @@ contains
      .make_max_density_elements(max_P,P)
      P_max = maxval(max_P)
      IP_max = maxval(max_I) * P_max
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do ab = start, .n_shell_pairs, step
+     parallel do ab = 1,.n_shell_pairs
        if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_shell_quartet_ab(sh4,aa,bb)
@@ -11353,8 +11403,9 @@ contains
      max_P.destroy
      max_I.destroy
      .weight_diagonal_blocks(J,TWO)
-     tonto_parallel.sum_symmetric_matrices(J)
-     J.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(J,is_symmetric=TRUE)
+     else;                           J.symmetric_reflect
+     end
      J = TWO*J
    end
 
@@ -11366,7 +11417,7 @@ contains
      !sh4 :: SHELL4
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
-     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
+     fa,fb,fc,fd,la,lb,lc,ld :: INT
      factor,cutoff,P_max,IP_max :: REAL
      skip :: BIN
      K = ZERO
@@ -11377,9 +11428,7 @@ contains
      .make_max_density_elements(max_P,P)
      P_max = maxval(max_P)
      IP_max = maxval(max_I) * P_max
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do ab=start,.n_shell_pairs,step
+     parallel do ab = 1,.n_shell_pairs
        if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
@@ -11411,8 +11460,9 @@ contains
      max_P.destroy
      max_I.destroy
      .blockwise_symmetric_fold(K)
-     tonto_parallel.sum_symmetric_matrices(K)
-     K.symmetric_reflect
+     if (tonto.do_in_parallel) then; tonto.parallel_sum(K,is_symmetric=TRUE)
+     else;                           K.symmetric_reflect
+     end
    end
 
    make_r_JK_disk(J,K,P)
@@ -11690,6 +11740,107 @@ contains
      end
      max_P.destroy
      max_I.destroy
+   end
+
+   make_u_JK_direct(J,K,P)
+   ! Make the unrestricted coulomb matrices "J" and exchange matrices "K" matrix
+   ! from density matrix "P".
+     J,K,P :: OPMATRIX*
+   ENSURE(J.created("unrestricted"),"unrestricted J not created")
+   ENSURE(K.created("unrestricted"),"unrestricted K not created")
+   ENSURE(P.created("unrestricted"),"unrestricted P not created")
+     PP :: MAT{REAL}*
+     I :: MAT4{REAL}*
+     max_P,max_I :: VEC{REAL}*
+     sh4 :: SHELL4
+     ab,cd, aa,bb,cc,dd :: INT
+     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
+     I_abcd,factor,cutoff :: REAL
+     P_alpha_db,P_alpha_cb,P_beta_db,P_beta_cb,P_alpha_dc,P_beta_dc :: REAL
+     J_alpha_cd,J_beta_cd,K_alpha_bc,K_alpha_bd,K_beta_bc,K_beta_bd :: REAL
+     skip :: BIN
+     J.set_to_zero
+     K.set_to_zero
+     cutoff = .scfdata.eri_cutoff
+     max_P.create(.n_shell_pairs)
+     PP.create(.n_bf,.n_bf)
+     PP = P.alpha + P.beta
+     .make_max_density_elements(max_P,PP)
+     PP.destroy
+     max_I.create(.n_shell_pairs )            ! Store the largest integral for each
+     .make_max_abab_integrals(max_I)          ! shell pair ab|ab
+     do ab = 1, .n_shell_pairs
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)   ! a & b shell indices.
+       .set_shell_quartet_ab(sh4,aa,bb)
+       do cd = 1,ab
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) ! c & d shell indices.
+                                              ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,max_I)
+         if (skip) cycle
+                                              ! calculate ab|cd
+         .set_shell_quartet_cd(sh4,cc,dd)
+         factor = ONE                         ! Evaluate the integrals'
+         if (aa==bb) factor = HALF            ! coincidence factors
+         if (cc==dd) factor = HALF * factor
+         if (aa==cc AND bb==dd) factor = HALF * factor
+         I.create(fa,la,fb,lb,fc,lc,fd,ld)
+         sh4.get_ERI(I)
+         do d = fd,ld
+           do c = fc,lc
+             P_alpha_dc = P.alpha(d,c)
+             P_beta_dc  = P.beta(d,c)
+             J_alpha_cd = ZERO
+             J_beta_cd  = ZERO
+             do b = fb,lb
+               P_alpha_db = P.alpha(d,b)
+               P_beta_db  = P.beta(d,b)
+               P_alpha_cb = P.alpha(c,b)
+               P_beta_cb  = P.beta(c,b)
+               K_alpha_bc = ZERO
+               K_beta_bc  = ZERO
+               K_alpha_bd = ZERO
+               K_beta_bd  = ZERO
+               do a = fa,la
+                 I_abcd  = factor * I(a,b,c,d)
+                 J.alpha(a,b) = J.alpha(a,b) + I_abcd*P_alpha_dc
+                 J.beta(a,b)  = J.beta(a,b)  + I_abcd*P_beta_dc
+                 J_alpha_cd   = J_alpha_cd   + I_abcd*P.alpha(b,a)
+                 J_beta_cd    = J_beta_cd    + I_abcd*P.beta(b,a)
+                 K.alpha(a,c) = K.alpha(a,c) + I_abcd*P_alpha_db
+                 K.alpha(a,d) = K.alpha(a,d) + I_abcd*P_alpha_cb
+                 K_alpha_bc   = K_alpha_bc   + I_abcd*P.alpha(d,a)
+                 K_alpha_bd   = K_alpha_bd   + I_abcd*P.alpha(c,a)
+                 K.beta(a,c)  = K.beta(a,c)  + I_abcd*P_beta_db
+                 K.beta(a,d)  = K.beta(a,d)  + I_abcd*P_beta_cb
+                 K_beta_bc    = K_beta_bc    + I_abcd*P.beta(d,a)
+                 K_beta_bd    = K_beta_bd    + I_abcd*P.beta(c,a)
+               end
+               K.alpha(b,c) = K.alpha(b,c) + K_alpha_bc
+               K.alpha(b,d) = K.alpha(b,d) + K_alpha_bd
+               K.beta(b,c)  = K.beta(b,c)  + K_beta_bc
+               K.beta(b,d)  = K.beta(b,d)  + K_beta_bd
+             end
+             J.alpha(c,d) = J.alpha(c,d) + J_alpha_cd
+             J.beta(c,d)  = J.beta(c,d)  + J_beta_cd
+           end
+         end
+         I.destroy
+         sh4.destroy_cd
+       end
+       sh4.destroy_ab
+     end
+     max_I.destroy
+     max_P.destroy
+     .weight_diagonal_blocks(J.alpha,TWO)
+     .weight_diagonal_blocks(J.beta,TWO)
+     .blockwise_symmetric_fold(K.alpha)
+     .blockwise_symmetric_fold(K.beta)
+     J.alpha.symmetric_reflect
+     J.beta.symmetric_reflect
+     K.alpha.symmetric_reflect
+     K.beta.symmetric_reflect
+     J.alpha = TWO*J.alpha
+     J.beta  = TWO*J.beta
    end
 
    make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
@@ -12265,8 +12416,8 @@ contains
       core_energy = ZERO
       pair_energy = ZERO
       Di.create(.n_bf)
-      direct = .scfdata.direct
-      .scfdata.direct = TRUE
+      direct = .scfdata.using_direct_scf
+      .scfdata.using_direct_scf = TRUE
       do i = 1,.n_a
          .make_scf_density_matrix(i)
          Di.set_to(.density_matrix)
@@ -12283,7 +12434,7 @@ contains
          end
       end
       Di.destroy
-      .scfdata.direct = direct
+      .scfdata.using_direct_scf = direct
       stdout.flush
       stdout.text("SCF MO pair energy decomposition:",flush=1)
       energy = sum(core_energy)+sum(transfer(pair_energy,(/ONE/)))+.nuclear_energy
@@ -13208,7 +13359,7 @@ contains
      select case (word)
         case("crystal_error_map  "); .make_crystal_error_map
         case("current_density    "); .make_j_density_grid
-        case("difference_density "); .make_difference_density_grid
+        case("deformation_density"); .make_deformation_density_grid
         case("electric_potential "); .make_electric_potential_grid
         case("electron_density   "); .make_electron_density_grid
         case("elf                "); .make_ELF_grid
@@ -13240,6 +13391,29 @@ contains
       width = .atom.bounding_cube_width
    end
 
+   dump_plot_grid(grid,name,factor)
+   ! Dump out the plot "grid" to an appropriate with with "name", in various
+   ! formats. If present, "factor" is a conversion factor to apply.
+      grid :: VEC{REAL}
+      name :: STR
+      factor :: REAL, optional
+   ENSURE(.grid.created, "no grid")
+   ENSURE(.atom.created, "no atoms")
+      arch :: ARCHIVE
+      fac :: REAL
+      fac = ONE
+      if (present(factor)) fac = factor
+      grid = fac*grid
+      arch.set(.name,name,format="gnuplot,ascii")
+      arch.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
+      arch.set(.name,name,format="contour,ascii")
+      arch.write_contour_a_la_nancy(grid,.grid,.atom)
+      arch.set(.name,name,format="gaussian_cube,ascii")
+      arch.write_gaussian_cube(grid,.grid,.atom,name)
+      arch.set(.name,name,format="xdgraph,ascii")
+      arch.write_a_la_xdgraph(grid,.grid,.atom)
+   end
+
    make_electron_density_grid
    ! Work out the density on ".grid" using ".natural orbitals" and the
    ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
@@ -13250,18 +13424,13 @@ contains
       density_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_density_grid(density_grid,pt)
-      arch.set(.name,"electron_density_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"electron_density_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(density_grid,.grid,.atom)
-      arch.set(.name,"electron_density_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(density_grid,.grid,.atom,"Electron density")
+      .dump_plot_grid(density_grid,"electron_density_grid",factor=(BOHR_PER_ANGSTROM)**3)
       pt.destroy
       density_grid.destroy
    end
 
-   make_difference_density_grid
-   ! Make a Gnuplot ascii file containing the difference density grid.
+   make_deformation_density_grid
+   ! Make a Gnuplot ascii file containing the deformation density grid.
    ENSURE(.grid.created, "no grid")
    ENSURE(.natural_orbitals.created,"no natural orbitals")
    ENSURE(.occupation_numbers.created,"no natural orbitals")
@@ -13296,12 +13465,7 @@ contains
      .natural_orbitals => old_nos
      .occupation_numbers => old_occ
      ! Write out the grids
-     arch.set(.name,"difference_density_grid",format="gnuplot,ascii")
-     arch.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-     arch.set(.name,"difference_density_grid",format="contour,ascii")
-     arch.write_contour_a_la_nancy(density_grid,.grid,.atom)
-     arch.set(.name,"difference_density_grid",format="gaussian_cube,ascii")
-     arch.write_gaussian_cube(density_grid,.grid,.atom,"Difference density")
+     .dump_plot_grid(density_grid,"deformation_density_grid",factor=(BOHR_PER_ANGSTROM)**3)
      ! Clean up
      pt.destroy
      density_grid.destroy
@@ -13318,12 +13482,7 @@ contains
       density_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_density_grid(density_grid,pt)
-      arch.set(.name,"spin_density_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"spin_density_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(density_grid,.grid,.atom)
-      arch.set(.name,"spin_density_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(density_grid,.grid,.atom,"Spin density")
+      .dump_plot_grid(density_grid,"spin_density_grid",factor=(BOHR_PER_ANGSTROM)**3)
       pt.destroy
       density_grid.destroy
    end
@@ -13533,16 +13692,9 @@ contains
         gr = gc
         gc.destroy
       end
+      .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_density_grid",factor=(BOHR_PER_ANGSTROM)**3)
       gr.destroy
       pt.destroy
-      arch.set(.name,"orbital_"//trim(orb.to_str)//"_density_grid")
-      arch.write(gr)
-      arch.set(.name,"orbital_"//trim(orb.to_str)//"_density_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"orbital_"//trim(orb.to_str)//"_density_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(gr,.grid,.atom)
-      arch.set(.name,"orbital_"//trim(orb.to_str)//"_density_grid",format="gausian_cube,ascii")
-      arch.write_gaussian_cube(gr,.grid,.atom,"Orbital "//trim(orb.to_str)//" density")
    end
 
    make_orbital_grid
@@ -13562,14 +13714,7 @@ contains
       if (.natural_orbitals.number_kind == "real") then
          gr.create(.grid.n_pt)
          .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid")
-         arch.write(gr)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="gnuplot,ascii")
-         arch.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="contour,ascii")
-         arch.write_contour_a_la_nancy(gr,.grid,.atom)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="gaussian_cube,ascii")
-         arch.write_gaussian_cube(gr,.grid,.atom,"Orbital "//trim(orb.to_str))
+         .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid",factor=(BOHR_PER_ANGSTROM)**3)
          gr.destroy
       else
          gc.create(.grid.n_pt)
@@ -13651,12 +13796,7 @@ contains
       laplacian_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_laplacian_grid(laplacian_grid,pt)
-      arch.set(.name,"laplacian_density_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(laplacian_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"laplacian_density_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(laplacian_grid,.grid,.atom)
-      arch.set(.name,"laplacian_density_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(laplacian_grid,.grid,.atom,"Laplacian")
+      .dump_plot_grid(laplacian_grid,"laplacian_density_grid")
       pt.destroy
       laplacian_grid.destroy
    end
@@ -13890,12 +14030,7 @@ contains
       grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_grad_rho_on_rho_grid(grid,pt)
-      arch.set(.name,"grad_rho_on_rho_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"grad_rho_on_rho_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(grid,.grid,.atom)
-      arch.set(.name,"grad_rho_on_rho_grid",format="gaussian_cube,,ascii")
-      arch.write_gaussian_cube(grid,.grid,.atom,"Grad rho on rho")
+      .dump_plot_grid(grid,"grad_rho_on_rho_grid")
       pt.destroy
       grid.destroy
    end
@@ -13938,12 +14073,7 @@ contains
       ELF_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_ELF_grid(ELF_grid,pt)
-      arch.set(.name,"ELF_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(ELF_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"ELF_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(ELF_grid,.grid,.atom)
-      arch.set(.name,"ELF_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(ELF_grid,.grid,.atom,"ELF")
+      .dump_plot_grid(ELF_grid,"grad_rho_on_rho_grid")
       pt.destroy
       ELF_grid.destroy
    end
@@ -14082,12 +14212,7 @@ contains
       ELF_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt,3); .grid.make_points(pt)
       .make_Tsirelson_ELF_grid(ELF_grid,pt)
-      arch.set(.name,"Tsirelson-Stash_ELF_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(ELF_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"Tsirelson-Stash_ELF_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(ELF_grid,.grid,.atom)
-      arch.set(.name,"Tsirelson-Stash_ELF_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(ELF_grid,.grid,.atom,"Tsirelson-Stash ELF")
+      .dump_plot_grid(ELF_grid,"Tsirelson-Stash_ELF_grid")
       pt.destroy
       ELF_grid.destroy
    end
@@ -14239,12 +14364,7 @@ contains
       fermi_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt, 3 ); .grid.make_points(pt)
       .make_fermi_mobility_grid_r(fermi_grid,pt)
-      arch.set(.name,"fermi_mobility_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(fermi_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"fermi_mobility_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(fermi_grid,.grid,.atom)
-      arch.set(.name,"fermi_mobility_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(fermi_grid,.grid,.atom,"Fermi mobility function")
+      .dump_plot_grid(fermi_grid,"fermi_mobility_grid")
       pt.destroy
       fermi_grid.destroy
    end
@@ -14318,12 +14438,7 @@ contains
       fermi_grid.create(.grid.n_pt)
       pt.create(.grid.n_pt, 3 ); .grid.make_points(pt)
       .make_true_fermi_mobil_grid_r(fermi_grid,pt)
-      arch.set(.name,"true_fermi_mobility_grid",format="gnuplot,ascii")
-      arch.write_gnuplot(fermi_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      arch.set(.name,"true_fermi_mobility_grid",format="contour,ascii")
-      arch.write_contour_a_la_nancy(fermi_grid,.grid,.atom)
-      arch.set(.name,"true_fermi_mobility_grid",format="gaussian_cube,ascii")
-      arch.write_gaussian_cube(fermi_grid,.grid,.atom,"True Fermi mobility function")
+      .dump_plot_grid(fermi_grid,"true_fermi_mobility_grid")
       pt.destroy
       fermi_grid.destroy
    end
@@ -16175,7 +16290,7 @@ contains
      mol.create
      .make_molecule_from_atom(a,mol)
      mol.scfdata.output = FALSE
-     mol.scfdata.direct = TRUE
+     mol.scfdata.using_direct_scf = TRUE
      mol.scf
      mol.delete_scf_MO_archive
      mol.delete_scf_fock_archive

@@ -48,6 +48,7 @@ contains
    nullify_ptr_part
    ! Nullify the pointer parts of the diffraction data object
      nullify(.reflections)
+     nullify(.scale_factors)
    end
 
    destroy_ptr_part ::: leaky
@@ -62,6 +63,7 @@ contains
        .exp_scale_factor = ONE
        .extinction_factor = ZERO
        .reflections.destroy
+       .scale_factors.destroy
      end
    end
 
@@ -106,6 +108,9 @@ contains
       .data_kind              = DIFFRACTION_DATA_DATA_KIND
       .thermal_smearing_model = DIFFRACTION_DATA_THERMAL_SMEARING_MODEL
       .partition_model        = DIFFRACTION_DATA_PARTITION_MODEL
+      .F_exp_min              = DIFFRACTION_DATA_F_EXP_MIN
+      .F_sigma_min            = DIFFRACTION_DATA_F_SIGMA_MIN
+      .F_sigma_max            = DIFFRACTION_DATA_F_SIGMA_MAX
    end
 
    update(unitcell,spacegroup)
@@ -192,17 +197,18 @@ contains
         case ("destroy_reflection_data    "); .destroy_reflection_data
         case ("erase_reflection_data      "); .destroy_reflection_data
         case ("exp_scale_factor=          "); .read_exp_scale_factor
+        case ("f_exp_min=                 "); .read_f_exp_min
+        case ("f_sigma_min=               "); .read_f_sigma_min
+        case ("f_sigma_max=               "); .read_f_sigma_max
         case ("junk=                      "); .read_junk
         case ("kind=                      "); .read_data_kind
         case ("make_f_predicted           "); .make_F_predicted
         case ("optimise_extinction=       "); .read_optimise_extinction
-        case ("optimise_extinction_factor="); .read_optimise_extinction
         case ("optimize_extinction=       "); .read_optimise_extinction
-        case ("optimize_extinction_factor="); .read_optimise_extinction
-        case ("optimise_scale=            "); .read_optimise_scale
         case ("optimise_scale_factor=     "); .read_optimise_scale
-        case ("optimize_scale=            "); .read_optimise_scale
         case ("optimize_scale_factor=     "); .read_optimise_scale
+        case ("optimise_scale_factors=    "); .read_optimise_scale
+        case ("optimize_scale_factors=    "); .read_optimise_scale
         case ("partition_model=           "); .read_partition_model
         case ("reflection_data=           "); .read_reflection_data
         case ("synthesize_sigma_i=        "); .read_synthesize_sigma_I
@@ -237,6 +243,24 @@ contains
    read_reflection_data ::: leaky, private
    ! Read in reflection data in the standard order from "stdin".
       .reflections.read_list_keywords
+   end
+
+   read_f_exp_min ::: private
+   ! Read the minimum acceptable value for F_exp
+      stdin.read(.F_exp_min)
+      ENSURE(.F_exp_min>=ZERO,"must be positive")
+   end
+
+   read_f_sigma_min ::: private
+   ! Read the minimum acceptable value for F_sigma
+      stdin.read(.F_sigma_min)
+      ENSURE(.F_sigma_min>ZERO,"must be positive")
+   end
+
+   read_f_sigma_max ::: private
+   ! Read the maximum acceptable value for F_sigma
+      stdin.read(.F_sigma_max)
+      ENSURE(.F_sigma_max>ZERO,"must be positive")
    end
 
    read_exp_scale_factor ::: private
@@ -409,12 +433,14 @@ contains
      end
    end
 
-   stl(n) result (res)
-   ! Return the value of sin(theta) / lambda for reflection n
+   sin_theta_on_lambda(n) result (res)
+   ! Return the value of sin(theta) / lambda for reflection n.
+   ! NOTE: the wavelength is changed to be in Angstrom since that is usually the
+   ! units sin theta on lamba is reported.
      self :: IN
      n :: INT, IN
      res :: REAL
-     res = sin(.reflections(n).theta)/.wavelength
+     res = sin(.reflections(n).theta)/.wavelength.to_units("angstrom")
    end
 
    make_F_predicted
@@ -440,9 +466,14 @@ contains
    ! (To get the corrections cooresponding to these parameters see routine
    ! .extinction_correction)
      if (.optimise_extinction) then
+       DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
        .optimise_extinction_factor
      else if (.optimise_scale) then
-       .optimise_scale_factor
+       if (.use_multiple_scale_factors) then
+          .optimise_scale_factors
+       else
+          .optimise_scale_factor
+       end
      end
    end
 
@@ -450,7 +481,11 @@ contains
    ! Return the extinction correction  factors "res" to the calculated
    ! individual structure factors.
      res :: VEC{REAL}(size(.reflections))
-     res = .extinction_correction(.scale_factor,.extinction_factor)
+     if (.use_multiple_scale_factors) then
+        res = .extinction_correction(.scale_factors,.extinction_factor)
+     else
+        res = .extinction_correction(.scale_factor,.extinction_factor)
+     end
    end
 
    extinction_correction(scale_factor,extinction_factor) result(res)
@@ -479,6 +514,43 @@ contains
      end
    end
 
+   extinction_correction(scale_factors,extinction_factor) result(res)
+   ! Return the extinction correction factors "res" to the calculated
+   ! individual structure factors. WARNING: this routine in fact does no
+   ! extinction correction, only multiple scale factors.
+     scale_factors :: VEC{REAL}
+     extinction_factor :: REAL
+     res :: VEC{REAL}(size(.reflections))
+     F_calc :: CPX
+     angle_part :: VEC{REAL}*
+     g,n,n_refl,n_group :: INT
+     n_refl = .reflections.n_refl
+     ENSURE(.reflections.created,"no reflection data")
+     ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+     ENSURE(scale_factors.dim==maxval(.reflections.group),"no. of scale factors does not match no. of groups")
+     n_group = scale_factors.dim
+     if (extinction_factor.is_zero(TOL(9))) then
+       do g = 1,n_group
+          do n = 1, n_refl
+            if (.reflections(n).group/=g) cycle
+            res(n) = scale_factors(g) 
+          end
+       end
+     else
+       angle_part.create(n_refl)
+       angle_part = .extinction_angle_part
+       do g = 1,n_group
+          do n = 1, n_refl
+            if (.reflections(n).group/=g) cycle
+            F_calc = .reflections(n).F_calc
+            res(n) = scale_factors(g) / sqrt(sqrt(ONE + &
+                extinction_factor*F_calc*conjg(F_calc)*angle_part(n)))
+          end
+       end
+       angle_part.destroy
+     end
+   end
+
    extinction_angle_part result(res) ::: private
    ! Return the angular part of the extinction correction.
      res :: VEC{REAL}(size(.reflections))
@@ -496,14 +568,14 @@ contains
    ! Determine the structure factor scale factor to scale the calculated
    ! structure factors .F_calc by in order to minimise the chi2. (But it does
    ! not do any scaling; see .extinction_correction routine for that)
+   DIE_IF(NOT .reflections.created,"no reflection data")
+   DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
+   DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
+   DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
      top,bot,F_pred :: REAL
      n,n_refl :: INT
      ref :: REFLECTION*
      n_refl = .reflections.n_refl
-     DIE_IF(NOT .reflections.created,"no reflection data")
-     DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
-     DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
-     DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
      top = ZERO
      bot = ZERO
      do n=1,n_refl
@@ -517,6 +589,41 @@ contains
      end
      .scale_factor = top/bot
      .n_param = 1
+   end
+
+   optimise_scale_factors ::: leaky
+   ! Multiple scale factors are determined here ...
+   ! Determine the structure factor scale factors to scale the calculated
+   ! structure factors .F_calc by in order to minimise the chi2. (But it does
+   ! not do any scaling; see .extinction_correction routine for that)
+   DIE_IF(NOT .reflections.created,"no reflection data")
+   DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
+   DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
+   DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
+   DIE_IF(NOT .use_multiple_scale_factors, "no reflection group numbers")
+     top,bot,F_pred :: REAL
+     g,n,n_refl,n_group :: INT
+     ref :: REFLECTION*
+     n_group = maxval(.reflections.group)
+     n_refl = .reflections.n_refl
+     .scale_factors.destroy
+     .scale_factors.create(n_group)
+     do g = 1,n_group
+        top = ZERO
+        bot = ZERO
+        do n = 1,n_refl
+          ref => .reflections(n)
+          if (ref.group/=g) cycle
+          if (.data_kind=="pnd") then; F_pred = ref.F_calc
+          else;                   F_pred = abs(ref.F_calc)
+          end
+          ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
+          top = top + F_pred * ref.F_exp  / (ref.F_sigma * ref.F_sigma)
+          bot = bot + F_pred * F_pred / (ref.F_sigma * ref.F_sigma)
+        end
+        .scale_factors(g) = top/bot
+     end
+     .n_param = n_group
    end
 
    optimise_extinction_factor
@@ -717,7 +824,7 @@ contains
        stdout.put(.reflections(n).h)
        stdout.put(.reflections(n).k)
        stdout.put(.reflections(n).l)
-       stdout.put(.stl(n))
+       stdout.put(.sin_theta_on_lambda(n))
        stdout.flush
      end
      stdout.dash(int_fields=3,real_fields=1)
@@ -750,31 +857,36 @@ contains
      real_width :: BIN
      real_width = TRUE
      stdout.flush
-     stdout.show("Using scale factor          = ", .optimise_scale,real_width)
-     stdout.show("Using extinction            = ", .optimise_extinction,real_width)
-     stdout.show("Thermal smearing model      = ", .thermal_smearing_model)
-     stdout.show("Fragment partition model    = ", .partition_model)
-     stdout.show("Correct dispersion?         = ", .correct_dispersion,real_width=TRUE)
+     stdout.show("Using scale factor(s)         = ", .optimise_scale,real_width=TRUE)
+     stdout.show("Using extinction              = ", .optimise_extinction,real_width)
+     stdout.show("Thermal smearing model        = ", .thermal_smearing_model)
+     stdout.show("Fragment partition model      = ", .partition_model)
+     stdout.show("Correct dispersion?           = ", .correct_dispersion,real_width=TRUE)
      if (.optimise_extinction) then;
-     stdout.show("Optimize extinction         = ", TRUE,real_width)
-     stdout.show("Secondary extinction factor = ", .extinction_factor)
+     stdout.show("Optimize extinction           = ", TRUE,real_width)
+     stdout.show("Secondary extinction factor   = ", .extinction_factor)
      else
-     stdout.show("Optimize extinction         = ", FALSE,real_width)
+     stdout.show("Optimize extinction           = ", FALSE,real_width)
      end
      if (.optimise_scale) then
-     stdout.show("Optimize scale factor       = ", TRUE,real_width)
-     stdout.show("Scale factor                = ", .scale_factor)
+        if (.use_multiple_scale_factors) then
+     stdout.show("Using multiple scale factors  = ", TRUE,real_width=TRUE)
+     stdout.show("Scale factors                 = ", .scale_factors)
+        else
+     stdout.show("Using single scale factor     = ", TRUE,real_width=TRUE)
+     stdout.show("Scale factor                  = ", .scale_factor)
+        end
      else
-     stdout.show("Optimize scale factor       = ", FALSE,real_width)
+     stdout.show("Optimize scale factor         = ", FALSE,real_width)
      end
    end
 
    put_gof_data
    ! Output the correction data
-     stdout.show("Chi2                        = ", .F_chi2)
-     stdout.show("Goodness of fit in F        = ", .F_goodness_of_fit)
-     stdout.show("R factor in F               = ", .F_r_factor)
-     stdout.show("Weighted R factor in F      = ", .F_weighted_r_factor)
+     stdout.show("Chi2                          = ", .F_chi2)
+     stdout.show("Goodness of fit in F          = ", .F_goodness_of_fit)
+     stdout.show("R factor in F                 = ", .F_r_factor)
+     stdout.show("Weighted R factor in F        = ", .F_weighted_r_factor)
    end
 
    put_reflection_data
@@ -826,7 +938,7 @@ contains
      stl_min = 1000
      stl_max = ZERO
      do n=1, n_refl
-       stl = .stl(n) * BOHR_PER_ANGSTROM
+       stl = .sin_theta_on_lambda(n)
        if (stl < stl_min) stl_min = stl
        if (stl > stl_max) stl_max = stl
      end
@@ -835,7 +947,7 @@ contains
      section_for.create(n_refl)
      ! Determine which section each reflection belongs to.
      do n=1, n_refl
-       stl = .stl(n) * BOHR_PER_ANGSTROM
+       stl = .sin_theta_on_lambda(n) 
        section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
      end
 
@@ -882,16 +994,16 @@ contains
      n_refl = .reflections.n_refl
 
      stdout.text("The effects of angle.")
-     stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs sin(theta)/lambda")
+     stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs sin(theta)/lambda")
      do n=1,n_refl
-       stdout.put(.stl(n))
+       stdout.put(.sin_theta_on_lambda(n))
        stdout.put(.reflections(n).F_z)
        stdout.flush
      end
      stdout.flush
 
      stdout.text("The effects of intensity.")
-     stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs Fexp")
+     stdout.text("Scatter plot of F_z = (Fexp-Fpred)/F_sigma vs Fexp")
      do n=1,n_refl
        stdout.put(.reflections(n).F_exp)
        stdout.put(.reflections(n).F_z)
@@ -907,7 +1019,10 @@ contains
      ext_refs.set_F_sigma(.reflections.F_sigma)
      ext.destroy
 
+     if (NOT .optimise_extinction) return
+
      stdout.text("The effects of extinction.")
+
      w = ZERO
      y = ZERO
      do n=1,n_refl
@@ -916,12 +1031,12 @@ contains
      end
      y = y / n_refl
      w = w / n_refl
-     stdout.show("Average value of abs(Fcalc_ext-Fcalc)/F_sigma is ",y)
+     stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/F_sigma is ",y)
      stdout.show("Average value of abs(extinction correction) is ",w)
      stdout.flush
 
      stdout.text("The effects of intensity on extinction.")
-     stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs Fpred")
+     stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred")
      do n=1,n_refl
        stdout.put(ext_refs(n).F_pred)
        stdout.put(ext_refs(n).F_z)
@@ -930,9 +1045,9 @@ contains
      stdout.flush
 
      stdout.text("The effects of scattering angle on extinction.")
-     stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs sin(theta)/lambda")
+     stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda")
      do n=1,n_refl
-       stdout.put(.stl(n))
+       stdout.put(.sin_theta_on_lambda(n))
        stdout.put(ext_refs(n).F_z)
        stdout.flush
      end
@@ -1014,6 +1129,13 @@ contains
       res :: BIN
       res = FALSE
       if (associated(.reflections)) res = .reflections.have_F_sigma
+   end
+
+   use_multiple_scale_factors result(res)
+   ! Return TRUE if we are supposed to use multiple scale factors.
+      res :: BIN
+      res = FALSE
+      if (associated(.reflections)) res = any(.reflections.group>0)
    end
 
 !*******************************************************************************
