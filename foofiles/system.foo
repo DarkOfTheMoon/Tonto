@@ -1,0 +1,452 @@
+! $Id $
+!-------------------------------------------------------------------------------
+!
+! SYSTEM: Contains system level routines, including memory management and error
+! messages.  It allows for the graceful termination of a program.
+!
+! An error status is simply an integer, the value is set to 1 if the program
+! terminates, or -1 if a warning condition is encountered.
+!
+! The memory part stores the total and maximum memory used (in bytes), and the
+! the total and maximum number of blocks of memory allocated.
+! A memory limit is also stored.  It is a fatal error to use more than the
+! allocated limit.
+!
+! The file part contains the file name and record number of the last acessed
+! file, in the event that this file should cause an error, the exact position
+! will be known.
+!
+! A standard system object, std_system, is provided to hold system information
+! in the current program. In most cases it should not be neccesary to
+! create any other system objects.
+!
+!  (c) Dylan Jayatilaka, 1998-1999
+!  (c) Daniel Grimwood, 1999
+!
+!-------------------------------------------------------------------------------
+module SYSTEM
+   
+   use TYPES
+
+    implicit none
+
+#  include "macros"
+#  include "system.int"
+
+! type system_type
+!    INT :: error_status                    ! Set non-zero on errors
+!    INT :: error_unit                      ! Unit number for error messages
+!    INT :: mem_used                        ! Memory used so far
+!    INT :: mem_blocks                      ! No of blocks allocated so far
+!    INT :: mem_max_used                    ! Maximum memory used so far
+!    INT :: mem_max_blocks                  ! Maximum memory blocks allocated
+!    INT :: mem_limit                       ! Soft memory limit
+!    BIN :: mem_exceeded                    ! True if memory soft limit exceeded
+!    STR :: mem_units                       ! Memory usage units
+!    INT :: stack_level                     ! The current call-stack level
+!    INT :: stack_max_level                 ! Maximum call-stack level
+!    INT :: stack_check_level               ! Memory checking is enabled for
+!                                           ! all routines at this level or
+!                                           ! higher in the call-stack
+!    IVEC, PTR   :: used_stack DEFAULT_NULL ! Stores the amount of memory used
+!                                           ! at each call-level
+!    STRVEC, PTR :: call_stack DEFAULT_NULL ! Stores the name of each subroutine
+!                                           ! at each call-level for tracebacks
+!    STR :: file_name                       ! Last file used
+!    INT :: file_record                     ! Record number of last file
+!    STR :: file_operation                  ! Operation performed on file
+! end
+
+#define STACK(X)
+#define UNSTACK
+#define CHECK
+
+   SYSTEM, target, public :: std_system = &
+     system_type(0,SYSTEM_STD_ERROR_UNIT,0,0,0,0,SYSTEM_MEMORY_LIMIT, &
+                 FALSE,SYSTEM_MEMORY_UNITS,0,0,0,null(),null(),"",0,"")
+
+contains
+
+   reset
+   ! Reset the error flag
+      .error_status = 0
+   end
+
+   set_unit(number)
+   ! Set the error unit "number"
+      INT :: number
+      .error_unit = number
+   end
+
+   set_put_file(file)
+   ! Set the error output file to "file"
+      OUTPUT :: file
+      .error_unit = file%unit
+   end
+
+!-------------------------------------------------------------------------------
+
+!  *****************
+!  Creation routines
+!  *****************
+
+   create(mem_limit)
+   !  Create a memory manager object with soft limit given in "limit"
+      PTR :: self
+      INT, optional :: mem_limit
+      allocate(self)
+      self.initialize(mem_limit)
+      std_system.add_mem(SYSTEM_SIZE) ! increment internal memory manager
+   end
+
+   destroy
+   !  Destroy the memory manager object
+      PTR :: self
+      if (.destroyed) return
+      deallocate(self)
+      std_system.delete_mem(SYSTEM_SIZE)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   initialize(limit) 
+   !  Initialize the memory manager object and set default memory limit
+   !  Pour les americain ordures
+      INOUT :: self
+      INT, optional :: limit
+      .initialise(limit) 
+   end
+
+   initialise(mem_limit)
+   !  Initialise the system object and set defaults
+      INOUT :: self
+      INT, optional :: mem_limit
+      .error_status = 0
+      .error_unit = SYSTEM_STD_ERROR_UNIT
+      .mem_used = 0
+      .mem_blocks = 0
+      .mem_max_used = 0
+      .mem_max_blocks = 0
+      .mem_limit = SYSTEM_MEMORY_LIMIT
+      .mem_exceeded = FALSE
+      .mem_units = SYSTEM_MEMORY_UNITS
+      .stack_level = 0
+      .stack_max_level = 0
+      .stack_check_level = 0
+      nullify(.call_stack)
+      nullify(.used_stack) 
+      .file_name = ""
+      .file_record = 0
+      .file_operation = ""
+      if (present(mem_limit)) .mem_limit = mem_limit
+   end
+
+   unit_conversion_factor result(res) [elemental]
+   ! Change the units used to display the memory
+      IN :: self
+      INT :: res
+      select case(.mem_units)
+         case("Words");  res = 8
+         case("Bytes");  res = 1
+         case("MBytes"); res = 1000000
+         case("MWords"); res = 8000000
+      end
+   end
+
+   reset_limit(limit) [pure]
+   !  Reset memory limit for the memory manager
+   !  "limit" is in bytes.
+      INOUT :: self
+      INT, IN :: limit
+      INT :: fac
+      fac = .unit_conversion_factor
+      .mem_limit = fac*limit
+   end
+
+!*******************************************************************************
+! Error messages.
+!*******************************************************************************
+
+   die
+   ! Set the error flag to 1 and terminate the program
+      .error_status = 1
+      write(.error_unit,*)
+      write(.error_unit,"(a)") "Error!"
+      .report_stack
+      .report_file
+      stop    
+   end
+
+   die(message,iostat)
+   ! Set the error flag to 1 and terminate the program with a message
+      CHR(*) :: message
+      INT, IN, optional :: iostat
+      .error_status = 1
+      write(.error_unit,*)
+      write(.error_unit,"(a)") "Error: "//trim(message)
+      if (present(iostat)) write(.error_unit,"(a,i4)") " Fortran error ",iostat
+      .report_stack
+      .report_file
+      stop    
+   end
+
+   die_if(condition,message,iostat)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! provided "condition" is TRUE
+      BIN :: condition
+      CHR(*) :: message
+      INT, IN, optional :: iostat
+      if (condition) .die(message,iostat)
+   end 
+
+   warn(message,iostat)
+   ! Set the error flag to -1 and issue a warning message
+      CHR(*) :: message
+      INT, IN, optional :: iostat
+      .error_status = -1
+      write(.error_unit,*)
+      write(.error_unit,"(a)") " WARNING: "//trim(message)
+      if (present(iostat)) write(.error_unit,"(a,i4)") " Fortran error ",iostat
+   end
+
+   warn_if(condition,message,iostat)
+   ! If "condition" is true, issue a warning and continue, but set the error
+   ! flag to -1 and 
+      BIN :: condition
+      CHR(*) :: message
+      INT, IN, optional :: iostat
+      if (condition) .warn(message,iostat)
+   end
+
+   ensure(condition,message,iostat)
+   ! Ensure "condition" is true, otherwise set the error flag to 1 and 
+   ! terminate the program with a "message"
+      BIN :: condition
+      CHR(*) :: message
+      INT, IN, optional :: iostat
+      if (NOT condition) .die(message,iostat)
+   end 
+
+!  **********************************
+!  Memory reporting and leak checking
+!  **********************************
+
+   add_mem(used) [pure]
+   !  Add memory usage data to the memory manager
+      INOUT :: self
+      INT, IN :: used
+      .mem_used       = .mem_used + used
+      .mem_max_used   = max(.mem_max_used,.mem_used)
+      .mem_blocks     = .mem_blocks + 1
+      .mem_max_blocks = max(.mem_max_blocks,.mem_blocks)
+      .used_stack(1:.stack_level) = .used_stack(1:.stack_level) + used
+   end
+
+   delete_mem(used) [pure]
+   !  Delete memory usage data to the memory manager
+      INOUT :: self
+      INT, IN :: used
+      .mem_used = .mem_used - used
+      .mem_blocks = .mem_blocks - 1
+      .used_stack(1:.stack_level) = .used_stack(1:.stack_level) - used
+   end
+
+   stack(routine_name) 
+   ! Add another level to the call stack. Placed at the start of every
+   ! non-pure routine
+      INOUT :: self
+      STR(*), optional :: routine_name
+      .stack_level = .stack_level + 1
+      .expand_stack
+      .used_stack(.stack_level) = 0
+      .call_stack(.stack_level) = "Unknown Routine"
+      if (present(routine_name)) .call_stack(.stack_level) = routine_name
+   end
+
+   unstack
+   ! Remove a level from the call level. Placed at the end of every non-pure
+   ! routine, including leaky routines. A stack report is produced if the
+   ! current level does not exceed the check_level set by start_leak_test.
+      INOUT :: self
+      STR :: name
+      if (.stack_level<=.stack_check_level) then
+         name = .call_stack(.stack_level)
+         .warn("memory leak report for routine "//trim(name))
+         .report_stack
+      end
+      .stack_level = .stack_level - 1
+   end
+
+   check
+   ! Check for memory leaks at this level. Placed at the end of every non-pure,
+   ! non-leaky routine. A stack report is produced only if there is a leak, AND
+   ! if the level is greater than the check_level set by start_leak_test (since 
+   ! for levels less or equal to than the check_level, unstack produces a stack
+   ! report).
+      STR :: name
+      .check_exceeded
+      name = .call_stack(.stack_level)
+      if (.used_stack(.stack_level) >0) &
+                                    .warn("memory leak in routine "//trim(name))
+      if (.used_stack(.stack_level) <0) &
+                                    .warn("memory sink in routine "//trim(name))
+      if (.used_stack(.stack_level)/=0 AND .stack_level>.stack_check_level) &
+                                    .report_stack
+      .unstack
+   end
+
+   start_check(depth)
+   ! Start memory leak testing at this level by printing out the memory stack
+   ! for all routines that are called (i.e. at the next level). This command 
+   ! is undone by the following routine. If present, the check extends to
+   ! to the current level plus "depth".
+      INT, optional :: depth
+      .stack_check_level = .stack_level + 1
+      if (present(depth)) .stack_check_level = .stack_level + depth
+   end
+
+   end_check
+   ! Ends memory leak testing at this level
+      .stack_check_level = 0
+   end
+
+   check_exceeded
+   !  Checks whether memory limit is exceeded
+      STR :: name
+      name = .call_stack(.stack_level)
+      if (.mem_used>.mem_limit AND NOT .mem_exceeded) then
+         .warn("memory limit exceeded in routine "//trim(name))
+         .report
+         .mem_exceeded = TRUE
+      end
+   end
+
+   expand_stack
+   ! Expand both stacks to a length at least equal to ".level"
+      INT :: dim
+      dim = .stack_level - .stack_max_level
+      if (dim>0) then
+         .expand_used_stack(dim)
+         .expand_call_stack(dim)
+         .stack_max_level = .stack_level
+      end
+   end
+
+   expand_used_stack(dim)
+   ! Expands used_stack by amount "dim".  Contents are retained.
+   ! Elements added are set to zero.
+     IVEC, PTR :: old
+     INT, IN :: dim
+     INT :: n
+     ENSURE(dim>0,"cannot expand stack by less than 1")
+     n = .stack_max_level
+     if (n==0) then
+        allocate(.used_stack(dim))
+        .used_stack(n+1:n+dim) = 0
+     else
+        old => .used_stack
+        allocate(.used_stack(n+dim))
+        .used_stack(1:n) = old
+        .used_stack(n+1:n+dim) = 0
+        deallocate(old)
+     end
+  end
+
+   expand_call_stack(dim)
+   ! Expands call_stack by amount "dim".  Contents are retained.
+   ! Elements added are set to "Unknown Routine".
+     STRVEC, PTR :: old
+     INT, IN :: dim
+     INT :: n
+     ENSURE(dim>0,"cannot expand stack by less than 1")
+     n = .stack_max_level
+     if (n==0) then
+        allocate(.call_stack(n+dim))
+        .call_stack(n+1:n+dim) = "Unknown Routine"
+     else
+        old => .call_stack
+        allocate(.call_stack(n+dim))
+        .call_stack(1:n) = old
+        .call_stack(n+1:n+dim) = "Unknown Routine"
+        deallocate(old)
+     end
+  end
+
+!-------------------------------------------------------------------------------
+! Output routines.
+!-------------------------------------------------------------------------------
+  report(out)
+  !  Report memory usage
+    OUTPUT, optional :: out
+    INT :: unit,fac
+    unit = std_system%error_unit
+    fac = .unit_conversion_factor
+    if (present(out)) unit = out%unit
+    write(unit,'(/"SYSTEM: Memory usage report:"/)')
+    write(unit,'("Memory used         = ",i9," ",a6)') .mem_used/fac, .mem_units
+    write(unit,'("Maximum memory used = ",i9," ",a6)') &
+                                                   .mem_max_used/fac, .mem_units
+    write(unit,'("Blocks used         = ",i9)')    .mem_blocks
+    write(unit,'("Maximum blocks used = ",i9)')    .mem_max_blocks
+    write(unit,'("Level               = ",i9)')    .stack_level
+    write(unit,'("Maximum level  used = ",i9)')    .stack_max_level
+    .report_stack(out)
+  end
+
+  report_stack(out,full_report)
+  ! Report memory stack usage. Use the unit number for file "out", if present.
+  ! If present and TRUE, "full_report" requests a full stack output.
+    OUTPUT, optional :: out
+    BIN, optional :: full_report
+    INT :: unit,fac,l
+    BIN :: full
+    unit = std_system%error_unit
+    full = FALSE
+    fac = .unit_conversion_factor
+    if (present(out)) unit = out%unit
+    if (present(full_report)) full = full_report
+    if (.stack_level>0) then
+      write(unit,*)
+      write(unit,'(a)') "Routine call stack:"
+      write(unit,'("Call   Routine name        ",a37)') "Usage"
+      do l = 1,.stack_level
+      write(unit,'(i3,".",a51,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
+      end
+    end
+    if (.stack_max_level>.stack_level AND full) then
+       write(unit, &
+         '("----------------------------------------------------------------")')
+      do l = .stack_level+1,.stack_max_level
+      write(unit,'(i3,".",a51,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
+      end
+    end
+  end
+
+  report_file(out)
+  ! Report info about the most recent open file.
+    OUTPUT, optional :: out
+    INT :: unit
+    if (.file_name /= "") then
+      unit = std_system%error_unit
+      if (present(out)) unit = out%unit
+      write(unit,*)
+      write(unit,'(a33)') "Open file most recently accessed:"
+      write(unit,'("File name            ",a43)') trim(self%file_name)
+      write(unit,'("File record number   ",i43)') .file_record
+      write(unit,'("Operation attempted  ",a43)') trim(self%file_operation)
+    end
+  end
+
+end 
