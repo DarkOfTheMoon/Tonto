@@ -1,0 +1,972 @@
+! $Id$
+!-------------------------------------------------------------------------------
+!
+! MOL: roby population analysis routines.
+!
+!-------------------------------------------------------------------------------
+module MOL_ROBY
+
+   use TYPES
+   use ERROR
+   use MM
+
+   use BUFFER
+   use STR
+   use INT
+   use DBL
+   use VEC
+   use IVEC
+   use MAT
+   use MAT3
+   use MAT4
+   use CMAT
+   use CMAT3
+   use OPVEC
+   use OPMAT
+
+   use INPUT
+   use OUTPUT
+   use ARCHIVE
+
+   use FILE
+   use SHELL2
+   use SHELL4
+   use ATOM
+
+   use ATOMVEC
+   use VECVEC
+   use IVECVEC
+   use MATVEC
+   use SCFDATA
+   use VECDIIS
+   use POINTGROUP
+   use XTAL
+   use TIME
+
+   use MOL_COMMON
+   use MOL_XTAL
+   use MOL_IO
+   use MOL_INTEGRALS
+   use MOL_SCF
+   implicit none         
+
+#  include "macros"
+#  include "mol_roby.int"
+
+contains
+
+   make_ANO_data
+   ! Prepare the roby atoms
+      INT :: k,kk,n_no, j
+      MOL, PTR :: mol
+      do k = 1,size( .atom_kind) ! Do an SCF for every different kind of atom
+         mol.create
+         kk = .atom_kind(k)%vec(1)
+         .make_molecule_from_atom(kk,mol)
+         mol%scfdata%output = FALSE
+         mol.scf
+         mol.make_ao_density_matrix
+         mol%pointgroup.create("oh")
+         mol.symmetrise(mol%density_matrix)
+         mol.make_natural_orbitals
+         .atom(kk)%natural_orbitals.create(mol%n_bf, "restricted")
+         .atom(kk)%natural_orbitals%restricted = mol%natural_orbitals%restricted
+         .atom(kk)%occupations.create(mol%n_bf, "restricted")
+         .atom(kk)%occupations%restricted = mol%occupation%restricted
+         n_no = .atom(kk)%occupations%restricted.no_of_elements_larger_than(0.05d0)
+         .out.show("n_no=",n_no)
+!         D(k)%mat.create(mol%n_bf,mol%n_bf)  
+!         D(k)%mat.to_product(NO(k)%mat(:,1:n_no),NO(k)%mat(:,1:n_no),transpose_b=TRUE)
+         .out.flush
+         .out.text("Occupation numbers for atom "// k.to_str.trim//":")
+         .out.flush
+         .out.put(.atom(kk)%occupations%restricted,"column")
+         .out.flush
+         .out.text("Natural orbitals for atom "// k.to_str.trim//":")
+         .out.put(.atom(kk)%natural_orbitals%restricted)
+         do j = 2, size(.atom_kind(k)%vec)
+            .atom( .atom_kind(k)%vec(j))%natural_orbitals => .atom(kk)%natural_orbitals
+            .atom( .atom_kind(k)%vec(j))%occupations => .atom(kk)%occupations
+         end
+         mol%atom.nullify_ptr_part ! do not destroy these
+         nullify(mol%basis)        ! do not destroy this
+         mol.destroy
+      end
+   end
+
+   prepare_roby_data(S)  [leaky]
+   ! provides the data required to perform the Roby population analysis
+   MAT, PTR :: S
+   INT :: n_k
+      .atom.make_atom_kind_list( .atom_kind)
+      .atom.make_atom_kind_map( .atom_kind_map)
+      n_k = size( .atom_kind)
+      if ( .mult /= 1) then
+         .make_ANSO_data
+      else
+         .make_ANO_data
+      end
+      .atom.make_atom_basis_fn_limits(.first, .last)
+      S.create( .n_bf, .n_bf); .get_overlap_matrix(S)
+   end
+   
+   roby_population_analysis
+   ! directs the complete Roby population analysis of a molecule
+   VEC, PTR :: n1, less
+   MAT, PTR :: n2
+   IVEC, PTR :: comb
+   INT :: i, j
+   MATVEC, PTR :: P
+   MAT, PTR :: S, P2, index, cov
+   DBL :: bi, c, d1, d2
+   STR :: word
+      .prepare_roby_data(S)
+      n1.create( .n_atom); less.create( .n_atom)
+      less.zero
+      n2.create( .n_atom, .n_atom); index.create( .n_atom, .n_atom)
+      cov.create( .n_atom, .n_atom)
+      P.create( .n_atom)
+      do i = 1, .n_atom
+         comb.create(1); comb(1)=i
+         P(i)%mat.create( .atom(i).n_bf, .atom(i).n_bf)
+         n1(i) = .calc_population( comb, S, P(i)%mat) 
+         comb.destroy
+      end
+      do i = 1, .n_atom
+        do j = 1, .n_atom
+         if (.atom.not_bonded(i,j)) cycle
+         if (j<=i) cycle
+         comb.create(2); comb = (/i, j/)
+         P2.create( .atom(i).n_bf + .atom(j).n_bf, .atom(i).n_bf + .atom(j).n_bf)
+         n2(i,j) = .calc_population( comb, S, P2) 
+         n2(j,i) = n2(i,j)
+         .calc_index(i, j, P(i)%mat, P(j)%mat, S, d1, d2, index(i,j), cov(i,j), P2) 
+         less(i) = (n1(i) + n1(j) - n2(i,j))*(d2/(d1+d2)) + less(i)
+         less(j) = less(j) + (n1(i) + n1(j) -n2(i,j))*(d1/(d1+d2))
+         cov(j,i) = cov(i,j); index(j,i)=index(i,j)
+         comb.destroy; P2.destroy
+        end
+      end
+      .put_roby_populations( n1, n2, less, index, cov)
+      read_loop: do
+         .in.read(word)
+         select case(word)
+            case("end");        exit read_loop
+            case("bond");       .read_atoms_to_bond(i, j)
+                .calc_index( i, j, P(i)%mat, P(j)%mat, S, d1,d2, bi,c)
+                .out.put("Atoms"// i.to_str // "and" // j.to_str ); .out.flush
+                .out.put("Bond index:"); .out.put(bi); .out.flush
+                .out.put("%Covalency:"); .out.put(c); .out.flush
+            case("shared");     .read_atoms_to_share( S)
+         end
+      end do read_loop
+      S.destroy; n1.destroy; n2.destroy; P.destroy; less.destroy 
+      cov.destroy; index.destroy
+   end
+
+   calc_index(a, b, P_A, P_B, O, l, l2, bond_index, p, P_T)
+   ! calculates the bond_index for two atoms
+   MAT, PTR, optional :: P_T
+   MAT, PTR :: O, SO, SH, SI, P_A, P_B, P_AB, C, S, SA, SB
+   MAT, PTR :: theta_s, theta_c, C_tilda, S_tilda
+   MAT, PTR :: tilda_ts, tilda_tc, SA_AB, SB_AB
+   VEC, PTR :: sval, cval, s_m, c_m, tmp, covalency, ionicity, c_a, c_b
+   IVEC, PTR :: comb, a_m, c_pair, s_pair
+   DBL :: P12, total_c, total_i, bond_index, l, l2, p
+   INT :: n_a, n_b, n_ab, i, j, a, b
+      comb.create(2)
+      comb = (/a, b/)
+      n_a = .atom(a).n_bf
+      n_b = .atom(b).n_bf
+      n_ab = n_a + n_b
+      SO.create(n_ab, n_ab); SH.create(n_ab, n_ab); SI.create(n_ab, n_ab)
+      SO(1:n_a, 1:n_a) = O( .first(a): .last(a), .first(a): .last(a) )
+      SO(n_a + 1 : n_ab, n_a + 1 : n_ab) = O( .first(b): .last(b), .first(b): .last(b) )
+      SO(n_a + 1 : n_ab, 1 : n_a) = O( .first(b): .last(b), .first(a): .last(a) )
+      SO(1:n_a, n_a + 1 : n_ab) = O( .first(a): .last(a), .first(b): .last(b) )
+      if (present(P_T)) then
+         P_AB => P_T
+      else
+         P_AB.create(n_ab, n_ab)
+         P12 = .calc_population(comb, O, P_AB)
+      end
+      C.create(n_ab, n_ab); C_tilda.create(n_ab, n_ab)
+      theta_c.create(n_ab, n_ab)
+      tilda_tc.create(n_ab, n_ab)
+      theta_s.create(n_ab, n_ab)
+      tilda_ts.create(n_ab, n_ab)
+      sval.create(n_ab)
+      cval.create(n_ab)
+      S.create(n_ab, n_ab); S_tilda.create(n_ab, n_ab)
+      C.zero; S.zero
+      C(1:n_a, 1:n_a) = P_A
+      C(n_a+1:n_ab, n_a+1:n_ab) = P_B
+      C = C - P_AB
+      S(1:n_a, 1:n_a) = P_A
+      S(n_a+1:n_ab, n_a+1:n_ab) = P_B*(-1)
+      if (NOT (present(P_T))) P_AB.destroy
+      SH.to_sqrt(SO)
+      SI.to_inverse_of(SH)
+      C.back_transform(C_tilda, SH); S.back_transform(S_tilda, SH)
+      C_tilda.solve_eigenproblem(cval, tilda_tc)
+      S_tilda.solve_eigenproblem(sval, tilda_ts)
+      theta_c.to_product(SI, tilda_tc)
+      theta_s.to_product(SI, tilda_ts)
+      .archive_orbitals( theta_c, theta_s, a, b)
+      SO.destroy; SO.create(n_ab, .n_bf); SA.create(n_a, .n_bf); SB.create(n_b, .n_bf)
+      SO(   1:n_a , : ) = O( .first(a): .last(a), : )
+      SO(n_a+1:n_ab, : ) = O( .first(b): .last(b), : )
+      SA = O( .first(a): .last(a), :)
+      SB = O( .first(b): .last(b), :)
+      SA_AB.create(n_a, n_ab); SB_AB.create(n_b, n_ab)
+      SA_AB(:, 1:n_a) = O( .first(a): .last(a), .first(a): .last(a))
+      SA_AB(:, n_a+1:n_ab) = O( .first(a): .last(a), .first(b): .last(b))
+      SB_AB(:, 1:n_a) = O( .first(b): .last(b), .first(a): .last(a))
+      SB_AB(:, n_a+1:n_ab) = O( .first(b): .last(b), .first(b): .last(b))
+      c_pair.create(n_ab); s_pair.create(n_ab)
+      c_pair.zero; s_pair.zero
+      do i = 1, n_ab
+         if (abs(cval(i)) < 1.0d-05) then
+            c_pair(i) = 0
+         else if (abs(cval(i)) > 0.99999) then
+            c_pair(i) = -1
+         else
+            do j = 1, i - 1
+               if (any(c_pair == j)) cycle
+               if (abs(cval(j) + cval(i)) < 1.0d-05) then 
+                  if (cval(i) > 0) then
+                     c_pair(i)=j
+                  else
+                     c_pair(i)=0
+                  end
+               end
+            end
+         end
+      end
+      do i = 1, n_ab
+         if (abs(sval(i)) < 1.0d-05) then
+            s_pair(i) = 0
+         else if (abs(sval(i)) > 0.99999) then
+            s_pair(i)=-1
+         else
+            do j = 1, i - 1
+               if (any(s_pair == j)) cycle
+               if (abs(sval(j) + sval(i)) < 1.0d-05) then 
+                  if (sval(i)>0) then
+                     s_pair(i)=j
+                  else
+                     s_pair(i)=0
+                  end
+               end
+            end
+         end
+      end
+      c_m.create(n_ab); s_m.create(n_ab); tmp.create( n_ab)
+      c_a.create(n_ab); c_b.create(n_ab)
+      do i = 1, n_ab 
+        tmp = theta_c(:,i)
+        c_m(i) = .calculate_theta_population( tmp(:), SO)
+        c_a(i) = .calculate_orbital_population( tmp(:), SA, SA_AB, P_A)
+        c_b(i) = .calculate_orbital_population( tmp(:), SB, SB_AB, P_B)
+        tmp = theta_s(:,i)
+        s_m(i) = .calculate_theta_population( tmp(:), SO)
+      end
+      covalency.create( n_ab); ionicity.create( n_ab); l = 0; l2 = 0
+      .out.flush; .out.dash(dbl_fields = 1)
+      .out.put("Bond Index Data:"); .out.flush
+      .out.put( .atom(a)%label.trim // " and " // .atom(b)%label.trim ); .out.flush
+      .out.dash(dbl_fields = 1)
+      .out.put("Orbital Angles:"); .out.flush
+      .out.dash(dbl_fields = 1)
+      do i = 1, n_ab
+         if (c_pair(i) <= 0) then
+           covalency(i) = 0
+         else
+           covalency(i) = (c_m(i) - c_m(c_pair(i)))/2
+           l2 = l2 + c_b(i) + c_b(c_pair(i))
+           l = l + c_a(i) + c_a(c_pair(i))
+           .out.put_dbl( 180 * cval(i).arccos / PI); .out.flush
+         end
+      end
+      .out.dash(dbl_fields = 1)
+      do i = 1, n_ab
+         if (s_pair(i) == 0) then
+           ionicity(i) = 0
+         else if (s_pair(i) < 0) then
+           ionicity(i) = 0
+         else
+           ionicity(i) = (s_m(i) - s_m(s_pair(i)))/2
+         end
+      end      
+      total_i = ionicity.sum_elements; total_c = covalency.sum_elements
+      bond_index = sqrt( total_i**2 + total_c**2)
+      p = (total_c/bond_index)**2
+      ionicity.destroy; covalency.destroy; SO.destroy; SH.destroy
+      C.destroy; S.destroy; theta_c.destroy; theta_s.destroy; SI.destroy
+      S_tilda.destroy; C_tilda.destroy; tilda_ts.destroy; tilda_tc.destroy
+      cval.destroy; sval.destroy; s_m.destroy; c_m.destroy; s_pair.destroy
+      comb.destroy; tmp.destroy; c_pair.destroy  
+      c_a.destroy; c_b.destroy; SA.destroy; SB.destroy   
+      SA_AB.destroy; SB_AB.destroy
+   end   
+
+   archive_orbitals( mat1, mat2, a, b)
+   ! archives the orbitals created in the previous routine
+   MAT, PTR :: mat1, mat2, tmp_mat1, tmp_mat2
+   INT :: a, b, j, count
+   ARCHIVE :: archive
+      tmp_mat1.create(.n_bf, .n_bf)
+      tmp_mat2.create( .n_bf, .n_bf)
+      tmp_mat1.zero; tmp_mat2.zero
+      count = 0
+      tmp_mat1( 1:size(mat1,1), .first(a) : .last(a)) & 
+         = mat1(:, 1 : .atom(a)%basis%n_bf)
+      tmp_mat2( 1:size(mat2,1), .first(a) : .last(a)) &
+         = mat2(:, 1 : .atom(a)%basis%n_bf)
+      count = count + .atom(a)%basis%n_bf
+      tmp_mat1( 1:size(mat1,1), .first(a) : .last(a)) &
+          = mat1(: , .atom(a)%basis%n_bf + 1 : size(mat1, 2))
+      tmp_mat2(1:size(mat2,1), count + 1 : count + .atom(a)%basis%n_bf) &
+          = mat2(:, .atom(a)%basis%n_bf + 1 : size(mat2, 2))
+      archive.set( .name, "covalent_orbitals")
+      archive.write( tmp_mat1)
+      archive.set( .name, "ionic_orbitals")
+      archive.write( tmp_mat2)
+      tmp_mat1.destroy; tmp_mat2.destroy   
+    end  
+
+   calculate_orbital_population( orbital, S, Sconv, P) result(pop)
+   ! calculates roby population for a given orbital
+   MAT, PTR :: P, Sconv
+   VEC :: orbital
+   MAT, PTR :: S, D, X, Y
+   INT :: n, i, j
+   DBL :: pop
+      n = size( orbital)
+      D.create(n, n)
+      X.create( size(P,1), size(P,1))
+      do i = 1, n
+        do j = 1, n
+           D(i,j) = orbital(i)*orbital(j)
+        end
+      end
+      D.back_transform(X, Sconv)
+      Y.create(size(P,1), size(P,1))
+      Y.to_product(X, P)
+      Y = matmul(P,Y)
+      X.destroy; X.create(.n_bf, .n_bf)
+      Y.change_basis(X, S)
+      D.destroy; D.create( .n_bf, .n_bf)
+      D.to_product(X, .density_matrix%restricted)
+      pop = D.trace
+      D.destroy; X.destroy; Y.destroy
+   end
+
+   calculate_theta_population( orbital, S) result(pop)
+   ! calculates roby population for a given orbital
+   VEC :: orbital
+   MAT, PTR :: S, D, X
+   INT :: n, i, j
+   DBL :: pop
+      n = size( orbital)
+      D.create(n, n)
+      X.create(.n_bf, .n_bf)
+      do i = 1, n
+        do j = 1, n
+           D(i,j) = orbital(i)*orbital(j)
+        end
+      end
+      D.change_basis(X, S)
+      D.destroy; D.create( .n_bf, .n_bf)
+      D.to_product(X, .density_matrix%restricted)
+      pop = D.trace
+      D.destroy; X.destroy
+   end
+  
+   read_atoms_to_bond( a, b)
+   ! reads in from the buffer the two atoms for the bond_index routine
+      INT :: a, b
+      ENSURE(.in%buffer%n_items==3, "Two atoms required for bond index calculation.")
+      a = .in%buffer.get_item.to_int      
+      b = .in%buffer.get_item.to_int
+   end
+   
+   read_atoms_to_share( S)
+   ! runs the get_shared_population procedure
+   ! after reading in the atom list
+      DBL :: shared
+      IVEC, PTR :: sel
+      MAT, PTR :: S
+      STRVEC, PTR :: comb_list
+      VEC, PTR :: population 
+      INT :: i, total_combs
+      sel.create( .in%buffer%n_items - 1)
+      do i = 1, .in%buffer%n_items
+         sel(i) = .in%buffer.get_item.to_int
+      end
+      do i = 1, size(sel)
+         total_combs = total_combs + size(sel).choose(i)   ! gets number of combinations
+      end
+      population.create( total_combs)
+      comb_list.create( total_combs)
+      shared = .get_shared_population( sel, population, comb_list, S)
+      .out.dash(dbl_fields = 3)
+      .out.text("Shared Population analysis")
+      .out.flush
+      .out.dash(dbl_fields = 3)
+      do i = 1, size( sel)
+         .out.put( .atom(sel(i))%label, int_width=TRUE, flush=1)
+      end
+      .out.flush
+      .out.put(shared)
+      .out.flush
+      .out.dash(dbl_fields = 3)
+      sel.destroy
+      comb_list.destroy
+      population.destroy
+   end
+   
+   get_shared_population( sel, p, c_l, S) result(sp)
+   ! calculates the shared population of "atoms"
+      IVEC, PTR :: sel
+      IVEC, PTR :: comb
+      STRVEC :: c_l
+      IMAT, PTR :: comb_mat
+      MAT, PTR :: S
+      DBL :: sp
+      VEC, PTR :: pop, p
+      INT :: k, m, count
+      sp = 0
+      pop.create( size(sel))
+      count = 0
+      do k = 1, size(sel)
+         pop(k) = 0
+         comb_mat => sel.get_combination_matrix_from(k)
+         comb.create(k)
+         do m = 1, nint( size(sel).choose(k))
+            count = count + 1
+            comb = comb_mat(:, m)
+            p(count) = .calc_population(comb, S)
+            c_l(count) = comb.to_str
+            pop(k) = pop(k) + p(count)
+         end      
+         comb.destroy
+         sp = sp - ((-1)**k)*pop(k)
+      end
+      comb_mat.destroy; pop.destroy
+   end
+   
+   calc_population( comb, S, P) result(pop)
+   ! gives the total population of the subgrouping of atoms determined by permutation
+      MAT, PTR, optional :: P   ! if the projection matrix is to be returned
+      IVEC, PTR :: comb, sub_f, sub_l, bases, occs
+      INT :: i, a, aa
+      INT :: total_occs, total_bases
+      INT :: basis_count, orb_count, bbasis_count
+      DBL :: pop
+      MAT, PTR :: S, W, X, Y
+      ! a bit of variable switching ...
+      occs.create(size(comb)); bases.create(size(comb))
+      sub_f.create(size(comb)); sub_l.create(size(comb))
+      do a = 1, size(comb)
+        sub_f(a) = .first( comb(a))
+        sub_l(a) = .last( comb(a))
+        occs(a) = .atom(a)%occupations%restricted.no_of_elements_larger_than(0.05d0)
+        bases(a) = .atom(a).n_bf
+      end
+      total_occs = occs.sum_elements
+      total_bases = bases.sum_elements
+      ! make Natural Orbitals matrix
+      W.create(total_bases, total_occs); W = ZERO
+      basis_count = 0; orb_count = 0
+      do a = 1, size(comb)
+         W(basis_count + 1 : basis_count + bases(a), orb_count + 1 : orb_count + occs(a)) &
+          = .atom(comb(a))%natural_orbitals%restricted( : , 1 : occs(a))
+         basis_count = basis_count + bases(a)
+         orb_count = orb_count + occs(a)
+      end      
+      ! make overlap matrix...Y
+      Y.create(total_bases, total_bases); Y = ZERO
+      basis_count = 0
+      do a = 1, size(comb)
+         bbasis_count = 0
+         do aa = 1, size(comb)
+            Y(basis_count + 1 : basis_count + bases(a), bbasis_count + 1 : bbasis_count + bases(aa) ) &
+             = S( sub_f(a) : sub_l(a), sub_f(aa) : sub_l(aa) )
+            bbasis_count = bbasis_count + bases(aa)
+         end 
+         basis_count = basis_count + bases(a)
+      end
+      X.create(total_occs, total_occs)
+      Y.change_basis(X,W); Y.destroy
+      Y.create(total_occs, total_occs)
+      Y.to_inverse_of(X); X.destroy
+      X.create(total_bases, total_bases)
+      Y.back_transform(X,W)
+      if (present(P)) P=X
+      Y.destroy
+      W.destroy
+      W.create(.n_bf, .n_bf)
+      Y.create(total_bases, .n_bf)
+      basis_count = 0
+      do a = 1, size(comb)
+         Y(basis_count + 1:basis_count + bases(a) ,:) = S( sub_f(a):sub_l(a),:)
+         basis_count = basis_count + bases(a)
+      end
+      X.change_basis(W,Y)
+      X.destroy
+      X.create(.n_bf, .n_bf)
+      X.to_product(W, .density_matrix%restricted)
+      pop = X.trace
+      X.destroy; Y.destroy; W.destroy
+      sub_f.destroy; sub_l.destroy; bases.destroy; occs.destroy
+   end
+
+   put_roby_populations(n1, n2, less, index, covalency)
+   ! Put .out the roby populations
+      VEC  :: n1
+      VEC, PTR :: less, charge
+      MAT, PTR :: index, covalency
+      DBL :: polarization
+      MAT  :: n2
+      INT :: k,l,kk,ll,a,b
+      STR :: symbol_a,symbol_b
+      charge.create( .n_atom)
+      do a = 1, .n_atom
+         charge(a) = .atom(a)%atomic_number - n1(a) + less(a)
+      end
+      polarization = charge.sum_elements - .charge
+      if ( abs(polarization) > 1.0d-05) charge = charge - polarization/( .n_atom)
+      .out.flush
+      .out.text("Roby populations",flush=2)
+      .out.dash(int_fields=1,dbl_fields=2)
+      .out.put("Atom",int_width=TRUE)
+      .out.put("Population")
+      .out.put("Roby Charge *",flush=1)
+      .out.dash(int_fields=1,dbl_fields=2)
+      do k = 1,size( .atom_kind)
+      do kk = 1,size( .atom_kind(k)%vec)
+         a = .atom_kind(k)%vec(kk)
+         symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         .out.put( symbol_a,int_width=TRUE)
+         .out.put( n1(a))
+         .out.put( charge(a))
+         .out.flush
+      end
+      end
+      .out.dash(int_fields=1,dbl_fields=2)
+      .out.put("* Roby charges assume negligible multiple overlap.")
+      .out.flush
+      .out.dash(int_fields=1,dbl_fields=2)
+      .out.flush
+      .out.text("Pair populations:",flush=2)
+      .out.dash(int_fields=2,dbl_fields=4)
+      .out.put("Atom_a",int_width=TRUE)
+      .out.put("Atom_b",int_width=TRUE)
+      .out.put("n_ab")
+      .out.put("s_ab")
+      .out.put("Bond Index")
+      .out.put("% Covalency",flush=1)
+      .out.dash(int_fields=2,dbl_fields=4)
+      do k = 1,size( .atom_kind)
+      do kk = 1,size( .atom_kind(k)%vec)
+      do l = 1,size( .atom_kind)
+      do ll = 1,size( .atom_kind(l)%vec) 
+         a = .atom_kind(k)%vec(kk)
+         b = .atom_kind(l)%vec(ll)
+         if (a==b) cycle
+         if ( .atom.not_bonded(a,b)) cycle
+         symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         symbol_b = .atom(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+         .out.put(symbol_a,int_width=TRUE)
+         .out.put(symbol_b,int_width=TRUE)
+         .out.put(n2(a,b))
+         .out.put(n1(a)+n1(b)-n2(a,b))
+         .out.put(index(a,b))
+         .out.put(covalency(a,b))
+         .out.flush
+      end
+      end
+      end
+      end
+      .out.dash(int_fields=2,dbl_fields=4); charge.destroy
+   end
+
+   dylans_population_analysis
+   ! Analyse the SCF orbitals into dylans populations
+      INT :: n_k
+      MAT, PTR  :: p
+      VEC, PTR  :: n1
+      MAT, PTR  :: n2
+      MAT3, PTR :: n3
+      TIME :: timer
+      ENSURE( .density_matrix.created,"need a density matrix")
+      .out.flush
+      .out.text("Starting dylans_population_analysis ...")
+      timer.start
+      .density_matrix.convert("unrestricted",factor=HALF)
+      .density_matrix%restricted.destroy
+      .make_natural_orbitals
+      .atom.make_atom_kind_list( .atom_kind)
+      .atom.make_atom_kind_map( .atom_kind_map)
+      n_k = size( .atom_kind)
+      p.create(.n_atom+1,.n_atom+1)
+      n1.create(.n_atom)
+      n2.create(.n_atom,.n_atom)
+      n3.create(.n_atom,.n_atom,.n_atom)
+      .make_ANSO_data
+      .make_dylans_populations(p,n1)
+      .put_dylans_populations(p,n1)
+!      .make_dylans_populations(p,n1,n2,n3)
+!      .put_dylans_populations(p,n1,n2,n3)
+      n3.destroy; n2.destroy; n1.destroy; p.destroy
+      .out.put( timer.time_taken("dylans_population_analysis"))
+   end
+
+   make_ANSO_data
+   ! Prepare the atomic natural spin orbital (ANSO) data
+      INT :: k,kk,a
+      MOL, PTR :: mol
+      .atom.make_atom_basis_fn_limits( .first, .last)
+      do k = 1,size( .atom_kind) ! Do an SCF for every different kind of atom
+         mol.create
+         kk = .atom_kind(k)%vec(1)
+         .make_molecule_from_atom(kk,mol)
+         mol%scfdata%output = FALSE
+         mol.scf
+         mol%density_matrix.convert("unrestricted",factor=HALF)
+         mol%density_matrix%restricted.destroy
+         mol%pointgroup.create("oh")
+         mol.symmetrise(mol%density_matrix)
+         mol.make_natural_orbitals
+         .atom(kk)%natural_orbitals.create(mol%n_bf, "alpha")
+         .atom(kk)%natural_orbitals.create(mol%n_bf, "beta")
+         .atom(kk)%natural_orbitals%alpha = mol%natural_orbitals%alpha
+         .atom(kk)%natural_orbitals%beta  = mol%natural_orbitals%beta
+         .atom(kk)%occupations.create(mol%n_bf, "alpha")
+         .atom(kk)%occupations.create(mol%n_bf, "beta")
+         .atom(kk)%occupations%alpha = mol%occupation%alpha
+         .atom(kk)%occupations%beta = mol%occupation%beta
+         do a = 2, size(.atom_kind(k)%vec)
+            .atom( .atom_kind(k)%vec(a))%natural_orbitals => .atom(kk)%natural_orbitals
+            .atom( .atom_kind(k)%vec(a))%occupations => .atom(kk)%occupations
+         end
+         .out.flush
+         .out.text("Alpha occupation numbers for atom "// k.to_str.trim//":")
+         .out.put(.atom(kk)%occupations%alpha,"column")
+         .out.text("Beta occupation numbers for atom "// k.to_str.trim//":")
+         .out.put(.atom(kk)%occupations%beta,"column")
+         .out.text("Alpha natural orbitals for atom "// k.to_str.trim//":")
+         .out.put(.atom(kk)%natural_orbitals%alpha)
+         .out.text("Beta natural orbitals for atom "// k.to_str.trim//":")
+         .out.put(.atom(kk)%natural_orbitals%beta)
+         mol%atom.nullify_ptr_part ! do not destroy these
+         nullify(mol%basis)        ! do not destroy this
+         mol.destroy
+      end
+   end
+
+   make_dylans_populations(p,n1)
+!   make_dylans_populations(p,n1,n2,n3,atom_kind_map,NOa,NOb,occa,occb)
+   ! Make dylans populations, for closed shells only
+      MAT :: p
+      VEC  :: n1
+!      MAT  :: n2
+!      MAT3 :: n3
+      INT :: k,a,fa,la,n,na
+      DBL :: pop
+      MAT, PTR :: S,D,W,X
+!     MAT, PTR :: Y
+!     INT :: b,c,fb,lb,fc,lc,l,m,mm,nb,nc,nabc,nk,nl,nm,nkl,nklm
+!     DBL :: bot
+!     VEC, PTR :: lambda
+      .atom.make_atom_basis_fn_limits( .first, .last)
+      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+      D.create(.n_bf,.n_bf)
+      D.from_diagonal(sqrt(.occupation%alpha))
+      D.back_transform(.natural_orbitals%alpha)
+      p = ZERO
+      n = .n_atom+1
+      p(n,n) = .n_e
+      n1 = ZERO
+      do a = 1,.n_atom
+         k = .atom_kind_map(a)
+         .out.show("a=",a)
+         .out.show("k=",k)
+         fa = .first(a); la = .last(a); na = la-fa+1
+         X.create(na,na)
+         X.from_diagonal(sqrt( .atom(a)%occupations%alpha))
+         X.back_transform( .atom(a)%natural_orbitals%alpha)
+         W.create(.n_bf,.n_bf)
+         X.change_basis(W,S(fa:la,:))
+         pop = W.trace_product_with(D)
+         X.from_diagonal(sqrt( .atom(a)%occupations%beta))
+         X.back_transform( .atom(a)%natural_orbitals%beta)
+         X.change_basis(W,S(fa:la,:))
+         pop = pop + W.trace_product_with(D)
+         p(a,a) = .atom(a)%atomic_number
+         p(a,n) = pop
+         p(n,a) = pop
+         n1(a) = pop*pop/p(a,a)
+         W.destroy
+         X.destroy
+      end
+!     n2 = ZERO
+!     do k = 1,n_k
+!     do kk = 1,size(atom_kind(k)%vec) 
+!     do l = 1,n_k
+!     do ll = 1,size(atom_kind(l)%vec) 
+!        a = atom_kind(k)%vec(kk)
+!        b = atom_kind(l)%vec(ll)
+!        if (a<=b) cycle
+!      ! if ( .atom.not_bonded(a,b)) cycle
+!        fa = first(a); la = last(a); na = la-fa+1
+!        fb = first(b); lb = last(b); nb = lb-fb+1
+!        nk = size(NO(k)%mat,2)
+!        nl = size(NO(l)%mat,2)
+!        nab = na + nb
+!        nkl = nk + nl
+!        lambda.create(nkl)
+!        lambda(   1:nk ) = sqrt(occ(k)%vec)
+!        lambda(nk+1:nkl) = sqrt(occ(l)%vec)
+!        W.create(nab,nkl)
+!        W = ZERO
+!        W(   1:na ,   1:nk ) = NO(k)%mat
+!        W(na+1:nab,nk+1:nkl) = NO(l)%mat
+!        Y.create(nab,nab)
+!        Y(   1:na ,   1:na ) = S(fa:la,fa:la)
+!        Y(na+1:nab,na+1:nab) = S(fb:lb,fb:lb)
+!        Y(na+1:nab,   1:na ) = S(fb:lb,fa:la)
+!        Y(   1:na ,na+1:nab) = S(fa:la,fb:lb)
+!        X.create(nkl,nkl)
+!        Y.change_basis(X,W)
+!        Y.destroy
+!        Y.create(nkl,nkl)
+!        Y.to_inverse_of(X)  ! Y = S^-1
+!        X.destroy
+!        X.create(nkl,nkl)
+!        X.to_product_with_diagonal(lambda,Y)
+!        Y.destroy
+!        Y.create(nab,nab)
+!        X.back_transform(Y,W)
+!        X.destroy
+!        W.destroy
+!        W.create(.n_bf,.n_bf)
+!        X.create(nab,.n_bf)
+!        X(   1:na ,:) = S(fa:la,:)
+!        X(na+1:nab,:) = S(fb:lb,:)
+!        Y.change_basis(W,X)
+!        W = transpose(W)
+!        pop = W.trace_product_with(.density_matrix%restricted)
+!        bot = W.trace_product_with(X)
+!        pop = pop*pop/bot
+!        n2(a,b) = pop
+!        n2(b,a) = pop
+!        X.destroy
+!        W.destroy
+!        Y.destroy
+!        lambda.destroy
+!     end
+!     end
+!     end
+!     end
+!     n3 = ZERO
+!     do k = 1,n_k
+!     do kk = 1,size(atom_kind(k)%vec) 
+!     do l = 1,n_k
+!     do ll = 1,size(atom_kind(l)%vec) 
+!     do m = 1,n_k
+!     do mm = 1,size(atom_kind(m)%vec) 
+!        a = atom_kind(k)%vec(kk)
+!        b = atom_kind(l)%vec(ll)
+!        c = atom_kind(m)%vec(mm)
+!        if (a<=b OR b<=c) cycle
+!      ! if (a==b OR b==c OR c==a) cycle
+!      ! if ( .atom.not_bonded(a,b)) cycle
+!      ! if ( .atom.not_bonded(b,c)) cycle
+!        fa = first(a); la = last(a); na = la-fa+1
+!        fb = first(b); lb = last(b); nb = lb-fb+1
+!        fc = first(c); lc = last(c); nc = lc-fc+1
+!        nk = size(NO(k)%mat,2)
+!        nl = size(NO(l)%mat,2)
+!        nm = size(NO(m)%mat,2)
+!        nabc = na + nb + nc
+!        nklm = nk + nl + nm
+!        lambda.create(nkl)
+!        lambda(      1:nk   ) = sqrt(occ(k)%vec)
+!        lambda(nk   +1:nk+nl) = sqrt(occ(l)%vec)
+!        lambda(nk+nl+1:nklm ) = sqrt(occ(m)%vec)
+!        W.create(nabc,nklm)
+!        W = ZERO
+!        W(      1:na   ,      1:nk   ) = NO(k)%mat
+!        W(na   +1:na+nb,nk   +1:nk+nl) = NO(l)%mat
+!        W(na+nb+1:nabc ,nk+nl+1:nklm ) = NO(m)%mat
+!        Y.create(nabc,nabc)
+!        Y(      1:na   ,      1:na   ) = S(fa:la,fa:la)
+!        Y(na   +1:na+nb,na   +1:na+nb) = S(fb:lb,fb:lb)
+!        Y(na+nb+1:nabc ,na+nb+1:nabc ) = S(fc:lc,fc:lc)
+!        Y(na+1:nab,   1:na ) = S(fb:lb,fa:la)
+!        Y(   1:na ,na+1:nab) = S(fa:la,fb:lb)
+!        Y(na+nb+1:nabc,      1:na  ) = S(fc:lc,fa:la)
+!        Y(      1:na  ,na+nb+1:nabc) = S(fa:la,fc:lc)
+!        Y(na+nb+1:nabc ,na   +1:na+nb) = S(fc:lc,fb:lb)
+!        Y(na   +1:na+nb,na+nb+1:nabc ) = S(fb:lb,fc:lc)
+!        X.create(nklm,nklm)
+!        Y.change_basis(X,W)
+!        Y.destroy
+!        Y.create(nklm,nklm)
+!        Y.to_inverse_of(X)  ! Y = S^-1
+!        X.destroy
+!        X.create(nklm,nklm)
+!        X.to_product_with_diagonal(lambda,Y)
+!        Y.destroy
+!        Y.create(nabc,nabc)
+!        X.back_transform(Y,W)
+!        X.destroy
+!        W.destroy
+!        W.create(.n_bf,.n_bf)
+!        X.create(nabc,.n_bf)
+!        X(      1:na   ,:) = S(fa:la,:)
+!        X(na   +1:na+nb,:) = S(fb:lb,:)
+!        X(na+nb+1:nabc ,:) = S(fc:lc,:)
+!        Y.change_basis(W,X)
+!        W = transpose(W)
+!        pop = W.trace_product_with(.density_matrix%restricted)
+!        bot = W.trace_product_with(X)
+!        pop = pop*pop/bot
+!        n3(a,b,c) = pop
+!        n3(a,c,b) = pop
+!        n3(b,a,c) = pop
+!        n3(b,c,a) = pop
+!        n3(c,a,b) = pop
+!        n3(c,b,a) = pop
+!        X.destroy
+!        W.destroy
+!        Y.destroy
+!        lambda.destroy
+!     end
+!     end
+!     end
+!     end
+!     end
+!     end
+      D.destroy
+      S.destroy
+   end
+
+   put_dylans_populations(p,n1)
+!   put_dylans_populations(p,n1,n2,n3,atom_kind)
+   ! Put .out the roby populations
+      MAT :: p
+      VEC  :: n1
+!      MAT  :: n2
+!      MAT3 :: n3
+      INT :: k,kk,a,b
+      STR :: symbol_a,symbol_b
+!     INT :: l,m,ll,mm,c
+!     STR :: symbol_c
+      .out.flush
+      .out.text("Dylan's population analysis",flush=2)
+      .out.text("Pair overlaps (last atom is the molecule itself):",flush=2)
+      .out.dash(int_fields=2,dbl_fields=1)
+      .out.put("Atom_a",int_width=TRUE)
+      .out.put("Atom_b",int_width=TRUE)
+      .out.put("p_ab",flush=1)
+      .out.dash(int_fields=2,dbl_fields=1)
+      do a = 1,.n_atom+1
+      do b = 1,a-1
+       ! if ( .atom.not_bonded(a,b)) cycle
+         if (a==.n_atom+1) then; symbol_a = "M"
+         else; symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         end
+         symbol_b = .atom(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+         .out.put(symbol_a,int_width=TRUE)
+         .out.put(symbol_b,int_width=TRUE)
+         .out.put(p(a,b))
+         .out.flush
+      end
+      end
+      .out.dash(int_fields=2,dbl_fields=1)
+      .out.text("Dylan's atomic populations",flush=2)
+      .out.dash(int_fields=1,dbl_fields=1)
+      .out.put("Atom",int_width=TRUE)
+      .out.put("Population",flush=1)
+      .out.dash(int_fields=1,dbl_fields=1)
+      do k = 1,size( .atom_kind)
+      do kk = 1,size( .atom_kind(k)%vec)
+         a = .atom_kind(k)%vec(kk)
+         symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         .out.put(symbol_a,int_width=TRUE)
+         .out.put(n1(a))
+         .out.flush
+      end
+      end
+      .out.dash(int_fields=1,dbl_fields=1)
+!     .out.flush
+!     .out.text("Pair populations:",flush=2)
+!     .out.dash(int_fields=2,dbl_fields=2)
+!     .out.put("Atom_a",int_width=TRUE)
+!     .out.put("Atom_b",int_width=TRUE)
+!     .out.put("n_ab")
+!     .out.put("s_ab",flush=1)
+!     .out.dash(int_fields=2,dbl_fields=2)
+!     do k = 1,size(atom_kind)
+!     do kk = 1,size(atom_kind(k)%vec)
+!     do l = 1,size(atom_kind)
+!     do ll = 1,size(atom_kind(l)%vec) 
+!        a = atom_kind(k)%vec(kk)
+!        b = atom_kind(l)%vec(ll)
+!        if (a==b) cycle
+!      ! if ( .atom.not_bonded(a,b)) cycle
+!        symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+!        symbol_b = .atom(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+!        .out.put(symbol_a,int_width=TRUE)
+!        .out.put(symbol_b,int_width=TRUE)
+!        .out.put(n2(a,b))
+!        .out.put(n1(a)+n1(b)-n2(a,b))
+!        .out.flush
+!     end
+!     end
+!     end
+!     end
+!     .out.dash(int_fields=2,dbl_fields=2)
+!     .out.flush
+!     .out.text("Triple populations:",flush=2)
+!     .out.dash(int_fields=3,dbl_fields=2)
+!     .out.put("Atom_a",int_width=TRUE)
+!     .out.put("Atom_b",int_width=TRUE)
+!     .out.put("Atom_c",int_width=TRUE)
+!     .out.put("n_abc")
+!     .out.put("s_abc",flush=1)
+!     .out.dash(int_fields=3,dbl_fields=2)
+!     do k = 1,size(atom_kind)
+!     do kk = 1,size(atom_kind(k)%vec)
+!     do l = 1,size(atom_kind)
+!     do ll = 1,size(atom_kind(l)%vec) 
+!     do m = 1,size(atom_kind)
+!     do mm = 1,size(atom_kind(m)%vec) 
+!        a = atom_kind(k)%vec(kk)
+!        b = atom_kind(l)%vec(ll)
+!        c = atom_kind(m)%vec(mm)
+!        if (a==b OR b==c OR c==a) cycle
+!      ! if ( .atom.not_bonded(a,b)) cycle
+!      ! if ( .atom.not_bonded(b,c)) cycle
+!        symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+!        symbol_b = .atom(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+!        symbol_c = .atom(c).chemical_symbol.trim // " (" // c.to_str.trim // ")"
+!        .out.put(symbol_a,int_width=TRUE)
+!        .out.put(symbol_b,int_width=TRUE)
+!        .out.put(symbol_c,int_width=TRUE)
+!        .out.put(n3(a,b,c))
+!        .out.put(n1(a)+n1(b)+n1(c)-n2(a,b)-n2(b,c)-n2(c,a)+n3(a,b,c))
+!        .out.flush
+!     end
+!     end
+!     end
+!     end
+!     end
+!     end
+!     .out.dash(int_fields=3,dbl_fields=2)
+   end
+
+end 
