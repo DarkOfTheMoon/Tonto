@@ -4331,8 +4331,7 @@ contains
   ! Do a Hartree-Fock SCF calculation. The following :
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! are produced as results.
-    OPMAT* :: dP,dF,old_P,old_F,error,old_MO,MO,F_backup,MO_backup
-!  DBL :: lambda,Escf
+    OPMAT* :: dP,dF,old_P,old_F,error
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     ! Initialize cycles
@@ -4340,10 +4339,6 @@ contains
     .make_fock_matrix(core=TRUE)
     dP.create(.n_bf); old_P.create_copy(.density_matrix)
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
-  old_MO.create_copy(.molecular_orbitals)
-  MO.create_copy(.molecular_orbitals)
-!  F_backup.create_copy(.fock_matrix)
-!  MO_backup.create_copy(.molecular_orbitals)
     ! Zeroth iteration.
     .scfdata.reset(.nuclear_energy,.scf_energy,.kinetic_energy)
     .make_scf_error(error) 
@@ -4351,7 +4346,6 @@ contains
     .scfdata.put_results
     do
       if (.scfdata.scf_done) exit
-!  old_MO.set_to(.molecular_orbitals)
       .extrapolate_scf(error)
       old_F.set_to(.fock_matrix)
       .update_molecular_orbitals
@@ -4364,35 +4358,10 @@ contains
       .fock_matrix.set_to(old_F)
       .fock_matrix.plus(dF)
       old_P.set_to(.density_matrix)
-
-!  if (MO.spinorbital_kind=="restricted") then
-!  F_backup.set_to(.fock_matrix)
-!  MO_backup.set_to(.molecular_orbitals)
-!  lambda = ZERO
-!  .camp_king(MO.restricted,old_MO.restricted,.molecular_orbitals.restricted,old_F.restricted,.fock_matrix.restricted,lambda)
-!  .fock_matrix.set_to(F_backup)
-!  .molecular_orbitals.set_to(MO_backup)
-!  .density_matrix.set_to(old_P)
-!  lambda = HALF
-!  .camp_king(MO.restricted,old_MO.restricted,.molecular_orbitals.restricted,old_F.restricted,.fock_matrix.restricted,lambda)
-!  .fock_matrix.set_to(F_backup)
-!  .molecular_orbitals.set_to(MO_backup)
-!  .density_matrix.set_to(old_P)
-!  lambda = ONE
-!  .camp_king(MO.restricted,old_MO.restricted,.molecular_orbitals.restricted,old_F.restricted,.fock_matrix.restricted,lambda)
-!  .fock_matrix.set_to(F_backup)
-!  .molecular_orbitals.set_to(MO_backup)
-!  .density_matrix.set_to(old_P)
-!  end
-
       .scfdata.update(.scf_energy,.kinetic_energy)
-      .make_scf_error(error) 
+      .make_scf_error(error)
       .scfdata.put_results
     end
-!  F_backup.destroy
-!  MO_backup.destroy
-!  MO.destroy
-  old_MO.destroy
     error.destroy
     dF.destroy
     dP.destroy
@@ -6666,7 +6635,8 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT* :: dP,dF,old_P,old_F,error,constraint
+    OPMAT* :: dP,dF,old_P,old_F,error,constraint,old_MO
+    DBL :: lambda
 
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
@@ -6676,6 +6646,7 @@ contains
     .make_fock_matrix
     dP.create(.n_bf); old_P.create_copy(.density_matrix)
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
+    old_MO.create(.n_bf)
     .make_scf_error(error) 
     constraint.create(.n_bf,"restricted")
 
@@ -6694,22 +6665,24 @@ contains
         .add_constraint(constraint)
         .make_scf_error(error) 
         .extrapolate_scf(error)
+        old_MO.set_to(.molecular_orbitals)
         .update_molecular_orbitals
+        old_P.set_to(.density_matrix)
+        old_F.set_to(.fock_matrix)
         .make_scf_density_matrix
         .save_scf_results
 
-      dP.set_to(.density_matrix)
-      dP.minus(old_P)
+        dP.set_to(.density_matrix)
+        dP.minus(old_P)
 
-      .make_fock_matrix(dP,dF,core=FALSE)
+        .make_fock_matrix(dP,dF,core=FALSE)
 
-      .fock_matrix.set_to(old_F)
-      .fock_matrix.plus(dF)
-      old_P.set_to(.density_matrix)
-      old_F.set_to(.fock_matrix)
+!        lambda=ONE
+!        if (old_MO.spinorbital_kind=="restricted") .camp_king(lambda,old_MO,old_F)
+        .fock_matrix.set_to(old_F)
+        .fock_matrix.plus(dF)
 
-        .make_structure_factors                ! To get new Hartree-Fock energy.
-
+        .make_structure_factors
         .scfdata.update(.scf_energy,.kinetic_energy)
         .scfdata.set_stats(.crystal)
         .scfdata.put_results
@@ -6720,6 +6693,7 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
+    old_MO.destroy
     constraint.destroy
     error.destroy
     .scfdata.cleanup_diis
@@ -8461,29 +8435,41 @@ contains
 !                        Camp-King routines
 !*******************************************************************************
 
-  camp_king(MO,old_MO,new_MO,old_F,new_F,lambda)
+  camp_king(lambda,MO_old,F_old)
   ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
   ! lambda should be between 0 and 1.
-    MAT, IN :: old_MO,old_F,new_F
-    MAT, INOUT :: MO,new_MO
     DBL, IN :: lambda
-    MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl,tmp1,tmp2
+    OPMAT, IN :: MO_old,F_old
+    OPMAT* :: F_backup,MO_backup,P_backup
+    MAT* :: old_MO,new_MO,old_F,new_F,MO
+    MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl
     VEC* :: theta
-    INT :: minpq,n,n_p,n_q,i,k
+    INT :: minpq,n,n_p,n_q,i,k,j
     DBL :: ded0,ded1,ded1a,E0,E1,E2
-    BIN :: bin
+
+    F_backup.set_to(.fock_matrix) !create_copy
+    MO_backup.set_to(.molecular_orbitals)
+    P_backup.set_to(.density_matrix)
+
     n_p = .n_e/2
     n_q = .n_bf - n_p
     minpq = min(n_p,n_q)
 
-    ! to begin with, old_MO = Cbar^j, new_MO = Cbar^{j+1}, from
-    ! .update_molecular_orbitals with the choice Q = Cbar^j.
+    old_MO => MO_old.restricted
+    old_F => F_old.restricted
+    MO.create(.n_bf,.n_bf)
+    new_MO.create(.n_bf,.n_bf)
+    new_MO=.molecular_orbitals.restricted
+    new_F.create(.n_bf,.n_bf)
+    new_F=.fock_matrix.restricted
 
     Q.create(.n_bf,.n_bf)
     V.create(.n_bf,.n_bf)
     W.create(.n_bf,.n_bf)
-    theta.create(.n_bf)
+    theta.create(minpq)
 
+    ! to begin with, old_MO = Cbar^j, new_MO = Cbar^{j+1}, from
+    ! .update_molecular_orbitals with the choice Q = Cbar^j.
     Q = old_MO                                  ! Set Q = old_MO = Cbar^j
 
     Q1.create(.n_bf,.n_bf)
@@ -8494,15 +8480,16 @@ contains
 
     Cj.create(.n_bf,.n_bf)
     Cj1.create(.n_bf,.n_bf)
-    Cj.to_unit_mat                              ! C^j = I
-!    Cj.to_product(Q1,old_MO)                    ! C^j = I
+    Cj.to_product(Q1,old_MO)                    ! C^j = I
     Cj1.to_product(Q1,new_MO)                   ! C^{j+1} = Q^{-1} Cbar^{j+1}
     Q1.destroy
 
     U.create(.n_bf,.n_bf)
     U.to_product(Cj,Cj1)                        ! eqn 8
+    V=Cj1
+    W=Cj1
     .make_Camp_King_VWT(V,W,theta,U)
-!    U.destroy
+    U.destroy
 
     CV.create(.n_bf,.n_bf)
     CW.create(.n_bf,.n_bf)
@@ -8515,20 +8502,8 @@ contains
     .make_Camp_King_U_hat(Uh,lambda,theta)
     Cl.create(.n_bf,.n_bf)
     Cl.to_product(CV,Uh)                        ! C(lambda) = C^j V Uh(lambda)
-    MO.to_product(Q,Cl)                         ! Cbar(lambda) = Q C(lambda)
-
-  if(lambda>0.75) then
-    tmp1.create(.n_bf,.n_bf)
-    tmp2.create(.n_bf,.n_bf)
-    tmp1.to_product(Uh,W,transpose_b=TRUE)
-    tmp2.to_product(V,tmp1)
-    bin=tmp2.same_as(U)
-    tmp2.destroy
-    tmp1.destroy
-    write(*,*) "eqn B1 = ",bin
-  end
-    U.destroy
     Uh.destroy
+    MO.to_product(Q,Cl)                         ! Cbar(lambda) = Q C(lambda)
 
     F.create(.n_bf,.n_bf)
 
@@ -8548,7 +8523,7 @@ contains
     E0 = .scf_energy
 
     !get de/dl at l=1
-    F=new_F                                        ! Fbar at lambda=1
+    F=F_backup.restricted                          ! Fbar at lambda=1
     F.change_basis(Q)                              ! F = Q^t Fbar Q
     F.change_basis(CW)                             ! eqn 28.
     ded1 = ZERO
@@ -8557,8 +8532,8 @@ contains
     end
     ded1 = -FOUR * ded1
     !temporary energy check
-    .fock_matrix.restricted = new_F
-    .molecular_orbitals.restricted = new_MO
+    .fock_matrix.restricted = F_backup.restricted
+    .molecular_orbitals.restricted = MO_backup.restricted
     .make_scf_density_matrix(damp=FALSE)
     E1 = .scf_energy
 
@@ -8567,7 +8542,8 @@ contains
     .make_scf_density_matrix(damp=FALSE)
     .make_fock_matrix
     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
-    F.change_basis(Cl)                             ! eqn 32.
+    F.change_basis(Q)
+    F.change_basis(Cl)
 
     ded1a = ZERO
     do n=1,n_p
@@ -8576,7 +8552,8 @@ contains
     ded1a = -FOUR * ded1a
     !temporary energy check
     E2 = .scf_energy
-write(*,'(6f15.8)') ded0,ded1,ded1a,E0,E1,E2
+
+ write(*,'(6f15.8)') ded0,ded1,ded1a,E0,E1,E2
 
     F.destroy
     Cl.destroy
@@ -8586,17 +8563,24 @@ write(*,'(6f15.8)') ded0,ded1,ded1a,E0,E1,E2
     W.destroy
     V.destroy
     Q.destroy
+    new_F.destroy
+    new_MO.destroy
+    MO.destroy
+    .fock_matrix.set_to(F_backup)
+    .molecular_orbitals.set_to(MO_backup)
+    .density_matrix.set_to(P_backup)
   end
 
-  make_Camp_King_VWT(V,W,theta,U)
+  make_Camp_King_VWT(V,W,theta,U) [private]
     IN :: self
     MAT, target :: V,W
     VEC, OUT :: theta
     MAT, target :: U
     MAT* :: Vp,Vq,Wp,Wq,M,MWq,Hq,Up,Uq,Hp,VpM,VpMWq,VqNWp,NWp,N,tmpm
+    MAT* :: UqWq,UpWp,Dp,Dq,a,b,c
     INT :: minpq,maxpq,n_p,n_q
-    VEC* :: tmp
-    BIN :: ea1,eb14
+    VEC* :: tmp,lambda
+    BIN :: ea1,eb14,eb13,eb9
     DBL :: dbl
     n_p = ceiling(.n_e/TWO)
     n_q = .n_bf - n_p
@@ -8611,110 +8595,92 @@ write(*,'(6f15.8)') ded0,ded1,ded1a,E0,E1,E2
     Up => U(:n_p,:n_p)
     Uq => U(n_p+1:,n_p+1:)
 
+
     U.zero_small_values(TOL(10))
-    W=ZERO
-    V=ZERO
-    theta=ZERO
-    Wq=Uq
+    W(:n_p,n_p+1:)=ZERO
+    W(n_p+1:,:n_p)=ZERO
+    V(:n_p,n_p+1:)=ZERO
+    V(n_p+1:,:n_p)=ZERO
 
-    Hp.create(n_p,n_p)
-    Hp.to_product(M,M,transpose_b=TRUE)
-    Hp.solve_eigenproblem(theta,Vp)
-    Vp.zero_small_values(TOL(10))
-    theta.zero_small_values(TOL(10))
-    Vp.reverse_column_order
-    theta(1:n_p).reverse_order                       ! eqn B6
-    Hp.destroy
-    Wq(:,:n_p).to_product(M,Vp,transpose_a=TRUE)
-    Wq.schmidt_orthonormalise
- 
-!    Hq.create(n_q,n_q)
-!    Hq.to_product(M,M,transpose_a=TRUE)
-!    Hq.solve_eigenproblem(theta,Wq)
-!    Wq.zero_small_values(TOL(10))
+!    Hp.create(n_p,n_p)
+!    Hp.to_product(M,M,transpose_b=TRUE)
+!    Hp.solve_eigenproblem(theta,Vp)
+!    Hp.destroy
+!    Vp.zero_small_values(TOL(10))
 !    theta.zero_small_values(TOL(10))
-!    Wq.reverse_column_order
-!    theta(1:n_p).reverse_order                       ! eqn B6
-!    Hq.destroy
-!    tmpm.create(n_p,n_q)
-!    tmpm.to_product(M,Wq)
-!    Vp = tmpm(:n_p,:n_p)
-!    tmpm.destroy
-!    Vp.schmidt_orthonormalise
+!    Vp.reverse_column_order
+!    theta(1:minpq).reverse_order                       ! eqn B6
+!    Wq(:,:n_p).to_product(M,Vp,transpose_a=TRUE)
+!    Wq.schmidt_orthonormalise
  
-  VpMWq.create(n_p,n_q)
-  VpM.create(n_p,n_q)
-  VpM.to_product(Vp,M,transpose_a=TRUE)
-  VpMWq.to_product(VpM,Wq)
-  VpMWq.zero_small_values(TOL(10))
-  tmp.create(n_p)
-  VpMWq(1:n_p,1:n_p).get_diagonal(tmp)
-  ea1 = tmp.same_as(sqrt(theta(:n_p)))
-  tmp.destroy
-  VpM.destroy
-  VpMWq.destroy
-
+    lambda.create(n_q)
+    Hq.create(n_q,n_q)
+    Hq.to_product(M,M,transpose_a=TRUE)
+    Hq.solve_eigenproblem(lambda,Wq)                 ! eqn A3
+    Hq.destroy
+    lambda.reverse_order                             ! eqn B6
+    theta = lambda(:minpq)
+    theta.zero_small_values(TOL(10))
+    theta = sqrt(theta)                              ! eqn A4
+    theta = asin(theta)            ! eqn B17
+    lambda.destroy
+    Wq.zero_small_values(TOL(10))
+    Wq.reverse_column_order
+    MWq.create(n_p,n_q)
+    MWq.to_product(M,Wq)
+    Vp = MWq(:n_p,:n_p)
+    MWq.destroy
+    Vp.schmidt_orthonormalise
+ 
     Vq.to_product(Uq,Wq)
     Vq.reverse_schmidt_orthogonalise                 ! eqn B8
 
     Wp.to_product(Up,Vp,transpose_a=TRUE)
     Wp.reverse_schmidt_orthogonalise                 ! eqn B11
-
-  N  => U(n_p+1:n_p+n_q,:n_p)
-  VqNWp.create(n_q,n_p)
-  NWp.create(n_q,n_p)
-  NWp.to_product(N,Wp)
-  VqNWp.to_product(Vq,NWp,transpose_a=TRUE)
-  tmp.create(n_p)
-  VqNWp(1:n_p,1:n_p).get_diagonal(tmp)
-  eb14 = tmp.same_as(-sqrt(theta(:n_p)))
-  tmp.destroy
-  NWp.destroy
-  VqNWp.destroy
-
-    theta(1:minpq) = sqrt(theta(1:minpq))            ! eqn A4
-    theta(1:minpq) = asin(theta(1:minpq))            ! eqn B17
-
-  write(*,*) "Equation A1 holds =",ea1
-  write(*,*) "Equation B14 holds =",eb14
   end
 
-  make_Camp_King_U_hat(Uh,lambda,theta)
+  make_Camp_King_U_hat(Uh,lambda,theta) [private]
     IN :: self
     MAT, target :: Uh
     DBL, IN :: lambda
     VEC, IN :: theta
     VEC* :: sin_theta,cos_theta
     MAT* :: Uh_pp,Uh_qq,Uh_qp,Uh_pq
-    INT :: minpq,maxpq,n_p,n_q
+    INT :: minpq,maxpq,n_p,n_q,m,n
     BIN :: ok
 
     ok = size(Uh,1)==.n_bf AND size(Uh,2)==.n_bf
-    ENSURE(ok,"incorrect dimensions for Uh matrix")
-    ENSURE(size(theta)==.n_bf,"incorrect dimensions for theta array")
     n_p = ceiling(.n_e/TWO)
     n_q = .n_bf - n_p
     minpq = min(n_p,n_q)
     maxpq = max(n_p,n_q)
+    m=n_p-minpq
+    n=n_q-minpq
+    ENSURE(ok,"incorrect dimensions for Uh matrix")
+    ENSURE(size(theta)==minpq,"incorrect dimensions for theta array")
 
     sin_theta.create(minpq)
-    sin_theta = sin(theta(1:minpq)*lambda)
-    cos_theta.create(maxpq)
+    cos_theta.create(minpq)
+    sin_theta = sin(theta*lambda)
     cos_theta = cos(theta*lambda)
-    ! cos_theta(minpq+1:) is 1 as theta(minpq+1:)=0.
-    ! Needed in cos_theta array below, to remove q<p vs q>p tests.
 
     Uh=ZERO
     Uh_pp => Uh(:n_p,:n_p)
     Uh_qq => Uh(n_p+1:,n_p+1:)
-    Uh_qp => Uh(n_p+1:n_p+minpq,:minpq)
-    Uh_pq => Uh(:minpq,n_p+1:n_p+minpq)
+    Uh_qp => Uh(n_p+1:,:n_p)
+    Uh_pq => Uh(:n_p,n_p+1:)
 
-    ! order important, must do cos before sin.
-    Uh_pp.from_diagonal(cos_theta(1:n_p))
-    Uh_qq.from_diagonal(cos_theta(1:n_q))
-    Uh_qp.from_diagonal(sin_theta)
-    Uh_pq.from_diagonal(-sin_theta)
+    Uh_pp(:minpq,:minpq).from_diagonal(cos_theta)
+    Uh_qq(:minpq,:minpq).from_diagonal(cos_theta)
+
+    Uh_qp(:minpq,:minpq).from_diagonal(-sin_theta)
+    Uh_pq(:minpq,:minpq).from_diagonal(sin_theta)
+
+    if (m>0) then ! do p-m:p block
+      Uh_pp(minpq+1:,minpq+1:).to_unit_mat
+    else if (n>0) then ! do p+q-n:p+q block
+      Uh_qq(minpq+1:,minpq+1:).to_unit_mat
+    end
 
     cos_theta.destroy
     sin_theta.destroy
