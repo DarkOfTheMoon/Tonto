@@ -194,11 +194,13 @@ close(TYPES);
 ## Loop over the .foo file lines
 ## -----------------------------------------------------------------------------
 
+$linenum = 0;
 LINE: while (<FOOFILE>) {
 
     chop;	# strip record separator
 
     $inp = $_;  # Get the line
+    $linenum = $linenum + 1;
 
     if ($inp =~ /^ *\S/ && $inp !~ /^ *[!#]/ ) {                     # if not blank ...
 
@@ -270,7 +272,7 @@ LINE: while (<FOOFILE>) {
 	        $ns = $ns - 1; $scopeunit = $scope{$ns};
 
 	        if ($ns < 0) {
-		    print 'FOO error: unmatched end';
+		    print 'FOO error: unmatched end at $linenum of $foofile';
 		    $ExitValue = 1;
                     last LINE;
 	        }
@@ -283,11 +285,19 @@ LINE: while (<FOOFILE>) {
 	        $ns = $ns - 1; $scopeunit = $scope{$ns};
 
 	        if ($ns < 0) {
-		    print 'FOO error: unmatched end';
+		    print 'FOO error: unmatched end at $linenum of $foofile';
 		    $ExitValue = 1;
                     last LINE;
 	        }
             }
+	}
+
+	############################################### quick error check ######
+
+	elsif (! defined $scopeunit) {
+	    print "FOO error: unmatched end?, near line $linenum of $foofile";
+	    $ExitValue = 1;
+	    last LINE;
 	}
 
 	###################################### Within a program or module ######
