@@ -1,3 +1,5 @@
+#!/usr/bin/perl
+
 #  Run this script to configure the Makefile for your system.
 #  It runs some tests such as determining what your compiler is.
 
@@ -20,8 +22,8 @@ my $VENDOR = '';                      # Name of the compiler vendor.
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f';                    # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
-my $COMPILER_VENDOR = '';
-my $SITE_CONFIG = '';
+my $COMPILER_VENDOR = '';             # e.g. LAHEY
+my $PLATFORM = '';                    # This is the compiler vendor and operating system
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -106,7 +108,7 @@ if (defined $FC && $FC ne '') {
     ($FC,$FULLFC) = &check_for_programs($FC);
   }
 } else {
-  ($FC,$FULLFC) = &check_for_programs('lf95','frtvpp','ifc','frt','xlf90',
+  ($FC,$FULLFC) = &check_for_programs('mpif90','lf95','frtvpp','ifc','frt','xlf90',
                             'pgf90','f95','f90','g95','g90');
 }
 &print_result($FULLFC);
@@ -120,8 +122,8 @@ if ($FC ne '') {
   else {&print_result('cannot determine');}
 
   $COMPILER_VENDOR = "${VENDOR}-${FC}-on-${OS}";
-  $SITE_CONFIG = "${SRCDIR}/site_config/${COMPILER_VENDOR}";
-  print STDERR "Options for your compiler are in $SITE_CONFIG\n";
+  $PLATFORM = "${SRCDIR}/platforms/${COMPILER_VENDOR}";
+  print STDERR "Options for your compiler are in $PLATFORM\n";
   &check_siteconfig;
 } else {
   die "Cannot find a Fortran compiler on your system.";
@@ -254,12 +256,12 @@ sub get_vendor {
 
 ################################################################################
 sub check_siteconfig {
-  if (! -f $SITE_CONFIG) {
+  if (! -f $PLATFORM) {
     print STDERR "\n";
-    print STDERR "File ${SITE_CONFIG} created from template.\n";
-    print STDERR "Please edit ${SITE_CONFIG}.\n";
-    open(SCt,"${SRCDIR}/site_config/template");
-    open(SC,"> $SITE_CONFIG");
+    print STDERR "File ${PLATFORM} created from template.\n";
+    print STDERR "Please edit ${PLATFORM}.\n";
+    open(SCt,"${SRCDIR}/platforms/template");
+    open(SC,"> $PLATFORM");
     while(<SCt>) {
       s/^(FC.*?=)(.*)/$1 $FC/;
       print SC;
@@ -291,7 +293,7 @@ sub do_substitutions_into_Makefile {
     s/\@MAKE\@/$MAKE/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
-    s/\@SITE_CONFIG\@/$SITE_CONFIG/g;
+    s/\@PLATFORM\@/$PLATFORM/g;
     s/\@COMPILER_VENDOR\@/$COMPILER_VENDOR/g;
     print OUTFILE;
   }
