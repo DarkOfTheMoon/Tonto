@@ -1,8 +1,9 @@
-#--------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 #
 #  >>> Make the module dependecy list
 #
-#  (c) dylan jayatilaka, university of western australia, 1998
+#  (c) dylan jayatilaka, university of western australia, 1998-2001
+#  (c) daniel grimwood, university of western australia, 1999-2001
 #
 #  $Id$
 #
