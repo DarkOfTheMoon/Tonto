@@ -3556,10 +3556,10 @@ sub fortran_do_routine_body {
    
      $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
      &fortran_change_square_brackets;
+     $fortran_out = &module_colon_to_fortran($fortran_out);
      $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
    
      ######## lines that contain a dot. ###########
-     $fortran_out = &module_colon_to_fortran($fortran_out);
      $fortran_out = &dots_to_fortran($fortran_out);
      ######## lines that contain a dot. ###########
    
