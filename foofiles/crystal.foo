@@ -26,6 +26,8 @@ module CRYSTAL
    use CMAT5
    use TEXTFILE
    use ARCHIVE
+   use REFLECTION
+   use REFLECTIONVEC
    use ATOM
    use ATOMVEC
    use SPACEGROUP
@@ -130,29 +132,8 @@ module CRYSTAL
 !   ! The crystallographic Z factor for the moleculat cell fragment in the
 !   ! unitcell
 !
-!   INT :: n_refl
-!   ! No. of reflection planes
-!
-!   IVEC* :: h
-!   ! Miller indices for the reflections
-!
-!   IVEC* :: k
-!   ! Miller indices for the reflections
-!
-!   IVEC* :: l
-!   ! Miller indices for the reflections
-!
-!   VEC* :: F_exp
-!   ! Experimental structure factors
-!
-!   VEC* :: sigma
-!   ! Experimental sigma
-!
-!   CVEC* :: F_calc
-!   ! Calculated complex structure factors without including corrections
-!
-!   VEC* :: F_pred
-!   ! Calculated structure factors including scale and extinction corrections
+!   REFLECTIONVEC* :: reflections
+!   ! The structure factor information
 !
 !   DBL :: scale_factor
 !   ! Scale factor to apply to the predicted structure factors
@@ -244,13 +225,7 @@ contains
   nullify_ptr_part
   ! Nullify the pointer parts of the crystal object
     .spacegroup.nullify_ptr_part
-    nullify(.h)
-    nullify(.k)
-    nullify(.l)
-    nullify(.F_exp)
-    nullify(.sigma)
-    nullify(.F_calc)
-    nullify(.F_pred)
+    nullify(.reflections)
     nullify(.fragment_geometry)
     nullify(.unit_cell_geometry)
     nullify(.unique_atom)
@@ -270,24 +245,15 @@ contains
    .destroy_fragment_data
   end
 
-   destroy_reflection_data
-   ! Erase all reflection data
-      if (.reflection_data_exists) then
-         .h.destroy
-         .k.destroy
-         .l.destroy
-         .n_refl = 0
-         .scale_factor = ONE
-         .exp_scale_factor = ONE
-         .extinction_factor = ZERO
-         if (.F_calc_exists) .F_calc.destroy
-         if (.F_pred_exists) .F_pred.destroy
-         if (.F_exp_exists) then
-            .F_exp.destroy
-            .sigma.destroy
-         end
-      end
-   end
+  destroy_reflection_data
+  ! Erase all reflection data
+    if (.reflection_data_exists) then
+      .scale_factor = ONE
+      .exp_scale_factor = ONE
+      .extinction_factor = ZERO
+      .reflections.destroy
+    end
+  end
 
   destroy_fragment_data
   ! Destroy the geometry and symmetry data for the fragment and unitcell.
@@ -325,7 +291,6 @@ contains
       .unit_cell_angle.convert_from("degree")
       .unit_cell_length = (/10.0d0,10.0d0,10.0d0/)
       .make_cell_matrices
-      .n_refl = 0
       .destroy_reflection_data
       .synthesize_sigma_I = FALSE
       .optimise_scale = TRUE
@@ -496,10 +461,6 @@ contains
             case("unit_cell_lengths");          .read_unit_cell_lengths
             case("unit_cell_dimensions");       .read_unit_cell_lengths
             case("cell_lengths");               .read_unit_cell_lengths
-            case("n_refl");                     .read_n_refl
-            case("n_hkl");                      .read_n_refl
-            case("no_of_reflections");          .read_n_refl
-            case("reflection_indices");         .read_reflection_indices
             case("reflection_data");            .read_reflection_data
             case("apply_scale_factor");         .read_scale_factor
             case("make_f_predicted");           .make_F_predicted
@@ -525,18 +486,26 @@ contains
       .update
    end
 
-   update [leaky]
-   ! Update the crystal information
-      .spacegroup.analyse
-      .make_cell_matrices
-      if (.F_exp.created) .F_exp = .F_exp * .exp_scale_factor
-      if (.sigma.created) .sigma = .sigma * .exp_scale_factor
-      .exp_scale_factor = ONE
-      if (.F_exp.destroyed OR .sigma.destroyed) then
+  update [leaky]
+  ! Update the crystal information
+    .spacegroup.analyse
+    .make_cell_matrices
+    if (.reflections.created) then
+      if (.reflections.have_F_exp) then
+        .reflections.scale_F_exp(.exp_scale_factor)
+      else
         .optimise_scale = FALSE
         .optimise_extinction = FALSE
       end
-   end
+      if (.reflections.have_F_sigma) then
+        .reflections.scale_F_sigma(.exp_scale_factor)
+      else
+        .optimise_scale = FALSE
+        .optimise_extinction = FALSE
+      end
+      .exp_scale_factor = ONE
+    end
+  end
 
    read_kind
    ! Read the kind of crystal experiment
@@ -564,150 +533,9 @@ contains
       stdin.read(.unit_cell_length)
    end
 
-   read_n_refl
-   ! Read the number of reflection data
-      stdin.read(.n_refl)
-   end
-
-   read_reflection_indices [leaky]
-   ! Read the hkl Miller index triples from the input
-      STRVEC* :: keywords
-      nullify(keywords)
-      keywords.create((/"h","k","l"/))
-      .process_reflection_data(keywords)
-      keywords.destroy
-   end
-
    read_reflection_data [leaky]
    ! Read in data in the standard order from "stdin".
-      STRVEC* :: keywords
-      STR :: word
-      DBL :: tmp
-      CDBL :: ctmp
-      nullify(keywords)
-      keywords.create(REFLECTION_INPUT_DATA_ORDER)
-      read_loop: do         ! Loop over input keywords
-         stdin.read(word)
-         word.to_lower_case
-         select case (trim(word))
-            case("end");        exit read_loop
-            case("data_order")
-              keywords.destroy
-              stdin.read_ptr(keywords)
-            case("loop")
-              .process_reflection_data(keywords)
-            case default;       DIE("unknown keyword, "//trim(word))
-         end
-      end do read_loop
-      keywords.destroy
-   end
- 
-  process_reflection_data(keywords) [leaky]
-  ! Read in data in the standard order from "stdin".
-    STRVEC :: keywords
-    STR :: word
-    DBL :: tmp
-    CDBL :: ctmp
-    INT :: i,k,tmpi,line,item
-
-    ! Read the data, cycling through the keywords for each reflection.
-    .n_refl = 0
-    stdin.read(word)
-    ENSURE(word/="end","empty reflection list")
-    line = stdin.line_number        ! Store line number
-    item = stdin.previous_line_item ! Item number on line
-    do
-      stdin.move_to_previous_item
-      do k = 1,size(keywords)
-        select case (trim(keywords(k)))
-          case("h");          stdin.read(tmpi)
-          case("k");          stdin.read(tmpi)
-          case("l");          stdin.read(tmpi)
-          case("indices");    stdin.read(tmpi)
-                              stdin.read(tmpi)
-                              stdin.read(tmpi)
-          case("F_exp");      stdin.read(tmp)
-          case("F_pred");     stdin.read(tmp)
-          case("add_F_pred"); stdin.read(tmp)
-          case("add_F_exp");  stdin.read(tmp)
-          case("F_calc");     stdin.read(ctmp)
-          case("add_F_calc"); stdin.read(ctmp)
-          case("F_sigma");    stdin.read(tmp)
-          case default;       DIE("unknown keyword, "//trim(keywords(k)))
-        end
-      end
-      .n_refl = .n_refl + 1
-      stdin.read(word)
-      word.to_lower_case
-      if (word=="end") exit
-    end
-    stdin.move_to_line(line)
-    stdin.move_to_line_item(item)
-
-    ! Make sure all the operations can be done.
-    do k = 1,size(keywords)
-      select case (trim(keywords(k)))
-        case("h");          if (.h.destroyed) .h.create(.n_refl)
-        case("k");          if (.k.destroyed) .k.create(.n_refl)
-        case("l");          if (.l.destroyed) .l.create(.n_refl)
-        case("indices");    if (.h.destroyed) .h.create(.n_refl)
-                            if (.k.destroyed) .k.create(.n_refl)
-                            if (.l.destroyed) .l.create(.n_refl)
-        case("F_exp");      if (.F_exp.destroyed) .F_exp.create(.n_refl)
-        case("F_pred");     if (.F_pred.destroyed) .F_pred.create(.n_refl)
-        case("F_calc");     if (.F_calc.destroyed) .F_calc.create(.n_refl)
-        case("add_F_exp")
-                   ENSURE(.F_exp.created, "no experimental structure factors")
-        case("add_F_pred")
-                   ENSURE(.F_pred.created, "no predicted structure factors")
-        case("add_F_calc")
-                   ENSURE(.F_calc.created, "no calculated structure factors")
-        case("F_sigma");    if (.sigma.destroyed) .sigma.create(.n_refl)
-        case default;       DIE("unknown keyword, "//trim(keywords(k)))
-      end
-    end
-
-    ! Read the data, cycling through the keywords for each reflection.
-    do i = 1,.n_refl
-      do k = 1,size(keywords)
-        select case (trim(keywords(k)))
-          case("h");          stdin.read(.h(i))
-          case("k");          stdin.read(.k(i))
-          case("l");          stdin.read(.l(i))
-          case("indices");    stdin.read(.h(i))
-                              stdin.read(.k(i))
-                              stdin.read(.l(i))
-          case("F_exp");      stdin.read(.F_exp(i))
-          case("F_pred");     stdin.read(.F_pred(i))
-          case("add_F_pred"); stdin.read(tmp)
-                              .F_pred(i) = .F_pred(i) + tmp
-          case("add_F_exp");  stdin.read(tmp)
-                              .F_exp(i) = .F_exp(i) + tmp
-          case("F_calc");     stdin.read(.F_calc(i))
-          case("add_F_calc"); stdin.read(ctmp)
-                              .F_calc(i) = .F_calc(i) + ctmp
-          case("F_sigma");    stdin.read(.sigma(i))
-          case("end");        DIE("end keyword positioned incorrectly.")
-          case default;       DIE("unknown keyword, "//trim(keywords(k)))
-        end
-      end
-    end
-  end
- 
-   put_F_calc [leaky]
-   ! Put the hkl Miller index triple followed by the calculated
-   ! structure factor to add onto existing structure factors.
-      INT :: i
-      ENSURE(.n_refl>0, "no reflections to put")
-      ENSURE(.F_calc.created, "require F_calc")
-      stdout.flush(2)
-      do i = 1,.n_refl
-         stdout.put(.h(i))
-         stdout.put(.k(i))
-         stdout.put(.l(i))
-         stdout.put(.F_calc(i),flush=1)
-      end
-      stdout.flush(1)
+      .reflections.read
    end
 
    read_scale_factor
@@ -762,138 +590,118 @@ contains
       stdin.read(.partition_model)
    end
 
-   lp_factor result(res)
-   ! Return the array of the Lorentz Polarization factors for all the reflections
-     VEC( .n_refl ) :: res
-     MAT(3,3) :: rcm
-     INT :: n
-     DBL :: kx,ky,kz,stl,c,s,two_theta
-     ENSURE(.n_refl>0,"no reflections entered")
-     rcm = .reciprocal_cell_matrix
-     do n=1, .n_refl
-       kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-       ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-       kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-       stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-       two_theta = TWO*asin( stl * .wavelength )
-       c = cos(two_theta)
-       s = sin(two_theta)
-       if (s.is_zero(TOL(8))) then
-          res(n) = ZERO
-          WARN("lp_factor for (000) reflection set to zero")
-       else
-          res(n) = (1+c*c)/(TWO*s)
-       end
-     end
-   end
+  lp_factor result(res)
+  ! Return the array of the Lorentz Polarization factors for all the
+  ! reflections
+    VEC(size(.reflections)) :: res
+    INT :: n
+    DBL :: c,s,two_theta
+    ENSURE(.reflections.created,"no reflection data")
+    do n=1, .reflections.n_refl
+      two_theta = TWO*asin( .stl(n) * .wavelength )
+      c = cos(two_theta)
+      s = sin(two_theta)
+      if (s.is_zero(TOL(8))) then
+        res(n) = ZERO
+        WARN("lp_factor for (000) reflection set to zero")
+      else
+        res(n) = (1+c*c)/(TWO*s)
+      end
+    end
+  end
 
-   I_pred result(res)
-   ! Return the array of predicted Intensities. Only the Lorentz Polarization
-   ! factor and the angular velocity factor for a single crystal are used.
-   ! Fundamental constants appearing in front of this are not calculated
-   ! NOTE: unlike I_exp, these may include extinction and dispersion effects.
-     VEC( .n_refl ) :: res
-     MAT(3,3) :: rcm
-     INT :: n
-     DBL :: kx,ky,kz,stl,c,s,two_theta,F2
-     ENSURE(.n_refl>0,"no reflections entered")
-     ENSURE(.F_pred.created, "no predicted structure factors")
-     rcm = .reciprocal_cell_matrix
-     do N=1, .n_refl
-       kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-       ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-       kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-       stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-       two_theta = TWO*asin( stl * .wavelength )
-       c = cos(two_theta)
-       s = sin(two_theta)
-       F2 = .F_pred(n)
-       F2 = F2*F2
-       if (s.is_zero(TOL(8))) then
+  I_pred result(res)
+  ! Return the array of predicted Intensities. Only the Lorentz Polarization
+  ! factor and the angular velocity factor for a single crystal are used.
+  ! Fundamental constants appearing in front of this are not calculated
+  ! NOTE: unlike I_exp, these may include extinction and dispersion effects.
+    VEC(size(.reflections)) :: res
+    INT :: n
+    DBL :: c,s,two_theta,F2
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_exp, "no calculated structure factors")
+    do n=1, .reflections.n_refl
+      two_theta = TWO*asin( .stl(n) * .wavelength )
+      c = cos(two_theta)
+      s = sin(two_theta)
+      F2 = .reflections(n).F_pred
+      F2 = F2*F2
+      if (s.is_zero(TOL(8))) then
+        res(n) = F2
+      else
+        res(n) = (1+c*c)/(TWO*s)*F2
+      end
+    end
+  end
+
+  I_exp result(res)
+  ! Return the array of experimental Intensities. Only the Lorentz Polarization
+  ! factor and the angular velocity factor for a single crystal are used.
+  ! Fundamental constants appearing in front of this are not calculated
+  ! NOTE: extinction factors, dispersion, multiple scattering corrections
+  ! are not included. These are the experimental intensities with these effects
+  ! removed.
+    VEC(size(.reflections)) :: res
+    INT :: n
+    DBL :: c,s,two_theta,F2
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_exp, "no calculated structure factors")
+    do n=1, .reflections.n_refl
+      two_theta = TWO*asin( .stl(n) * .wavelength )
+      c = cos(two_theta)
+      s = sin(two_theta)
+      F2 = abs(.reflections(n).F_exp)
+      F2 = F2*F2
+      if (s.is_zero(TOL(8))) then
+         res(n) = F2
+      else
+         res(n) = (1+c*c)/(TWO*s)*F2
+      end
+    end
+  end
+
+  I_sigma result(res)
+  ! Return the array of experimental sigma's in the Intensities.
+    VEC(size(.reflections)) :: res
+    MAT(3,3) :: rcm
+    INT :: n
+    DBL :: c,s,two_theta,F2
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc OR .reflections.have_F_exp, "no calculated structure factors")
+    if (NOT .reflections.have_F_exp AND NOT .synthesize_sigma_I) then
+      WARN("The synthesize_sigma_I flag was not set; it is now set")
+      .synthesize_sigma_I = TRUE
+    end
+    if (.synthesize_sigma_I) then
+      res = .reflections.I_pred
+      res = sqrt(res/.equivalence_factors)
+    else
+      rcm = .reciprocal_cell_matrix
+      do n=1, .reflections.n_refl
+        two_theta = TWO*asin( .stl(n) * .wavelength )
+        c = cos(two_theta)
+        s = sin(two_theta)
+        F2 = abs(.reflections(n).F_exp)
+        if (s.is_zero(TOL(8))) then
           res(n) = F2
-       else
-          res(n) = (1+c*c)/(TWO*s)*F2
-       end
-     end
-   end
-
-   I_exp result(res)
-   ! Return the array of experimental Intensities. Only the Lorentz Polarization
-   ! factor and the angular velocity factor for a single crystal are used.
-   ! Fundamental constants appearing in front of this are not calculated
-   ! NOTE: extinction factors, dispersion, multiple scattering corrections
-   ! are not included. These are the experimental intensities with these effects
-   ! removed.
-     VEC( .n_refl ) :: res
-     MAT(3,3) :: rcm
-     INT :: n
-     DBL :: kx,ky,kz,stl,c,s,two_theta,F2
-     ENSURE(.n_refl>0,"no reflections entered")
-     ENSURE(.F_exp_exists, "no experimental structure factors")
-     rcm = .reciprocal_cell_matrix
-     do N=1, .n_refl
-       kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-       ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-       kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-       stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-       two_theta = TWO*asin( stl * .wavelength )
-       c = cos(two_theta)
-       s = sin(two_theta)
-       F2 = abs(.F_exp(n))
-       F2 = F2*F2
-       if (s.is_zero(TOL(8))) then
-          res(n) = F2
-       else
-          res(n) = (1+c*c)/(TWO*s)*F2
-       end
-     end
-   end
-
-   I_sigma result(res)
-   ! Return the array of experimental sigma's in the Intensities.
-     VEC( .n_refl ) :: res
-     MAT(3,3) :: rcm
-     INT :: n
-     DBL :: kx,ky,kz,stl,c,s,two_theta,F2
-     ENSURE(.n_refl>0,"no reflections entered")
-     ENSURE(.F_exp_exists OR .F_calc_exists, "can't generate sigma")
-     if (.no_F_exp AND NOT .synthesize_sigma_I) then
-        WARN("The synthesize_sigma_I flag was not set; it is now set")
-        .synthesize_sigma_I = TRUE
-     end
-     if (.synthesize_sigma_I) then
-        res = .I_pred
-        res = sqrt(res/.equivalence_factors)
-     else
-       rcm = .reciprocal_cell_matrix
-       do N=1, .n_refl
-         kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-         ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-         kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-         stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-         two_theta = TWO*asin( stl * .wavelength )
-         c = cos(two_theta)
-         s = sin(two_theta)
-         F2 = abs(.F_exp(n))
-         if (s.is_zero(TOL(8))) then
-            res(n) = F2
-         else
-            res(n) = TWO*(1+c*c)/(TWO*s)*F2
-         end
-       end
-     end
-   end
+        else
+          res(n) = TWO*(1+c*c)/(TWO*s)*F2
+        end
+      end
+    end
+  end
 
    equivalence_factors result (res)
    ! Return the equivalence factors, the number of distinct reflections
    ! which are symmetry equivalent to a particular (hkl) triple, for all
    ! the reflections.
-      IVEC(.n_refl) :: res
+      IVEC(size(.reflections)) :: res
       IVEC(3) :: hkl,new
-      INT :: n,s,u
-      ENSURE(.n_refl>0,"no reflections")
-      do n = 1,.n_refl
-         hkl = (/ .h(n),.k(n),.l(n) /)
+      INT :: n,s,u,n_refl
+      ENSURE(.reflections.created,"no reflection data")
+      n_refl = .reflections.n_refl
+      do n = 1,n_refl
+         hkl = .reflections.indices(n)
          u = 1
          do s = 2,.spacegroup.n_seitz
             new = matmul(.spacegroup.seitz(1:3,1:3,s),hkl)
@@ -903,98 +711,120 @@ contains
       end
    end
 
-   make_F_predicted [leaky]
-   ! Make the predicted magnitude of the structure factors, including possibly
-   ! an overall scale factor and extinction correction.
-      INOUT :: self
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      .n_param = 0
-      if (.optimise_extinction OR .optimise_scale) .get_optimum_parameters
-      .F_pred.destroy
-      .F_pred.create(.n_refl)
-      if (.kind=="pnd") then; .F_pred = .F_calc * .extinction_correction
-      else;                   .F_pred = abs(.F_calc) * .extinction_correction
-      end
-      if (.F_exp.created AND .sigma.created) .make_agreement_statistics
-   end
+  stl(n) result (res)
+  ! Return the value of sin(theta) / lambda for reflection n
+    IN :: self
+    INT, IN :: n
+    IVEC(3) :: hkl
+    DBL :: res,kx,ky,kz,res
+    hkl = .reflections.indices(n)
+    kx = dot_product(.reciprocal_cell_matrix(1,:),hkl(:))
+    ky = dot_product(.reciprocal_cell_matrix(2,:),hkl(:))
+    kz = dot_product(.reciprocal_cell_matrix(3,:),hkl(:))
+    res = HALF*sqrt(kx*kx+ky*ky+kz*kz)
+  end
 
-   get_optimum_parameters
-   ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
-   ! (To get the corrections cooresponding to these parameters see routine
-   ! .extinction_correction)
-      ENSURE(.F_calc_exists, "No calculated structure factors")
-      ENSURE(.F_exp.created, "No experimental structure factors.")
-      ENSURE(.sigma.created, "No experimental errors.")
-      if (.optimise_extinction) then
-         .optimise_extinction_factor
-      else if (.optimise_scale) then
-         .optimise_scale_factor
-      end
-   end
+  make_F_predicted [leaky]
+  ! Make the predicted magnitude of the structure factors, including possibly
+  ! an overall scale factor and extinction correction.
+    VEC* :: F_pred
+    INOUT :: self
+    ENSURE(.reflections.created,"no reflection data")
+    .n_param = 0
+    if (.optimise_extinction OR .optimise_scale) .get_optimum_parameters
+    F_pred.create(.reflections.n_refl)
+    if (.kind=="pnd") then
+      F_pred = .reflections.F_calc * .extinction_correction
+    else
+      F_pred = abs(.reflections.F_calc) * .extinction_correction
+    end
+    .reflections.set_F_pred(F_pred)
+    F_pred.destroy
+    if (.reflections.have_F_exp AND .reflections.have_F_sigma) &
+                      .make_agreement_statistics
+  end
 
-   extinction_correction result(res)
-   ! Return the extinction correction  factors "res" to the calculated
-   ! individual structure factors.
-      VEC( .n_refl ) :: res
-      res = .extinction_correction(.scale_factor,.extinction_factor)
-   end
+  get_optimum_parameters
+  ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
+  ! (To get the corrections cooresponding to these parameters see routine
+  ! .extinction_correction)
+    if (.optimise_extinction) then
+      .optimise_extinction_factor
+    else if (.optimise_scale) then
+      .optimise_scale_factor
+    end
+  end
 
-   extinction_correction(scale_factor,extinction_factor) result(res)
-   ! Return the extinction correction  factors "res" to the calculated individual
-   ! structure factors. NOTE: this routine also does scaling corrections without
-   ! extinction.
-      DBL :: scale_factor,extinction_factor
-      VEC( .n_refl )  :: res
-      VEC* :: angle_part
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      if (extinction_factor.is_zero(TOL(9))) then
-         res(:) = scale_factor
-      else
-         angle_part.create( .n_refl )
-         angle_part = .extinction_angle_part
-         res(:) = scale_factor/sqrt(sqrt(ONE + extinction_factor*.F_calc*conjg(.F_calc)*angle_part))
-         angle_part.destroy
-      end
-   end
+  extinction_correction result(res)
+  ! Return the extinction correction  factors "res" to the calculated
+  ! individual structure factors.
+    VEC(size(.reflections))  :: res
+    res = .extinction_correction(.scale_factor,.extinction_factor)
+  end
 
-   extinction_angle_part result(res)
-   ! Return the angular part of the extinction correction.
-      MAT(3,3) :: rcm
-      VEC( .n_refl ) :: res
-      INT :: n
-      DBL :: kx,ky,kz,stl,twotheta, c,s
-      rcm = .reciprocal_cell_matrix
-      do n=1, .n_refl
-         kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-         ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-         kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-         stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-         twotheta=TWO*asin( stl * .wavelength )
-         c = cos(twotheta)
-         s = sin(twotheta)
-         res(n) = (1+c*c)/(1+c*s)
+  extinction_correction(scale_factor,extinction_factor) result(res)
+  ! Return the extinction correction  factors "res" to the calculated
+  ! individual structure factors. NOTE: this routine also does scaling
+  ! corrections without extinction.
+    DBL :: scale_factor,extinction_factor
+    CDBL :: F_calc
+    VEC(size(.reflections))  :: res
+    VEC* :: angle_part
+    INT :: n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    if (extinction_factor.is_zero(TOL(9))) then
+       res(:) = scale_factor
+    else
+      angle_part.create(n_refl)
+      angle_part = .extinction_angle_part
+      do n=1, n_refl
+        F_calc = .reflections(n).F_calc
+        res(n) = scale_factor / sqrt(sqrt(ONE + &
+            extinction_factor*F_calc*conjg(F_calc)*angle_part(n)))
       end
-   end
+      angle_part.destroy
+    end
+  end
 
-   optimise_scale_factor
-   ! Determine the structure factor scale factor to scale the calculated structure
-   ! factors .F_calc by in order to minimise the chi2. (But it does not do any
-   ! scaling; see .extinction_correction routine for that)
-      DBL :: top,bot
-      VEC* :: F_pred
-      ENSURE(.F_calc.created, "No calculated structure factors.")
-      ENSURE(.F_exp.created,  "No experimental structure factors.")
-      ENSURE(.sigma.created,  "No experimental errors.")
-      F_pred.create(.n_refl)
-      if (.kind=="pnd") then; F_pred = .F_calc
-      else;                   F_pred = abs(.F_calc)
+  extinction_angle_part result(res)
+  ! Return the angular part of the extinction correction.
+    VEC(size(.reflections)) :: res
+    INT :: n
+    DBL :: twotheta,c,s
+    do n=1, .reflections.n_refl
+      twotheta=TWO*asin( .stl(n) * .wavelength )
+      c = cos(twotheta)
+      s = sin(twotheta)
+      res(n) = (1+c*c)/(1+c*s)
+    end
+  end
+
+  optimise_scale_factor
+  ! Determine the structure factor scale factor to scale the calculated
+  ! structure factors .F_calc by in order to minimise the chi2. (But it does
+  ! not do any scaling; see .extinction_correction routine for that)
+    DBL :: top,bot,F_pred
+    INT :: n,n_refl
+    REFLECTION* :: ref
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+    ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+    top = ZERO
+    bot = ZERO
+    do n=1,n_refl
+      if (.kind=="pnd") then; F_pred = ref.F_calc
+      else;                   F_pred = abs(ref.F_calc)
       end
-      top = sum( F_pred * .F_exp  / (.sigma * .sigma) )
-      bot = sum( F_pred *  F_pred / (.sigma * .sigma) )
-      .scale_factor = top/bot
-      F_pred.destroy
-      .n_param = 1
-   end
+      top = top + F_pred * ref.F_exp  / (ref.F_sigma * ref.F_sigma)
+      bot = bot + F_pred * F_pred / (ref.F_sigma * ref.F_sigma)
+    end
+    .scale_factor = top/bot
+    .n_param = 1
+  end
 
    optimise_extinction_factor
    ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
@@ -1017,29 +847,39 @@ contains
       .n_param = 2
    end
 
-   chi2(p) result (res) [selfless]
-   ! Make the predicted magnitude of the structure factors, including possibly
-   ! an overall scale factor and extinction correction. Update agreement
-   ! statistcics as well, but do not update .F_pred. This routine is for use
-   ! in the BFGS minimiser.
-      VEC :: p
-      DBL :: res
-      VEC* :: F_pred
-      CRYSTAL* :: self; self => saved_self
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      ENSURE(.F_exp.created, "No experimental structure factors.")
-      ENSURE(.sigma.created, "No experimental errors.")
-      ENSURE(size(p)==2, "wrong size, p")
-      F_pred.create(.n_refl)
-      F_pred = abs(.F_calc) * .extinction_correction(p(1),p(2))
-      res = sum( ((F_pred - .F_exp)/.sigma)**2 ) / max(.n_refl-.n_param,1)
-      F_pred.destroy
-   end
+  chi2(p) result (res) [selfless]
+  ! Make the predicted magnitude of the structure factors, including possibly
+  ! an overall scale factor and extinction correction. Update agreement
+  ! statistcics as well, but do not update .F_pred. This routine is for use
+  ! in the BFGS minimiser.
+    VEC :: p
+    DBL :: res,tmp,tmp1
+    VEC* :: ext
+    REFLECTION* :: ref
+    INT :: n,n_refl
+    CRYSTAL* :: self; self => saved_self
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+    ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+    ENSURE(size(p)==2, "wrong size, p")
+    ext.create(n_refl)
+    ext = .extinction_correction(p(1),p(2))
+    tmp = ZERO
+    do n=1,n_refl
+      ref => .reflections(n)
+      tmp1 = (abs(ref.F_calc) * ext(n) - ref.F_exp) / ref.F_sigma
+      tmp = tmp + tmp1 * tmp1
+    end
+      res = tmp / max(n_refl-.n_param,1)
+    ext.destroy
+  end
 
    d_chi2(p) result (res) [selfless]
-   ! Return the derivative of the chi2 with respect to the .scale_factor in p(1),
-   ! and with respect to .extinction_factor in p(2). This routine is for use
-   ! in the BFGS minimiser.
+   ! Return the derivative of the chi2 with respect to the .scale_factor in
+   ! p(1), and with respect to .extinction_factor in p(2). This routine is for
+   ! use in the BFGS minimiser.
       VEC :: p
       VEC(size(p)) :: res
       CRYSTAL* :: self; self => saved_self
@@ -1048,123 +888,142 @@ contains
       res(2) = .d_chi2_d_ext(p)
    end
 
-   d_chi2_d_scale(p) result (res)
-   ! Derivative of the chi^2 with respect to the scale factor
-      VEC :: p
-      DBL :: res
-      VEC* :: F_pred
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      ENSURE(size(p)==2, "wrong size, p")
-      F_pred.create(.n_refl)
-      F_pred = abs(.F_calc) * .extinction_correction(p(1),p(2))
-      res = sum( F_pred*F_pred - .F_exp*F_pred/(.sigma*.sigma) )
-      res = TWO*res/(p(1)*max(.n_refl-.n_param,1))
-      F_pred.destroy
-   end
+  d_chi2_d_scale(p) result (res)
+  ! Derivative of the chi^2 with respect to the scale factor
+    VEC :: p
+    DBL :: res,tmp,F_pred
+    VEC* :: ext
+    REFLECTION* :: ref
+    INT :: n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+    ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+    ENSURE(size(p)==2, "wrong size, p")
+    ext.create(n_refl)
+    ext = .extinction_correction(p(1),p(2))
+    tmp = ZERO
+    do n=1,n_refl
+      ref => .reflections(n)
+      F_pred = abs(ref.F_calc) * ext(n)
+      tmp = tmp + F_pred*F_pred - ref.F_exp*F_pred / (ref.F_sigma*ref.F_sigma)
+    end
+    res = TWO*tmp/(p(1)*max(n_refl-.n_param,1))
+    ext.destroy
+  end
 
-   d_chi2_d_ext(p) result (res)
-   ! Derivative of the chi^2 with respect to the extinction parameter.
-      VEC :: p
-      DBL :: res
-      VEC* :: angle_bit,tmp,ext
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      ENSURE(size(p)==2, "wrong size, p")
-      angle_bit.create(.n_refl)
-      ext.create(.n_refl)
-      tmp.create(.n_refl)
-      angle_bit = .extinction_angle_part
-      ext = .extinction_correction(ONE,p(2))
-      tmp = p(1) * abs(.F_calc) * ext
-      ext = ext*ext*ext*ext*ext
-      ext = ext*.F_calc*.F_calc*.F_calc
-      tmp = (tmp - .F_exp) * ext * angle_bit / (.sigma * .sigma)
-      res = -p(1)*sum(tmp)/(TWO * max(.n_refl-.n_param,1))
-      tmp.destroy
-      ext.destroy
-      angle_bit.destroy
-   end
+  d_chi2_d_ext(p) result (res)
+  ! Derivative of the chi^2 with respect to the extinction parameter.
+    VEC, IN :: p
+    DBL :: res,tmp,extn,p1
+    VEC* :: angle_bit,ext
+    CVEC* :: Fc_conjgFcalc
+    REFLECTION* :: ref
+    INT :: n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+    ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+    ENSURE(size(p)==2, "wrong size, p")
+    angle_bit.create(n_refl)
+    ext.create(n_refl)
+    angle_bit = .extinction_angle_part
+    p1 = p(1)
+    ext = .extinction_correction(ONE,p(2))
+    tmp = ZERO
+    do n = 1,n_refl
+      ref => .reflections(n)
+      extn = ext(n)
+      tmp = tmp + (p1 * abs(ref.F_calc) * extn - ref.F_exp) * &
+          extn*extn*extn*extn*extn* ref.F_calc*ref.F_calc*ref.F_calc * &
+          angle_bit(n) / (ref.F_sigma * ref.F_sigma)
+    end
+    res = -p1*tmp/(TWO * max(n_refl-.n_param,1))
+    ext.destroy
+    angle_bit.destroy
+  end
 
-   d_chi2_dU(dF) result (res)
-   ! Evaluate the derivative of the chi^2 with respect to parameters U
-   ! (e.g. thermal parameters) given the derivatives "dF" of where
-   ! .F_calc with respect to these parameters U. NOTE: this routine
-   ! assumes that the .scale_factor and .extinction_factor are fixed.
-      CMAT :: dF
-      VEC(size(dF,2)) :: res
-      VEC* :: Fc,ext,angle_bit
-      DBL :: fac
-      INT :: u
-      ENSURE(size(dF,1)==.n_refl, "wrong size, dF")
-      ENSURE(.F_calc_exists, "no calculated structure factors")
-      ENSURE(.sigma.created, "no experimental errors")
-      angle_bit.create(.n_refl)
-      angle_bit = .extinction_angle_part
-      ext.create(.n_refl)
-      ext = .extinction_correction(ONE,.extinction_factor)
-      Fc.create(.n_refl)
-      Fc = abs(.F_calc)
-      Fc = ((.scale_factor*ext*Fc - .F_exp)/(.sigma*.sigma)) * &
-           (ext/Fc - HALF*ext*ext*ext*ext*ext*.extinction_factor*Fc*angle_bit)
-      do u = 1,size(dF,2)
-         res(u) = sum( Fc * conjg(.F_calc) * dF(:,u) )
-      end
-      fac = TWO*.scale_factor/max(.n_refl-.n_param,1)
-      res = fac * res
-      Fc.destroy
-      ext.destroy
-      angle_bit.destroy
-   end
+  d_chi2_dU(dF) result (res)
+  ! Evaluate the derivative of the chi^2 with respect to parameters U
+  ! (e.g. thermal parameters) given the derivatives "dF" of where
+  ! .F_calc with respect to these parameters U. NOTE: this routine
+  ! assumes that the .scale_factor and .extinction_factor are fixed.
+    CMAT :: dF
+    VEC(size(dF,2)) :: res
+    CVEC* :: Fc_conjgFcalc
+    REFLECTION* :: ref
+    VEC* :: ext,angle_bit
+    DBL :: fac,Fc,Fc1,extn
+    INT :: u,n_refl,n
+    n_refl = .reflections.n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    ENSURE(size(dF,1)==n_refl, "wrong size, dF")
+    ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+    ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+    angle_bit.create(n_refl)
+    angle_bit = .extinction_angle_part
+    ext.create(n_refl)
+    ext = .extinction_correction(ONE,.extinction_factor)
+    Fc_conjgFcalc.create(n_refl)
+    do n = 1,n_refl
+      ref => .reflections(n)
+      extn = ext(n)
+      Fc1 = abs(ref.F_calc)
+      Fc = ( (.scale_factor*extn*Fc1 - ref.F_exp) / &
+         (ref.F_sigma * ref.F_sigma) ) * &
+         (extn / Fc1 - HALF * extn * extn * extn * extn * extn * &
+         .extinction_factor * Fc1 * angle_bit(n))
+      Fc_conjgFcalc(n) = Fc * conjg(ref.F_calc)
+    end
+    fac = TWO*.scale_factor/max(n_refl-.n_param,1)
+    do u = 1,size(dF,2)
+       res(u) = fac * sum( Fc_conjgFcalc(:) * dF(:,u) )
+    end
+    Fc_conjgFcalc.destroy
+    ext.destroy
+    angle_bit.destroy
+  end
 
-   make_agreement_statistics
-   ! Make the agreement statistics
-      DBL :: top1,top2,bot1,bot2
-      VEC* :: I_pred,I_exp,I_sigma
-      ENSURE(.F_pred.created,"No predicted structure fac's")
-      ENSURE(.F_exp.created, "No experimental structure factors.")
-      ENSURE(.sigma.created, "No experimental errors.")
-      top1 = sum( abs(.F_pred - .F_exp) )
-      bot1 = sum( abs(.F_exp) )
-      top2 = sum( ((.F_pred - .F_exp) /.sigma)**2 )
-      bot2 = sum( (.F_exp/.sigma)**2 )
-      .r_factor          = top1/bot1
-      .weighted_r_factor = sqrt(top2/bot2)
-      .chi2              = top2/max(.n_refl-.n_param,1)
-      .goodness_of_fit   = sqrt(.chi2)
+  make_agreement_statistics
+  ! Make the agreement statistics
+    INT :: n_refl
+    ENSURE(.reflections.created,"no reflection data")
+    n_refl = .reflections.n_refl
 
-      I_pred.create(.n_refl);    I_pred  = .I_pred
-      I_exp.create(.n_refl);     I_exp   = .I_exp
-      I_sigma.create(.n_refl);   I_sigma = .I_sigma
-      top1 = sum( abs(I_pred - I_exp) )
-      bot1 = sum( abs(I_exp) )
-      top2 = sum( ((I_pred - I_exp) /I_sigma)**2 )
-      bot2 = sum( (I_exp/I_sigma)**2 )
-      .I_r_factor          = top1/bot1
-      .I_weighted_r_factor = sqrt(top2/bot2)
-      .I_chi2              = top2/max(.n_refl-.n_param,1)
-      .I_goodness_of_fit   = sqrt(.chi2)
-      I_sigma.destroy
-      I_exp.destroy
-      I_pred.destroy
-   end
+    .I_chi2 = .reflections.I_chi2 * max(n_refl-1,1) / max(n_refl-.n_param,1)
+    .I_goodness_of_fit = sqrt(.I_chi2)
+    .I_r_factor = .reflections.I_r_factor
+    .I_weighted_r_factor = .reflections.I_weighted_r_factor
+
+    .chi2 = .reflections.F_chi2 * max(n_refl-1,1) / max(n_refl-.n_param,1)
+    .goodness_of_fit = sqrt(.chi2)
+    .r_factor = .reflections.F_r_factor
+    .weighted_r_factor = .reflections.F_weighted_r_factor
+  end
 
    make_k_pts(res)
    ! Convert the hkl indices to reciprocal lattice vectors
    ! Dimension of res is [.n_refl,3]
       MAT :: res
       INT :: n
+      IVEC(3) :: hkl
       MAT(3,3) :: rcm
-      rcm = 2*PI*.reciprocal_cell_matrix
-      do n = 1, .n_refl
-         res(n,1) = rcm(1,1)*.h(n) + rcm(1,2)*.k(n) + rcm(1,3)*.l(n)
-         res(n,2) = rcm(2,1)*.h(n) + rcm(2,2)*.k(n) + rcm(2,3)*.l(n)
-         res(n,3) = rcm(3,1)*.h(n) + rcm(3,2)*.k(n) + rcm(3,3)*.l(n)
+      rcm = TWO*PI*.reciprocal_cell_matrix
+      do n = 1, .reflections.n_refl
+         hkl = .reflections.indices(n)
+         res(n,1) = dot_product(rcm(1,:),hkl(:))
+         res(n,2) = dot_product(rcm(2,:),hkl(:))
+         res(n,3) = dot_product(rcm(3,:),hkl(:))
       end
    end
 
   n_unique_k_pts result(res) [pure]
     IN :: self
     INT :: res
-    res = .n_unique_symops * .n_refl
+    res = .n_unique_symops * .reflections.n_refl
   end
 
    make_unique_k_pts(k)
@@ -1172,18 +1031,21 @@ contains
    ! in the reduced crystal spacegroup
    ! (c) Dylan Jayatilaka, UWA, feb 1996
       MAT :: k
-      INT :: p,u,n
+      INT :: p,u,n,n_refl
       MAT(3,3) :: b,rcm
+      IVEC(3) :: hkl
+      n_refl = .reflections.n_refl
       ENSURE(.unique_symop.created,"no unique_symop array!")
       p = 0
-      rcm = 2*PI*.reciprocal_cell_matrix
+      rcm = TWO*PI*.reciprocal_cell_matrix
       do u = 1,.n_unique_symops
          b = matmul(rcm,.unique_symop_mat(u))
-         do n = 1, .n_refl
+         do n = 1,n_refl
             p = p + 1
-            k(p,1) = b(1,1)*.h(n) + b(1,2)*.k(n) + b(1,3)*.l(n)
-            k(p,2) = b(2,1)*.h(n) + b(2,2)*.k(n) + b(2,3)*.l(n)
-            k(p,3) = b(3,1)*.h(n) + b(3,2)*.k(n) + b(3,3)*.l(n)
+            hkl = .reflections.indices(n)
+            k(p,1) = dot_product(b(1,:),hkl(:))
+            k(p,2) = dot_product(b(2,:),hkl(:))
+            k(p,3) = dot_product(b(3,:),hkl(:))
          end
       end
    end
@@ -1192,380 +1054,388 @@ contains
 !  Service methods used by other modules
 !  *************************************
 
-   make_phases_for_symop(u,phase,mask)
-   ! Return the sum of the "phase" shifts for each (hkl) reflection from each
-   ! glide vector for all symops which are equivalent to the "u"-th
-   ! unique symmetry operation, .unique_symop(u), as determined by the mask
-   ! array.
-      INT, IN :: u
-      CVEC, OUT :: phase
-      IVEC, IN :: mask
-      DBL :: pi2,tx,ty,tz
-      INT :: s
-      ENSURE( .unique_symop.created,"no unique_symop array!")
-      ENSURE( u<=.n_unique_symops,"symop index out of range")
-      ENSURE( size(phase)==.n_refl,"wrong length for phase array")
-      pi2 = TWO*PI
-      phase = ZERO
-      do s = 1,.spacegroup.n_seitz
-         if (mask(s)/=.unique_symop(u)) cycle
-         tx = pi2*.spacegroup.seitz(4,1,s)
-         ty = pi2*.spacegroup.seitz(4,2,s)
-         tz = pi2*.spacegroup.seitz(4,3,s)
-         phase(:) = phase(:) + exp(cmplx(ZERO,.h(:)*tx+.k(:)*ty+.l(:)*tz))
+  make_phases_for_symop(u,phase,mask)
+  ! Return the sum of the "phase" shifts for each (hkl) reflection from each
+  ! glide vector for all symops which are equivalent to the "u"-th
+  ! unique symmetry operation, .unique_symop(u), as determined by the mask
+  ! array.
+    INT, IN :: u
+    CVEC, OUT :: phase
+    IVEC, IN :: mask
+    IVEC(3) :: hkl
+    DBL :: pi2,tx,ty,tz
+    INT :: s,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(.unique_symop.created,"no unique_symop array!")
+    ENSURE(u<=.n_unique_symops,"symop index out of range")
+    ENSURE(size(phase)==n_refl,"wrong length for phase array")
+    pi2 = TWO*PI
+    phase = ZERO
+    do s = 1,.spacegroup.n_seitz
+      if (mask(s)/=.unique_symop(u)) cycle
+      tx = pi2*.spacegroup.seitz(4,1,s)
+      ty = pi2*.spacegroup.seitz(4,2,s)
+      tz = pi2*.spacegroup.seitz(4,3,s)
+      do n=1,n_refl
+        hkl = .reflections.indices(n)
+        phase(n) = phase(n) + exp(cmplx(ZERO,hkl(1)*tx+hkl(2)*ty+hkl(3)*tz))
       end
-   end
+    end
+  end
 
-   sum_unique_sf(sf,unique_sf)
-   ! Form the structure factors "sf" from the sum of the list of
-   ! unique structure factors, "unique_sf".
-      CVEC :: sf
-      CVEC, IN :: unique_sf
-      CVEC* :: phase
-      INT :: u,uf,ul
-      ENSURE( size(sf)==.n_refl,"incorrect size for array sf")
-      phase.create(.n_refl)
-      sf = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)+1
-         ul = .n_refl*u
-         .make_phases_for_symop(u,phase,.translated_symop)
-         sf(:) = sf(:) + phase(:)*unique_sf(uf:ul)
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         sf(:) = sf(:) + phase(:)*conjg(unique_sf(uf:ul))
-      end
-      phase.destroy
-   end
+  sum_unique_sf(sf,unique_sf)
+  ! Form the structure factors "sf" from the sum of the list of
+  ! unique structure factors, "unique_sf".
+    CVEC :: sf
+    CVEC, IN :: unique_sf
+    CVEC* :: phase
+    INT :: u,uf,ul,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE( size(sf)==n_refl,"incorrect size for array sf")
+    phase.create(n_refl)
+    sf = ZERO
+    do u = 1,.n_unique_symops
+       uf = n_refl*(u-1)+1
+       ul = n_refl*u
+       .make_phases_for_symop(u,phase,.translated_symop)
+       sf(:) = sf(:) + phase(:)*unique_sf(uf:ul)
+       if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
+       .make_phases_for_symop(u,phase,.inverted_symop)
+       sf(:) = sf(:) + phase(:)*conjg(unique_sf(uf:ul))
+    end
+    phase.destroy
+  end
 
-   sum_unique_sf_ints(sf_ints,unique_sf_ints)
-   ! Form the structure factor integrals "sf_ints" from a sum of the list
-   ! of unique structure factors integrals  "unique_sf_ints".
-      CMAT3 :: sf_ints
-      CMAT3, IN :: unique_sf_ints
-      CVEC* :: phase
-      INT :: u,uf,n
-      ENSURE(size(sf_ints,1)==.n_refl,"wrong size for sf_ints!")
-      phase.create(.n_refl)
-      sf_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
-         end
+  sum_unique_sf_ints(sf_ints,unique_sf_ints)
+  ! Form the structure factor integrals "sf_ints" from a sum of the list
+  ! of unique structure factors integrals  "unique_sf_ints".
+    CMAT3 :: sf_ints
+    CMAT3, IN :: unique_sf_ints
+    CVEC* :: phase
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(sf_ints,1)==n_refl,"wrong size for sf_ints!")
+    phase.create(n_refl)
+    sf_ints = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phases_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
       end
-      phase.destroy
-   end
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
+      .make_phases_for_symop(u,phase,.inverted_symop)
+      do n = 1,n_refl
+        sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
+      end
+    end
+    phase.destroy
+  end
 
-   sum_unique_sf_deriv_U(sf,unique_sf)
-   ! Form the structure factor derivatives "sf" (wrt the thermal paramaters,U)
-   !  from a sum of the list of unique structure factor derivatives "unique_sf".
-      CMAT :: sf
-      CMAT, IN :: unique_sf
-      CVEC* :: phase
-      INT :: u,uf, n
-      ENSURE(size(sf,1)==.n_refl, "wrong size, matrix sf")
-      ENSURE(size(unique_sf,2)==.n_unique_k_pts, "wrong size, matrix sf")
-      phase.create(.n_refl)
-      sf = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-           sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-           sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
-         end
+  sum_unique_sf_deriv_U(sf,unique_sf)
+  ! Form the structure factor derivatives "sf" (wrt the thermal paramaters,U)
+  !  from a sum of the list of unique structure factor derivatives "unique_sf".
+    CMAT :: sf
+    CMAT, IN :: unique_sf
+    CVEC* :: phase
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(sf,1)==n_refl, "wrong size, matrix sf")
+    ENSURE(size(unique_sf,2)==.n_unique_k_pts, "wrong size, matrix sf")
+    phase.create(n_refl)
+    sf = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phases_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
       end
-      phase.destroy
-   end
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
+      .make_phases_for_symop(u,phase,.inverted_symop)
+      do n = 1,n_refl
+        sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
+      end
+    end
+    phase.destroy
+  end
 
-   sum_ft_ints(ft_ints,unique_ft_ints)
-   ! Form the Fourier transform integrals "ft_ints" from a sum of the list
-   ! of unique integrals "unique_ft_ints".  Dimensions of ft_ints are
-   ! [.n_refl,n_comp_a,n_comp_b].
-      CMAT3 :: ft_ints
-      CMAT3, IN :: unique_ft_ints
-      CVEC* :: phase
-      INT :: u,uf, n
-      ENSURE( size(ft_ints,1)==.n_refl,"incorrect size for array ft_ints")
-      phase.create(.n_refl)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*unique_ft_ints(uf+n,:,:)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*conjg(unique_ft_ints(uf+n,:,:))
-         end
+  sum_ft_ints(ft_ints,unique_ft_ints)
+  ! Form the Fourier transform integrals "ft_ints" from a sum of the list
+  ! of unique integrals "unique_ft_ints".  Dimensions of ft_ints are
+  ! [.n_refl,n_comp_a,n_comp_b].
+    CMAT3 :: ft_ints
+    CMAT3, IN :: unique_ft_ints
+    CVEC* :: phase
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
+    phase.create(n_refl)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phases_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*unique_ft_ints(uf+n,:,:)
       end
-      phase.destroy
-   end
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
+      .make_phases_for_symop(u,phase,.inverted_symop)
+      do n = 1,n_refl
+        ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*conjg(unique_ft_ints(uf+n,:,:))
+      end
+    end
+    phase.destroy
+  end
 
-   make_phased_matrix_for_symop(u,phase,mask)
-   ! Return the sum of the "phase" shifts times the seitz matrices for all
-   ! symops which are equivalent to the "u"-th unique symmetry operation,
-   ! .unique_symop(u), as determined by the "mask" array, when
-   ! mask(u)==.unique_symop(u).
-      INT, IN :: u
-      CMAT3, OUT :: phase
-      IVEC, IN :: mask
-      DBL :: pi2,tx,ty,tz
-      INT :: s, n,i,j
-      MAT(4,4) :: seitz
-      pi2 = TWO*PI
-      phase = ZERO
-      ENSURE(.unique_symop.created,"no unique_symop array!")
-      ENSURE(u<=.n_unique_symops,"symop index out of range")
-      ENSURE(size(phase,1)==.n_refl,"wrong size, dim=1, phase array")
-      ENSURE(size(phase,2)==3,"wrong size, dim=2, phase array")
-      ENSURE(size(phase,3)==3,"wrong size, dim=3, phase array")
-      do s = 1,.spacegroup.n_seitz
-         if (mask(s)/=.unique_symop(u)) cycle
-         seitz = .spacegroup.seitz(:,:,s)
-         tx = pi2*seitz(4,1)
-         ty = pi2*seitz(4,2)
-         tz = pi2*seitz(4,3)
-         if (seitz(3,3)>0) then                  ! M points along +z always
-            do i = 1,3
-            do j = 1,3
-            do n = 1,.n_refl
-               phase(n,i,j) = phase(n,i,j) + &
-               seitz(i,j)*exp(cmplx(ZERO,.h(n)*tx+.k(n)*ty+.l(n)*tz))
-            end
-            end
-            end
-         else                                    ! M points in -z direction
-            seitz(3,:3) = -seitz(3,:3)           ! Invert
-            do i = 1,3
-            do j = 1,3
-            do n = 1,.n_refl
-               phase(n,i,j) = phase(n,i,j) + &
-               seitz(i,j)*exp(cmplx(ZERO,.h(n)*tx+.k(n)*ty+.l(n)*tz))
-            end
-            end
-            end
-         end
+  make_phased_matrix_for_symop(u,phase,mask)
+  ! Return the sum of the "phase" shifts times the seitz matrices for all
+  ! symops which are equivalent to the "u"-th unique symmetry operation,
+  ! .unique_symop(u), as determined by the "mask" array, when
+  ! mask(u)==.unique_symop(u).
+    INT, IN :: u
+    CMAT3, OUT :: phase
+    IVEC, IN :: mask
+    IVEC(3) :: hkl
+    VEC(3) :: t
+    DBL :: pi2
+    INT :: s,n,i,j,n_refl
+    MAT(4,4) :: seitz
+    pi2 = TWO*PI
+    phase = ZERO
+    n_refl = .reflections.n_refl
+    ENSURE(.unique_symop.created,"no unique_symop array!")
+    ENSURE(u<=.n_unique_symops,"symop index out of range")
+    ENSURE(size(phase,1)==n_refl,"wrong size, dim=1, phase array")
+    ENSURE(size(phase,2)==3,"wrong size, dim=2, phase array")
+    ENSURE(size(phase,3)==3,"wrong size, dim=3, phase array")
+    do s = 1,.spacegroup.n_seitz
+      if (mask(s)/=.unique_symop(u)) cycle
+      seitz = .spacegroup.seitz(:,:,s)
+      t = (/ pi2*seitz(4,1), pi2*seitz(4,2), pi2*seitz(4,3) /)
+      if (seitz(3,3)>0) then                  ! M points along +z always
+        do n = 1,n_refl
+          hkl = .reflections.indices(n)
+          phase(n,:,:) = phase(n,:,:) + &
+             seitz(:,:)*exp(cmplx(ZERO,dot_product(t,hkl)))
+        end
+      else                                    ! M points in -z direction
+        seitz(3,:3) = -seitz(3,:3)           ! Invert
+        do n = 1,n_refl
+          hkl = .reflections.indices(n)
+          phase(n,:,:) = phase(n,:,:) + &
+             seitz(:,:)*exp(cmplx(ZERO,dot_product(t,hkl)))
+        end
       end
-   end
+    end
+  end
 
-   sum_PND_spin_ints(ft_ints,unique_ft_ints)
-   ! Form the Fourier transform integrals "ft_ints", required for the spin
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
-   ! [.n_refl,n_comp_a,n_comp_b,3].
-      CMAT4 :: ft_ints
-      CMAT3, IN :: unique_ft_ints
-      CMAT3* :: phase
-      MAT* :: q
-      INT :: u,uf, n
-      ENSURE(size(ft_ints,1)==.n_refl,"wrong size for ft_ints!")
-      q.create(.n_refl,3)
-      phase.create(.n_refl,3,3)
-      .make_k_pts(q)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phased_matrix_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
-               ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
-               - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
-               unique_ft_ints(uf+n,:,:)
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
-               ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
-               - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
-               unique_ft_ints(uf+n,:,:)
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
-               ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
-               - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
-               unique_ft_ints(uf+n,:,:)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
-         .make_phased_matrix_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
-               ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
-               - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
-               conjg(unique_ft_ints(uf+n,:,:))
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
-               ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
-               - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
-               conjg(unique_ft_ints(uf+n,:,:))
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
-               ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
-               - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
-               conjg(unique_ft_ints(uf+n,:,:))
-         end
-      end
-      phase.destroy
-      ! The factor of two for conversion to Bohr magnetons cancels the
-      ! factor of half for the S=sigma/2 operator, and g_e x mu_B = 1.
-      do n = 1, .n_refl
-          ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-      end
-      q.destroy
-   end
+  sum_PND_spin_ints(ft_ints,unique_ft_ints)
+  ! Form the Fourier transform integrals "ft_ints", required for the spin
+  ! magnetic structure factors, from a sum of the list of unique structure
+  ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
+  ! [.n_refl,n_comp_a,n_comp_b,3].
+    CMAT4 :: ft_ints
+    CMAT3, IN :: unique_ft_ints
+    CMAT3* :: phase
+    MAT* :: q
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
+    q.create(n_refl,3)
+    phase.create(n_refl,3,3)
+    .make_k_pts(q)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+       uf = n_refl*(u-1)
+       .make_phased_matrix_for_symop(u,phase,.translated_symop)
+       do n = 1,n_refl
+          ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
+             ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
+             - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
+             unique_ft_ints(uf+n,:,:)
+          ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
+             ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
+             - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
+             unique_ft_ints(uf+n,:,:)
+          ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
+             ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
+             - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
+             unique_ft_ints(uf+n,:,:)
+       end
+       if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
+       .make_phased_matrix_for_symop(u,phase,.inverted_symop)
+       do n = 1,n_refl
+          ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
+             ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
+             - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
+             conjg(unique_ft_ints(uf+n,:,:))
+          ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
+             ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
+             - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
+             conjg(unique_ft_ints(uf+n,:,:))
+          ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
+             ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
+             - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
+             conjg(unique_ft_ints(uf+n,:,:))
+       end
+    end
+    phase.destroy
+    ! The factor of two for conversion to Bohr magnetons cancels the
+    ! factor of half for the S=sigma/2 operator, and g_e x mu_B = 1.
+    do n = 1,n_refl
+      ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+    end
+    q.destroy
+  end
 
-   sum_PND_nabla_ints(ft_ints,unique_ft_ints)
-   ! Form the fourier transform nabla_a_3 integrals "ft_ints", required for the
-   ! PND magnetic structure factors, from a sum of "unique_ft_ints".
-   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
-      CMAT3 :: ft_ints
-      CMAT4, IN :: unique_ft_ints
-      CMAT3* :: phase
-      MAT* :: q
-      INT :: u,uf, n
-      ENSURE(size(ft_ints,1)==.n_refl,"wrong size for ft_ints!")
-      q.create(.n_refl,3)
-      phase.create(.n_refl,3,3)
-      .make_k_pts(q)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phased_matrix_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-            ft_ints(n,:,:) = ft_ints(n,:,:) + &
-               (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*unique_ft_ints(uf+n,:,:,1) + &
-               (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*unique_ft_ints(uf+n,:,:,2) + &
-               (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*unique_ft_ints(uf+n,:,:,3)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
-         .make_phased_matrix_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-            ft_ints(n,:,:) = ft_ints(n,:,:) + &
-               (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*conjg(unique_ft_ints(uf+n,:,:,1)) + &
-               (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*conjg(unique_ft_ints(uf+n,:,:,2)) + &
-               (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*conjg(unique_ft_ints(uf+n,:,:,3))
-         end
+  sum_PND_nabla_ints(ft_ints,unique_ft_ints)
+  ! Form the fourier transform nabla_a_3 integrals "ft_ints", required for the
+  ! PND magnetic structure factors, from a sum of "unique_ft_ints".
+  ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
+    CMAT3 :: ft_ints
+    CMAT4, IN :: unique_ft_ints
+    CMAT3* :: phase
+    MAT* :: q
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
+    q.create(n_refl,3)
+    phase.create(n_refl,3,3)
+    .make_k_pts(q)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phased_matrix_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        ft_ints(n,:,:) = ft_ints(n,:,:) + &
+         (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*unique_ft_ints(uf+n,:,:,1) + &
+         (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*unique_ft_ints(uf+n,:,:,2) + &
+         (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*unique_ft_ints(uf+n,:,:,3)
       end
-      phase.destroy
-      ! The factor of 2 to convert to Bohr magnetons cancels the factor
-      ! of 1/2 for the Bohr magneton.
-      do n = 1, .n_refl
-          ft_ints(n,:,:) =  ft_ints(n,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
+      .make_phased_matrix_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        ft_ints(n,:,:) = ft_ints(n,:,:) + &
+         (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*conjg(unique_ft_ints(uf+n,:,:,1)) + &
+         (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*conjg(unique_ft_ints(uf+n,:,:,2)) + &
+         (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*conjg(unique_ft_ints(uf+n,:,:,3))
       end
-      q.destroy
-   end
+    end
+    phase.destroy
+    ! The factor of 2 to convert to Bohr magnetons cancels the factor
+    ! of 1/2 for the Bohr magneton.
+    do n = 1,n_refl
+      ft_ints(n,:,:) = ft_ints(n,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+    end
+    q.destroy
+  end
 
-   sum_ft_spin_ints(ft_ints,unique_ft_ints)
-   ! Form the Fourier transform integrals "ft_ints", required for the spin
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
-   ! [.n_refl,n_comp_a,n_comp_b,3,3].
-      CMAT5 :: ft_ints
-      CMAT3, IN :: unique_ft_ints
-      CVEC* :: phase
-      MAT* :: q
-      CMAT* :: ints
-      INT :: u,uf, n
-      ENSURE(size(ft_ints,1)==.n_refl,"wrong size for ft_ints!")
-      phase.create(.n_refl)
-      q.create(.n_refl,3)
-      ints.create(size(ft_ints,2),size(ft_ints,3))
-      .make_k_pts(q)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-            ints = phase(n)*unique_ft_ints(uf+n,:,:)
-            ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
-            ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
-            ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-            ints = phase(n)*conjg(unique_ft_ints(uf+n,:,:))
-            ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
-            ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
-            ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
-            ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
-         end
+  sum_ft_spin_ints(ft_ints,unique_ft_ints)
+  ! Form the Fourier transform integrals "ft_ints", required for the spin
+  ! magnetic structure factors, from a sum of the list of unique structure
+  ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
+  ! [.n_refl,n_comp_a,n_comp_b,3,3].
+    CMAT5 :: ft_ints
+    CMAT3, IN :: unique_ft_ints
+    CVEC* :: phase
+    MAT* :: q
+    CMAT* :: ints
+    INT :: u,uf,n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
+    phase.create(n_refl)
+    q.create(n_refl,3)
+    ints.create(size(ft_ints,2),size(ft_ints,3))
+    .make_k_pts(q)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phases_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        ints = phase(n)*unique_ft_ints(uf+n,:,:)
+        ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
+        ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
+        ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
       end
-      ints.destroy
-      ! The factor of two for conversion to Bohr magnetons cancels the
-      ! factor of half for the S operator
-      do n = 1, .n_refl
-          ft_ints(n,:,:,:,:) = -ft_ints(n,:,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
+      .make_phases_for_symop(u,phase,.inverted_symop)
+      do n = 1,n_refl
+        ints = phase(n)*conjg(unique_ft_ints(uf+n,:,:))
+        ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
+        ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
+        ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
+        ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
       end
-      q.destroy
-      phase.destroy
-   end
+    end
+    ints.destroy
+    ! The factor of two for conversion to Bohr magnetons cancels the
+    ! factor of half for the S operator
+    do n = 1,n_refl
+       ft_ints(n,:,:,:,:) = -ft_ints(n,:,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+    end
+    q.destroy
+    phase.destroy
+  end
 
-   sum_ft_r_ints(ft_ints,unique_ft_ints,B)
-   ! Form the Fourier transform dipole integrals "ft_ints", required for the PND
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  "B" is the external magnetic field.
-   ! Note: only inversions are allowed as symmetry elements for PND simulations.
-   ! Dimensions of ft are [.n_refl,n_comp_a,n_comp_b,3].
-      CMAT4 :: ft_ints
-      CMAT4, IN :: unique_ft_ints
-      VEC(3) :: B
-      CVEC* :: phase
-      MAT* :: q
-      CMAT3* :: ints
-      INT :: u,uf, n
-      CDBL :: ci
-      ENSURE( size(ft_ints,1)==.n_refl,"incorrect size for array ft_ints")
-      phase.create(.n_refl)
-      q.create(.n_refl,3)
-      ints.create(size(ft_ints,2),size(ft_ints,3),3)
-      .make_k_pts(q)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
-            ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
-                                                - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
-                                                - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
-                                                - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
-            ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
-                                                - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
-                                                - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
-                                                - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
-         end
+  sum_ft_r_ints(ft_ints,unique_ft_ints,B)
+  ! Form the Fourier transform dipole integrals "ft_ints", required for the PND
+  ! magnetic structure factors, from a sum of the list of unique structure
+  ! factor intergals "unique_ft_ints".  "B" is the external magnetic field.
+  ! Note: only inversions are allowed as symmetry elements for PND simulations.
+  ! Dimensions of ft are [.n_refl,n_comp_a,n_comp_b,3].
+    CMAT4 :: ft_ints
+    CMAT4, IN :: unique_ft_ints
+    VEC(3) :: B
+    CVEC* :: phase
+    MAT* :: q
+    CMAT3* :: ints
+    INT :: u,uf,n,n_refl
+    CDBL :: ci
+    n_refl = .reflections.n_refl
+    ENSURE( size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
+    phase.create(n_refl)
+    q.create(n_refl,3)
+    ints.create(size(ft_ints,2),size(ft_ints,3),3)
+    .make_k_pts(q)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+      uf = n_refl*(u-1)
+      .make_phases_for_symop(u,phase,.translated_symop)
+      do n = 1,n_refl
+        ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
+        ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
+                                            - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
+        ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
+                                            - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
+        ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
+                                            - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
       end
-      ints.destroy
-     ! The factor of two for conversion to Bohr magnetons cancels the
-     ! factor of half for the S operator
-      ci = (ZERO,ONE)
-      do n = 1, .n_refl
-          ft_ints(n,:,:,:) = -ci*ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+      if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
+      .make_phases_for_symop(u,phase,.inverted_symop)
+      do n = 1,n_refl
+        ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
+        ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
+                                            - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
+        ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
+                                            - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
+        ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
+                                            - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
       end
-      q.destroy
-      phase.destroy
-   end
+    end
+    ints.destroy
+    ! The factor of two for conversion to Bohr magnetons cancels the
+    ! factor of half for the S operator
+    ci = (ZERO,ONE)
+    do n = 1,n_refl
+      ft_ints(n,:,:,:) = -ci*ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+    end
+    q.destroy
+    phase.destroy
+  end
 
    sum_ft_nabla_ints(ft_ints,unique_ft_ints)
    ! Form the fourier transform nabla_a integrals "ft_ints", required for the
@@ -1578,17 +1448,18 @@ contains
       CVEC* :: phase
       MAT* :: q
       CMAT3* :: ints
-      INT :: u,uf, n
-      ENSURE(size(ft_ints,1)==.n_refl,"wrong size for ft_ints!")
-      phase.create(.n_refl)
-      q.create(.n_refl,3)
+      INT :: u,uf,n,n_refl
+      n_refl = .reflections.n_refl
+      ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
+      phase.create(n_refl)
+      q.create(n_refl,3)
       ints.create(size(ft_ints,2),size(ft_ints,3),3)
       .make_k_pts(q)
       ft_ints = ZERO
       do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
+         uf = n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
+         do n = 1,n_refl
             ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
             ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
             ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
@@ -1596,7 +1467,7 @@ contains
          end
          if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
          .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
+         do n = 1,n_refl
             ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
             ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
             ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
@@ -1608,40 +1479,41 @@ contains
       ! of 1/2 for the Bohr magneton
       ! Extra minus sign introduced, but not sure why ...
       ! Reversed minus sign introduced ...
-      do n = 1, .n_refl
-          ft_ints(n,:,:,:) =  ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+      do n = 1,n_refl
+          ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
       end
       q.destroy
       phase.destroy
    end
 
-   sum_ft_j_ints(ft_ints,unique_ft_ints)
-   ! Form the fourier transform j integrals "ft_ints", required for the PND
-   ! magnetic striucture factors, from a sum of "unique_ft_ints".
-   ! Note: only inversions are allowed as symmetry elements for PND simulations.
-   ! Note: the complex conjugate nabla_b integrals are not included.
-   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
-      CMAT4 :: ft_ints
-      CMAT4, IN :: unique_ft_ints
-      CVEC* :: phase
-      INT :: u,uf, n
-      ENSURE( size(ft_ints,1)==.n_refl,"incorrect size for array ft_ints")
-      phase.create(.n_refl)
-      ft_ints = ZERO
-      do u = 1,.n_unique_symops
-         uf = .n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,.n_refl
+  sum_ft_j_ints(ft_ints,unique_ft_ints)
+  ! Form the fourier transform j integrals "ft_ints", required for the PND
+  ! magnetic striucture factors, from a sum of "unique_ft_ints".
+  ! Note: only inversions are allowed as symmetry elements for PND simulations.
+  ! Note: the complex conjugate nabla_b integrals are not included.
+  ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
+    CMAT4 :: ft_ints
+    CMAT4, IN :: unique_ft_ints
+    CVEC* :: phase
+    INT :: u,uf, n,n_refl
+    n_refl = .reflections.n_refl
+    ENSURE(size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
+    phase.create(n_refl)
+    ft_ints = ZERO
+    do u = 1,.n_unique_symops
+       uf = n_refl*(u-1)
+       .make_phases_for_symop(u,phase,.translated_symop)
+       do n = 1,n_refl
          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) + phase(n)*unique_ft_ints(uf+n,:,:,:)
-         end
-         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,.n_refl
+       end
+       if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions...
+       .make_phases_for_symop(u,phase,.inverted_symop)
+       do n = 1,n_refl
          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) - phase(n)*conjg(unique_ft_ints(uf+n,:,:,:))
-         end
-      end
-      phase.destroy
-   end
+       end
+    end
+    phase.destroy
+  end
 
 ! ***********************************
 ! Operations on atomvecs in a crystal
@@ -2480,57 +2352,39 @@ contains
       out.dash(int_fields=2)
    end
 
+   put_F_calc
+   ! Put the hkl Miller index triple followed by the calculated
+   ! structure factor to add onto existing structure factors.
+      STRVEC(2) :: keywords
+      keywords(1) = "indices"
+      keywords(2) = "F_calc"
+      ENSURE(.reflections.created, "no reflection data")
+      .reflections.put(keywords)
+   end
+
    put_F_stats(output)
    ! Output the structure factor goodness of fit statistics to file "output" or
    ! stdout.
       TEXTFILE, optional, target :: output
-      TEXTFILE* :: out
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      out.flush
-      out.text("Goodness of fit parameters based on Structure Factors:",flush=2)
-      out.show("R factor                    =", .r_factor)
-      out.show("Weighted R factor           =", .weighted_r_factor)
-      out.show("chi**2                      =", .chi2)
-      out.show("Goodness of fit             =", .goodness_of_fit)
-      .put_correction_data(out)
+      .reflections.put_F_stats(output)
+      .put_correction_data(output)
    end
 
    put_I_stats(output)
    ! Output the intensity goodness of fit statistics to file "output" or stdout.
       TEXTFILE, optional, target :: output
-      TEXTFILE* :: out
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      out.flush
-      out.text("Goodness of fit parameters based on Intensities:",flush=2)
-      out.show("R factor                    =", .I_r_factor)
-      out.show("Weighted R factor           =", .I_weighted_r_factor)
-      out.show("chi**2                      =", .I_chi2)
-      out.show("Goodness of fit             =", .I_goodness_of_fit)
-      .put_correction_data(out)
+      .reflections.put_I_stats(output)
+      .put_correction_data(output)
    end
 
-  put_corrections(out)
-  ! Output which corrections are being used, to file "out"
-    TEXTFILE :: out
+  put_correction_data(output)
+  ! Output the correction data to file "output"
+    TEXTFILE, optional, target :: output
     BIN :: dbl_width
-    dbl_width = TRUE
-    out.flush
-    out.show("Optimise scale factor    = ", .optimise_scale,dbl_width)
-    out.show("Optimise extinction      = ", .optimise_extinction,dbl_width)
-    out.show("Thermal smearing model   = ", .thermal_smearing_model)
-    out.show("Fragment partition model = ", .partition_model)
-!    out.show("Correct dispersion?      = ", .correct_dispersion)
-    out.flush
-  end
-
-  put_correction_data(out)
-  ! Output the correction data to file "out"
-    TEXTFILE :: out
-    BIN :: dbl_width
+    TEXTFILE* :: out
+    if (present(output)) then; out => output
+    else;                      out => stdout
+    end
     dbl_width = TRUE
     out.flush
     out.show("Using scale factor          =", .optimise_scale,dbl_width)
@@ -2554,356 +2408,27 @@ contains
 !    out.show("Correct dispersion?         =", .correct_dispersion)
    end
 
-   put_reflection_data(output) [leaky]
-   ! Output the reflection data to file "output"
-      TEXTFILE, target, optional :: output
-      if (.F_calc_exists AND .F_exp_exists) then
-         .put_structure_factor_data(output)
-         .put_intensity_data(output)
-      else if (.F_calc_exists) then
-         .put_F_pred_data(output)
-         .put_I_pred_data(output)
-      else if (.F_exp_exists)  then
-         .put_F_exp_data(output)
-         .put_I_exp_data(output)
-      end
-   end
-
-   put_structure_factor_data(output) [leaky]
-   ! Output the structure factor data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n
-      ENSURE(.F_pred_exists,"No predicted struc fac's")
-      ENSURE(.F_exp_exists, "The experimental struc fac's are all zero")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      out.flush
-      out.text("Structure factor reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      .put_F_stats(out)
-      out.dash(int_fields=3,dbl_fields=5)
-      out.tab(int_fields=3,dbl_fields=2)
-      out.put("Predicted")
-      out.flush
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("Re(F_calc)")
-      out.put("Im(F_calc)")
-      out.put("|F_calc|")
-      out.put("|F_exp|")
-      out.put("sigma")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=5)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(.F_calc(n))
-         out.put(.F_pred(n))
-         out.put(.F_exp(n))
-         out.put(.sigma(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=5)
-   end
-
-   put_F_pred_data(output) [leaky]
-   ! Output only the predicted structure factor data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n
-      ENSURE(.F_pred_exists,"The predicted SF's do not exists")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      out.flush
-      out.text("Structure factor reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      out.flush
-      out.dash(int_fields=3,dbl_fields=3)
-      out.tab(int_fields=3,dbl_fields=2)
-      out.put("Predicted")
-      out.flush
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("Re(F_calc)")
-      out.put("Im(F_calc)")
-      out.put("|F_calc|")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=3)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(.F_calc(n))
-         out.put(.F_pred(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=3)
-   end
-
-   put_F_exp_data(output)
-   ! Output only the experimental structure factor data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n
-      ENSURE(.F_exp_exists,"The experimental SF's are all zero")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      out.flush
-      out.text("Structure factor reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("F_exp")
-      out.put("sigma")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(.F_exp(n))
-         out.put(.sigma(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=2)
-   end
-
-   put_intensity_data(output)
-   ! Output the structure factor data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n
-      VEC* :: I_exp,I_pred,sigma
-      ENSURE(.F_calc_exists,"The calculated SF's are all zero")
-      ENSURE(.F_exp_exists, "The experimental SF's are all zero")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      I_pred.create(.n_refl)
-      I_exp.create(.n_refl)
-      sigma.create(.n_refl)
-      I_pred = .I_pred
-      I_exp =  .I_exp
-      sigma =  .I_sigma
-      out.flush
-      out.text("Intensity Reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      .put_I_stats
-      out.dash(int_fields=3,dbl_fields=5)
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("I_pred")
-      out.put("I_exp")
-      out.put("sigma")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=5)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(I_pred(n))
-         out.put(I_exp(n))
-         out.put(sigma(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=5)
-      sigma.destroy
-      I_exp.destroy
-      I_pred.destroy
-   end
-
-   put_I_pred_data(output)
-   ! Output only the predicted intensity data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n,dbl_fields
-      VEC* :: I_pred,sigma
-      ENSURE(.F_calc_exists,"The calculated SF's are all zero")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      I_pred.create(.n_refl)
-      I_pred = .I_pred
-      sigma.create(.n_refl)
-      sigma =  .I_sigma
-      out.flush
-      out.text("Intensity Reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      dbl_fields = 1
-      .put_correction_data(out)
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      out.tab(int_fields=3,dbl_fields=1)
-      out.put("Estimated")
-      out.flush
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("I_pred")
-      out.put("I_sigma")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(I_pred(n))
-         out.put(sigma(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=2)
-      I_pred.destroy
-      sigma.destroy
-   end
-
-   put_I_exp_data(output)
-   ! Output only the experimental structure factor data to file "output"
-      TEXTFILE, target, optional :: output
-      TEXTFILE* :: out
-      INT :: n
-      VEC* :: I_exp,sigma
-      ENSURE(.F_exp_exists,"The experimental SF's are all zero")
-      if (present(output)) then; out => output
-      else;                      out => stdout
-      end
-      I_exp.create(.n_refl)
-      sigma.create(.n_refl)
-      I_exp =  .I_exp
-      sigma =  .I_sigma
-      out.flush
-      out.text("Intensity Reflection data:",flush=2)
-      out.show("No. of reflections =",.n_refl)
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      out.put("h", int_width=TRUE)
-      out.put("k", int_width=TRUE)
-      out.put("l", int_width=TRUE)
-      out.put("F_exp")
-      out.put("sigma")
-      out.flush
-      out.dash(int_fields=3,dbl_fields=2)
-      do n = 1,.n_refl
-         out.put(.h(n))
-         out.put(.k(n))
-         out.put(.l(n))
-         out.put(I_exp(n))
-         out.put(sigma(n))
-         out.flush
-      end
-      out.dash(int_fields=3,dbl_fields=2)
-      sigma.destroy
-      I_exp.destroy
-   end
+  put_reflection_data(output)
+  ! Output the reflection data to file "output", or stdout
+    TEXTFILE, target, optional :: output
+    ENSURE(.reflections.created,"no reflections")
+    .reflections.put_reflection_data(output)
+  end
 
   put_qq_plot(name)
   ! Output a qq plot to the text file.
   ! It is a plot of the experimental quantile vs expected quantile.
     STR, optional :: name
-    ARCHIVE :: archive
-    MAT* :: grid
-    grid.create(.n_refl,2)
-    .make_qq_plot_grid(grid)
-    archive.set(root_name=name,name="qq_plot",format="ascii")
-    archive.write(grid,order="by_row")
-    archive.close
-    grid.destroy
+    ENSURE(.reflections.created, "no reflection data")
+    .reflections.put_F_qq_plot(name)
   end
-
-   make_qq_plot_grid(grid)
-   ! Make the grid for the Q-Q plot, which is a plot of the deviations X-Y
-   ! versus the expected deviations, assuming that the expected devaitions
-   ! are normally distributed. grid(1,:) contains the expected deviation d0j,
-   ! grid(2,:) contains actual deviation dj.
-      MAT, target :: grid
-      VEC* :: d,e
-      DBL :: temp
-      INT :: n,j
-      ENSURE(size(grid,1)==.n_refl, "grid wrong size")
-      ENSURE(size(grid,2)==2,       "grid wrong size")
-      n = .n_refl
-      d => grid(:,2)
-      d(:)  = (.F_exp - .F_pred(:)) * sign(ONE,real(.F_calc)) /.sigma(:)
-      d.sort                           ! sort array from lowest to highest
-      e => grid(:,1)
-      do j=1,n                         ! expected quantile, d0j
-        temp = (TWO*(n-j)+ONE)/(TWO*n) ! cumulative probability
-        e(n-j+1) = temp.z_from_p
-      end
-   end
 
   put_labelled_qq_plot(name)
   ! Output a qq plot to the text file.
   ! It is a plot of the experimental quantile vs expected quantile.
     STR, optional :: name
-    TEXTFILE* :: textfile
-    MAT* :: grid
-    IVEC* :: h,k,l
-    INT :: n
-    l.create(.n_refl); l = .l
-    k.create(.n_refl); k = .k
-    h.create(.n_refl); h = .h
-    grid.create(.n_refl,2)
-    .make_qq_plot_grid(grid,h,k,l)
-    textfile.create(trim(name) // ":qq_plot_labelled")
-    textfile.open_for_write
-    textfile.set_labels(FALSE)
-    do n=1,.n_refl
-      textfile.put(grid(n,1))
-      textfile.put(grid(n,2))
-      textfile.put(h(n))
-      textfile.put(k(n))
-      textfile.put(l(n))
-      textfile.flush
-    end
-    textfile.close
-    textfile.destroy
-    grid.destroy
-    h.destroy
-    k.destroy
-    l.destroy
-  end
-
-  make_qq_plot_grid(grid,h,k,l)
-  ! Make the grid for the Q-Q plot, which is a plot of the deviations X-Y
-  ! versus the expected deviations, assuming that the expected devaitions
-  ! are normally distributed. grid(1,:) contains the expected deviation d0j,
-  ! grid(2,:) contains actual deviation dj.
-    MAT, target :: grid
-    VEC* :: d,e
-    IVEC :: h,k,l
-    DBL :: temp
-    INT :: n,i,j
-    n = .n_refl
-    ENSURE(size(grid,1)==n, "grid wrong size")
-    ENSURE(size(grid,2)==2, "grid wrong size")
-    d => grid(:,2)
-    d(:)  = (.F_exp - .F_pred(:)) * sign(ONE,real(.F_calc)) /.sigma(:)
-    do i=1,n-1                   ! sort array from lowest to highest
-      do j=i+1,n
-        if (d(j) < d(i)) then
-          d.swap_elements(i,j)
-          h.swap_elements(i,j)
-          k.swap_elements(i,j)
-          l.swap_elements(i,j)
-        end
-      end
-    end
-    e => grid(:,1)
-    do j=1,n                         ! expected quantile, d0j
-      temp = (TWO*(n-j)+ONE)/(TWO*n) ! cumulative probability
-      e(n-j+1) = temp.z_from_p
-    end
+    ENSURE(.reflections.created, "no reflection data")
+    .reflections.put_labelled_F_qq_plot(name)
   end
 
   put_chi2_vs_angle_plot
@@ -2911,35 +2436,29 @@ contains
   ! into sections.
   ! Reads from stdin the number of divisions in the plot.
     INT :: num_sections
-    INT :: n,num,k
-    MAT(3,3) :: rcm
-    IVEC( .n_refl ) :: section_for
-    DBL :: kx,ky,kz,stl,stl_min,stl_max,chi2,width,stl_mean
+    INT :: n,num,k,n_refl
+    IVEC* :: section_for
+    DBL :: stl,stl_min,stl_max,chi2,width,stl_mean,z
 
     stdin.read(num_sections)
     ENSURE(num_sections > 0, "number of sections to plot not positive")
-    ENSURE(.F_pred.created,"no predicted structure factors")
-    rcm = .reciprocal_cell_matrix
+    ENSURE(.reflections.created,"no structure factors")
+    n_refl = .reflections.n_refl
 
     ! Work out the limits of the sin(theta)/lambda.
     stl_min = 1000
     stl_max = ZERO
-    do n=1, .n_refl
-      kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-      ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-      kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-      stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)*BOHR_PER_ANGSTROM
+    do n=1, n_refl
+      stl = .stl(n) * BOHR_PER_ANGSTROM
       if (stl < stl_min) stl_min = stl
       if (stl > stl_max) stl_max = stl
     end
     width = (TOL(3) + stl_max - stl_min)/num_sections
 
+    section_for.create(n_refl)
     ! Determine which section each reflection belongs to.
-    do n=1, .n_refl
-      kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-      ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-      kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-      stl = HALF*sqrt(kx*kx+ky*ky+kz*kz)*BOHR_PER_ANGSTROM
+    do n=1, n_refl
+      stl = .stl(n) * BOHR_PER_ANGSTROM
       section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
     end
 
@@ -2957,9 +2476,9 @@ contains
       chi2 = ZERO
       num = 0
       stl_mean = stl_min + (n - HALF) * width
-      do k = 1, .n_refl
+      do k = 1, n_refl
         if (n==section_for(k)) then
-          chi2 = chi2 + ((.F_pred(k) - .F_exp(k)) / .sigma(k))**2
+          chi2 = chi2 + .reflections(k).F_z2
           num = num + 1
         end
       end
@@ -2973,81 +2492,145 @@ contains
       end
     end
     stdout.flush
+    section_for.destroy
   end
 
   put_fcalc_plots
   ! Output some different plots about the calculated structure factors.
-    MAT(3,3) :: rcm
-    VEC* :: z,stl,ext
-    INT :: n
-    DBL :: kx,ky,kz,x,y,w
+    VEC* :: ext
+    REFLECTIONVEC* :: ext_refs
+    IVEC(3) :: hkl
+    INT :: n,n_refl
+    DBL :: x,y,w
 
-    rcm = .reciprocal_cell_matrix
-
-    z.create(.n_refl)
-    stl.create(.n_refl)
-    ext.create(.n_refl)
-
-    z(:)  = (.F_exp(:) - .F_pred(:)) * sign(ONE,real(.F_calc(:))) /.sigma(:)
-    do n=1,.n_refl
-      kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
-      ky = rcm(2,1) * .h(n) + rcm(2,2) * .k(n) + rcm(2,3) * .l(n)
-      kz = rcm(3,1) * .h(n) + rcm(3,2) * .k(n) + rcm(3,3) * .l(n)
-      stl(n) = HALF*sqrt(kx*kx+ky*ky+kz*kz)
-    end
-    ext = .extinction_correction
+    n_refl = .reflections.n_refl
 
     stdout.text("The effects of angle.")
-    stdout.text("Scatter plot of (Fexp-Fpred)/sigma vs sin(theta)/lambda")
-    do n=1,.n_refl
-      stdout.put(stl(n))
-      stdout.put(z(n))
+    stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs sin(theta)/lambda")
+    do n=1,n_refl
+      stdout.put(.stl(n))
+      stdout.put(.reflections(n).F_z)
       stdout.flush
     end
     stdout.flush
 
     stdout.text("The effects of intensity.")
-    stdout.text("Scatter plot of (Fexp-Fpred)/sigma vs Fexp")
-    do n=1,.n_refl
-      stdout.put(.F_exp(n))
-      stdout.put(z(n))
+    stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs Fexp")
+    do n=1,n_refl
+      stdout.put(.reflections(n).F_exp)
+      stdout.put(.reflections(n).F_z)
       stdout.flush
     end
     stdout.flush
 
+    ext_refs.create(n_refl)
+    ext.create(n_refl)
+    ext = .extinction_correction
+    ext_refs.set_F_exp(.reflections.F_pred)
+    ext_refs.set_F_pred(.reflections.F_pred * ext)
+    ext_refs.set_F_sigma(.reflections.F_sigma)
+    ext.destroy
+
     stdout.text("The effects of extinction.")
-    stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/sigma vs Fpred")
     w = ZERO
     y = ZERO
-    do n=1,.n_refl
-      x = abs(.F_calc(n))  * (ext(n) - ONE) * sign(ONE,real(.F_calc(n))) / .sigma(n)
-      y = y + abs(x)
-      w = w + abs( (ext(n) - ONE) / ext(n) )
-      stdout.put(.F_pred(n))
-      stdout.put(x)
-      stdout.flush
+    do n=1,n_refl
+      y = y + abs(ext_refs(n).F_z)
+      w = w + abs(ext_refs(n).F_r)
     end
-    stdout.flush
-    y = y / .n_refl
-    w = w / .n_refl
-    stdout.text("The effects of extinction.")
-    stdout.show("Average value of abs(Fcalc_ext-Fcalc)/sigma is ",y)
+    y = y / n_refl
+    w = w / n_refl
+    stdout.show("Average value of abs(Fcalc_ext-Fcalc)/F_sigma is ",y)
     stdout.show("Average value of abs(extinction correction) is ",w)
     stdout.flush
 
     stdout.text("The effects of extinction.")
-    stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/sigma vs sin(theta)/lambda")
-    do n=1,.n_refl
-      x = abs(.F_calc(n))  * (ext(n) - ONE) * sign(ONE,real(.F_calc(n))) / .sigma(n)
-      stdout.put(stl(n))
-      stdout.put(x)
+    stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs Fpred")
+    do n=1,n_refl
+      stdout.put(ext_refs(n).F_pred)
+      stdout.put(ext_refs(n).F_z)
       stdout.flush
     end
+    stdout.flush
+
+    stdout.text("The effects of extinction.")
+    stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs sin(theta)/lambda")
+    do n=1,n_refl
+      stdout.put(.stl(n))
+      stdout.put(ext_refs(n).F_z)
+      stdout.flush
+    end
+    ext_refs.destroy
 
     stdout.flush
-    ext.destroy
-    stl.destroy
-    z.destroy
+  end
+
+   make_crystal_error_map(map,pts)
+   ! Make the crystal error "map" for the supplied points "pts" from the crystal
+   ! structure factors
+     VEC :: map
+     MAT :: pts
+     MAT* :: k
+     VEC* :: F,phase
+     INT :: n_pts,n_refl,n
+     DBL :: fac
+     ENSURE(.reflections.created, "no structure factors")
+     ENSURE(.have_F_calc, "no calculated structure factors")
+     ENSURE(.have_F_exp, "no experimental structure factors")
+     ENSURE( size(pts,2)==3,  "incorrect dimension for points array")
+     n_pts = size(pts,1)
+     n_refl = .reflections.n_refl
+     k.create(n_refl,3); .make_k_pts(k)
+     F.create(n_refl)
+     F = (.reflections.F_exp - .reflections.F_pred) * sign(ONE,real(.reflections.F_calc))
+     phase.create(n_refl)
+     do n = 1,n_pts
+        phase.to_product(k,pts(n:n,:),transpose_b=TRUE)
+        map(n) = sum(F*cos(phase))
+     end
+     fac = TWO/.unit_cell_volume
+     map = fac*map
+     phase.destroy
+     F.destroy
+     k.destroy
+   end
+
+  put_PND_sf(name)
+  ! Output the magnetic structure factors
+      CVEC* :: FM_s
+      CVEC* :: FM_l
+      STR :: name
+      ARCHIVE :: archive
+      INT :: n
+      FM_s.create(.reflections.n_refl)
+      archive.set(name,"PND_spin_sf")
+      archive.read(FM_s)
+      FM_l.create(.reflections.n_refl)
+      archive.set(name,"PND_nabla_sf")
+      archive.read(FM_l)
+      stdout.text("PND magnetic structure factors:")
+      stdout.flush
+      stdout.dash(int_fields=3,dbl_fields=3)
+      stdout.put("h", int_width=TRUE)
+      stdout.put("k", int_width=TRUE)
+      stdout.put("l", int_width=TRUE)
+      stdout.put("FM_s")
+      stdout.put("FM_l")
+      stdout.put("FM")
+      stdout.flush
+      stdout.dash(int_fields=3,dbl_fields=3)
+      do n = 1, .reflections.n_refl
+         stdout.put(.reflections(n).h)
+         stdout.put(.reflections(n).k)
+         stdout.put(.reflections(n).l)
+         stdout.put(real(FM_s(n)) )
+         stdout.put(real(FM_l(n)) )
+         stdout.put(real(FM_s(n)+FM_l(n)) )
+         stdout.flush
+      end
+      stdout.dash(int_fields=3,dbl_fields=3)
+      FM_l.destroy
+      FM_s.destroy
   end
 
 !  *******************
@@ -3069,49 +2652,83 @@ contains
    no_reflection_data result(res)
    ! Return TRUE if no reflection data exists
       BIN :: res
-      res = NOT associated(.h) OR (.n_refl==0)
+      res = NOT associated(.reflections)
    end
 
-   reflection_data_exists result(res)
-   ! Return TRUE if reflection data exists
+  reflection_data_exists result(res)
+  ! Return TRUE if reflection data exists
+    BIN :: res
+    res = associated(.reflections)
+  end
+
+   have_F_exp result(res)
+   ! Return TRUE if have some experimental structure factors
       BIN :: res
-      res = associated(.h) AND (.n_refl>0)
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_exp
    end
 
-   no_F_exp result(res)
-   ! Return TRUE if experimental structure factors does not exist
+   have_F_calc result(res)
+   ! Return TRUE if have some calculated structure factors
       BIN :: res
-      res = NOT associated(.F_exp)
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_calc
    end
 
-   F_exp_exists result(res)
-   ! Return TRUE if experimental structure factors exist
+   have_F_pred result(res)
+   ! Return TRUE if have some predicted structure factors
       BIN :: res
-      res = associated(.F_exp)
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_pred
    end
 
-   no_F_calc result(res)
-   ! Return TRUE if calculated structure factors does not exist
+   have_F_sigma result(res)
+   ! Return TRUE if have some structure factor errors
       BIN :: res
-      res = NOT associated(.F_calc)
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_sigma
    end
 
-   F_calc_exists result(res)
-   ! Return TRUE if calculated structure factors exist
-      BIN :: res
-      res = associated(.F_calc)
-   end
+!*******************************************************************************
+!                     Inherited reflection routines
+!*******************************************************************************
 
-   no_F_pred result(res)
-   ! Return TRUE if predicted structure factor magnitudes do not exist
-      BIN :: res
-      res = NOT associated(.F_pred)
-   end
+  n_refl result (res)
+  ! The number of reflections
+    INT :: res
+    ENSURE(.reflections.created, "no reflection data")
+    res = .reflections.n_refl
+  end
 
-   F_pred_exists result(res)
-   ! Return TRUE if predicted structure factor magnitudes exist
-      BIN :: res
-      res = associated(.F_pred)
-   end
+  F_calc result (res)
+  ! The calculated structure factors
+    CVEC(size(.reflections)) :: res
+    res = .reflections.F_calc
+  end
+
+  F_pred result (res)
+  ! The predicted structure factors
+    VEC(size(.reflections)) :: res
+    res = .reflections.F_pred
+  end
+
+  F_sigma result (res)
+  ! The structure factor errors
+    VEC(size(.reflections)) :: res
+    res = .reflections.F_sigma
+  end
+
+  F_exp result (res)
+  ! The experimental structure factors
+    VEC(size(.reflections)) :: res
+    res = .reflections.F_exp
+  end
+
+  set_F_calc(F_calc)
+  ! Set the calculated structure factors
+    CVEC, IN :: F_calc
+    ENSURE(.reflection_data_exists,"no reflection data")
+    .reflections.set_F_calc(F_calc)
+  end
 
 end
