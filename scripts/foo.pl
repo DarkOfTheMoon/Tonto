@@ -1271,14 +1271,6 @@ sub process_foo_line {
 
    $fortran_out = $input_line;
    $skip_fortran_out = 0;
- # if (defined $current_rout_name &&
- #     defined $routine{$current_rout_name}{template} &&
- #             $routine{$current_rout_name}{template} == 1) { 
- #    $skip_fortran_out = 1; }
- # if (defined $current_rout_name &&
- #     defined $routine{$current_rout_name}{inlined_by_foo} &&
- #             $routine{$current_rout_name}{inlined_by_foo} == 1) { 
- #    $skip_fortran_out = 1; }
 
    $html_out = $input_line;
    $skip_html_out = 0;
@@ -1292,15 +1284,6 @@ sub process_foo_line {
       $skip_tidy_out = 1; }
 
    $html_out = &html_change_special_chars($html_out);
-
-#print "line-FFFF----> = $fortran_out";
-#print "scope unit= $scopeunit";
-#print "  @ scope = @scope";
-#print " grep     ",grep(/(subroutine)|(function)/,@scope);
-#print "new scope = $newscopeunit";
-#print "old scope = $oldscopeunit";
-#print "par scope = $parentscope";
-#print " pure      = ",$routine{$current_rout_name}{pure};
 
    if ($input_line !~ m/^\s*$/o) {
      ########################################### Found a NEW scope unit #####
@@ -1326,7 +1309,7 @@ sub process_foo_line {
      ########################################### Within an EXISTING scope #####
      elsif (&in_module_interface_scope)     { &do_module_interface_scope; }
      elsif (&in_routine_interface_scope)    { &do_routine_interface_scope; }
-     elsif ($scopeunit eq 'program')        { &do_program_scope; }
+     #elsif ($scopeunit eq 'program')        { &do_program_scope; }
      elsif ($scopeunit eq 'module')         { &do_module_scope; }
      elsif ($scopeunit eq 'type')           { &do_type_scope; }
      elsif ($scopeunit eq 'array type')     { &do_type_scope; }
@@ -1334,27 +1317,9 @@ sub process_foo_line {
      elsif (&in_routine_scope)              { &do_routine_scope; }
    }
 
-#print "scope has routine=", &scope_has_routine;
-#print "  @ scope = @scope";
-#print "new scope = $newscopeunit";
    # The following is if we are in a routine body in some scope ...
    if (&scope_has_routine)                { &do_routine_body; }
-
-#print "line after---> = $fortran_out";
-#print "scope unit= $scopeunit";
-#print "  @ scope = @scope";
-#print "new scope = $newscopeunit";
-#print "old scope = $oldscopeunit";
-#print "par scope = $parentscope";
-
-#if ($routine{$current_rout_name}{first_local_var_decl}) {
-#print "$current_rout_name, decl = $input_line";
-#}
-
-#if ($routine{$current_rout_name}{first_active_line}) {
-#print "$current_rout_name, act  = $input_line";
-#}
-
+   elsif (&scope_has_program)             { &do_program_scope; }
 
    # Print the processed line!
    if (  $do_fortran &&
@@ -1370,6 +1335,14 @@ sub process_foo_line {
 # Return TRUE if the scope has a routine/function somewhere in the scope stack
 sub scope_has_routine {
    my @has_routine = grep(/(subroutine)|(function)/,@scope);
+   if ($#has_routine>=0) { return 1; }
+   else                  { return undef; }
+}
+
+################################################################################
+# Return TRUE if the scope has a program somewhere in the scope stack
+sub scope_has_program {
+   my @has_routine = grep(/program/,@scope);
    if ($#has_routine>=0) { return 1; }
    else                  { return undef; }
 }
@@ -3601,12 +3574,12 @@ sub fortran_do_program_scope {
   my $comment;
   ($fortran_out,$comment) = &split_by_comment($fortran_out);
 
-#print "IN program scope ----";
   &fortran_add_default_initialisation;
   &fortran_change_variable_declarations;
 
   ######## lines that contain a dot. ###########
   $fortran_out = &dots_to_fortran($fortran_out);
+  print STDERR $fortran_out;
   ######## lines that contain a dot. ###########
 
   &fortran_process_case_statements;
