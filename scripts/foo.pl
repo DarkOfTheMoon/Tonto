@@ -247,17 +247,22 @@ $function_res_type{"REAL_to_str"} = 'STR';
 );
                                        # Make Tonto intrinsic scalar & array information
                                        # WARNING: ARR{STR} element sizes are special
-my ($scalar_type,$elt_size,$head_name,$array_type);
+my ($scalar_type,$elt_size,$elt_1,$head_name,$array_type);
 @all_known_type_names = @tonto_intrinsic_scalar_type_names;
 foreach $scalar_type (@tonto_intrinsic_scalar_type_names) {
-   if ($scalar_type eq 'STR') { $elt_size = "len(self(1))*CHR_SIZE"; }
-   else                       { $elt_size = $scalar_type . "_SIZE";  }
+   $elt_size = $scalar_type . "_SIZE";
    %{$tonto_type_info{$scalar_type}} = &analyse_type_name($scalar_type);
    $tonto_type_info{$scalar_type}{tonto_size} = $scalar_type . "_SIZE";
    foreach $head_name (keys %tonto_assumed_array_part) {
       $array_type = "$head_name\{$scalar_type\}";
       %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
-      $tonto_type_info{$array_type}{tonto_element_size} = $elt_size;
+      if ($scalar_type eq 'STR') {
+         $elt_1 = $tonto_assumed_array_part{$head_name} ;
+         $elt_1 =~ s/:/1/g;
+         $tonto_type_info{$array_type}{tonto_element_size} = "len(self(" . $elt_1 . "))*CHR_SIZE"; 
+      } else {
+         $tonto_type_info{$array_type}{tonto_element_size} = $elt_size;
+      }
       push(@all_known_type_names,$array_type);
    }
 }
@@ -3630,16 +3635,33 @@ sub fortran_do_program_scope {
   &fortran_add_default_initialisation;
   &fortran_change_variable_declarations;
 
+  $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
+  &fortran_change_square_brackets;
+  $fortran_out = &module_colon_to_fortran($fortran_out);
+
   ######## lines that contain a dot. ###########
   $fortran_out = &dots_to_fortran($fortran_out);
   ######## lines that contain a dot. ###########
 
-  &fortran_process_case_statements;
   &fortran_process_error_management;
+  &fortran_process_case_statements;
   &fortran_add_include_files;
   &fortran_change_use_statements;
-  &fortran_change_square_brackets;
-  $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
+
+#  &fortran_add_default_initialisation;
+#  &fortran_change_variable_declarations;
+#
+#  ######## lines that contain a dot. ###########
+#  $fortran_out = &dots_to_fortran($fortran_out);
+#  ######## lines that contain a dot. ###########
+#
+#  &fortran_process_case_statements;
+#  &fortran_process_error_management;
+#  &fortran_add_include_files;
+#  &fortran_change_use_statements;
+#  &fortran_change_square_brackets;
+#  $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
+#  $fortran_out = &module_colon_to_fortran($fortran_out);
 
   $fortran_out .= $comment; 
 }

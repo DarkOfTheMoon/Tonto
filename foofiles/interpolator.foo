@@ -75,12 +75,14 @@ contains
    ! Nullify the pointer parts
       nullify(.data_point)
       nullify(.data_value)
+      nullify(.y2)
    end
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts
       .data_point.destroy
       .data_value.destroy
+      .y2.destroy
    end
 
 !   created result(res)
@@ -105,6 +107,10 @@ contains
       .data_value.destroy
       .spacing = ZERO
       .finalised = FALSE
+      .y1_initial = INTERPOLATOR_Y1_INITIAL
+      .y1_final   = INTERPOLATOR_Y1_FINAL
+      .y2_initial = INTERPOLATOR_Y2_INITIAL
+      .y2_final   = INTERPOLATOR_Y2_FINAL
       if (present(spacing)) .set_spacing(spacing)
       if (present(first))   .set_first_data_point(first)
    end
@@ -172,6 +178,10 @@ contains
          case ("put             "); .put
          case ("spacing=        "); .read_spacing
          case ("units=          "); .read_units
+         case ("y1_initial=     "); .read_y1_initial
+         case ("y1_final=       "); .read_y1_final
+         case ("y2_initial=     "); .read_y2_initial
+         case ("y2_final=       "); .read_y2_final
          case default;         UNKNOWN(word)
       end
    end
@@ -189,8 +199,10 @@ contains
       stdin.read(.kind)
       .kind.to_lower_case
       select case (.kind)
-         case ("linear")
-         case ("logarithmic")
+         case ("linear")                   ! Linear interpolation between data_value's
+         case ("cubic_spline")             ! Cubic spline interpolation between data_value's
+         case ("logarithmic_linear")       ! Linear interpolation between the log of the data_value's
+         case ("logarithmic_cubic_spline") ! Spline interpolation between the log of the data_value's
          case default; UNKNOWN(.kind)
       end
    end
@@ -216,6 +228,26 @@ contains
       .set_spacing(spacing)
    end
 
+   read_y1_initial
+   ! Read the initial first derivative for cubic spline interpolation
+      stdin.read(.y1_initial)
+   end
+
+   read_y1_final
+   ! Read the final first derivative for cubic spline interpolation
+      stdin.read(.y1_final)
+   end
+
+   read_y2_initial
+   ! Read the initial second derivative for cubic spline interpolation
+      stdin.read(.y2_initial)
+   end
+
+   read_y2_final
+   ! Read the final second derivative for cubic spline interpolation
+      stdin.read(.y2_final)
+   end
+
    finalise ::: leaky
    ! Check everything is OK after reading data. Saturation must exist but it is
    ! applied into the RGB triples and then destroyed.
@@ -236,6 +268,7 @@ contains
          .data_value = .data_value(order)
          order.destroy
       end
+      if (.kind=="cubic_spline" OR .kind=="logarithic_cubic_spline") .set_spline_2nd_derivatives
       .finalised = TRUE
    end
 
@@ -323,7 +356,7 @@ contains
       .n_data = n-1
       .data_value.shrink(.n_data)
       .data_point.shrink(.n_data)
-      if (.kind=="logarithmic") then
+      if (.kind(1:11)=="logarithmic") then
          ENSURE(all(.data_value>ZERO),"-ve data_values cant be used with log interpolation")
          .data_value = log(.data_value)
       end
@@ -361,23 +394,26 @@ contains
       res :: REAL
    ENSURE(.finalised,"not finalised")
       del,frac :: REAL
-      i1,i2 :: INT
+      f,i1,i2 :: INT
+      is_log :: BIN
+      is_log = .kind(1:11)=="logarithmic"
       if (.is_even_spaced) then ! This is more efficient than below
          frac = (point - .data_point(1))/.spacing
-         i1 = floor(frac)
-         if (frac>i1) then
-           i2 = i1+1
-           if (-1<i1 AND i2<.n_data) then
-              del  = .data_value(i1+2) - .data_value(i2)
-              res  = .data_value(i2) + (frac-i1)*del
-              if (.kind=="logarithmic") res = exp(res)
+         f  = floor(frac)
+         i1 = f + 1
+         i2 = i1 + 1
+         if (frac>f) then ! point is between data_point's
+           if (1<=i1 AND i2<=.n_data) then
+              del = .data_value(i2) - .data_value(i1)
+              res = .data_value(i1) + (frac-f)*del
+              if (is_log) res = exp(res)
            else
               res = ZERO
            end
-         else
-           if (-1<i1 AND i1<.n_data) then
-              res  = .data_value(i1+1)
-              if (.kind=="logarithmic") res = exp(res)
+         else              ! point is exactly equal to a data_point
+           if (1<=i1 AND i1<=.n_data) then
+              res  = .data_value(i1)
+              if (is_log) res = exp(res)
            else
               res = ZERO
            end
@@ -390,7 +426,7 @@ contains
             frac = (point - .data_point(i1))/(.data_point(i2)-.data_point(i1))
             del  = .data_value(i2) - .data_value(i1)
             res  = .data_value(i1) + frac*del
-            if (.kind=="logarithmic") res = exp(res)
+            if (is_log) res = exp(res)
          else
             res = ZERO 
          end
@@ -403,31 +439,30 @@ contains
       points :: VEC{REAL}, IN
       values :: VEC{REAL}(points.dim)
    ENSURE(.finalised,"not finalised")
-      point :: REAL
-      res :: REAL
-      del,frac :: REAL
-      i1,i2 :: INT
-      i :: INT
+      point,del,frac,res :: REAL
+      i,f,i1,i2 :: INT
+      is_log :: BIN
+      is_log = .kind(1:11)=="logarithmic"
       if (.is_even_spaced) then ! This is more efficient than below
         do i = 1,points.dim
           point = points(i)
-
           frac = (point - .data_point(1))/.spacing
-          i1 = floor(frac)
-          if (frac>i1) then
-            i2 = i1+1
-            if (-1<i1 AND i2<.n_data) then
-              del  = .data_value(i1+2) - .data_value(i2)
-              res  = .data_value(i2) + (frac-i1)*del
-              if (.kind=="logarithmic") res = exp(res)
+          f  = floor(frac)
+          i1 = f + 1
+          i2 = i1 + 1
+          if (frac>f) then ! point lies betwen spacing
+            if (1<=i1 AND i2<=.n_data) then
+              del = .data_value(i2) - .data_value(i1)
+              res = .data_value(i1) + (frac-f)*del
+              if (is_log) res = exp(res)
               values(i) = res
             else
               values(i) = ZERO
             end
-          else
-            if (-1<i1 AND i1<.n_data) then
-              res  = .data_value(i1+1)
-              if (.kind=="logarithmic") res = exp(res)
+          else             ! point is exactly equal to a data_point
+            if (1<=i1 AND i1<=.n_data) then
+              res  = .data_value(i1)
+              if (is_log) res = exp(res)
               values(i) = res
             else
               values(i) = ZERO
@@ -444,7 +479,7 @@ contains
             frac = (point - .data_point(i1))/(.data_point(i2)-.data_point(i1))
             del  = .data_value(i2) - .data_value(i1)
             res  = .data_value(i1) + frac*del
-            if (.kind=="logarithmic") res = exp(res)
+            if (is_log) res = exp(res)
             values(i) = res
           else
             values(i) = ZERO
@@ -490,46 +525,125 @@ contains
       call func_at(.data_point,pos,.data_value)
    end
 
-!   set_spline_2nd_derivatives
-!   ! Return the interpolated value for "point".
-!   ENSURE(.finalised,"not finalised")
-!   ENSURE(.data_point.created,"no data points")
-!   ENSURE(.data_value.created,"no data values")
-!      dx,dxp,dxm,dy,dyp,dym,sig,p :: REAL
-!      n,i,ip1,pm1 :: INT
-!      u :: VEC{REAL}*
-!      n = .n_data
-!      x => .data_point
-!      y => .data_value
-!      u.create(n)
-!      dx = x(2) - x(1)
-!      dy = y(2) - y(1)
-!      y2(1) = .y2_ininitial
-!      u(1) = (THREE/dx)*(dy/dx - .y1_initial)
-!      do i = 2,n-1
-!         ip1 = i + 1
-!         im1 = i - 1
-!         dxp = x(ip1) - x(i)
-!         dxm = x(i)   - x(im1)
-!         dyp = y(ip1) - y(i)
-!         dym = y(i)   - y(im1)
-!         dx  = x(ip1) - x(im1)
-!         sig = dxm/dx
-!         p = sig*y2(im1) + TWO
-!         y2(i) = (sig-ONE)/p
-!         u(i) = (SIX*(dyp/dxp - dym/dxm)/dx - sig*u(im1))/p
-!      end
-!      dy = y(n) - y(n-1)
-!      dx = x(n) - x(n-1)
-!      u(n) = (THREE/dx)*(.y1_final - dy/dx)
-!      sig = 
-!      y2(n) = (un - qn*u(n-1))/(qn*y2(n-1)+ONE)
-!      ! Back substitution of the triadiagonal algorithm
-!      do i = n-1,1,-1
-!         y2(i) = y2(i)*y2(i+1) + u(i)
-!      end
-!      u.destroy
-!   end
+   spline_value_for(point) result (res)
+   ! Return the spline interpolated value for "point".
+      self :: IN
+      point :: REAL, IN
+      res :: REAL
+   ENSURE(.finalised,"not finalised")
+      frac,del,dl6,v1,v2,a,b :: REAL
+      f,i1,i2 :: INT
+      is_log :: BIN
+      is_log = .kind(1:11)=="logarithmic"
+      if (.is_even_spaced) then ! This is more efficient than below
+         frac = (point - .data_point(1))/.spacing
+         f  = floor(frac)
+         i1 = f + 1
+         i2 = i1 + 1
+         if (frac>f) then ! point lies between spacings
+           if (1<=i1 AND i2<=.n_data) then
+              v1  = .data_value(i1)
+              v2  = .data_value(i2)
+              del = v2 - v1
+              dl6 = del*del/SIX
+              b = frac - f
+              a = ONE - b
+              res = a*v1 + b*v2 +(a*(a*a-1)*.y2(i1) + b*(b*b-1)*.y2(i2))*dl6
+              if (is_log) res = exp(res)
+           else
+              res = ZERO
+           end
+         else              ! point is exactly on a data_point
+           if (1<=i1 AND i1<=.n_data) then
+              res  = .data_value(i1)
+              if (is_log) res = exp(res)
+           else
+              res = ZERO
+           end
+         end
+      else
+         if (point.is_in_range(.data_point.range)) then
+            i1 = count(.data_point<=point) ! assuming .data is ordered !
+            i1 = min(i1,.n_data-1)
+            i2 = i1 + 1
+            v1 = .data_value(i1)
+            v2 = .data_value(i2)
+            del = v2 - v1
+            dl6 = del*del/SIX
+            b = frac - f
+            a = ONE - b
+            res = a*v1 + b*v2 +(a*(a*a-1)*.y2(i1) + b*(b*b-1)*.y2(i2))*dl6
+            if (is_log) res = exp(res)
+         else
+            res = ZERO 
+         end
+      end
+   end
+
+   set_spline_2nd_derivatives
+   ! Set .y2, the second derivatives of the interpolating function at the
+   ! tabulated .data_points's. The values of the second derivatives at
+   ! the endpoints are normally zero. The values of the first derivative are
+   ! normally taken to be the finite difference of the first two or last two
+   ! points.
+   ENSURE(.finalised,"not finalised")
+   ENSURE(.data_point.created,"no data points")
+   ENSURE(.data_value.created,"no data values")
+   ENSURE(.n_data>=3,"must have at least 3 data points")
+      dx,dxp,dxm,dy,dyp,dym,sig,p :: REAL
+      n,i,ip1,im1 :: INT
+      x,y,u :: VEC{REAL}*
+      n = .n_data
+      .y2.destroy
+      .y2.create(n)
+      x => .data_point
+      y => .data_value
+      u.create(n)
+      dx = x(2) - x(1)
+      dy = y(2) - y(1)
+      .y2(1) = .y2_initial
+      if (.y1_initial_set) then; u(1) = (THREE/dx)*(dy/dx - .y1_initial)
+      else;                      u(1) = ZERO
+      end
+      do i = 2,n-1
+         ip1 = i + 1
+         im1 = i - 1
+         dxp = x(ip1) - x(i)
+         dxm = x(i)   - x(im1)
+         dyp = y(ip1) - y(i)
+         dym = y(i)   - y(im1)
+         dx  = x(ip1) - x(im1)
+         sig = dxm/dx
+         p = sig*.y2(im1) + TWO
+         .y2(i) = (sig-ONE)/p
+         u(i) = (SIX*(dyp/dxp - dym/dxm)/dx - sig*u(im1))/p
+      end
+      dy = y(n) - y(n-1)
+      dx = x(n) - x(n-1)
+      if (.y1_final_set) then; u(n) = (THREE/dx)*(.y1_final - dy/dx)
+      else;                    u(n) = ZERO
+      end
+      .y2(n) = (u(n) - .y2_final*u(n-1))/(.y2_final*.y2(n-1)+ONE)
+      ! Back substitution of the triadiagonal algorithm
+      do i = n-1,1,-1
+         .y2(i) = .y2(i)*.y2(i+1) + u(i)
+      end
+      u.destroy
+   end
+
+   y1_initial_set result (res)
+   ! Return TRUE if the first derivative at the start, .y1_initial, has been set
+   ! by the user
+      res :: BIN
+      res = .y1_initial /= INTERPOLATOR_Y1_INITIAL
+   end
+
+   y1_final_set result (res)
+   ! Return TRUE if the first derivative at the endpoint, .y1_final, has been
+   ! set by the user
+      res :: BIN
+      res = .y1_final /= INTERPOLATOR_Y1_FINAL
+   end
 
 !  **************
 !  Output methods
