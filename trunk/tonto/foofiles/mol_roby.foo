@@ -143,6 +143,17 @@ contains
 !         end
 !      end do read_loop
 
+   read_roby_atom(roby_atom) [leaky]
+   ! Reads from the .in file the roby_atom for consideration
+      IVEC, PTR :: roby_atom
+      INT :: k, n_roby_atom
+      n_roby_atom = .in%buffer%n_items - 1
+      roby_atom.create(n_roby_atom)
+      do k = 1,n_roby_atom
+         roby_atom(k) = .in.next_int
+      end
+   end
+
    put_roby_shared_population
    ! Evaluate and put the Roby shared population for a group of atoms
       DBL :: shared_population
@@ -150,11 +161,8 @@ contains
       IVEC, PTR :: roby_atom
       VEC, PTR :: population,pop
       IMAT, PTR :: comb_mat
-      n_roby_atom = .in%buffer%n_items - 1
-      roby_atom.create(n_roby_atom)
-      do k = 1,n_roby_atom
-         roby_atom(k) = .in.next_int
-      end
+      .read_roby_atom(roby_atom)
+      n_roby_atom = size(roby_atom)
       !
       do k = 1,n_roby_atom ! isnt this just 2^k ?
          n_k = n_roby_atom.choose(k)
@@ -233,6 +241,73 @@ contains
       rho_W.destroy
       P.destroy
       D.destroy
+   end
+
+   make_roby_projected_density(rho,rho_old,roby_atom)
+   ! Make the Roby-projected density matrix in the concatenated basis 
+   ! of AO functions of the atoms in "roby_atoms" and copy it into
+   ! a matrix .n_bf x .n_bf, where all other matrix elements not 
+   ! corresponding to basis functions in "roby_atoms" are made zero.
+   ! rho_old specifies that the density_matrix to be used is supplied
+      MAT :: rho
+      IVEC :: roby_atom
+      MAT, PTR :: D,P,rho_W, rho_old
+      INT :: n_bf
+      ENSURE(size(rho,1)==.n_bf,"rho has wrong shape")
+      ENSURE(size(rho,2)==.n_bf,"rho has wrong shape")
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      D.create(n_bf,n_bf)
+      .roby_overlap_transform( rho_old,D,col_atom=roby_atom)
+      P.create(n_bf,n_bf)
+      .make_roby_projection_matrix(P,roby_atom)
+      rho_W.create(n_bf,n_bf)
+      .roby_project(D,rho_W,P) ! rho_W(small) = P_W(small) D(small) P_W(small)
+      .AO_subspace_set(rho,rho_W,A_row_atom=roby_atom,A_col_atom=roby_atom)
+      rho_W.destroy
+      P.destroy
+      D.destroy
+   end
+
+   make_roby_projected_density(rho,roby_atom,ANO) 
+   ! Make the Roby-projected density matrix in the concatenated basis 
+   ! of AO functions of the atoms in "roby_atoms" and copy it into
+   ! a matrix .n_bf x .n_bf, where all other matrix elements not 
+   ! corresponding to basis functions in "roby_atoms" are made zero.
+   ! The orbitals for roby projection are supplied in the ANO matrix
+      IVEC :: roby_atom
+      MAT :: ANO
+      DBL :: pop
+      MAT, PTR :: X, D, rho_W, rho
+      INT :: n_bf
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      D.create(n_bf,n_bf) 
+      .roby_overlap_transform( .density_matrix%restricted,D,col_atom=roby_atom)
+      .make_roby_projection_matrix(X,roby_atom,ANO)
+      rho_W.create(n_bf,n_bf)
+      .roby_project(D,rho_W,X)
+      .AO_subspace_set(rho,rho_W,A_row_atom=roby_atom, A_col_atom=roby_atom) 
+      rho_W.destroy; D.destroy
+      X.destroy
+   end
+
+   make_roby_projected_NOs(NOs,roby_atom,ANO) 
+   ! Make the Roby-projected natural orbitals.
+   ! The orbitals for roby projection are supplied in the ANO matrix
+      IVEC :: roby_atom
+      MAT :: ANO
+      DBL :: pop
+      MAT, PTR :: X, D
+      OPMAT, PTR :: NOs
+      INT :: n_bf
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      .make_roby_projection_matrix(X,roby_atom,ANO)
+      D.create( .n_bf, .n_bf)
+      .AO_subspace_set(D,X,A_row_atom=roby_atom, A_col_atom=roby_atom)
+      NOs%restricted = matmul(D,.natural_orbitals%restricted)
+      D.destroy
+      X.destroy
    end
 
    put_roby_shared_energy
@@ -430,6 +505,27 @@ contains
       X.destroy
    end
 
+   roby_population_from_rho(roby_atom,rho) result (pop) 
+   ! Return the (total) Roby population for the group of atoms whose
+   ! indices are given in "roby_atom" and for which the density matrix
+   ! used for projection is given by rho 
+      IVEC :: roby_atom
+      MAT, PTR :: rho 
+      DBL :: pop
+      MAT, PTR :: X,Y
+      INT :: n_bf
+      ENSURE(size(rho,1)==.n_bf, "supplied density is of wrong order")
+      ENSURE(size(rho,2)==.n_bf, "supplied density is of wrong order")
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      Y.create(.n_bf, .n_bf)
+      .make_roby_projection_matrix(X,roby_atom)
+      .roby_overlap_transform(X,Y,roby_atom)
+      pop = Y.trace_product_with( rho)
+      Y.destroy
+      X.destroy
+   end
+
    roby_population(roby_atom,ANO) result (pop) 
    ! Return the (total) Roby population for the group of atoms whose
    ! indices are given in "roby_atom" and for which the roby projection
@@ -592,10 +688,10 @@ contains
    ! Calculates the Roby-Gould bond index for two atoms
       IVEC :: roby_atom
       DBL :: da,db, pcc, bond_index
-      MAT, PTR :: P_A, P_B, P_AB
       MAT, PTR :: C, theta_c, S, theta_s
       VEC, PTR :: cval, c_p, sval, s_p
       VEC, PTR :: c_a, c_b, s_a, s_b
+      VEC, PTR :: R_AB, I_AB
       VEC, PTR :: covalency,ionicity
       IVEC, PTR :: c_pair, s_pair
       INT :: n_a, n_b, n_ab, i, j, a, b
@@ -610,22 +706,10 @@ contains
       n_ab = n_a + n_b
       C.create(n_ab,n_ab); theta_c.create(n_ab, n_ab); cval.create(n_ab)
       S.create(n_ab,n_ab); theta_s.create(n_ab, n_ab); sval.create(n_ab)
-      P_A.create(n_a,n_a); P_B.create(n_b,n_b); P_AB.create(n_ab,n_ab)
-      .make_roby_projection_matrix(P_A ,(/a/)  )
-      .make_roby_projection_matrix(P_B ,(/b/)  )
-      .make_roby_projection_matrix(P_AB,(/a,b/))
-      C = ZERO
-      C(    1:n_a ,     1:n_a ) =  P_A
-      C(n_a+1:n_ab, n_a+1:n_ab) =  P_B
-      C = C - P_AB
+      .make_roby_shared_operator(C,roby_atom)
+      .make_roby_ionic_operator(S,roby_atom)
       .make_gould_theta_orbitals(C,roby_atom,theta_c,cval)
-      S = ZERO
-      S(    1:n_a ,     1:n_a ) =  P_A
-      S(n_a+1:n_ab, n_a+1:n_ab) = -P_B
       .make_gould_theta_orbitals(S,roby_atom,theta_s,sval)
-      P_AB.destroy
-      P_B.destroy
-      P_A.destroy
     ! .archive_orbitals( theta_c, theta_s, a, b)
       c_pair.create(n_ab); s_pair.create(n_ab)
       cval.find_opposite_pairs(c_pair,TOL(5),ONE-TOL(5))
@@ -672,6 +756,11 @@ contains
       .put_roby_gould_data(roby_atom,bond_index,pc_covalency,pc_ionicity,da,db)
       .put_roby_gould_c_data(covalency,ionicity,cval,c_p,c_pair,c_a,c_b)
       .put_roby_gould_s_data(covalency,ionicity,sval,s_p,s_pair,s_a,s_b)
+      R_AB.create(size(c_p)); I_AB.create(size(s_p))
+      .make_roby_gould_superoperators(roby_atom,R_AB,I_AB,theta_c)
+      .put_roby_gould_superoperators(R_AB,I_AB,c_p,c_pair,cval)
+      R_AB.destroy; I_AB.destroy
+      .roby_gould_partitioning(cval,c_p,c_pair,sval,s_p,s_pair)
       end
       ionicity.destroy
       covalency.destroy
@@ -680,6 +769,113 @@ contains
       c_p.destroy; c_pair.destroy; c_b.destroy; s_b.destroy
       s_p.destroy; s_pair.destroy; c_a.destroy; s_a.destroy
    end   
+
+   make_roby_shared_operator(R,roby_atom)
+   ! constructs the roby_shared_operator R_AB = P_A + P_B - P_AB
+   IVEC :: roby_atom
+   MAT, PTR :: P_A,P_B,P_AB
+   MAT :: R
+   INT :: a, b, n_a, n_b, n_ab
+      a = roby_atom(1)
+      b = roby_atom(2)
+      n_a = .atom(a).no_of_basis_functions
+      n_b = .atom(b).no_of_basis_functions
+      n_ab = n_a + n_b
+      P_A.create(n_a,n_a)
+      P_B.create(n_b,n_b)
+      P_AB.create(n_ab,n_ab)
+      .make_roby_projection_matrix(P_A ,(/a/)  )
+      .make_roby_projection_matrix(P_B ,(/b/)  )
+      .make_roby_projection_matrix(P_AB,(/a,b/))
+      R = ZERO
+      R(    1:n_a ,     1:n_a ) =  P_A
+      R(n_a+1:n_ab, n_a+1:n_ab) =  P_B
+      R = R - P_AB
+      P_AB.destroy
+      P_B.destroy
+      P_A.destroy
+   end
+
+   make_roby_ionic_operator(I,roby_atom)
+   ! constructs the roby/gould ionic operator I_AB = P_A - P_B
+   IVEC :: roby_atom
+   MAT, PTR :: P_B,P_A
+   MAT :: I
+   INT :: a, b, n_a, n_b, n_ab
+      a = roby_atom(1)
+      b = roby_atom(2)
+      n_a = .atom(a).no_of_basis_functions
+      n_b = .atom(b).no_of_basis_functions
+      n_ab = n_a + n_b
+      P_A.create(n_a,n_a)
+      P_B.create(n_b,n_b)
+      .make_roby_projection_matrix(P_A ,(/a/)  )
+      .make_roby_projection_matrix(P_B ,(/b/)  )
+      I = ZERO
+      I(    1:n_a ,     1:n_a ) =  P_A
+      I(n_a+1:n_ab, n_a+1:n_ab) = -P_B
+      P_A.destroy; P_B.destroy
+   end
+
+   make_roby_gould_superoperators(roby_atom,R_AB,I_AB,theta_c)
+   ! Makes the superoperators R_AB^2 and calculates the expectation value
+   ! of this over each theta orbital. Similarly for I_AB^2.
+   ! R_AB^2 = -P_A - P_B +P_AB + P_A.P_B + P_B.P_A
+   ! I_AB^2 = P_A + P_B - P_A.P_B - P_B.P_A
+   VEC, PTR :: R_AB, I_AB, p_a, p_b, p_ab, bp_a, ap_b
+   IVEC :: roby_atom
+   MAT, PTR :: theta_c, rho_A, rho_B, rho_t
+   INT :: i, n_theta
+    rho_A.create( .n_bf, .n_bf)
+    rho_B.create( .n_bf, .n_bf)
+    rho_t.create( .n_bf, .n_bf)
+    n_theta = size(theta_c,1)
+    p_a.create( n_theta)
+    p_b.create( n_theta)
+    p_ab.create( n_theta)
+    bp_a.create( n_theta)
+    ap_b.create( n_theta)
+    do i = 1, size(theta_c,1)
+      p_a(i)  = .roby_population(roby_atom,theta_c(:,i:i),1)  ! P_A  rho_theta
+      p_b(i)  = .roby_population(roby_atom,theta_c(:,i:i),2)  ! P_B  rho_theta
+      p_ab(i) = .roby_population(roby_atom,theta_c(:,i:i))    ! P_AB rho_theta
+      .make_roby_projected_density(rho_t,roby_atom,theta_c(:,i:i))
+      .make_roby_projected_density(rho_A,rho_t,roby_atom(1:1))
+      .make_roby_projected_density(rho_B,rho_t,roby_atom(2:2))
+      bp_a(i) = .roby_population_from_rho(roby_atom(2:2),rho_A) ! P_B.P_A rho_t
+      ap_b(i) = .roby_population_from_rho(roby_atom(1:1),rho_B) ! P_A.P_B rho_t 
+    end
+    R_AB = -p_a - p_b + p_ab + bp_a + ap_b
+    I_AB = p_a + p_b - ap_b - bp_a
+    rho_A.destroy; rho_B.destroy; rho_t.destroy
+    p_a.destroy; p_b.destroy; p_ab.destroy; bp_a.destroy; ap_b.destroy
+   end
+
+   put_roby_gould_superoperators(R_AB,I_AB,c_p,c_pair, cval)
+   ! outputs the Roby_gould superoperator relationships for the bond
+   VEC, PTR :: R_AB, I_AB, c_p, cval
+   IVEC, PTR :: c_pair
+   INT :: i
+     .out.dash(int_fields=1,dbl_fields=4)
+     .out.put("Roby-Gould super operator relationships.")
+     .out.flush
+     .out.dash(int_fields=1,dbl_fields=4)
+     .out.put("Theta (dg)",int_width=TRUE)
+     .out.put("R_AB^2")
+     .out.put("I_AB^2")
+     .out.put("I_AB^2 + R_AB^2")
+     .out.put("n_theta"); .out.flush
+     .out.dash(int_fields=1,dbl_fields=4)
+     do i = 1, size(c_p)
+      if (c_pair(i)<=0) cycle
+      .out.put(nint(180*cval(i).arccos/PI))
+      .out.put(R_AB(i) + R_AB(c_pair(i)))
+      .out.put(I_AB(i) + I_AB(c_pair(i)))
+      .out.put(R_AB(i) + I_AB(i) + R_AB(c_pair(i)) + I_AB(c_pair(i)))
+      .out.put(c_p(i) + c_p(c_pair(i))); .out.flush
+     end
+     .out.dash(int_fields=1,dbl_fields=4)
+   end
 
    put_roby_gould_data(roby,bond_index,pc_covalency,pc_ionicity,da,db)
    ! Output detailed Roby-Gould bond index information
@@ -808,6 +1004,75 @@ contains
          end
       end
       .out.dash(int_fields=1,dbl_fields=5)
+   end
+
+   roby_gould_partitioning(cval,c_p,c_pair,sval,s_p,s_pair)
+   ! calculates the roby_gould partitioning data
+   ! where the ionic and shared components are extracted
+   ! from the eigenvector populations and gives this as output.
+      IVEC, PTR :: c_pair, s_pair, angle_c, angle_s, angle_pairs
+      VEC, PTR :: cval, c_p, s_p, sval
+      VEC, PTR :: s_ab, i_ab 
+      VEC, PTR :: s_total, i_total
+      VEC, PTR :: n2
+      INT :: i, j
+      s_ab.create(size(c_p))
+      s_ab = abs(cval) * c_p
+      ! make the |I_AB| data for each theta orbital = i_ab
+      i_ab.create(size(c_p))
+      i_ab = abs(sval) * s_p
+      .out.dash(dbl_fields=4,int_fields=1)
+      .out.put("Roby Gould Partitioning.");.out.flush
+      .out.dash(dbl_fields=4,int_fields=1)
+      .out.flush
+      .out.put("Theta (dg)", int_width=TRUE)
+      .out.put("Covalent")
+      .out.put("Ionic")
+      .out.put("Sum Weighted")
+      .out.put("Total")
+      .out.flush
+      .out.tab(int_fields=1)
+      .out.put("Population")
+      .out.put("Population")
+      .out.put("Squares")
+      .out.put("Population")
+      .out.flush
+      .out.dash(dbl_fields=4,int_fields=1)
+      angle_c.create(size(c_p)) 
+      angle_s.create(size(s_p))
+      s_total.create(size(c_p)); s_total.zero
+      i_total.create(size(s_p)); i_total.zero
+      do i = 1, size(c_p)
+        angle_c(i) = nint(180*cval(i).arccos/PI)
+        angle_s(i) = nint(180*sval(i).arcsin/PI)
+         if (c_pair(i) <= 0) cycle
+         s_total(i) = s_ab(i) + s_ab(c_pair(i))
+         if (s_pair(i) == 0) cycle
+         if (s_pair(i) == -1) then
+            i_total(i) = i_ab(i)
+         else
+            i_total(i) = i_ab(i) + i_ab(s_pair(i))
+         end
+      end
+      angle_pairs.create(size(c_p))
+      angle_pairs.pair_vec_from(angle_c,angle_s)
+      n2.create(size(c_p)); n2.zero
+      do i = 1, size(c_p)
+        if (angle_pairs(i)==0) cycle
+        n2(i) = sqrt(i_total(angle_pairs(i))**2 + s_total(i)**2)
+        .out.put(angle_c(i))
+        .out.put(s_total(i))
+        .out.put(i_total(i))
+        .out.put(n2(i))
+        .out.put(c_p(i))
+        .out.flush
+      end
+      .out.dash(int_fields=1,dbl_fields=4)
+      angle_c.destroy; angle_s.destroy
+      s_total.destroy; i_total.destroy
+      i_ab.destroy; s_ab.destroy
+      angle_pairs.destroy
+      n2.destroy
    end
 
    make_gould_theta_orbitals(X,roby_atom,theta,eigenvalues)
@@ -1024,6 +1289,41 @@ contains
 !!!      tmp_mat1.destroy; tmp_mat2.destroy   
 !!!    end  
 !!!
+
+      plot_theta_orbitals
+      ! plots all the theta_c orbitals involving the diatomic specified as
+      ! parameters to the keyword call
+      IVEC, PTR :: roby_atom
+      INT :: i, size_theta
+      VEC,PTR :: cval
+      OPMAT, PTR :: proj_NOs
+      MAT, PTR :: theta_c, R, saved_NO_matrix
+         .grid.put( .out)
+         .read_roby_atom(roby_atom)
+         ENSURE(size(roby_atom)==2,"must specify a diatomic")
+         size_theta = .atom(roby_atom).n_bf
+         R.create(size_theta,size_theta)
+         theta_c.create(size_theta,size_theta)
+         .make_roby_shared_operator(R,roby_atom)
+         cval.create(size_theta)
+         .make_gould_theta_orbitals(R,roby_atom,theta_c,cval)
+         R.destroy
+         saved_NO_matrix.create( .n_bf, .n_bf)
+         saved_NO_matrix = .natural_orbitals%restricted
+         do i = 1, size_theta
+           if (abs(cval(i))<1.0d-05) cycle 
+           proj_NOs.create( .n_bf, "restricted")
+           .make_roby_projected_NOs(proj_NOs, roby_atom, theta_c(:,i:i))
+           .natural_orbitals%restricted = proj_NOs%restricted
+           .make_orbital_density_grid(i,make_NOs=FALSE)
+           .natural_orbitals%restricted = saved_NO_matrix
+           proj_NOs.destroy
+         end 
+         cval.destroy
+         theta_c.destroy
+         saved_NO_matrix.destroy
+      end
+
 !!!   plot_theta_orbitals( orb_type, orb_no)
 !!!   ARCHIVE :: archive
 !!!   STR(*) :: orb_type
