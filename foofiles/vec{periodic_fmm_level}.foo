@@ -29,16 +29,20 @@ contains
 ! Memory allocation
 !*******************************************************************************
 
-   create(lb,ub,mol) ::: leaky
-   ! Create the vector with lower bound "lb", upper bound "ub"
+   create(lb,ub,mol,charges,positions) ::: leaky
+   ! Create the vector with lower bound "lb", upper bound "ub". Must also supply
+   ! a molecule "mol", and fragment "charges" and "positions" for correct
+   ! initialisation.
       self :: PTR
       lb,ub :: INT, IN
-      mol :: MOLECULE, IN, optional
+      mol :: MOLECULE, IN
+      charges :: VEC{REAL}*
+      positions :: MAT{REAL}*
       nullify(self)
       allocate(self(lb:ub))
       ADD_MEMORY((ub-lb+1)*ELEMENT_TYPE_SIZE)
       .nullify_ptr_part
-      .set_defaults(mol)
+      .set_defaults(mol,charges,positions)
    end
 
    destroy ::: get_from(VEC{OBJECT}), leaky
@@ -53,13 +57,17 @@ contains
    ! Destroy the pointer parts of self
    end
 
-   set_defaults(mol)
+   set_defaults(mol,charges,positions)
    ! Set default values.
-      mol :: MOLECULE, IN, optional
+      self :: PTR
+      mol :: MOLECULE, IN
+      charges :: VEC{REAL}*
+      positions :: MAT{REAL}*
    ENSURE(.dim>1,"must have at least two levels")
       i :: INT
+      self(0).set_defaults(mol,charges,positions)
       do i = 1,.dim
-         self(i).set_defaults(mol)
+         self(i).set_defaults(self(i-1))
       end
    end
 
@@ -67,10 +75,36 @@ contains
 ! Misc
 !*******************************************************************************
 
-   set_first_level(n_div)
-   ! Set the variables that go into the first level.
-     n_div :: INT, IN
-     self(1).set_number_of_divisions(n_div)
+   make_positions_and_charges ::: leaky
+   ! Make a list of point charges that accurately represents the total charge of
+   ! the initial level (i.e. unit cell). Then sort the charges into boxes.
+   ! NOTE: this sets level 0--1 ONLY.
+      self :: PTR
+   ENSURE(.created,"no fmm levels")
+   ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
+   ENSURE(ubound(self,1)>0,"must have at least level 0 and level 1")
+      self(0).make_L0_positions_and_charges
+      self(0).make_L0_positions_into_boxes 
+      ! Copy charges to level 1
+      self(1).charges   => self(0).charges
+      self(1).positions => self(0).positions
+   end
+
+   make_box_charges ::: leaky
+   ! Make the list of charges in each box at level 0, used for making the box
+   ! multipoles and box total charges. ALso make the list of total box and total
+   ! subbox charges, for correctly evaluating l_max.
+      self :: PTR
+   ENSURE(.created,"no fmm levels")
+   ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
+   ENSURE(ubound(self,1)>1,"must have at least two levels")
+      i :: INT
+      self(0).make_L0_total_box_charges
+      self(1).make_total_box_charges(self(0)) 
+      do i = 2,ubound(self,1)
+         self(i).make_total_box_charges(self(i-1)) 
+         self(i).make_total_subsubbox_charges(self(i-2))
+      end
    end
  
    set_l_max
@@ -79,110 +113,57 @@ contains
       self :: PTR
    ENSURE(.created,"no fmm levels")
    ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
-   ENSURE(ubound(self,1)>=1,"must have at least two levels")
+   ENSURE(ubound(self,1)>=1,"must have at least level 0 and level 1")
       i :: INT
       do i = 1,ubound(self,1)
-         self(i).set_level(self(i-1))
+         self(i).set_l_max(self(i-1))
       end
    end
 
-   make_positions_and_charges(charges,positions)
-   ! Make a list of point charges that accurately represents the total charge of
-   ! the initial level (i.e. unit cell) from a given set of fragment "charges"
-   ! and fragment "positions".  Includes contributions from electrons and nuclei.
-   ! NOTE: this sets level 0 and level 1 ONLY.
-      self :: PTR
-      charges :: VEC{REAL}
-      positions :: MAT{REAL}
-   ENSURE(.created,"no fmm levels")
-   ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
-   ENSURE(ubound(self,1)>1,"must have at least two levels")
-      self(0).make_positions_and_charges(charges,positions)
-      ! Copy to level 1 and level 2
-      self(1).charges   => self(0).charges
-      self(1).positions => self(0).positions
-      self(2).charges   => self(0).charges ! needed to generate multipoles
-      self(2).positions => self(0).positions
-   end
-
-   make_initial_subbox_multipoles(l_max) ::: leaky
-   ! Assign the initial subbox multipoles up to order "l_max" from a given set
-   ! of ".charges" and ".positions". NOTE: this should be applied to level two
-   ! in the first instance (level 1 is the buffer zone).
+   make_box_multipoles(l_max) ::: leaky
+   ! Make the list of box multipoles at level 0 up to order "l_max". Then define
+   ! the remaining box multipoles and the subsubbox multipoles.
       self :: PTR
       l_max :: INT
    ENSURE(.created,"no fmm levels")
    ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
-   ENSURE(ubound(self,1)>=1,"must have at least two levels")
-      self(2).make_initial_subbox_multipoles(l_max)
-   end
- 
-   make_all_subbox_multipoles
-   ! Make the multipole expansion for each level. This assumed the multipoles at
-   ! level 2 are created.
-      self :: PTR
-   ENSURE(.created,"no fmm levels")
-   ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
-   ENSURE(ubound(self,1)>=1,"must have at least two levels")
-   ENSURE(self(2).subbox_multipoles.created,"no starting multipoles at level 2")
-   ENSURE(self(2).subbox_multipoles(1,1,1).element.created,"no starting multipoles at level 2")
+   ENSURE(ubound(self,1)>1,"must have at least three levels")
       i :: INT
-      do i = 3,ubound(self,1)
-         self(i).make_subbox_multipoles(self(i-1))
+      self(0).make_L0_box_multipoles(l_max)
+      self(1).make_box_multipoles(self(0)) 
+ ! self(1).put_box_multipoles
+ ! self(1).make_L1_box_multipoles(l_max)
+ ! self(1).put_box_multipoles
+ ! stop
+      do i = 2,ubound(self,1)
+         self(i).make_box_multipoles(self(i-1)) 
+         self(i).make_subsubbox_multipoles(self(i-2))
       end
    end
  
-   make_potential(values,points,adjust_surface_dipoles) 
-   ! Make the the "values" of the potential at "points" in the unit cell, coming
-   ! from the set of subbox multipoles at this level. If present TRUE,
+   make_potential(values,adjust_surface_dipoles) 
+   ! Make the the "values" of the potential at the positions of the effective
+   ! charges in the initial fragment, ".fragment_positions". If present TRUE,
    ! "adjust_surface_dipoles" causes most of the dipoles on the surface of this
    ! level to be reversed, to simulate the neutralisation of the surface charge,
    ! in order to get a potential close to the Ewald potential.
       self :: PTR
       values :: VEC{REAL}
-      points :: MAT{REAL}
       adjust_surface_dipoles :: BIN, optional
    ENSURE(.created,"no fmm levels")
    ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
    ENSURE(ubound(self,1)>=1,"must have at least two levels")
       i :: INT
       values = ZERO
-    ! do i = 0,ubound(self,1)
-         stdout.set_real_style("e")
-      do i = 0,2
-         self(i).add_potential_to(values,points)
-         stdout.text("potential so far:")
-         stdout.show("level =",i)
-         stdout.put(values,"column")
+       ! stdout.set_real_style("e")
+      do i = 1,ubound(self,1)
+         self(i).add_potential_to(values)
+       ! stdout.text("potential so far:")
+       ! stdout.show("level =",i)
+       ! stdout.put(values,"column")
+       ! if (i==5) exit
       end
-   end
- 
-   set_all_levels
-   ! Make the information for each level.
-      self :: PTR
-   ENSURE(lbound(self,1)==0,"must have level zero as lower bound")
-   ENSURE(ubound(self,1)>=1,"must have at least two levels")
-   ENSURE(self(0).level_number>=0, "starting level must not be negative")
-     i :: INT
-     do i = 1,ubound(self,1)
-        self(i).set_level(self(i-1))
-     end
-   end
- 
-   check_levels_match
-   ! Check whether the levels are all related.
-     ENSURE(.dim>1,"must have at least two levels")
-     i :: INT
-     div_match,centre_match :: BIN
-     div_match = TRUE
-     centre_match = TRUE
-     do i = 1,.dim
-       if (any(self(1).divisions/=self(i).divisions)) div_match = FALSE
-       if (NOT self(1).box_centre.same_as(self(i).box_centre)) centre_match = FALSE
-       if (NOT div_match OR NOT centre_match) exit
-     end
-     ENSURE(div_match,"number of divisions not consistent")
-     ENSURE(centre_match,"box centres not consistent")
+         self(1).subtract_fragment_potential(values)
    end
 
    put
