@@ -128,7 +128,7 @@ help :
 	@echo ""
 
 install : run_mol.x
-	install -f $(installdir) ./run_mol.x
+	install $(installdir)/run_mol.x ./run_mol.x
 
 clean :
 	@if (-d ./dependencies)  echo "rm -f dependencies/*"
