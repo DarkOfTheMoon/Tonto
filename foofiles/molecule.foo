@@ -1584,16 +1584,18 @@ contains
    ! If the archive file exists, read it; otherwise make it.
       S :: MAT{REAL}
       arch :: ARCHIVE
-      write_archive,calc_it,group :: BIN
+      write_archive,calc_it,group,rxhf :: BIN
       arch.set(.name,"overlap_matrix")
       if (.scfdata.destroyed) then
          calc_it = TRUE
          write_archive = TRUE
+         rxhf = FALSE
          group = FALSE
       else
          calc_it = .scfdata.direct
          write_archive = NOT .scfdata.direct
-         group = .scfdata.group
+         rxhf  = .scfdata.kind=="rxhf"
+         group = .scfdata.kind=="noninteracting-group-rhf"
       end
       if (NOT calc_it) then
         if (arch.exists) then
@@ -1605,10 +1607,9 @@ contains
         end
       end
       if (calc_it) then
-         if (group) then
-               .make_group_overlap_matrix(S)
-         else
-               .make_overlap_matrix(S)
+         if (rxhf) then;       .make_rxhf_overlap_matrix(S)
+         else if (group) then; .make_group_overlap_matrix(S)
+         else;                 .make_overlap_matrix(S)
          end
       end
       if (write_archive) arch.write(S)
@@ -1629,6 +1630,36 @@ contains
        sh.make_overlap(S(fa:la,fb:lb))
        sh.destroy_ptr_part
      end
+     tonto_parallel.sum_symmetric_matrices(S)
+     S.symmetric_reflect
+   end
+
+   make_rxhf_overlap_matrix(S)
+   ! Calculate the overlap matrix "S" for a restricted crystal Hartree-Fock
+   ! calculation.
+     S :: MAT{REAL}, target
+   ENSURE(.atom.created,  "no fragment atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.cluster.created,"no cluster data")
+   ENSURE(.cluster.atom.created,"no cluster atom data")
+   ENSURE(.cluster.info_made,"no cluster data")
+   ENSURE(S.is_square,"S is not square")
+   ENSURE(S.dim1==.cluster.atom.no_of_basis_functions,"S has wrong shape")
+     n_shell_pairs,q,fa,la,fb,lb,start,step :: INT
+     sh :: SHELL2
+     stdout.text("here")
+     n_shell_pairs = .cluster.atom.n_shell_pairs
+     stdout.show("n_shell_pairs = ",n_shell_pairs)
+     start = 1 + tonto_parallel.this_proc
+     step = tonto_parallel.n_proc
+     if (tonto_parallel.do_parallel) S = ZERO
+     do q = start,n_shell_pairs,step
+       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
+       sh.make_overlap(S(fa:la,fb:lb))
+       sh.destroy_ptr_part
+     end
+     stdout.text("here2")
      tonto_parallel.sum_symmetric_matrices(S)
      S.symmetric_reflect
    end
@@ -9966,6 +9997,115 @@ contains
      K.symmetric_reflect
    end
 
+   make_r_J_direct(J,P)
+   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
+   ! directly.
+     J,P :: MAT{REAL}
+     max_I,max_P :: VEC{REAL}*
+     sh4 :: SHELL4
+     ab,cd,aa,bb,cc,dd :: INT
+     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
+     factor,cutoff,P_max,IP_max :: REAL
+     skip :: BIN
+     J = ZERO
+     cutoff = .scfdata.eri_cutoff
+     max_I.create(.n_shell_pairs)
+     max_P.create(.n_shell_pairs)
+     .make_max_abab_integrals(max_I)
+     .make_max_density_elements(max_P,P)
+     P_max = maxval(max_P)
+     IP_max = maxval(max_I) * P_max
+     start = 1 + tonto_parallel.this_proc
+     step = tonto_parallel.n_proc
+     do ab = start, .n_shell_pairs, step
+       if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
+       .set_shell_quartet_ab(sh4,aa,bb)
+       do cd = 1,ab
+         if (max_I(ab)*max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
+                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,max_I)
+         if (skip) cycle
+
+         .set_shell_quartet_cd(sh4,cc,dd)
+         if (aa==bb) then                   ! Evaluate the integrals'
+           factor = HALF                    ! coincidence factors
+         else
+           factor = ONE
+         end
+         if (cc==dd) factor = HALF * factor
+         if (aa==cc AND bb==dd) factor = HALF * factor
+         sh4.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         sh4.destroy_cd
+       end
+       sh4.destroy_ab
+     end
+     max_P.destroy
+     max_I.destroy
+     .weight_diagonal_blocks(J,TWO)
+     tonto_parallel.sum_symmetric_matrices(J)
+     J.symmetric_reflect
+     J = TWO*J
+   end
+
+   make_r_K_direct(K,P)
+   ! Make the real exchange matrix "K" from a symmetric density matrix "P"
+   ! directly.
+     K,P :: MAT{REAL}
+     max_I,max_P :: VEC{REAL}*
+     !sh4 :: SHELL4
+     sh4q :: SHELL1QUARTET
+     ab,cd,aa,bb,cc,dd :: INT
+     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
+     factor,cutoff,P_max,IP_max :: REAL
+     skip :: BIN
+     K = ZERO
+     cutoff = .scfdata.eri_cutoff
+     max_I.create(.n_shell_pairs)
+     max_P.create(.n_shell_pairs)
+     .make_max_abab_integrals(max_I)
+     .make_max_density_elements(max_P,P)
+     P_max = maxval(max_P)
+     IP_max = maxval(max_I) * P_max
+     start = 1 + tonto_parallel.this_proc
+     step = tonto_parallel.n_proc
+     do ab=start,.n_shell_pairs,step
+       if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
+       .set_precomp_shell_quartet_ab(sh4q,aa,bb)
+       !.set_shell_quartet_ab(sh4,aa,bb)
+       do cd = 1,ab
+         if (max_I(ab)*max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
+                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,max_I)
+         if (skip) cycle
+
+         .set_precomp_shell_quartet_cd(sh4q,cc,dd)
+         !.set_shell_quartet_cd(sh4,cc,dd)
+         if (aa==bb) then                   ! Evaluate the integrals'
+           factor = HALF                    ! coincidence factors
+         else
+           factor = ONE
+         end
+         if (cc==dd) factor = HALF * factor
+         if (aa==cc AND bb==dd) factor = HALF * factor
+         sh4q.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         sh4q.destroy_cd
+         !sh4.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         !sh4.destroy_cd
+       end
+       !sh4.destroy_ab
+       sh4q.destroy_ab
+     end
+     max_P.destroy
+     max_I.destroy
+     .blockwise_symmetric_fold(K)
+     tonto_parallel.sum_symmetric_matrices(K)
+     K.symmetric_reflect
+   end
+
    make_r_JK_disk(J,K,P)
    ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a
    ! symmetric density matrix "P" from disk integral archive "eri_integrals"
@@ -10065,6 +10205,54 @@ contains
      .weight_diagonal_blocks(J,TWO)
      J.symmetric_reflect
      J = TWO*J
+   end
+
+   make_r_K_disk(K,P)
+   ! Make the real exchange matrix "K" from a symmetric density matrix "P" from
+   ! disk integral archive "eri_integrals"
+     K,P :: MAT{REAL}
+     eri_archive,ind_archive :: ARCHIVE
+     I :: MAT4{REAL}*
+     q,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld,n_quartets :: INT
+     I_abcd,P_dc,P_db,P_cb :: REAL
+     eri_archive.set(.name,"eri_integrals")
+     ind_archive.set(.name,"eri_index")
+     ENSURE(.basis_info_made, "no basis info")
+     ENSURE(.atom.created,  "no atom list")
+     ENSURE(eri_archive.exists, "no integral file")
+     ENSURE(ind_archive.exists, "no integral index file")
+     eri_archive.open(for="read-only",buffered=TRUE,type="real")
+     ind_archive.open(for="read-only",buffered=TRUE,type="int")
+     K = ZERO
+     n_quartets = .n_shell_quartets
+     do
+       ind_archive.file.read(q)
+       if (q > n_quartets) exit
+       .get_shell_quartet_indices(q,fa,la,fb,lb,fc,lc,fd,ld)
+       I.create(fa,la,fb,lb,fc,lc,fd,ld)
+       eri_archive.file.read(I)
+       do d = fd,ld
+         do c = fc,lc
+           P_dc = P(d,c)
+           do b = fb,lb
+             P_db = P(d,b)
+             P_cb = P(c,b)
+             do a = fa,la
+                I_abcd = I(a,b,c,d)
+                K(a,c) = K(a,c) + I_abcd*P_db
+                K(a,d) = K(a,d) + I_abcd*P_cb
+                K(b,c) = K(b,c) + I_abcd*P(d,a)
+                K(b,d) = K(b,d) + I_abcd*P(c,a)
+             end
+           end
+         end
+       end
+       I.destroy
+     end
+     ind_archive.close
+     eri_archive.close
+     .blockwise_symmetric_fold(K)
+     K.symmetric_reflect
    end
 
    make_r_group_JK(J,K,P)
@@ -10193,58 +10381,6 @@ contains
      end
      max_P.destroy
      max_I.destroy
-   end
-
-   make_r_J_direct(J,P)
-   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
-   ! directly.
-     J,P :: MAT{REAL}
-     max_I,max_P :: VEC{REAL}*
-     sh4 :: SHELL4
-     ab,cd,aa,bb,cc,dd :: INT
-     fa,fb,fc,fd,la,lb,lc,ld,start,step :: INT
-     factor,cutoff,P_max,IP_max :: REAL
-     skip :: BIN
-     J = ZERO
-     cutoff = .scfdata.eri_cutoff
-     max_I.create(.n_shell_pairs)
-     max_P.create(.n_shell_pairs)
-     .make_max_abab_integrals(max_I)
-     .make_max_density_elements(max_P,P)
-     P_max = maxval(max_P)
-     IP_max = maxval(max_I) * P_max
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     do ab = start, .n_shell_pairs, step
-       if (max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
-       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
-       .set_shell_quartet_ab(sh4,aa,bb)
-       do cd = 1,ab
-         if (max_I(ab)*max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
-         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
-                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,max_I)
-         if (skip) cycle
-
-         .set_shell_quartet_cd(sh4,cc,dd)
-         if (aa==bb) then                   ! Evaluate the integrals'
-           factor = HALF                    ! coincidence factors
-         else
-           factor = ONE
-         end
-         if (cc==dd) factor = HALF * factor
-         if (aa==cc AND bb==dd) factor = HALF * factor
-         sh4.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.destroy_cd
-       end
-       sh4.destroy_ab
-     end
-     max_P.destroy
-     max_I.destroy
-     .weight_diagonal_blocks(J,TWO)
-     tonto_parallel.sum_symmetric_matrices(J)
-     J.symmetric_reflect
-     J = TWO*J
    end
 
    make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
