@@ -375,6 +375,7 @@ contains
       end
       saved.use_style(self)
       self  = saved
+      .io_status = 2            ! Set soft end-of-file
       DELETE_MEM(TEXTFILE_SIZE)
       deallocate(saved)         ! instead, just deallocate it
    end
@@ -515,6 +516,7 @@ contains
       ENSURE(.internal.created,"no internal file")
       .update_system_info
       if (.record<size(.internal)) then ! No errors.  
+         .io_status = 0
          .record = .record+1
          string = .internal(.record)
          .buffer.set(string)
@@ -524,10 +526,9 @@ contains
          if (NOT .ignore_end_of_file) then   ! Do not ignore end of file
             if(.saved.created) then          ! Automatically return to saved file
                .revert                       ! Get back previous settings
-               .io_status = 2                ! Set soft end-of-file
-             else
+            else
                DIE("unexpected end of file") ! Die if nothing to unsave
-             end
+            end
          end
       end
    end
@@ -549,6 +550,7 @@ contains
 10    continue
       select case (fail)
         case (0)                             ! No errors.  
+          .io_status = 0
           .buffer.set(string)                ! Read a line into the buffer.
           .record = .record+1
           .update_system_info
@@ -557,7 +559,6 @@ contains
            if (NOT .ignore_end_of_file) then ! This end shouldnt be ignored
              if(.saved.created) then         ! It's OK, go back to saved file
                .revert
-               .io_status = 2                ! Set soft end-of-file
              else 
                DIE("unexpected end of file") ! Die if nothing saved
              end
@@ -592,6 +593,8 @@ contains
    skip_next_item [leaky]
    ! Move to the next item in the input file.
       .update_line
+      DIE_IF(.end_of_file,"file has ended")
+      DIE_IF(.reverted,   "internal file has ended")
       .buffer.skip_item
       .update_system_info
    end
@@ -654,7 +657,9 @@ contains
     STR :: res
     ENSURE(.action=="read","file does not have read action!")
     if ( .buffer.not_empty ) then
-      .update_line
+      .update_line                     ! ?? is this needed ??
+      DIE_IF(.end_of_file,  "file has ended")
+      DIE_IF(.reverted,     "internal file has ended")
       res = .buffer.buffer_str( .buffer.pos : )
       .read_line
     else
@@ -787,6 +792,9 @@ contains
    ! Get the next item in the file
       STR :: word
       .update_line
+      word = " "
+      RETURN_IF(.end_of_file AND .ignore_end_of_file)
+      RETURN_IF(.reverted(reset=FALSE))
       .buffer.get(word)
       .update_system_info
    end
@@ -796,6 +804,9 @@ contains
     STR :: word
     ENSURE(.action=="read","file does not have read action!")
     .update_line
+    word = " "
+    RETURN_IF(.end_of_file AND .ignore_end_of_file)
+    RETURN_IF(.reverted(reset=FALSE))
     .buffer.get(word)
     .update_system_info
   end
@@ -842,6 +853,9 @@ contains
     DBL :: value
     ENSURE(.action=="read","file does not have read action!")
     .update_line
+    value = ZERO
+    RETURN_IF(.end_of_file AND .ignore_end_of_file)
+    RETURN_IF(.reverted(reset=FALSE))
     .buffer.get(value)
     .update_system_info
   end
@@ -852,6 +866,9 @@ contains
     CHR(*), IN :: format
     ENSURE(.action=="read","file does not have read action!")
     .update_line
+    value = ZERO
+    RETURN_IF(.end_of_file AND .ignore_end_of_file)
+    RETURN_IF(.reverted(reset=FALSE))
     .buffer.get(value,format)
     .update_system_info
   end
@@ -862,9 +879,13 @@ contains
       DBL :: real,imag
       ENSURE(.action=="read","file does not have read action!")
       .update_line
+      RETURN_IF(.end_of_file AND .ignore_end_of_file)
+      RETURN_IF(.reverted(reset=FALSE))
       .buffer.get(real)
       .update_system_info
       .update_line
+      DIE_IF(.end_of_file,"imaginary part expected but file has ended")
+      DIE_IF(.reverted,   "imaginary part expected but internal file has ended")
       .buffer.get(imag)
       .update_system_info
       value = cmplx(real,imag)
@@ -875,6 +896,8 @@ contains
       INT :: value
       ENSURE(.action=="read","file does not have read action!")
       .update_line
+      RETURN_IF(.end_of_file AND .ignore_end_of_file)
+      RETURN_IF(.reverted(reset=FALSE))
       .buffer.get(value)
       .update_system_info
    end
@@ -884,6 +907,8 @@ contains
       BIN :: value
       ENSURE(.action=="read","file does not have read action!")
       .update_line
+      RETURN_IF(.end_of_file AND .ignore_end_of_file)
+      RETURN_IF(.reverted(reset=FALSE))
       .buffer.get(value)
       .update_system_info
    end
@@ -2347,10 +2372,7 @@ contains
    set_default_units(units)
    ! Set the .default_units to "units".
       STR(*) :: units
-      DBL :: value
-      value = ONE
-      if (units/=" ") &
-      ENSURE(value.is_convertible_to(units),"Unknown units for conversion!")
+      ENSURE(units.is_known_unit OR units==" ","Unknown units for conversion!")
       .default_units = units
    end
 
@@ -2364,9 +2386,9 @@ contains
    ! Set the width of the margin in the buffer. Takes effect at the next
    ! output line
       INT :: margin
-      DIE_IF(margin<0,"margin less than zero")
-      DIE_IF(margin>STR_SIZE,"margin too large")
-      DIE_IF( .buffer.pos>.margin,"set margin only on empty buffers")
+      ENSURE(margin>=0,"margin less than zero")
+      ENSURE(margin<=STR_SIZE,"margin too large")
+      ENSURE(.buffer.pos<=.margin,"set margin only on empty buffers")
       .update_system_info
       .margin = margin
       .buffer.clear
@@ -2400,7 +2422,7 @@ contains
    set_int_width(width)
    ! Set the width of an integer in the format object
       INT :: width
-      DIE_IF(width<0,"width less than zero")
+      ENSURE(width>=0,"width less than zero")
       WARN_IF(width<TEXTFILE_INT_WIDTH,"width may be too small")
       .int_width = width
    end
@@ -2408,15 +2430,15 @@ contains
    set_dbl_width(width)
    ! Set the width in the dblfmt format object
       INT :: width
-      DIE_IF(width<0,"width less than zero")
-      DIE_IF(width<.dbl_precision,"width smaller than precision")
+      ENSURE(width>=0,"width less than zero")
+      ENSURE(width>=.dbl_precision,"width smaller than precision")
       .dbl_width = width
    end
 
    set_fields(fields)
    ! Set the number of fields in the dblfmt format object
       INT :: fields
-      DIE_IF(fields<1,"not enough fields")
+      ENSURE(fields>=1,"not enough fields")
       .fields = fields
    end
 
@@ -2424,8 +2446,8 @@ contains
    ! Set the precision required in the dblfmt format object
       INT :: precision
       INT :: w
-      DIE_IF(precision<0,"precision less than zero")
-      DIE_IF(precision>.dbl_width,"precision greater than field width")
+      ENSURE(precision>=0,"precision less than zero")
+      ENSURE(precision<=.dbl_width,"precision greater than field width")
       w = .int_width - (.dbl_width-.dbl_precision-1)
       WARN_IF(w>0,"width may be too small")
       .dbl_precision = precision
@@ -2568,16 +2590,30 @@ contains
 
    end_of_file result(res)
    ! See if .io_status>1, indicating the end of file has been found. 
-   ! Reset .io_status if the .ignore_end_of_file was set, indicating 
-   ! that the end of file was anticipated as a possibility.
-   ! Reset .io_status if the file ended and was usaved (i.e. a soft ending),
-   ! and move back one item.
+   ! This also covers the case when an internal file has ended, where
+   ! .io_status==2 (i.e. a soft ending).
+   ! If .io_status=2 then an internal file has ended (i.e. a soft ending),
+   ! so the current file cursor is moved back one item pre-emptively.
       BIN :: res
       res = .io_status>0
-      if (.io_status==2) then
-         .io_status = 0
-         .move_to_previous_item
-      end
+    ! if (.io_status==2) then
+    !    .io_status = 0
+    !    .move_to_previous_item
+    ! end
+   end
+
+   reverted(reset) result(res)
+   ! See if .io_status==2, indicating an internal file has ended (i.e. a soft ending).
+   ! NOTE: Unless the "reset" variable is present and FALSE, the .io_status variable 
+   ! is reset by default. So if you want the soft ending to be detectable by later
+   ! routines, you must call this routine with "reset=FALSE".
+      BIN, optional :: reset
+      BIN :: res
+      BIN :: reset_io_status
+      reset_io_status = TRUE
+      if (present(reset)) reset_io_status = reset
+      res = .io_status==2
+      if (reset_io_status) .io_status = 0
    end
 
    at_end_of_file result(res)
