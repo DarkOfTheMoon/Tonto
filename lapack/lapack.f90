@@ -1,25 +1,29 @@
-      double precision function ddot(n,dx,incx,dy,incy)
+#include "../foofiles/macros"
+#undef STACK
+#undef E
+
+      REAL function ddot(n,dx,incx,dy,incy)
 !
 !     forms the dot product of two vectors.
 !     uses unrolled loops for increments equal to one.
 !     jack dongarra, linpack, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision dx(*),dy(*),dtemp
-      integer i,incx,incy,ix,iy,m,mp1,n
+      REAL dx(*),dy(*),dtemp
+      INT i,incx,incy,ix,iy,m,mp1,n
 !
-      ddot = 0.0d0
-      dtemp = 0.0d0
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      ddot = ZERO
+      dtemp = ZERO
+      if (n <= 0) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         dtemp = dtemp + dx(ix)*dy(iy)
         ix = ix + incx
@@ -34,11 +38,11 @@
 !        clean-up loop
 !
    20 m = mod(n,5)
-      if( m .eq. 0 ) go to 40
+      if ( m  ==  0 ) go to 40
       do 30 i = 1,m
         dtemp = dtemp + dx(i)*dy(i)
    30 continue
-      if( n .lt. 5 ) go to 60
+      if ( n  <  5 ) go to 60
    40 mp1 = m + 1
       do 50 i = mp1,n,5
         dtemp = dtemp + dx(i)*dy(i) + dx(i + 1)*dy(i + 1) + &
@@ -59,7 +63,7 @@
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      REAL   A( LDA, * ), B( LDB, * )
 !     ..
 !
 !  Purpose
@@ -87,7 +91,7 @@
 !          The number of right hand sides, i.e., the number of columns
 !          of the matrix B.  NRHS >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the N-by-N coefficient matrix A.
 !          On exit, the factors L and U from the factorization
 !          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -99,7 +103,7 @@
 !          The pivot indices that define the permutation matrix P;
 !          row i of the matrix was interchanged with row IPIV(i).
 !
-!  B       (input/output) DOUBLE PRECISION array, dimension (LDB,NRHS)
+!  B       (input/output) REAL array, dimension (LDB,NRHS)
 !          On entry, the N-by-NRHS matrix of right hand side matrix B.
 !          On exit, if INFO = 0, the N-by-NRHS solution matrix X.
 !
@@ -118,24 +122,21 @@
 !     .. External Subroutines ..
       EXTERNAL           DGETRF, DGETRS, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF( N.LT.0 ) THEN
+      IF( N < 0 ) THEN
          INFO = -1
-      ELSE IF( NRHS.LT.0 ) THEN
+      ELSE IF( NRHS < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
-      ELSE IF( LDB.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDB < MAX( 1, N ) ) THEN
          INFO = -7
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DGESV ', -INFO )
          RETURN
       END IF
@@ -143,7 +144,7 @@
 !     Compute the LU factorization of A.
 !
       CALL DGETRF( N, N, A, LDA, IPIV, INFO )
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
 !
 !        Solve the system A*X = B, overwriting B with X.
 !
@@ -166,7 +167,7 @@
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), WORK( * )
+      REAL   A( LDA, * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -184,7 +185,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the factors L and U from the factorization
 !          A = P*L*U as computed by DGETRF.
 !          On exit, if INFO = 0, the inverse of the original matrix A.
@@ -196,7 +197,7 @@
 !          The pivot indices from DGETRF; for 1<=i<=N, row i of the
 !          matrix was interchanged with row IPIV(i).
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO=0, then WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -217,9 +218,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY
@@ -232,9 +230,6 @@
 !     .. External Subroutines ..
       EXTERNAL           DGEMM, DGEMV, DSWAP, DTRSM, DTRTRI, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
@@ -243,15 +238,15 @@
       NB = ILAENV( 1, 'DGETRI', ' ', N, -1, -1, -1 )
       LWKOPT = N*NB
       WORK( 1 ) = LWKOPT
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( N.LT.0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF( N < 0 ) THEN
          INFO = -1
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -3
-      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N )  AND   NOT LQUERY ) THEN
          INFO = -6
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DGETRI', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -260,19 +255,19 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
 !     Form inv(U).  If INFO > 0 from DTRTRI, then U is singular,
 !     and the inverse is not computed.
 !
       CALL DTRTRI( 'Upper', 'Non-unit', N, A, LDA, INFO )
-      IF( INFO.GT.0 ) RETURN
+      IF( INFO > 0 ) RETURN
 !
       NBMIN = 2
       LDWORK = N
-      IF( NB.GT.1 .AND. NB.LT.N ) THEN
+      IF( NB > 1  AND  NB < N ) THEN
          IWS = MAX( LDWORK*NB, 1 )
-         IF( LWORK.LT.IWS ) THEN
+         IF( LWORK < IWS ) THEN
             NB = LWORK / LDWORK
             NBMIN = MAX( 2, ILAENV( 2, 'DGETRI', ' ', N, -1, -1, -1 ) )
          END IF
@@ -282,7 +277,7 @@
 !
 !     Solve the equation inv(A)*L = inv(U) for inv(A).
 !
-      IF( NB.LT.NBMIN .OR. NB.GE.N ) THEN
+      IF( NB < NBMIN  OR  NB.GE.N ) THEN
 !
 !        Use unblocked code.
 !
@@ -297,7 +292,7 @@
 !
 !           Compute current column of inv(A).
 !
-            IF( J.LT.N ) &
+            IF( J < N ) &
                CALL DGEMV( 'No transpose', N, N-J, -ONE, A( 1, J+1 ), &
                            LDA, WORK( J+1 ), 1, ONE, A( 1, J ), 1 )
    20    CONTINUE
@@ -321,7 +316,7 @@
 !
 !           Compute current block column of inv(A).
 !
-            IF( J+JB.LE.N ) &
+            IF( J+JB <= N ) &
                CALL DGEMM( 'No transpose', 'No transpose', N, JB, &
                            N-J-JB+1, -ONE, A( 1, J+JB ), LDA, &
                            WORK( J+JB ), LDWORK, ONE, A( 1, J ), LDA )
@@ -334,7 +329,7 @@
 !
       DO 60 J = N - 1, 1, -1
          JP = IPIV( J )
-         IF( JP.NE.J ) CALL DSWAP( N, A( 1, J ), 1, A( 1, JP ), 1 )
+         IF( JP/=J ) CALL DSWAP( N, A( 1, J ), 1, A( 1, JP ), 1 )
    60 CONTINUE
 !
       WORK( 1 ) = IWS
@@ -351,12 +346,12 @@
 !     March 31, 1993
 !
 !     .. Scalar Arguments ..
-      CHARACTER          TRANS
+      CHR          TRANS
       INTEGER            INFO, LDA, LDB, N, NRHS
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      REAL   A( LDA, * ), B( LDB, * )
 !     ..
 !
 !  Purpose
@@ -370,7 +365,7 @@
 !  Arguments
 !  =========
 !
-!  TRANS   (input) character(len=1)
+!  TRANS   (input) STR(len=1)
 !          Specifies the form of the system of equations:
 !          = 'N':  A * X = B  (No transpose)
 !          = 'T':  A'* X = B  (Transpose)
@@ -383,7 +378,7 @@
 !          The number of right hand sides, i.e., the number of columns
 !          of the matrix B.  NRHS >= 0.
 !
-!  A       (input) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input) REAL array, dimension (LDA,N)
 !          The factors L and U from the factorization A = P*L*U
 !          as computed by DGETRF.
 !
@@ -394,7 +389,7 @@
 !          The pivot indices from DGETRF; for 1<=i<=N, row i of the
 !          matrix was interchanged with row IPIV(i).
 !
-!  B       (input/output) DOUBLE PRECISION array, dimension (LDB,NRHS)
+!  B       (input/output) REAL array, dimension (LDB,NRHS)
 !          On entry, the right hand side matrix B.
 !          On exit, the solution matrix X.
 !
@@ -407,9 +402,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            NOTRAN
@@ -417,35 +409,32 @@
 !     .. External Subroutines ..
       EXTERNAL           DLASWP, DTRSM, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
       NOTRAN =  scan( TRANS, 'Nn' )>0
-      IF( .NOT.NOTRAN .AND. .NOT. scan( TRANS, 'Tt' )>0 .AND. .NOT. &
+      IF(  NOT NOTRAN  AND   NOT  scan( TRANS, 'Tt' )>0  AND   NOT  &
            scan( TRANS, 'Cc' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( NRHS.LT.0 ) THEN
+      ELSE IF( NRHS < 0 ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -5
-      ELSE IF( LDB.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDB < MAX( 1, N ) ) THEN
          INFO = -8
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DGETRS', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 .OR. NRHS.EQ.0 ) RETURN
+      IF( N == 0  OR  NRHS == 0 ) RETURN
 !
       IF( NOTRAN ) THEN
 !
@@ -496,7 +485,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, D, P, Q
+      REAL   A, B, C, D, P, Q
 !     ..
 !
 !  Purpose
@@ -514,27 +503,24 @@
 !  Arguments
 !  =========
 !
-!  A       (input) DOUBLE PRECISION
-!  B       (input) DOUBLE PRECISION
-!  C       (input) DOUBLE PRECISION
-!  D       (input) DOUBLE PRECISION
+!  A       (input) REAL
+!  B       (input) REAL
+!  C       (input) REAL
+!  D       (input) REAL
 !          The scalars a, b, c, and d in the above expression.
 !
-!  P       (output) DOUBLE PRECISION
-!  Q       (output) DOUBLE PRECISION
+!  P       (output) REAL
+!  Q       (output) REAL
 !          The scalars p and q in the above expression.
 !
 !  =====================================================================
 !
 !     .. Local Scalars ..
-      DOUBLE PRECISION   E, F
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS
+      REAL   E, F
 !     ..
 !     .. Executable Statements ..
 !
-      IF( ABS( D ).LT.ABS( C ) ) THEN
+      IF( ABS( D ) < ABS( C ) ) THEN
          E = D / C
          F = C + D*E
          P = ( A+B*E ) / F
@@ -559,7 +545,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, RT1, RT2
+      REAL   A, B, C, RT1, RT2
 !     ..
 !
 !  Purpose
@@ -574,19 +560,19 @@
 !  Arguments
 !  =========
 !
-!  A       (input) DOUBLE PRECISION
+!  A       (input) REAL
 !          The (1,1) element of the 2-by-2 matrix.
 !
-!  B       (input) DOUBLE PRECISION
+!  B       (input) REAL
 !          The (1,2) and (2,1) elements of the 2-by-2 matrix.
 !
-!  C       (input) DOUBLE PRECISION
+!  C       (input) REAL
 !          The (2,2) element of the 2-by-2 matrix.
 !
-!  RT1     (output) DOUBLE PRECISION
+!  RT1     (output) REAL
 !          The eigenvalue of larger absolute value.
 !
-!  RT2     (output) DOUBLE PRECISION
+!  RT2     (output) REAL
 !          The eigenvalue of smaller absolute value.
 !
 !  Further Details
@@ -605,21 +591,8 @@
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
-      PARAMETER          ( TWO = 2.0D0 )
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   HALF
-      PARAMETER          ( HALF = 0.5D0 )
-!     ..
 !     .. Local Scalars ..
-      DOUBLE PRECISION   AB, ACMN, ACMX, ADF, DF, RT, SM, TB
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SQRT
+      REAL   AB, ACMN, ACMX, ADF, DF, RT, SM, TB
 !     ..
 !     .. Executable Statements ..
 !
@@ -630,16 +603,16 @@
       ADF = ABS( DF )
       TB = B + B
       AB = ABS( TB )
-      IF( ABS( A ).GT.ABS( C ) ) THEN
+      IF( ABS( A ) > ABS( C ) ) THEN
          ACMX = A
          ACMN = C
       ELSE
          ACMX = C
          ACMN = A
       END IF
-      IF( ADF.GT.AB ) THEN
+      IF( ADF > AB ) THEN
          RT = ADF*SQRT( ONE+( AB / ADF )**2 )
-      ELSE IF( ADF.LT.AB ) THEN
+      ELSE IF( ADF < AB ) THEN
          RT = AB*SQRT( ONE+( ADF / AB )**2 )
       ELSE
 !
@@ -647,7 +620,7 @@
 !
          RT = AB*SQRT( TWO )
       END IF
-      IF( SM.LT.ZERO ) THEN
+      IF( SM < ZERO ) THEN
          RT1 = HALF*( SM-RT )
 !
 !        Order of execution important.
@@ -655,7 +628,7 @@
 !        next line needs to be executed in higher precision.
 !
          RT2 = ( ACMX / RT1 )*ACMN - ( B / RT1 )*B
-      ELSE IF( SM.GT.ZERO ) THEN
+      ELSE IF( SM > ZERO ) THEN
          RT1 = HALF*( SM+RT )
 !
 !        Order of execution important.
@@ -683,7 +656,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, CS1, RT1, RT2, SN1
+      REAL   A, B, C, CS1, RT1, RT2, SN1
 !     ..
 !
 !  Purpose
@@ -702,24 +675,24 @@
 !  Arguments
 !  =========
 !
-!  A       (input) DOUBLE PRECISION
+!  A       (input) REAL
 !          The (1,1) element of the 2-by-2 matrix.
 !
-!  B       (input) DOUBLE PRECISION
+!  B       (input) REAL
 !          The (1,2) element and the conjugate of the (2,1) element of
 !          the 2-by-2 matrix.
 !
-!  C       (input) DOUBLE PRECISION
+!  C       (input) REAL
 !          The (2,2) element of the 2-by-2 matrix.
 !
-!  RT1     (output) DOUBLE PRECISION
+!  RT1     (output) REAL
 !          The eigenvalue of larger absolute value.
 !
-!  RT2     (output) DOUBLE PRECISION
+!  RT2     (output) REAL
 !          The eigenvalue of smaller absolute value.
 !
-!  CS1     (output) DOUBLE PRECISION
-!  SN1     (output) DOUBLE PRECISION
+!  CS1     (output) REAL
+!  SN1     (output) REAL
 !          The vector (CS1, SN1) is a unit right eigenvector for RT1.
 !
 !  Further Details
@@ -740,22 +713,9 @@
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
-      PARAMETER          ( TWO = 2.0D0 )
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   HALF
-      PARAMETER          ( HALF = 0.5D0 )
-!     ..
 !     .. Local Scalars ..
       INTEGER            SGN1, SGN2
-      DOUBLE PRECISION   AB, ACMN, ACMX, ACS, ADF, CS, CT, DF, RT, SM, TB, TN
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SQRT
+      REAL   AB, ACMN, ACMX, ACS, ADF, CS, CT, DF, RT, SM, TB, TN
 !     ..
 !     .. Executable Statements ..
 !
@@ -766,16 +726,16 @@
       ADF = ABS( DF )
       TB = B + B
       AB = ABS( TB )
-      IF( ABS( A ).GT.ABS( C ) ) THEN
+      IF( ABS( A ) > ABS( C ) ) THEN
          ACMX = A
          ACMN = C
       ELSE
          ACMX = C
          ACMN = A
       END IF
-      IF( ADF.GT.AB ) THEN
+      IF( ADF > AB ) THEN
          RT = ADF*SQRT( ONE+( AB / ADF )**2 )
-      ELSE IF( ADF.LT.AB ) THEN
+      ELSE IF( ADF < AB ) THEN
          RT = AB*SQRT( ONE+( ADF / AB )**2 )
       ELSE
 !
@@ -783,7 +743,7 @@
 !
          RT = AB*SQRT( TWO )
       END IF
-      IF( SM.LT.ZERO ) THEN
+      IF( SM < ZERO ) THEN
          RT1 = HALF*( SM-RT )
          SGN1 = -1
 !
@@ -792,7 +752,7 @@
 !        next line needs to be executed in higher precision.
 !
          RT2 = ( ACMX / RT1 )*ACMN - ( B / RT1 )*B
-      ELSE IF( SM.GT.ZERO ) THEN
+      ELSE IF( SM > ZERO ) THEN
          RT1 = HALF*( SM+RT )
          SGN1 = 1
 !
@@ -820,12 +780,12 @@
          SGN2 = -1
       END IF
       ACS = ABS( CS )
-      IF( ACS.GT.AB ) THEN
+      IF( ACS > AB ) THEN
          CT = -TB / CS
          SN1 = ONE / SQRT( ONE+CT*CT )
          CS1 = CT*SN1
       ELSE
-         IF( AB.EQ.ZERO ) THEN
+         IF( AB == ZERO ) THEN
             CS1 = ONE
             SN1 = ZERO
          ELSE
@@ -834,7 +794,7 @@
             SN1 = TN*CS1
          END IF
       END IF
-      IF( SGN1.EQ.SGN2 ) THEN
+      IF( SGN1 == SGN2 ) THEN
          TN = CS1
          CS1 = -SN1
          SN1 = TN
@@ -844,7 +804,7 @@
 !     End of DLAEV2
 !
       END
-      DOUBLE PRECISION FUNCTION DLANST( NORM, N, D, E )
+      REAL FUNCTION DLANST( NORM, N, D, E )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -852,11 +812,11 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          NORM
+      CHR          NORM
       INTEGER            N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
+      REAL   D( * ), E( * )
 !     ..
 !
 !  Purpose
@@ -887,7 +847,7 @@
 !  Arguments
 !  =========
 !
-!  NORM    (input) character(len=1)
+!  NORM    (input) STR(len=1)
 !          Specifies the value to be returned in DLANST as described
 !          above.
 !
@@ -895,31 +855,25 @@
 !          The order of the matrix A.  N >= 0.  When N = 0, DLANST is
 !          set to zero.
 !
-!  D       (input) DOUBLE PRECISION array, dimension (N)
+!  D       (input) REAL array, dimension (N)
 !          The diagonal elements of A.
 !
-!  E       (input) DOUBLE PRECISION array, dimension (N-1)
+!  E       (input) REAL array, dimension (N-1)
 !          The (n-1) sub-diagonal or super-diagonal elements of A.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I
-      DOUBLE PRECISION   ANORM, SCALE, SUM
+      REAL   ANORM, SCALE, SUM
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLASSQ
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
-!     ..
 !     .. Executable Statements ..
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          ANORM = ZERO
       ELSE IF(  scan( NORM, 'Mm' )>0 ) THEN
 !
@@ -930,12 +884,12 @@
             ANORM = MAX( ANORM, ABS( D( I ) ) )
             ANORM = MAX( ANORM, ABS( E( I ) ) )
    10    CONTINUE
-      ELSE IF(  scan( NORM, 'Oo' )>0 .OR. NORM.EQ.'1' .OR. &
+      ELSE IF(  scan( NORM, 'Oo' )>0  OR  NORM == '1'  OR  &
                 scan( NORM, 'Ii' )>0 ) THEN
 !
 !        Find norm1(A).
 !
-         IF( N.EQ.1 ) THEN
+         IF( N == 1 ) THEN
             ANORM = ABS( D( 1 ) )
          ELSE
             ANORM = MAX( ABS( D( 1 ) )+ABS( E( 1 ) ), &
@@ -944,13 +898,13 @@
                ANORM = MAX( ANORM, ABS( D( I ) )+ABS( E( I ) )+ ABS( E( I-1 ) ))
    20       CONTINUE
          END IF
-      ELSE IF( scan( NORM, 'Ff' )>0 .OR. scan( NORM, 'Ee' )>0 ) THEN
+      ELSE IF( scan( NORM, 'Ff' )>0  OR  scan( NORM, 'Ee' )>0 ) THEN
 !
 !        Find normF(A).
 !
          SCALE = ZERO
          SUM = ONE
-         IF( N.GT.1 ) THEN
+         IF( N > 1 ) THEN
             CALL DLASSQ( N-1, E, 1, SCALE, SUM )
             SUM = 2*SUM
          END IF
@@ -965,7 +919,7 @@
 !
       END
 
-      DOUBLE PRECISION FUNCTION DLANSY( NORM, UPLO, N, A, LDA, WORK )
+      REAL FUNCTION DLANSY( NORM, UPLO, N, A, LDA, WORK )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -973,11 +927,11 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          NORM, UPLO
+      CHR          NORM, UPLO
       INTEGER            LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), WORK( * )
+      REAL   A( LDA, * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -1008,11 +962,11 @@
 !  Arguments
 !  =========
 !
-!  NORM    (input) character(len=1)
+!  NORM    (input) STR(len=1)
 !          Specifies the value to be returned in DLANSY as described
 !          above.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the upper or lower triangular part of the
 !          symmetric matrix A is to be referenced.
 !          = 'U':  Upper triangular part of A is referenced
@@ -1022,7 +976,7 @@
 !          The order of the matrix A.  N >= 0.  When N = 0, DLANSY is
 !          set to zero.
 !
-!  A       (input) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input) REAL array, dimension (LDA,N)
 !          The symmetric matrix A.  If UPLO = 'U', the leading n by n
 !          upper triangular part of A contains the upper triangular part
 !          of the matrix A, and the strictly lower triangular part of A
@@ -1034,29 +988,23 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(N,1).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+!  WORK    (workspace) REAL array, dimension (LWORK),
 !          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 !          WORK is not referenced.
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      REAL   ABSA, SCALE, SUM, VALUE
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLASSQ
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
-!     ..
 !     .. Executable Statements ..
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          VALUE = ZERO
       ELSE IF(  scan( NORM, 'Mm' )>0 ) THEN
 !
@@ -1108,7 +1056,7 @@
                VALUE = MAX( VALUE, SUM )
   100       CONTINUE
          END IF
-      ELSE IF( scan( NORM, 'Ff' )>0 .OR. scan( NORM, 'Ee' )>0 ) THEN
+      ELSE IF( scan( NORM, 'Ff' )>0  OR  scan( NORM, 'Ee' )>0 ) THEN
 !
 !        Find normF(A).
 !
@@ -1134,7 +1082,7 @@
 !     End of DLANSY
 !
       END
-      DOUBLE PRECISION FUNCTION DLAPY2( X, Y )
+      REAL FUNCTION DLAPY2( X, Y )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1142,7 +1090,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   X, Y
+      REAL   X, Y
 !     ..
 !
 !  Purpose
@@ -1154,23 +1102,15 @@
 !  Arguments
 !  =========
 !
-!  X       (input) DOUBLE PRECISION
-!  Y       (input) DOUBLE PRECISION
+!  X       (input) REAL
+!  Y       (input) REAL
 !          X and Y specify the values x and y.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D0 )
 !     ..
 !     .. Local Scalars ..
-      DOUBLE PRECISION   W, XABS, YABS, Z
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN, SQRT
+      REAL   W, XABS, YABS, Z
 !     ..
 !     .. Executable Statements ..
 !
@@ -1178,7 +1118,7 @@
       YABS = ABS( Y )
       W = MAX( XABS, YABS )
       Z = MIN( XABS, YABS )
-      IF( Z.EQ.ZERO ) THEN
+      IF( Z == ZERO ) THEN
          DLAPY2 = W
       ELSE
          DLAPY2 = W*SQRT( ONE+( Z / W )**2 )
@@ -1188,7 +1128,7 @@
 !     End of DLAPY2
 !
       END
-      DOUBLE PRECISION FUNCTION DLAPY3( X, Y, Z )
+      REAL FUNCTION DLAPY3( X, Y, Z )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1196,7 +1136,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   X, Y, Z
+      REAL   X, Y, Z
 !     ..
 !
 !  Purpose
@@ -1208,22 +1148,16 @@
 !  Arguments
 !  =========
 !
-!  X       (input) DOUBLE PRECISION
-!  Y       (input) DOUBLE PRECISION
-!  Z       (input) DOUBLE PRECISION
+!  X       (input) REAL
+!  Y       (input) REAL
+!  Z       (input) REAL
 !          X, Y and Z specify the values x, y and z.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D0 )
 !     ..
 !     .. Local Scalars ..
-      DOUBLE PRECISION   W, XABS, YABS, ZABS
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
+      REAL   W, XABS, YABS, ZABS
 !     ..
 !     .. Executable Statements ..
 !
@@ -1231,7 +1165,7 @@
       YABS = ABS( Y )
       ZABS = ABS( Z )
       W = MAX( XABS, YABS, ZABS )
-      IF( W.EQ.ZERO ) THEN
+      IF( W == ZERO ) THEN
          DLAPY3 = ZERO
       ELSE
          DLAPY3 = W*SQRT( ( XABS / W )**2+( YABS / W )**2+ ( ZABS / W )**2 )
@@ -1250,11 +1184,11 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, SIDE, STOREV, TRANS
+      CHR          DIRECT, SIDE, STOREV, TRANS
       INTEGER            K, LDC, LDT, LDV, LDWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   C( LDC, * ), T( LDT, * ), V( LDV, * ), WORK( LDWORK, *)
+      REAL   C( LDC, * ), T( LDT, * ), V( LDV, * ), WORK( LDWORK, *)
 !     ..
 !
 !  Purpose
@@ -1266,21 +1200,21 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          = 'L': apply H or H' from the Left
 !          = 'R': apply H or H' from the Right
 !
-!  TRANS   (input) character(len=1)
+!  TRANS   (input) STR(len=1)
 !          = 'N': apply H (No transpose)
 !          = 'T': apply H' (Transpose)
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Indicates how H is formed from a product of elementary
 !          reflectors
 !          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 !          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 !
-!  STOREV  (input) character(len=1)
+!  STOREV  (input) STR(len=1)
 !          Indicates how the vectors which define the elementary
 !          reflectors are stored:
 !          = 'C': Columnwise
@@ -1296,7 +1230,7 @@
 !          The order of the matrix T (= the number of elementary
 !          reflectors whose product defines the block reflector).
 !
-!  V       (input) DOUBLE PRECISION array, dimension
+!  V       (input) REAL array, dimension
 !                                (LDV,K) if STOREV = 'C'
 !                                (LDV,M) if STOREV = 'R' and SIDE = 'L'
 !                                (LDV,N) if STOREV = 'R' and SIDE = 'R'
@@ -1308,21 +1242,21 @@
 !          if STOREV = 'C' and SIDE = 'R', LDV >= max(1,N);
 !          if STOREV = 'R', LDV >= K.
 !
-!  T       (input) DOUBLE PRECISION array, dimension (LDT,K)
+!  T       (input) REAL array, dimension (LDT,K)
 !          The triangular k by k matrix T in the representation of the
 !          block reflector.
 !
 !  LDT     (input) INTEGER
 !          The leading dimension of the array T. LDT >= K.
 !
-!  C       (input/output) DOUBLE PRECISION array, dimension (LDC,N)
+!  C       (input/output) REAL array, dimension (LDC,N)
 !          On entry, the m by n matrix C.
 !          On exit, C is overwritten by H*C or H'*C or C*H or C*H'.
 !
 !  LDC     (input) INTEGER
 !          The leading dimension of the array C. LDA >= max(1,M).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (LDWORK,K)
+!  WORK    (workspace) REAL array, dimension (LDWORK,K)
 !
 !  LDWORK  (input) INTEGER
 !          The leading dimension of the array WORK.
@@ -1331,12 +1265,8 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
-!     ..
 !     .. Local Scalars ..
-      CHARACTER          TRANST
+      CHR          TRANST
       INTEGER            I, J
 !     ..
 !     .. External Subroutines ..
@@ -1346,7 +1276,7 @@
 !
 !     Quick return if possible
 !
-      IF( M.LE.0 .OR. N.LE.0 ) RETURN
+      IF( M <= 0  OR  N <= 0 ) RETURN
 !
       IF(  scan( TRANS, 'Nn' )>0 ) THEN
          TRANST = 'T'
@@ -1379,7 +1309,7 @@
 !
                CALL DTRMM( 'Right', 'Lower', 'No transpose', 'Unit', N, &
                            K, ONE, V, LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C2'*V2
 !
@@ -1395,7 +1325,7 @@
 !
 !              C := C - V * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C2 := C2 - V2 * W'
 !
@@ -1433,7 +1363,7 @@
 !
                CALL DTRMM( 'Right', 'Lower', 'No transpose', 'Unit', M, &
                            K, ONE, V, LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C2 * V2
 !
@@ -1449,7 +1379,7 @@
 !
 !              C := C - W * V'
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C2 := C2 - W * V2'
 !
@@ -1495,7 +1425,7 @@
 !
                CALL DTRMM( 'Right', 'Upper', 'No transpose', 'Unit', N, &
                            K, ONE, V( M-K+1, 1 ), LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C1'*V1
 !
@@ -1510,7 +1440,7 @@
 !
 !              C := C - V * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C1 := C1 - V1 * W'
 !
@@ -1547,7 +1477,7 @@
 !
                CALL DTRMM( 'Right', 'Upper', 'No transpose', 'Unit', M, &
                            K, ONE, V( N-K+1, 1 ), LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C1 * V1
 !
@@ -1562,7 +1492,7 @@
 !
 !              C := C - W * V'
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C1 := C1 - W * V1'
 !
@@ -1609,7 +1539,7 @@
 !
                CALL DTRMM( 'Right', 'Upper', 'Transpose', 'Unit', N, K, &
                            ONE, V, LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C2'*V2'
 !
@@ -1625,7 +1555,7 @@
 !
 !              C := C - V' * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C2 := C2 - V2' * W'
 !
@@ -1663,7 +1593,7 @@
 !
                CALL DTRMM( 'Right', 'Upper', 'Transpose', 'Unit', M, K, &
                            ONE, V, LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C2 * V2'
 !
@@ -1679,7 +1609,7 @@
 !
 !              C := C - W * V
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C2 := C2 - W * V2
 !
@@ -1725,7 +1655,7 @@
 !
                CALL DTRMM( 'Right', 'Lower', 'Transpose', 'Unit', N, K, &
                            ONE, V( 1, M-K+1 ), LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C1'*V1'
 !
@@ -1740,7 +1670,7 @@
 !
 !              C := C - V' * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C1 := C1 - V1' * W'
 !
@@ -1777,7 +1707,7 @@
 !
                CALL DTRMM( 'Right', 'Lower', 'Transpose', 'Unit', M, K, &
                            ONE, V( 1, N-K+1 ), LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C1 * V1'
 !
@@ -1792,7 +1722,7 @@
 !
 !              C := C - W * V
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C1 := C1 - W * V1
 !
@@ -1831,12 +1761,12 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          SIDE
+      CHR          SIDE
       INTEGER            INCV, LDC, M, N
-      DOUBLE PRECISION   TAU
+      REAL   TAU
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   C( LDC, * ), V( * ), WORK( * )
+      REAL   C( LDC, * ), V( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -1854,7 +1784,7 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          = 'L': form  H * C
 !          = 'R': form  C * H
 !
@@ -1864,7 +1794,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix C.
 !
-!  V       (input) DOUBLE PRECISION array, dimension
+!  V       (input) REAL array, dimension
 !                     (1 + (M-1)*abs(INCV)) if SIDE = 'L'
 !                  or (1 + (N-1)*abs(INCV)) if SIDE = 'R'
 !          The vector v in the representation of H. V is not used if
@@ -1873,10 +1803,10 @@
 !  INCV    (input) INTEGER
 !          The increment between elements of v. INCV <> 0.
 !
-!  TAU     (input) DOUBLE PRECISION
+!  TAU     (input) REAL
 !          The value tau in the representation of H.
 !
-!  C       (input/output) DOUBLE PRECISION array, dimension (LDC,N)
+!  C       (input/output) REAL array, dimension (LDC,N)
 !          On entry, the m by n matrix C.
 !          On exit, C is overwritten by the matrix H * C if SIDE = 'L',
 !          or C * H if SIDE = 'R'.
@@ -1884,15 +1814,12 @@
 !  LDC     (input) INTEGER
 !          The leading dimension of the array C. LDC >= max(1,M).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension
+!  WORK    (workspace) REAL array, dimension
 !                         (N) if SIDE = 'L'
 !                      or (M) if SIDE = 'R'
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DGEMV, DGER
@@ -1903,7 +1830,7 @@
 !
 !        Form  H * C
 !
-         IF( TAU.NE.ZERO ) THEN
+         IF( TAU/=ZERO ) THEN
 !
 !           w := C' * v
 !
@@ -1917,7 +1844,7 @@
 !
 !        Form  C * H
 !
-         IF( TAU.NE.ZERO ) THEN
+         IF( TAU/=ZERO ) THEN
 !
 !           w := C * v
 !
@@ -1942,10 +1869,10 @@
 !
 !     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   ALPHA, TAU
+      REAL   ALPHA, TAU
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   X( * )
+      REAL   X( * )
 !     ..
 !
 !  Purpose
@@ -1977,11 +1904,11 @@
 !  N       (input) INTEGER
 !          The order of the elementary reflector.
 !
-!  ALPHA   (input/output) DOUBLE PRECISION
+!  ALPHA   (input/output) REAL
 !          On entry, the value alpha.
 !          On exit, it is overwritten with the value beta.
 !
-!  X       (input/output) DOUBLE PRECISION array, dimension
+!  X       (input/output) REAL array, dimension
 !                         (1+(N-2)*abs(INCX))
 !          On entry, the vector x.
 !          On exit, it is overwritten with the vector v.
@@ -1989,39 +1916,33 @@
 !  INCX    (input) INTEGER
 !          The increment between elements of X. INCX > 0.
 !
-!  TAU     (output) DOUBLE PRECISION
+!  TAU     (output) REAL
 !          The value tau.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            J, KNT
-      DOUBLE PRECISION   BETA, RSAFMN, SAFMIN, XNORM
+      REAL   BETA, RSAFMN, SAFMIN, XNORM
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DLAPY2, DNRM2
+      REAL   DLAPY2, DNRM2
       EXTERNAL           DLAPY2, DNRM2
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SIGN
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DSCAL
 !     ..
 !     .. Executable Statements ..
 !
-      IF( N.LE.1 ) THEN
+      IF( N <= 1 ) THEN
          TAU = ZERO
          RETURN
       END IF
 !
       XNORM = DNRM2( N-1, X, INCX )
 !
-      IF( XNORM.EQ.ZERO ) THEN
+      IF( XNORM == ZERO ) THEN
 !
 !        H  =  I
 !
@@ -2032,7 +1953,7 @@
 !
          BETA = -SIGN( DLAPY2( ALPHA, XNORM ), ALPHA )
          SAFMIN = tiny(ZERO)*radix(ZERO)/epsilon(ZERO)
-         IF( ABS( BETA ).LT.SAFMIN ) THEN
+         IF( ABS( BETA ) < SAFMIN ) THEN
 !
 !           XNORM, BETA may be inaccurate; scale X and recompute them
 !
@@ -2043,7 +1964,7 @@
             CALL DSCAL( N-1, RSAFMN, X, INCX )
             BETA = BETA*RSAFMN
             ALPHA = ALPHA*RSAFMN
-            IF( ABS( BETA ).LT.SAFMIN ) GO TO 10
+            IF( ABS( BETA ) < SAFMIN ) GO TO 10
 !
 !           New BETA is at most 1, at least SAFMIN
 !
@@ -2078,11 +1999,11 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, STOREV
+      CHR          DIRECT, STOREV
       INTEGER            K, LDT, LDV, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   T( LDT, * ), TAU( * ), V( LDV, * )
+      REAL   T( LDT, * ), TAU( * ), V( LDV, * )
 !     ..
 !
 !  Purpose
@@ -2108,13 +2029,13 @@
 !  Arguments
 !  =========
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Specifies the order in which the elementary reflectors are
 !          multiplied to form the block reflector:
 !          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 !          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 !
-!  STOREV  (input) character(len=1)
+!  STOREV  (input) STR(len=1)
 !          Specifies how the vectors which define the elementary
 !          reflectors are stored (see also Further Details):
 !          = 'C': columnwise
@@ -2127,7 +2048,7 @@
 !          The order of the triangular factor T (= the number of
 !          elementary reflectors). K >= 1.
 !
-!  V       (input/output) DOUBLE PRECISION array, dimension
+!  V       (input/output) REAL array, dimension
 !                               (LDV,K) if STOREV = 'C'
 !                               (LDV,N) if STOREV = 'R'
 !          The matrix V. See further details.
@@ -2136,11 +2057,11 @@
 !          The leading dimension of the array V.
 !          If STOREV = 'C', LDV >= max(1,N); if STOREV = 'R', LDV >= K.
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (K)
+!  TAU     (input) REAL array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i).
 !
-!  T       (output) DOUBLE PRECISION array, dimension (LDT,K)
+!  T       (output) REAL array, dimension (LDT,K)
 !          The k by k triangular factor T of the block reflector.
 !          If DIRECT = 'F', T is upper triangular; if DIRECT = 'B', T is
 !          lower triangular. The rest of the array is not used.
@@ -2175,13 +2096,10 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   VII
+      REAL   VII
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DGEMV, DTRMV
@@ -2190,11 +2108,11 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
       IF(  scan( DIRECT, 'Ff' )>0 ) THEN
          DO 20 I = 1, K
-            IF( TAU( I ).EQ.ZERO ) THEN
+            IF( TAU( I ) == ZERO ) THEN
 !
 !              H(i)  =  I
 !
@@ -2231,7 +2149,7 @@
    20    CONTINUE
       ELSE
          DO 40 I = K, 1, -1
-            IF( TAU( I ).EQ.ZERO ) THEN
+            IF( TAU( I ) == ZERO ) THEN
 !
 !              H(i)  =  I
 !
@@ -2242,7 +2160,7 @@
 !
 !              general case
 !
-               IF( I.LT.K ) THEN
+               IF( I < K ) THEN
                   IF(  scan( STOREV, 'Cc' )>0 ) THEN
                      VII = V( N-K+I, I )
                      V( N-K+I, I ) = ONE
@@ -2289,12 +2207,12 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          TYPE
+      CHR          TYPE
       INTEGER            INFO, KL, KU, LDA, M, N
-      DOUBLE PRECISION   CFROM, CTO
+      REAL   CFROM, CTO
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -2309,7 +2227,7 @@
 !  Arguments
 !  =========
 !
-!  TYPE    (input) character(len=1)
+!  TYPE    (input) STR(len=1)
 !          TYPE indices the storage type of the input matrix.
 !          = 'G':  A is a full matrix.
 !          = 'L':  A is a lower triangular matrix.
@@ -2332,8 +2250,8 @@
 !          The upper bandwidth of A.  Referenced only if TYPE = 'B',
 !          'Q' or 'Z'.
 !
-!  CFROM   (input) DOUBLE PRECISION
-!  CTO     (input) DOUBLE PRECISION
+!  CFROM   (input) REAL
+!  CTO     (input) REAL
 !          The matrix A is multiplied by CTO/CFROM. A(I,J) is computed
 !          without over/underflow if the final result CTO*A(I,J)/CFROM
 !          can be represented without over/underflow.  CFROM must be
@@ -2345,7 +2263,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,M)
+!  A       (input/output) REAL array, dimension (LDA,M)
 !          The matrix to be multiplied by CTO/CFROM.  See TYPE for the
 !          storage type.
 !
@@ -2358,17 +2276,10 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
-!     ..
 !     .. Local Scalars ..
       LOGICAL            DONE
       INTEGER            I, ITYPE, J, K1, K2, K3, K4
-      DOUBLE PRECISION   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN
+      REAL   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -2397,39 +2308,39 @@
          ITYPE = -1
       END IF
 !
-      IF( ITYPE.EQ.-1 ) THEN
+      IF( ITYPE == -1 ) THEN
          INFO = -1
-      ELSE IF( CFROM.EQ.ZERO ) THEN
+      ELSE IF( CFROM == ZERO ) THEN
          INFO = -4
-      ELSE IF( M.LT.0 ) THEN
+      ELSE IF( M < 0 ) THEN
          INFO = -6
-      ELSE IF( N.LT.0 .OR. ( ITYPE.EQ.4 .AND. N.NE.M ) .OR. &
-               ( ITYPE.EQ.5 .AND. N.NE.M ) ) THEN
+      ELSE IF( N < 0  OR  ( ITYPE == 4  AND  N/=M )  OR  &
+               ( ITYPE == 5  AND  N/=M ) ) THEN
          INFO = -7
-      ELSE IF( ITYPE.LE.3 .AND. LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( ITYPE <= 3  AND  LDA < MAX( 1, M ) ) THEN
          INFO = -9
       ELSE IF( ITYPE.GE.4 ) THEN
-         IF( KL.LT.0 .OR. KL.GT.MAX( M-1, 0 ) ) THEN
+         IF( KL < 0  OR  KL > MAX( M-1, 0 ) ) THEN
             INFO = -2
-         ELSE IF( KU.LT.0 .OR. KU.GT.MAX( N-1, 0 ) .OR. &
-                  ( ( ITYPE.EQ.4 .OR. ITYPE.EQ.5 ) .AND. KL.NE.KU ) ) &
+         ELSE IF( KU < 0  OR  KU > MAX( N-1, 0 )  OR  &
+                  ( ( ITYPE == 4  OR  ITYPE == 5 )  AND  KL/=KU ) ) &
                    THEN
             INFO = -3
-         ELSE IF( ( ITYPE.EQ.4 .AND. LDA.LT.KL+1 ) .OR. &
-                  ( ITYPE.EQ.5 .AND. LDA.LT.KU+1 ) .OR. &
-                  ( ITYPE.EQ.6 .AND. LDA.LT.2*KL+KU+1 ) ) THEN
+         ELSE IF( ( ITYPE == 4  AND  LDA < KL+1 )  OR  &
+                  ( ITYPE == 5  AND  LDA < KU+1 )  OR  &
+                  ( ITYPE == 6  AND  LDA < 2*KL+KU+1 ) ) THEN
             INFO = -9
          END IF
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DLASCL', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 .OR. M.EQ.0 ) RETURN
+      IF( N == 0  OR  M == 0 ) RETURN
 !
 !     Get machine parameters
 !
@@ -2442,20 +2353,20 @@
    10 CONTINUE
       CFROM1 = CFROMC*SMLNUM
       CTO1 = CTOC / BIGNUM
-      IF( ABS( CFROM1 ).GT.ABS( CTOC ) .AND. CTOC.NE.ZERO ) THEN
+      IF( ABS( CFROM1 ) > ABS( CTOC )  AND  CTOC/=ZERO ) THEN
          MUL = SMLNUM
-         DONE = .FALSE.
+         DONE =  FALSE
          CFROMC = CFROM1
-      ELSE IF( ABS( CTO1 ).GT.ABS( CFROMC ) ) THEN
+      ELSE IF( ABS( CTO1 ) > ABS( CFROMC ) ) THEN
          MUL = BIGNUM
-         DONE = .FALSE.
+         DONE =  FALSE
          CTOC = CTO1
       ELSE
          MUL = CTOC / CFROMC
-         DONE = .TRUE.
+         DONE =  TRUE
       END IF
 !
-      IF( ITYPE.EQ.0 ) THEN
+      IF( ITYPE == 0 ) THEN
 !
 !        Full matrix
 !
@@ -2465,7 +2376,7 @@
    20       CONTINUE
    30    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.1 ) THEN
+      ELSE IF( ITYPE == 1 ) THEN
 !
 !        Lower triangular matrix
 !
@@ -2475,7 +2386,7 @@
    40       CONTINUE
    50    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.2 ) THEN
+      ELSE IF( ITYPE == 2 ) THEN
 !
 !        Upper triangular matrix
 !
@@ -2485,7 +2396,7 @@
    60       CONTINUE
    70    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.3 ) THEN
+      ELSE IF( ITYPE == 3 ) THEN
 !
 !        Upper Hessenberg matrix
 !
@@ -2495,7 +2406,7 @@
    80       CONTINUE
    90    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.4 ) THEN
+      ELSE IF( ITYPE == 4 ) THEN
 !
 !        Lower half of a symmetric band matrix
 !
@@ -2507,7 +2418,7 @@
   100       CONTINUE
   110    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.5 ) THEN
+      ELSE IF( ITYPE == 5 ) THEN
 !
 !        Upper half of a symmetric band matrix
 !
@@ -2519,7 +2430,7 @@
   120       CONTINUE
   130    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.6 ) THEN
+      ELSE IF( ITYPE == 6 ) THEN
 !
 !        Band matrix
 !
@@ -2535,7 +2446,7 @@
 !
       END IF
 !
-      IF( .NOT.DONE ) GO TO 10
+      IF(  NOT DONE ) GO TO 10
 !
       RETURN
 !
@@ -2550,12 +2461,12 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            LDA, M, N
-      DOUBLE PRECISION   ALPHA, BETA
+      REAL   ALPHA, BETA
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -2567,7 +2478,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies the part of the matrix A to be set.
 !          = 'U':      Upper triangular part is set; the strictly lower
 !                      triangular part of A is not changed.
@@ -2581,13 +2492,13 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.  N >= 0.
 !
-!  ALPHA   (input) DOUBLE PRECISION
+!  ALPHA   (input) REAL
 !          The constant to which the offdiagonal elements are to be set.
 !
-!  BETA    (input) DOUBLE PRECISION
+!  BETA    (input) REAL
 !          The constant to which the diagonal elements are to be set.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On exit, the leading m-by-n submatrix of A is set as follows:
 !
 !          if UPLO = 'U', A(i,j) = ALPHA, 1<=i<=j-1, 1<=j<=n,
@@ -2603,9 +2514,6 @@
 !
 !     .. Local Scalars ..
       INTEGER            I, J
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 !     ..
 !     .. Executable Statements ..
 !
@@ -2661,11 +2569,11 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, PIVOT, SIDE
+      CHR          DIRECT, PIVOT, SIDE
       INTEGER            LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), C( * ), S( * )
+      REAL   A( LDA, * ), C( * ), S( * )
 !     ..
 !
 !  Purpose
@@ -2713,19 +2621,19 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          Specifies whether the plane rotation matrix P is applied to
 !          A on the left or the right.
 !          = 'L':  Left, compute A := P*A
 !          = 'R':  Right, compute A:= A*P'
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Specifies whether P is a forward or backward sequence of
 !          plane rotations.
 !          = 'F':  Forward, P = P( z - 1 )*...*P( 2 )*P( 1 )
 !          = 'B':  Backward, P = P( 1 )*P( 2 )*...*P( z - 1 )
 !
-!  PIVOT   (input) character(len=1)
+!  PIVOT   (input) STR(len=1)
 !          Specifies the plane for which P(k) is a plane rotation
 !          matrix.
 !          = 'V':  Variable pivot, the plane (k,k+1)
@@ -2740,7 +2648,7 @@
 !          The number of columns of the matrix A.  If n <= 1, an
 !          immediate return is effected.
 !
-!  C, S    (input) DOUBLE PRECISION arrays, dimension
+!  C, S    (input) REAL arrays, dimension
 !                  (M-1) if SIDE = 'L'
 !                  (N-1) if SIDE = 'R'
 !          c(k) and s(k) contain the cosine and sine that define the
@@ -2749,7 +2657,7 @@
 !          R( k ) = (  c( k )  s( k ) ).
 !                   ( -s( k )  c( k ) )
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          The m by n matrix A.  On exit, A is overwritten by P*A if
 !          SIDE = 'R' or by A*P' if SIDE = 'L'.
 !
@@ -2758,46 +2666,40 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, INFO, J
-      DOUBLE PRECISION   CTEMP, STEMP, TEMP
+      REAL   CTEMP, STEMP, TEMP
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters
 !
       INFO = 0
-      IF( .NOT. scan( SIDE, 'LlRr' )>0 ) THEN
+      IF(  NOT  scan( SIDE, 'LlRr' )>0 ) THEN
          INFO = 1
-      ELSE IF( .NOT. scan( PIVOT, 'VvTtBb' )>0 ) THEN
+      ELSE IF(  NOT  scan( PIVOT, 'VvTtBb' )>0 ) THEN
          INFO = 2
-      ELSE IF( .NOT. scan( DIRECT, 'FfBb' )>0 ) THEN
+      ELSE IF(  NOT  scan( DIRECT, 'FfBb' )>0 ) THEN
          INFO = 3
-      ELSE IF( M.LT.0 ) THEN
+      ELSE IF( M < 0 ) THEN
          INFO = 4
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = 5
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DLASR ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( ( M.EQ.0 ) .OR. ( N.EQ.0 ) ) RETURN
+      IF( ( M == 0 )  OR  ( N == 0 ) ) RETURN
       IF(  scan( SIDE, 'Ll' )>0 ) THEN
 !
 !        Form  P * A
@@ -2807,7 +2709,7 @@
                DO 20 J = 1, M - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 10 I = 1, N
                         TEMP = A( J+1, I )
                         A( J+1, I ) = CTEMP*TEMP - STEMP*A( J, I )
@@ -2819,7 +2721,7 @@
                DO 40 J = M - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 30 I = 1, N
                         TEMP = A( J+1, I )
                         A( J+1, I ) = CTEMP*TEMP - STEMP*A( J, I )
@@ -2833,7 +2735,7 @@
                DO 60 J = 2, M
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 50 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = CTEMP*TEMP - STEMP*A( 1, I )
@@ -2845,7 +2747,7 @@
                DO 80 J = M, 2, -1
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 70 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = CTEMP*TEMP - STEMP*A( 1, I )
@@ -2859,7 +2761,7 @@
                DO 100 J = 1, M - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 90 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = STEMP*A( M, I ) + CTEMP*TEMP
@@ -2871,7 +2773,7 @@
                DO 120 J = M - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 110 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = STEMP*A( M, I ) + CTEMP*TEMP
@@ -2890,7 +2792,7 @@
                DO 140 J = 1, N - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 130 I = 1, M
                         TEMP = A( I, J+1 )
                         A( I, J+1 ) = CTEMP*TEMP - STEMP*A( I, J )
@@ -2902,7 +2804,7 @@
                DO 160 J = N - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 150 I = 1, M
                         TEMP = A( I, J+1 )
                         A( I, J+1 ) = CTEMP*TEMP - STEMP*A( I, J )
@@ -2916,7 +2818,7 @@
                DO 180 J = 2, N
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 170 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = CTEMP*TEMP - STEMP*A( I, 1 )
@@ -2928,7 +2830,7 @@
                DO 200 J = N, 2, -1
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 190 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = CTEMP*TEMP - STEMP*A( I, 1 )
@@ -2942,7 +2844,7 @@
                DO 220 J = 1, N - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 210 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = STEMP*A( I, N ) + CTEMP*TEMP
@@ -2954,7 +2856,7 @@
                DO 240 J = N - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 230 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = STEMP*A( I, N ) + CTEMP*TEMP
@@ -2979,11 +2881,11 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          ID
+      CHR          ID
       INTEGER            INFO, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * )
+      REAL   D( * )
 !     ..
 !
 !  Purpose
@@ -2998,14 +2900,14 @@
 !  Arguments
 !  =========
 !
-!  ID      (input) character(len=1)
+!  ID      (input) STR(len=1)
 !          = 'I': sort D in increasing order;
 !          = 'D': sort D in decreasing order.
 !
 !  N       (input) INTEGER
 !          The length of the array D.
 !
-!  D       (input/output) DOUBLE PRECISION array, dimension (N)
+!  D       (input/output) REAL array, dimension (N)
 !          On entry, the array to be sorted.
 !          On exit, D has been sorted into increasing order
 !          (D(1) <= ... <= D(N) ) or into decreasing order
@@ -3023,7 +2925,7 @@
 !     ..
 !     .. Local Scalars ..
       INTEGER            DIR, ENDD, I, J, START, STKPNT
-      DOUBLE PRECISION   D1, D2, D3, DMNMX, TMP
+      REAL   D1, D2, D3, DMNMX, TMP
 !     ..
 !     .. Local Arrays ..
       INTEGER            STACK( 2, 32 )
@@ -3042,19 +2944,19 @@
       ELSE IF(  scan( ID, 'Ii' )>0 ) THEN
          DIR = 1
       END IF
-      IF( DIR.EQ.-1 ) THEN
+      IF( DIR == -1 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DLASRT', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.1 ) RETURN
+      IF( N <= 1 ) RETURN
 !
       STKPNT = 1
       STACK( 1, 1 ) = 1
@@ -3063,17 +2965,17 @@
       START = STACK( 1, STKPNT )
       ENDD = STACK( 2, STKPNT )
       STKPNT = STKPNT - 1
-      IF( ENDD-START.LE.SELECT .AND. ENDD-START.GT.0 ) THEN
+      IF( ENDD-START <= SELECT  AND  ENDD-START > 0 ) THEN
 !
 !        Do Insertion sort on D( START:ENDD )
 !
-         IF( DIR.EQ.0 ) THEN
+         IF( DIR == 0 ) THEN
 !
 !           Sort into decreasing order
 !
             DO 30 I = START + 1, ENDD
                DO 20 J = I, START + 1, -1
-                  IF( D( J ).GT.D( J-1 ) ) THEN
+                  IF( D( J ) > D( J-1 ) ) THEN
                      DMNMX = D( J )
                      D( J ) = D( J-1 )
                      D( J-1 ) = DMNMX
@@ -3089,7 +2991,7 @@
 !
             DO 50 I = START + 1, ENDD
                DO 40 J = I, START + 1, -1
-                  IF( D( J ).LT.D( J-1 ) ) THEN
+                  IF( D( J ) < D( J-1 ) ) THEN
                      DMNMX = D( J )
                      D( J ) = D( J-1 )
                      D( J-1 ) = DMNMX
@@ -3101,7 +3003,7 @@
 !
          END IF
 !
-      ELSE IF( ENDD-START.GT.SELECT ) THEN
+      ELSE IF( ENDD-START > SELECT ) THEN
 !
 !        Partition D( START:ENDD ) and stack parts, largest one first
 !
@@ -3111,25 +3013,25 @@
          D2 = D( ENDD )
          I = ( START+ENDD ) / 2
          D3 = D( I )
-         IF( D1.LT.D2 ) THEN
-            IF( D3.LT.D1 ) THEN
+         IF( D1 < D2 ) THEN
+            IF( D3 < D1 ) THEN
                DMNMX = D1
-            ELSE IF( D3.LT.D2 ) THEN
+            ELSE IF( D3 < D2 ) THEN
                DMNMX = D3
             ELSE
                DMNMX = D2
             END IF
          ELSE
-            IF( D3.LT.D2 ) THEN
+            IF( D3 < D2 ) THEN
                DMNMX = D2
-            ELSE IF( D3.LT.D1 ) THEN
+            ELSE IF( D3 < D1 ) THEN
                DMNMX = D3
             ELSE
                DMNMX = D1
             END IF
          END IF
 !
-         IF( DIR.EQ.0 ) THEN
+         IF( DIR == 0 ) THEN
 !
 !           Sort into decreasing order
 !
@@ -3138,17 +3040,17 @@
    60       CONTINUE
    70       CONTINUE
             J = J - 1
-            IF( D( J ).LT.DMNMX ) GO TO 70
+            IF( D( J ) < DMNMX ) GO TO 70
    80       CONTINUE
             I = I + 1
-            IF( D( I ).GT.DMNMX ) GO TO 80
-            IF( I.LT.J ) THEN
+            IF( D( I ) > DMNMX ) GO TO 80
+            IF( I < J ) THEN
                TMP = D( I )
                D( I ) = D( J )
                D( J ) = TMP
                GO TO 60
             END IF
-            IF( J-START.GT.ENDD-J-1 ) THEN
+            IF( J-START > ENDD-J-1 ) THEN
                STKPNT = STKPNT + 1
                STACK( 1, STKPNT ) = START
                STACK( 2, STKPNT ) = J
@@ -3172,17 +3074,17 @@
    90       CONTINUE
   100       CONTINUE
             J = J - 1
-            IF( D( J ).GT.DMNMX ) GO TO 100
+            IF( D( J ) > DMNMX ) GO TO 100
   110       CONTINUE
             I = I + 1
-            IF( D( I ).LT.DMNMX ) GO TO 110
-            IF( I.LT.J ) THEN
+            IF( D( I ) < DMNMX ) GO TO 110
+            IF( I < J ) THEN
                TMP = D( I )
                D( I ) = D( J )
                D( J ) = TMP
                GO TO 90
             END IF
-            IF( J-START.GT.ENDD-J-1 ) THEN
+            IF( J-START > ENDD-J-1 ) THEN
                STKPNT = STKPNT + 1
                STACK( 1, STKPNT ) = START
                STACK( 2, STKPNT ) = J
@@ -3199,7 +3101,7 @@
             END IF
          END IF
       END IF
-      IF( STKPNT.GT.0 ) GO TO 10
+      IF( STKPNT > 0 ) GO TO 10
       RETURN
 !
 !     End of DLASRT
@@ -3214,10 +3116,10 @@
 !
 !     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   SCALE, SUMSQ
+      REAL   SCALE, SUMSQ
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   X( * )
+      REAL   X( * )
 !     ..
 !
 !  Purpose
@@ -3243,7 +3145,7 @@
 !  N       (input) INTEGER
 !          The number of elements to be used from the vector X.
 !
-!  X       (input) DOUBLE PRECISION array, dimension (N)
+!  X       (input) REAL array, dimension (N)
 !          The vector for which a scaled sum of squares is computed.
 !             x( i )  = X( 1 + ( i - 1 )*INCX ), 1 <= i <= n.
 !
@@ -3251,36 +3153,30 @@
 !          The increment between successive values of the vector X.
 !          INCX > 0.
 !
-!  SCALE   (input/output) DOUBLE PRECISION
+!  SCALE   (input/output) REAL
 !          On entry, the value  scale  in the equation above.
 !          On exit, SCALE is overwritten with  scl , the scaling factor
 !          for the sum of squares.
 !
-!  SUMSQ   (input/output) DOUBLE PRECISION
+!  SUMSQ   (input/output) REAL
 !          On entry, the value  sumsq  in the equation above.
 !          On exit, SUMSQ is overwritten with  smsq , the basic sum of
 !          squares from which  scl  has been factored out.
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            IX
-      DOUBLE PRECISION   ABSXI
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS
+      REAL   ABSXI
 !     ..
 !     .. Executable Statements ..
 !
-      IF( N.GT.0 ) THEN
+      IF( N > 0 ) THEN
          DO 10 IX = 1, 1 + ( N-1 )*INCX, INCX
-            IF( X( IX ).NE.ZERO ) THEN
+            IF( X( IX )/=ZERO ) THEN
                ABSXI = ABS( X( IX ) )
-               IF( SCALE.LT.ABSXI ) THEN
+               IF( SCALE < ABSXI ) THEN
                   SUMSQ = 1 + SUMSQ*( SCALE / ABSXI )**2
                   SCALE = ABSXI
                ELSE
@@ -3306,7 +3202,7 @@
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -3321,7 +3217,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the matrix of column dimension N to which the row
 !          interchanges will be applied.
 !          On exit, the permuted matrix.
@@ -3356,18 +3252,18 @@
 !
 !     .. Local Scalars ..
       INTEGER            I, I1, I2, INC, IP, IX, IX0, J, K, N32
-      DOUBLE PRECISION   TEMP
+      REAL   TEMP
 !     ..
 !     .. Executable Statements ..
 !
 !     Interchange row I with row IPIV(I) for each of rows K1 through K2.
 !
-      IF( INCX.GT.0 ) THEN
+      IF( INCX > 0 ) THEN
          IX0 = K1
          I1 = K1
          I2 = K2
          INC = 1
-      ELSE IF( INCX.LT.0 ) THEN
+      ELSE IF( INCX < 0 ) THEN
          IX0 = 1 + ( 1-K2 )*INCX
          I1 = K2
          I2 = K1
@@ -3377,12 +3273,12 @@
       END IF
 !
       N32 = ( N / 32 )*32
-      IF( N32.NE.0 ) THEN
+      IF( N32/=0 ) THEN
          DO 30 J = 1, N32, 32
             IX = IX0
             DO 20 I = I1, I2, INC
                IP = IPIV( IX )
-               IF( IP.NE.I ) THEN
+               IF( IP/=I ) THEN
                   DO 10 K = J, J + 31
                      TEMP = A( I, K )
                      A( I, K ) = A( IP, K )
@@ -3393,12 +3289,12 @@
    20       CONTINUE
    30    CONTINUE
       END IF
-      IF( N32.NE.N ) THEN
+      IF( N32/=N ) THEN
          N32 = N32 + 1
          IX = IX0
          DO 50 I = I1, I2, INC
             IP = IPIV( IX )
-            IF( IP.NE.I ) THEN
+            IF( IP/=I ) THEN
                DO 40 K = N32, N
                   TEMP = A( I, K )
                   A( I, K ) = A( IP, K )
@@ -3422,11 +3318,11 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            LDA, LDW, N, NB
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), E( * ), TAU( * ), W( LDW, * )
+      REAL   A( LDA, * ), E( * ), TAU( * ), W( LDW, * )
 !     ..
 !
 !  Purpose
@@ -3447,7 +3343,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) CHARACTER
+!  UPLO    (input) STR
 !          Specifies whether the upper or lower triangular part of the
 !          symmetric matrix A is stored:
 !          = 'U': Upper triangular
@@ -3459,7 +3355,7 @@
 !  NB      (input) INTEGER
 !          The number of rows and columns to be reduced.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 !          n-by-n upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -3483,18 +3379,18 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= (1,N).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          If UPLO = 'U', E(n-nb:n-1) contains the superdiagonal
 !          elements of the last NB columns of the reduced matrix;
 !          if UPLO = 'L', E(1:nb) contains the subdiagonal elements of
 !          the first NB columns of the reduced matrix.
 !
-!  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+!  TAU     (output) REAL array, dimension (N-1)
 !          The scalar factors of the elementary reflectors, stored in
 !          TAU(n-nb:n-1) if UPLO = 'U', and in TAU(1:nb) if UPLO = 'L'.
 !          See Further Details.
 !
-!  W       (output) DOUBLE PRECISION array, dimension (LDW,NB)
+!  W       (output) REAL array, dimension (LDW,NB)
 !          The n-by-nb matrix W required to update the unreduced part
 !          of A.
 !
@@ -3552,29 +3448,23 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, HALF
-      PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0, HALF = 0.5D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, IW
-      DOUBLE PRECISION   ALPHA
+      REAL   ALPHA
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DAXPY, DGEMV, DLARFG, DSCAL, DSYMV
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DDOT
+      REAL   DDOT
       EXTERNAL           DDOT
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 !     ..
 !     .. Executable Statements ..
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
       IF(  scan( UPLO, 'Uu' )>0 ) THEN
 !
@@ -3582,7 +3472,7 @@
 !
          DO 10 I = N, N - NB + 1, -1
             IW = I - N + NB
-            IF( I.LT.N ) THEN
+            IF( I < N ) THEN
 !
 !              Update A(1:i,i)
 !
@@ -3591,7 +3481,7 @@
                CALL DGEMV( 'No transpose', I, N-I, -ONE, W( 1, IW+1 ), &
                            LDW, A( I, I+1 ), LDA, ONE, A( 1, I ), 1 )
             END IF
-            IF( I.GT.1 ) THEN
+            IF( I > 1 ) THEN
 !
 !              Generate elementary reflector H(i) to annihilate
 !              A(1:i-2,i)
@@ -3604,7 +3494,7 @@
 !
                CALL DSYMV( 'Upper', I-1, ONE, A, LDA, A( 1, I ), 1, &
                            ZERO, W( 1, IW ), 1 )
-               IF( I.LT.N ) THEN
+               IF( I < N ) THEN
                   CALL DGEMV( 'Transpose', I-1, N-I, ONE, W( 1, IW+1 ), &
                               LDW, A( 1, I ), 1, ZERO, W( I+1, IW ), 1 )
                   CALL DGEMV( 'No transpose', I-1, N-I, -ONE, &
@@ -3634,7 +3524,7 @@
                         LDA, W( I, 1 ), LDW, ONE, A( I, I ), 1 )
             CALL DGEMV( 'No transpose', N-I+1, I-1, -ONE, W( I, 1 ), &
                         LDW, A( I, 1 ), LDA, ONE, A( I, I ), 1 )
-            IF( I.LT.N ) THEN
+            IF( I < N ) THEN
 !
 !              Generate elementary reflector H(i) to annihilate
 !              A(i+2:n,i)
@@ -3668,11 +3558,11 @@
 !     End of DLATRD
 !
       END
-      DOUBLE PRECISION FUNCTION DNRM2 ( N, X, INCX )
+      REAL FUNCTION DNRM2 ( N, X, INCX )
 !     .. Scalar Arguments ..
       INTEGER                           INCX, N
 !     .. Array Arguments ..
-      DOUBLE PRECISION                  X( * )
+      REAL                  X( * )
 !     ..
 !
 !  DNRM2 returns the euclidean norm of a vector via the function
@@ -3687,19 +3577,14 @@
 !     Sven Hammarling, Nag Ltd.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION      ONE         , ZERO
-      PARAMETER           ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     .. Local Scalars ..
       INTEGER               IX
-      DOUBLE PRECISION      ABSXI, NORM, SCALE, SSQ
-!     .. Intrinsic Functions ..
-      INTRINSIC             ABS, SQRT
+      REAL      ABSXI, NORM, SCALE, SSQ
 !     ..
 !     .. Executable Statements ..
-      IF( N.LT.1 .OR. INCX.LT.1 )THEN
+      IF( N < 1  OR  INCX < 1 )THEN
          NORM  = ZERO
-      ELSE IF( N.EQ.1 )THEN
+      ELSE IF( N == 1 )THEN
          NORM  = ABS( X( 1 ) )
       ELSE
          SCALE = ZERO
@@ -3709,9 +3594,9 @@
 !        CALL DLASSQ( N, X, INCX, SCALE, SSQ )
 !
          DO 10, IX = 1, 1 + ( N - 1 )*INCX, INCX
-            IF( X( IX ).NE.ZERO )THEN
+            IF( X( IX )/=ZERO )THEN
                ABSXI = ABS( X( IX ) )
-               IF( SCALE.LT.ABSXI )THEN
+               IF( SCALE < ABSXI )THEN
                   SSQ   = ONE   + SSQ*( SCALE/ABSXI )**2
                   SCALE = ABSXI
                ELSE
@@ -3739,7 +3624,7 @@
       INTEGER            INFO, K, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -3766,7 +3651,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the (n-k+i)-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by DGEQLF in the last k columns of its array
@@ -3776,11 +3661,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (K)
+!  TAU     (input) REAL array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by DGEQLF.
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (N)
+!  WORK    (workspace) REAL array, dimension (N)
 !
 !  INFO    (output) INTEGER
 !          = 0: successful exit
@@ -3788,9 +3673,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, II, J, L
@@ -3798,31 +3680,28 @@
 !     .. External Subroutines ..
       EXTERNAL           DLARF, DSCAL, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DORG2L', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
 !     Initialise columns 1:n-k to columns of the unit matrix
 !
@@ -3865,7 +3744,7 @@
       INTEGER            INFO, K, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -3892,7 +3771,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the i-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by DGEQRF in the first k columns of its array
@@ -3902,11 +3781,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (K)
+!  TAU     (input) REAL array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by DGEQRF.
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (N)
+!  WORK    (workspace) REAL array, dimension (N)
 !
 !  INFO    (output) INTEGER
 !          = 0: successful exit
@@ -3914,9 +3793,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J, L
@@ -3924,31 +3800,28 @@
 !     .. External Subroutines ..
       EXTERNAL           DLARF, DSCAL, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DORG2R', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
 !     Initialise columns k+1:n to columns of the unit matrix
 !
@@ -3963,12 +3836,12 @@
 !
 !        Apply H(i) to A(i:m,i:n) from the left
 !
-         IF( I.LT.N ) THEN
+         IF( I < N ) THEN
             A( I, I ) = ONE
             CALL DLARF( 'Left', M-I+1, N-I, A( I, I ), 1, TAU( I ), &
                         A( I, I+1 ), LDA, WORK )
          END IF
-         IF( I.LT.M ) CALL DSCAL( M-I, -TAU( I ), A( I+1, I ), 1 )
+         IF( I < M ) CALL DSCAL( M-I, -TAU( I ), A( I+1, I ), 1 )
          A( I, I ) = ONE - TAU( I )
 !
 !        Set A(1:i-1,i) to zero
@@ -3993,7 +3866,7 @@
       INTEGER            INFO, K, LDA, LWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -4020,7 +3893,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the (n-k+i)-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by DGEQLF in the last k columns of its array
@@ -4030,11 +3903,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (K)
+!  TAU     (input) REAL array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by DGEQLF.
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -4053,9 +3926,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY
@@ -4064,9 +3934,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLARFB, DLARFT, DORG2L, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -4080,19 +3947,19 @@
       NB = ILAENV( 1, 'DORGQL', ' ', M, N, K, -1 )
       LWKOPT = MAX( 1, N )*NB
       WORK( 1 ) = LWKOPT
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( M.LT.0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DORGQL', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -4101,7 +3968,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -4109,18 +3976,18 @@
       NBMIN = 2
       NX = 0
       IWS = N
-      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+      IF( NB > 1  AND  NB < K ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code.
 !
          NX = MAX( 0, ILAENV( 3, 'DORGQL', ' ', M, N, K, -1 ) )
-         IF( NX.LT.K ) THEN
+         IF( NX < K ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  reduce NB and
 !              determine the minimum value of NB.
@@ -4131,7 +3998,7 @@
          END IF
       END IF
 !
-      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+      IF( NB.GE.NBMIN  AND  NB < K  AND  NX < K ) THEN
 !
 !        Use blocked code after the first block.
 !        The last kk columns are handled by the block method.
@@ -4153,13 +4020,13 @@
 !
       CALL DORG2L( M-KK, N-KK, K-KK, A, LDA, TAU, WORK, IINFO )
 !
-      IF( KK.GT.0 ) THEN
+      IF( KK > 0 ) THEN
 !
 !        Use blocked code
 !
          DO 50 I = K - KK + 1, K, NB
             IB = MIN( NB, K-I+1 )
-            IF( N-K+I.GT.1 ) THEN
+            IF( N-K+I > 1 ) THEN
 !
 !              Form the triangular factor of the block reflector
 !              H = H(i+ib-1) . . . H(i+1) H(i)
@@ -4207,7 +4074,7 @@
       INTEGER            INFO, K, LDA, LWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -4234,7 +4101,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the i-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by DGEQRF in the first k columns of its array
@@ -4244,11 +4111,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (K)
+!  TAU     (input) REAL array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by DGEQRF.
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -4267,9 +4134,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY
@@ -4278,9 +4142,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLARFB, DLARFT, DORG2R, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -4294,19 +4155,19 @@
       NB = ILAENV( 1, 'DORGQR', ' ', M, N, K, -1 )
       LWKOPT = MAX( 1, N )*NB
       WORK( 1 ) = LWKOPT
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( M.LT.0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DORGQR', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -4315,7 +4176,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -4323,18 +4184,18 @@
       NBMIN = 2
       NX = 0
       IWS = N
-      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+      IF( NB > 1  AND  NB < K ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code.
 !
          NX = MAX( 0, ILAENV( 3, 'DORGQR', ' ', M, N, K, -1 ) )
-         IF( NX.LT.K ) THEN
+         IF( NX < K ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  reduce NB and
 !              determine the minimum value of NB.
@@ -4345,7 +4206,7 @@
          END IF
       END IF
 !
-      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+      IF( NB.GE.NBMIN  AND  NB < K  AND  NX < K ) THEN
 !
 !        Use blocked code after the last block.
 !        The first kk columns are handled by the block method.
@@ -4366,16 +4227,16 @@
 !
 !     Use unblocked code for the last or only block.
 !
-      IF( KK.LT.N ) CALL DORG2R( M-KK, N-KK, K-KK, A( KK+1, KK+1 ), LDA, &
+      IF( KK < N ) CALL DORG2R( M-KK, N-KK, K-KK, A( KK+1, KK+1 ), LDA, &
                       TAU( KK+1 ), WORK, IINFO )
 !
-      IF( KK.GT.0 ) THEN
+      IF( KK > 0 ) THEN
 !
 !        Use blocked code
 !
          DO 50 I = KI + 1, 1, -NB
             IB = MIN( NB, K-I+1 )
-            IF( I+IB.LE.N ) THEN
+            IF( I+IB <= N ) THEN
 !
 !              Form the triangular factor of the block reflector
 !              H = H(i) H(i+1) . . . H(i+ib-1)
@@ -4419,11 +4280,11 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -4440,7 +4301,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U': Upper triangle of A contains elementary reflectors
 !                 from DSYTRD;
 !          = 'L': Lower triangle of A contains elementary reflectors
@@ -4449,7 +4310,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix Q. N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the vectors which define the elementary reflectors,
 !          as returned by DSYTRD.
 !          On exit, the N-by-N orthogonal matrix Q.
@@ -4457,11 +4318,11 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A. LDA >= max(1,N).
 !
-!  TAU     (input) DOUBLE PRECISION array, dimension (N-1)
+!  TAU     (input) REAL array, dimension (N-1)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by DSYTRD.
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -4480,9 +4341,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY, UPPER
@@ -4495,27 +4353,24 @@
 !     .. External Subroutines ..
       EXTERNAL           DORGQL, DORGQR, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      LQUERY = ( LWORK.EQ.-1 )
+      LQUERY = ( LWORK == -1 )
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
-      ELSE IF( LWORK.LT.MAX( 1, N-1 ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N-1 )  AND   NOT LQUERY ) THEN
          INFO = -7
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
          IF( UPPER ) THEN
             NB = ILAENV( 1, 'DORGQL', ' ', N-1, N-1, N-1, -1 )
          ELSE
@@ -4525,7 +4380,7 @@
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DORGTR', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -4534,7 +4389,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -4580,7 +4435,7 @@
          DO 60 I = 2, N
             A( I, 1 ) = ZERO
    60    CONTINUE
-         IF( N.GT.1 ) THEN
+         IF( N > 1 ) THEN
 !
 !           Generate Q(2:n,2:n)
 !
@@ -4598,14 +4453,14 @@
 !     scales a vector by a constant.
 !     uses unrolled loops for increment equal to one.
 !     jack dongarra, linpack, 3/11/78.
-!     modified 3/93 to return if incx .le. 0.
+!     modified 3/93 to return if incx  <=  0.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision da,dx(*)
-      integer i,incx,m,mp1,n,nincx
+      REAL da,dx(*)
+      INT i,incx,m,mp1,n,nincx
 !
-      if( n.le.0 .or. incx.le.0 )return
-      if(incx.eq.1)go to 20
+      if ( n <= 0 .or. incx <= 0 ) return
+      if (incx == 1)go to 20
 !
 !        code for increment not equal to 1
 !
@@ -4621,11 +4476,11 @@
 !        clean-up loop
 !
    20 m = mod(n,5)
-      if( m .eq. 0 ) go to 40
+      if ( m  ==  0 ) go to 40
       do 30 i = 1,m
         dx(i) = da*dx(i)
    30 continue
-      if( n .lt. 5 ) return
+      if ( n  <  5 ) return
    40 mp1 = m + 1
       do 50 i = mp1,n,5
         dx(i) = da*dx(i)
@@ -4644,11 +4499,11 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          COMPZ
+      CHR          COMPZ
       INTEGER            INFO, LDZ, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * ), WORK( * ), Z( LDZ, * )
+      REAL   D( * ), E( * ), WORK( * ), Z( LDZ, * )
 !     ..
 !
 !  Purpose
@@ -4663,7 +4518,7 @@
 !  Arguments
 !  =========
 !
-!  COMPZ   (input) character(len=1)
+!  COMPZ   (input) STR(len=1)
 !          = 'N':  Compute eigenvalues only.
 !          = 'V':  Compute eigenvalues and eigenvectors of the original
 !                  symmetric matrix.  On entry, Z must contain the
@@ -4676,16 +4531,16 @@
 !  N       (input) INTEGER
 !          The order of the matrix.  N >= 0.
 !
-!  D       (input/output) DOUBLE PRECISION array, dimension (N)
+!  D       (input/output) REAL array, dimension (N)
 !          On entry, the diagonal elements of the tridiagonal matrix.
 !          On exit, if INFO = 0, the eigenvalues in ascending order.
 !
-!  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (input/output) REAL array, dimension (N-1)
 !          On entry, the (n-1) subdiagonal elements of the tridiagonal
 !          matrix.
 !          On exit, E has been destroyed.
 !
-!  Z       (input/output) DOUBLE PRECISION array, dimension (LDZ, N)
+!  Z       (input/output) REAL array, dimension (LDZ, N)
 !          On entry, if  COMPZ = 'V', then Z contains the orthogonal
 !          matrix used in the reduction to tridiagonal form.
 !          On exit, if INFO = 0, then if  COMPZ = 'V', Z contains the
@@ -4698,7 +4553,7 @@
 !          The leading dimension of the array Z.  LDZ >= 1, and if
 !          eigenvectors are desired, then  LDZ >= max(1,N).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (max(1,2*N-2))
+!  WORK    (workspace) REAL array, dimension (max(1,2*N-2))
 !          If COMPZ = 'N', then WORK is not referenced.
 !
 !  INFO    (output) INTEGER
@@ -4714,8 +4569,6 @@
 !  =====================================================================
 !
 !     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
-      PARAMETER          (ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0, THREE = 3.0D0)
       INTEGER            MAXIT
       PARAMETER          ( MAXIT = 30 )
 !     ..
@@ -4723,19 +4576,16 @@
       INTEGER            I, ICOMPZ, II, ISCALE, J, JTOT, K, L, L1, LEND, &
                          LENDM1, LENDP1, LENDSV, LM1, LSV, M, MM, MM1, &
                          NM1, NMAXIT
-      DOUBLE PRECISION   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2, &
+      REAL   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2, &
                          S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      REAL   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLAE2, DLAEV2, DLARTG, DLASCL, DLASET, DLASR, &
                          DLASRT, DSWAP, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SIGN, SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -4752,24 +4602,24 @@
       ELSE
          ICOMPZ = -1
       END IF
-      IF( ICOMPZ.LT.0 ) THEN
+      IF( ICOMPZ < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( ( LDZ.LT.1 ) .OR. ( ICOMPZ.GT.0 .AND. LDZ.LT.MAX( 1, N ) ) ) THEN
+      ELSE IF( ( LDZ < 1 )  OR  ( ICOMPZ > 0  AND  LDZ < MAX( 1, N ) ) ) THEN
          INFO = -6
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DSTEQR', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
-      IF( N.EQ.1 ) THEN
-         IF( ICOMPZ.EQ.2 ) Z( 1, 1 ) = ONE
+      IF( N == 1 ) THEN
+         IF( ICOMPZ == 2 ) Z( 1, 1 ) = ONE
          RETURN
       END IF
 !
@@ -4785,7 +4635,7 @@
 !     Compute the eigenvalues and eigenvectors of the tridiagonal
 !     matrix.
 !
-      IF( ICOMPZ.EQ.2 ) CALL DLASET( 'Full', N, N, ZERO, ONE, Z, LDZ )
+      IF( ICOMPZ == 2 ) CALL DLASET( 'Full', N, N, ZERO, ONE, Z, LDZ )
 !
       NMAXIT = N*MAXIT
       JTOT = 0
@@ -4798,13 +4648,13 @@
       NM1 = N - 1
 !
    10 CONTINUE
-      IF( L1.GT.N ) GO TO 160
-      IF( L1.GT.1 ) E( L1-1 ) = ZERO
-      IF( L1.LE.NM1 ) THEN
+      IF( L1 > N ) GO TO 160
+      IF( L1 > 1 ) E( L1-1 ) = ZERO
+      IF( L1 <= NM1 ) THEN
          DO 20 M = L1, NM1
             TST = ABS( E( M ) )
-            IF( TST.EQ.ZERO ) GO TO 30
-            IF( TST.LE.( SQRT( ABS( D( M ) ) )*SQRT( ABS( D(M+1) ) ) )*EPS) THEN
+            IF( TST == ZERO ) GO TO 30
+            IF( TST <= ( SQRT( ABS( D( M ) ) )*SQRT( ABS( D(M+1) ) ) )*EPS) THEN
                E( M ) = ZERO
                GO TO 30
             END IF
@@ -4818,18 +4668,18 @@
       LEND = M
       LENDSV = LEND
       L1 = M + 1
-      IF( LEND.EQ.L ) GO TO 10
+      IF( LEND == L ) GO TO 10
 !
 !     Scale submatrix in rows and columns L to LEND
 !
       ANORM = DLANST( 'I', LEND-L+1, D( L ), E( L ) )
       ISCALE = 0
-      IF( ANORM.EQ.ZERO ) GO TO 10
-      IF( ANORM.GT.SSFMAX ) THEN
+      IF( ANORM == ZERO ) GO TO 10
+      IF( ANORM > SSFMAX ) THEN
          ISCALE = 1
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L, 1, E( L ), N, INFO )
-      ELSE IF( ANORM.LT.SSFMIN ) THEN
+      ELSE IF( ANORM < SSFMIN ) THEN
          ISCALE = 2
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L, 1, E( L ), N, INFO )
@@ -4837,38 +4687,38 @@
 !
 !     Choose between QL and QR iteration
 !
-      IF( ABS( D( LEND ) ).LT.ABS( D( L ) ) ) THEN
+      IF( ABS( D( LEND ) ) < ABS( D( L ) ) ) THEN
          LEND = LSV
          L = LENDSV
       END IF
 !
-      IF( LEND.GT.L ) THEN
+      IF( LEND > L ) THEN
 !
 !        QL Iteration
 !
 !        Look for small subdiagonal element.
 !
    40    CONTINUE
-         IF( L.NE.LEND ) THEN
+         IF( L/=LEND ) THEN
             LENDM1 = LEND - 1
             DO 50 M = L, LENDM1
                TST = ABS( E( M ) )**2
-               IF( TST.LE.( EPS2*ABS( D(M) ) )*ABS( D(M+1) )+ SAFMIN) GO TO 60
+               IF( TST <= ( EPS2*ABS( D(M) ) )*ABS( D(M+1) )+ SAFMIN) GO TO 60
    50       CONTINUE
          END IF
 !
          M = LEND
 !
    60    CONTINUE
-         IF( M.LT.LEND ) E( M ) = ZERO
+         IF( M < LEND ) E( M ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 80
+         IF( M == L ) GO TO 80
 !
 !        If remaining matrix is 2-by-2, use DLAE2 or SLAEV2
 !        to compute its eigensystem.
 !
-         IF( M.EQ.L+1 ) THEN
-            IF( ICOMPZ.GT.0 ) THEN
+         IF( M == L+1 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                CALL DLAEV2( D( L ), E( L ), D( L+1 ), RT1, RT2, C, S )
                WORK( L ) = C
                WORK( N-1+L ) = S
@@ -4881,11 +4731,11 @@
             D( L+1 ) = RT2
             E( L ) = ZERO
             L = L + 2
-            IF( L.LE.LEND ) GO TO 40
+            IF( L <= LEND ) GO TO 40
             GO TO 140
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 140
+         IF( JTOT == NMAXIT ) GO TO 140
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -4905,7 +4755,7 @@
             F = S*E( I )
             B = C*E( I )
             CALL DLARTG( G, F, C, S, R )
-            IF( I.NE.M-1 ) E( I+1 ) = R
+            IF( I/=M-1 ) E( I+1 ) = R
             G = D( I+1 ) - P
             R = ( D( I )-G )*S + TWO*C*B
             P = S*R
@@ -4914,7 +4764,7 @@
 !
 !           If eigenvectors are desired, then save rotations.
 !
-            IF( ICOMPZ.GT.0 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                WORK( I ) = C
                WORK( N-1+I ) = -S
             END IF
@@ -4923,7 +4773,7 @@
 !
 !        If eigenvectors are desired, then apply saved rotations.
 !
-         IF( ICOMPZ.GT.0 ) THEN
+         IF( ICOMPZ > 0 ) THEN
             MM = M - L + 1
             CALL DLASR( 'R', 'V', 'B', N, MM, WORK( L ), WORK( N-1+L ), &
                         Z( 1, L ), LDZ )
@@ -4939,7 +4789,7 @@
          D( L ) = P
 !
          L = L + 1
-         IF( L.LE.LEND ) GO TO 40
+         IF( L <= LEND ) GO TO 40
          GO TO 140
 !
       ELSE
@@ -4949,26 +4799,26 @@
 !        Look for small superdiagonal element.
 !
    90    CONTINUE
-         IF( L.NE.LEND ) THEN
+         IF( L/=LEND ) THEN
             LENDP1 = LEND + 1
             DO 100 M = L, LENDP1, -1
                TST = ABS( E( M-1 ) )**2
-               IF( TST.LE.( EPS2*ABS( D(M) ) )*ABS( D(M-1) )+ SAFMIN )GO TO 110
+               IF( TST <= ( EPS2*ABS( D(M) ) )*ABS( D(M-1) )+ SAFMIN )GO TO 110
   100       CONTINUE
          END IF
 !
          M = LEND
 !
   110    CONTINUE
-         IF( M.GT.LEND ) E( M-1 ) = ZERO
+         IF( M > LEND ) E( M-1 ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 130
+         IF( M == L ) GO TO 130
 !
 !        If remaining matrix is 2-by-2, use DLAE2 or SLAEV2
 !        to compute its eigensystem.
 !
-         IF( M.EQ.L-1 ) THEN
-            IF( ICOMPZ.GT.0 ) THEN
+         IF( M == L-1 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                CALL DLAEV2( D( L-1 ), E( L-1 ), D( L ), RT1, RT2, C, S )
                WORK( M ) = C
                WORK( N-1+M ) = S
@@ -4985,7 +4835,7 @@
             GO TO 140
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 140
+         IF( JTOT == NMAXIT ) GO TO 140
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -5005,7 +4855,7 @@
             F = S*E( I )
             B = C*E( I )
             CALL DLARTG( G, F, C, S, R )
-            IF( I.NE.M ) E( I-1 ) = R
+            IF( I/=M ) E( I-1 ) = R
             G = D( I ) - P
             R = ( D( I+1 )-G )*S + TWO*C*B
             P = S*R
@@ -5014,7 +4864,7 @@
 !
 !           If eigenvectors are desired, then save rotations.
 !
-            IF( ICOMPZ.GT.0 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                WORK( I ) = C
                WORK( N-1+I ) = S
             END IF
@@ -5023,7 +4873,7 @@
 !
 !        If eigenvectors are desired, then apply saved rotations.
 !
-         IF( ICOMPZ.GT.0 ) THEN
+         IF( ICOMPZ > 0 ) THEN
             MM = L - M + 1
             CALL DLASR( 'R', 'V', 'F', N, MM, WORK( M ), WORK( N-1+M ), &
                         Z( 1, M ), LDZ )
@@ -5047,10 +4897,10 @@
 !     Undo scaling if necessary
 !
   140 CONTINUE
-      IF( ISCALE.EQ.1 ) THEN
+      IF( ISCALE == 1 ) THEN
          CALL DLASCL('G', 0, 0, SSFMAX, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
          CALL DLASCL('G', 0, 0, SSFMAX, ANORM, LENDSV-LSV, 1, E( LSV ), N, INFO)
-      ELSE IF( ISCALE.EQ.2 ) THEN
+      ELSE IF( ISCALE == 2 ) THEN
          CALL DLASCL('G', 0, 0, SSFMIN, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
          CALL DLASCL('G', 0, 0, SSFMIN, ANORM, LENDSV-LSV, 1, E(LSV), N, INFO)
       END IF
@@ -5058,16 +4908,16 @@
 !     Check for no convergence to an eigenvalue after a total
 !     of N*MAXIT iterations.
 !
-      IF( JTOT.LT.NMAXIT ) GO TO 10
+      IF( JTOT < NMAXIT ) GO TO 10
       DO 150 I = 1, N - 1
-         IF( E( I ).NE.ZERO ) INFO = INFO + 1
+         IF( E( I )/=ZERO ) INFO = INFO + 1
   150 CONTINUE
       GO TO 190
 !
 !     Order eigenvalues and eigenvectors.
 !
   160 CONTINUE
-      IF( ICOMPZ.EQ.0 ) THEN
+      IF( ICOMPZ == 0 ) THEN
 !
 !        Use Quick Sort
 !
@@ -5082,12 +4932,12 @@
             K = I
             P = D( I )
             DO 170 J = II, N
-               IF( D( J ).LT.P ) THEN
+               IF( D( J ) < P ) THEN
                   K = J
                   P = D( J )
                END IF
   170       CONTINUE
-            IF( K.NE.I ) THEN
+            IF( K/=I ) THEN
                D( K ) = D( I )
                D( I ) = P
                CALL DSWAP( N, Z( 1, I ), 1, Z( 1, K ), 1 )
@@ -5112,7 +4962,7 @@
       INTEGER            INFO, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
+      REAL   D( * ), E( * )
 !     ..
 !
 !  Purpose
@@ -5127,11 +4977,11 @@
 !  N       (input) INTEGER
 !          The order of the matrix.  N >= 0.
 !
-!  D       (input/output) DOUBLE PRECISION array, dimension (N)
+!  D       (input/output) REAL array, dimension (N)
 !          On entry, the n diagonal elements of the tridiagonal matrix.
 !          On exit, if INFO = 0, the eigenvalues in ascending order.
 !
-!  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (input/output) REAL array, dimension (N-1)
 !          On entry, the (n-1) subdiagonal elements of the tridiagonal
 !          matrix.
 !          On exit, E has been destroyed.
@@ -5146,26 +4996,21 @@
 !  =====================================================================
 !
 !     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
-      PARAMETER          (ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0, THREE = 3.0D0)
       INTEGER            MAXIT
       PARAMETER          ( MAXIT = 30 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, ISCALE, JTOT, L, L1, LEND, LENDSV, LSV, M, NMAXIT
-      DOUBLE PRECISION   ALPHA, ANORM, BB, C, EPS, EPS2, GAMMA, OLDC, &
+      REAL   ALPHA, ANORM, BB, C, EPS, EPS2, GAMMA, OLDC, &
                          OLDGAM, P, R, RT1, RT2, RTE, S, SAFMAX, SAFMIN, &
                          SIGMA, SSFMAX, SSFMIN
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      REAL   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLAE2, DLASCL, DLASRT, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SIGN, SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -5175,12 +5020,12 @@
 !
 !     Quick return if possible
 !
-      IF( N.LT.0 ) THEN
+      IF( N < 0 ) THEN
          INFO = -1
          CALL XERBLA( 'DSTERF', -INFO )
          RETURN
       END IF
-      IF( N.LE.1 ) RETURN
+      IF( N <= 1 ) RETURN
 !
 !     Determine the unit roundoff for this environment.
 !
@@ -5204,10 +5049,10 @@
       L1 = 1
 !
    10 CONTINUE
-      IF( L1.GT.N ) GO TO 170
-      IF( L1.GT.1 ) E( L1-1 ) = ZERO
+      IF( L1 > N ) GO TO 170
+      IF( L1 > 1 ) E( L1-1 ) = ZERO
       DO 20 M = L1, N - 1
-         IF( ABS( E( M ) ).LE.( SQRT( ABS( D( M ) ) )*SQRT( ABS( D( M+ &
+         IF( ABS( E( M ) ) <= ( SQRT( ABS( D( M ) ) )*SQRT( ABS( D( M+ &
              1 ) ) ) )*EPS ) THEN
             E( M ) = ZERO
             GO TO 30
@@ -5221,17 +5066,17 @@
       LEND = M
       LENDSV = LEND
       L1 = M + 1
-      IF( LEND.EQ.L ) GO TO 10
+      IF( LEND == L ) GO TO 10
 !
 !     Scale submatrix in rows and columns L to LEND
 !
       ANORM = DLANST( 'I', LEND-L+1, D( L ), E( L ) )
       ISCALE = 0
-      IF( ANORM.GT.SSFMAX ) THEN
+      IF( ANORM > SSFMAX ) THEN
          ISCALE = 1
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L, 1, E( L ), N, INFO )
-      ELSE IF( ANORM.LT.SSFMIN ) THEN
+      ELSE IF( ANORM < SSFMIN ) THEN
          ISCALE = 2
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L, 1, E( L ), N, INFO )
@@ -5243,7 +5088,7 @@
 !
 !     Choose between QL and QR iteration
 !
-      IF( ABS( D( LEND ) ).LT.ABS( D( L ) ) ) THEN
+      IF( ABS( D( LEND ) ) < ABS( D( L ) ) ) THEN
          LEND = LSV
          L = LENDSV
       END IF
@@ -5255,33 +5100,33 @@
 !        Look for small subdiagonal element.
 !
    50    CONTINUE
-         IF( L.NE.LEND ) THEN
+         IF( L/=LEND ) THEN
             DO 60 M = L, LEND - 1
-               IF( ABS( E( M ) ).LE.EPS2*ABS( D( M )*D( M+1 ) ) ) GO TO 70
+               IF( ABS( E( M ) ) <= EPS2*ABS( D( M )*D( M+1 ) ) ) GO TO 70
    60       CONTINUE
          END IF
          M = LEND
 !
    70    CONTINUE
-         IF( M.LT.LEND ) E( M ) = ZERO
+         IF( M < LEND ) E( M ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 90
+         IF( M == L ) GO TO 90
 !
 !        If remaining matrix is 2 by 2, use DLAE2 to compute its
 !        eigenvalues.
 !
-         IF( M.EQ.L+1 ) THEN
+         IF( M == L+1 ) THEN
             RTE = SQRT( E( L ) )
             CALL DLAE2( D( L ), RTE, D( L+1 ), RT1, RT2 )
             D( L ) = RT1
             D( L+1 ) = RT2
             E( L ) = ZERO
             L = L + 2
-            IF( L.LE.LEND ) GO TO 50
+            IF( L <= LEND ) GO TO 50
             GO TO 150
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 150
+         IF( JTOT == NMAXIT ) GO TO 150
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -5301,7 +5146,7 @@
          DO 80 I = M - 1, L, -1
             BB = E( I )
             R = P + BB
-            IF( I.NE.M-1 ) E( I+1 ) = S*R
+            IF( I/=M-1 ) E( I+1 ) = S*R
             OLDC = C
             C = P / R
             S = BB / R
@@ -5309,7 +5154,7 @@
             ALPHA = D( I )
             GAMMA = C*( ALPHA-SIGMA ) - S*OLDGAM
             D( I+1 ) = OLDGAM + ( ALPHA-GAMMA )
-            IF( C.NE.ZERO ) THEN
+            IF( C/=ZERO ) THEN
                P = ( GAMMA*GAMMA ) / C
             ELSE
                P = OLDC*BB
@@ -5326,7 +5171,7 @@
          D( L ) = P
 !
          L = L + 1
-         IF( L.LE.LEND ) GO TO 50
+         IF( L <= LEND ) GO TO 50
          GO TO 150
 !
       ELSE
@@ -5337,19 +5182,19 @@
 !
   100    CONTINUE
          DO 110 M = L, LEND + 1, -1
-            IF( ABS( E( M-1 ) ).LE.EPS2*ABS( D( M )*D( M-1 ) ) ) GO TO 120
+            IF( ABS( E( M-1 ) ) <= EPS2*ABS( D( M )*D( M-1 ) ) ) GO TO 120
   110    CONTINUE
          M = LEND
 !
   120    CONTINUE
-         IF( M.GT.LEND ) E( M-1 ) = ZERO
+         IF( M > LEND ) E( M-1 ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 140
+         IF( M == L ) GO TO 140
 !
 !        If remaining matrix is 2 by 2, use DLAE2 to compute its
 !        eigenvalues.
 !
-         IF( M.EQ.L-1 ) THEN
+         IF( M == L-1 ) THEN
             RTE = SQRT( E( L-1 ) )
             CALL DLAE2( D( L ), RTE, D( L-1 ), RT1, RT2 )
             D( L ) = RT1
@@ -5360,7 +5205,7 @@
             GO TO 150
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 150
+         IF( JTOT == NMAXIT ) GO TO 150
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -5380,7 +5225,7 @@
          DO 130 I = M, L - 1
             BB = E( I )
             R = P + BB
-            IF( I.NE.M ) E( I-1 ) = S*R
+            IF( I/=M ) E( I-1 ) = S*R
             OLDC = C
             C = P / R
             S = BB / R
@@ -5388,7 +5233,7 @@
             ALPHA = D( I+1 )
             GAMMA = C*( ALPHA-SIGMA ) - S*OLDGAM
             D( I ) = OLDGAM + ( ALPHA-GAMMA )
-            IF( C.NE.ZERO ) THEN
+            IF( C/=ZERO ) THEN
                P = ( GAMMA*GAMMA ) / C
             ELSE
                P = OLDC*BB
@@ -5413,17 +5258,17 @@
 !     Undo scaling if necessary
 !
   150 CONTINUE
-      IF( ISCALE.EQ.1 ) &
+      IF( ISCALE == 1 ) &
          CALL DLASCL('G', 0, 0, SSFMAX, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
-      IF( ISCALE.EQ.2 ) &
+      IF( ISCALE == 2 ) &
          CALL DLASCL('G', 0, 0, SSFMIN, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
 !
 !     Check for no convergence to an eigenvalue after a total
 !     of N*MAXIT iterations.
 !
-      IF( JTOT.LT.NMAXIT ) GO TO 10
+      IF( JTOT < NMAXIT ) GO TO 10
       DO 160 I = 1, N - 1
-         IF( E( I ).NE.ZERO ) INFO = INFO + 1
+         IF( E( I )/=ZERO ) INFO = INFO + 1
   160 CONTINUE
       GO TO 180
 !
@@ -5445,19 +5290,19 @@
 !     jack dongarra, linpack, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision dx(*),dy(*),dtemp
-      integer i,incx,incy,ix,iy,m,mp1,n
+      REAL dx(*),dy(*),dtemp
+      INT i,incx,incy,ix,iy,m,mp1,n
 !
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      if (n <= 0) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !       code for unequal increments or equal increments not equal
 !         to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         dtemp = dx(ix)
         dx(ix) = dy(iy)
@@ -5473,13 +5318,13 @@
 !       clean-up loop
 !
    20 m = mod(n,3)
-      if( m .eq. 0 ) go to 40
+      if ( m  ==  0 ) go to 40
       do 30 i = 1,m
         dtemp = dx(i)
         dx(i) = dy(i)
         dy(i) = dtemp
    30 continue
-      if( n .lt. 3 ) return
+      if ( n  <  3 ) return
    40 mp1 = m + 1
       do 50 i = mp1,n,3
         dtemp = dx(i)
@@ -5503,11 +5348,11 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          JOBZ, UPLO
+      CHR          JOBZ, UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), W( * ), WORK( * )
+      REAL   A( LDA, * ), W( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -5519,18 +5364,18 @@
 !  Arguments
 !  =========
 !
-!  JOBZ    (input) character(len=1)
+!  JOBZ    (input) STR(len=1)
 !          = 'N':  Compute eigenvalues only;
 !          = 'V':  Compute eigenvalues and eigenvectors.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA, N)
+!  A       (input/output) REAL array, dimension (LDA, N)
 !          On entry, the symmetric matrix A.  If UPLO = 'U', the
 !          leading N-by-N upper triangular part of A contains the
 !          upper triangular part of the matrix A.  If UPLO = 'L',
@@ -5545,10 +5390,10 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  W       (output) DOUBLE PRECISION array, dimension (N)
+!  W       (output) REAL array, dimension (N)
 !          If INFO = 0, the eigenvalues in ascending order.
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -5570,26 +5415,20 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LOWER, LQUERY, WANTZ
       INTEGER            IINFO, IMAX, INDE, INDTAU, INDWRK, ISCALE, &
                          LLWORK, LOPT, LWKOPT, NB
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
+      REAL   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
-      DOUBLE PRECISION   DLANSY
+      REAL   DLANSY
       EXTERNAL           ILAENV, DLANSY
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLASCL, DORGTR, DSCAL, DSTEQR, DSTERF, DSYTRD, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -5597,28 +5436,28 @@
 !
       WANTZ =  scan( JOBZ, 'Vv' )>0
       LOWER =  scan( UPLO, 'Ll' )>0
-      LQUERY = ( LWORK.EQ.-1 )
+      LQUERY = ( LWORK == -1 )
 !
       INFO = 0
-      IF( .NOT.( WANTZ .OR.  scan( JOBZ, 'Nn' )>0 ) ) THEN
+      IF(  NOT ( WANTZ  OR   scan( JOBZ, 'Nn' )>0 ) ) THEN
          INFO = -1
-      ELSE IF( .NOT.( LOWER .OR.  scan( UPLO, 'Uu' )>0 ) ) THEN
+      ELSE IF(  NOT ( LOWER  OR   scan( UPLO, 'Uu' )>0 ) ) THEN
          INFO = -2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, 3*N-1 ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, 3*N-1 )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
          NB = ILAENV( 1, 'DSYTRD', UPLO, N, -1, -1, -1 )
          LWKOPT = MAX( 1, ( NB+2 )*N )
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DSYEV ', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -5627,12 +5466,12 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
 !
-      IF( N.EQ.1 ) THEN
+      IF( N == 1 ) THEN
          W( 1 ) = A( 1, 1 )
          WORK( 1 ) = 3
          IF( WANTZ ) A( 1, 1 ) = ONE
@@ -5652,14 +5491,14 @@
 !
       ANRM = DLANSY( 'M', UPLO, N, A, LDA, WORK )
       ISCALE = 0
-      IF( ANRM.GT.ZERO .AND. ANRM.LT.RMIN ) THEN
+      IF( ANRM > ZERO  AND  ANRM < RMIN ) THEN
          ISCALE = 1
          SIGMA = RMIN / ANRM
-      ELSE IF( ANRM.GT.RMAX ) THEN
+      ELSE IF( ANRM > RMAX ) THEN
          ISCALE = 1
          SIGMA = RMAX / ANRM
       END IF
-      IF( ISCALE.EQ.1 ) CALL DLASCL( UPLO, 0, 0, ONE, SIGMA, N, N, A, LDA, INFO)
+      IF( ISCALE == 1 ) CALL DLASCL( UPLO, 0, 0, ONE, SIGMA, N, N, A, LDA, INFO)
 !
 !     Call DSYTRD to reduce symmetric matrix to tridiagonal form.
 !
@@ -5674,7 +5513,7 @@
 !     For eigenvalues only, call DSTERF.  For eigenvectors, first call
 !     DORGTR to generate the orthogonal matrix, then call DSTEQR.
 !
-      IF( .NOT.WANTZ ) THEN
+      IF(  NOT WANTZ ) THEN
          CALL DSTERF( N, W, WORK( INDE ), INFO )
       ELSE
          CALL DORGTR(UPLO, N, A, LDA, WORK(INDTAU), WORK(INDWRK), LLWORK, IINFO)
@@ -5683,8 +5522,8 @@
 !
 !     If matrix was scaled, then rescale eigenvalues appropriately.
 !
-      IF( ISCALE.EQ.1 ) THEN
-         IF( INFO.EQ.0 ) THEN
+      IF( ISCALE == 1 ) THEN
+         IF( INFO == 0 ) THEN
             IMAX = N
          ELSE
             IMAX = INFO - 1
@@ -5710,11 +5549,11 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), D( * ), E( * ), TAU( * )
+      REAL   A( LDA, * ), D( * ), E( * ), TAU( * )
 !     ..
 !
 !  Purpose
@@ -5726,7 +5565,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the upper or lower triangular part of the
 !          symmetric matrix A is stored:
 !          = 'U':  Upper triangular
@@ -5735,7 +5574,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 !          n-by-n upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -5757,15 +5596,15 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  D       (output) DOUBLE PRECISION array, dimension (N)
+!  D       (output) REAL array, dimension (N)
 !          The diagonal elements of the tridiagonal matrix T:
 !          D(i) = A(i,i).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          The off-diagonal elements of the tridiagonal matrix T:
 !          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 !
-!  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+!  TAU     (output) REAL array, dimension (N-1)
 !          The scalar factors of the elementary reflectors (see Further
 !          Details).
 !
@@ -5818,24 +5657,18 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO, HALF
-      PARAMETER          ( ONE = 1.0D0, ZERO = 0.0D0, HALF = 1.0D0 / 2.0D0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I
-      DOUBLE PRECISION   ALPHA, TAUI
+      REAL   ALPHA, TAUI
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DAXPY, DLARFG, DSYMV, DSYR2, XERBLA
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DDOT
+      REAL   DDOT
       EXTERNAL           DDOT
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 !     ..
 !     .. Executable Statements ..
 !
@@ -5843,21 +5676,21 @@
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DSYTD2', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
       IF( UPPER ) THEN
 !
@@ -5871,7 +5704,7 @@
             CALL DLARFG( I, A( I, I+1 ), A( 1, I+1 ), 1, TAUI )
             E( I ) = A( I, I+1 )
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(1:i,1:i)
 !
@@ -5909,7 +5742,7 @@
             CALL DLARFG( N-I, A( I+1, I ), A( MIN( I+2, N ), I ), 1, TAUI )
             E( I ) = A( I+1, I )
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(i+1:n,i+1:n)
 !
@@ -5951,11 +5784,11 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), D( * ), E( * ), TAU( * ), WORK( * )
+      REAL   A( LDA, * ), D( * ), E( * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -5968,14 +5801,14 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 !          N-by-N upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -5997,19 +5830,19 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  D       (output) DOUBLE PRECISION array, dimension (N)
+!  D       (output) REAL array, dimension (N)
 !          The diagonal elements of the tridiagonal matrix T:
 !          D(i) = A(i,i).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          The off-diagonal elements of the tridiagonal matrix T:
 !          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 !
-!  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+!  TAU     (output) REAL array, dimension (N-1)
 !          The scalar factors of the elementary reflectors (see Further
 !          Details).
 !
-!  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+!  WORK    (workspace/output) REAL array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -6071,9 +5904,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY, UPPER
@@ -6081,9 +5911,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLATRD, DSYR2K, DSYTD2, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -6095,18 +5922,18 @@
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
-      ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < 1  AND   NOT LQUERY ) THEN
          INFO = -9
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
 !
 !        Determine the block size.
 !
@@ -6115,7 +5942,7 @@
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DSYTRD', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -6124,26 +5951,26 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
 !
       NX = N
       IWS = 1
-      IF( NB.GT.1 .AND. NB.LT.N ) THEN
+      IF( NB > 1  AND  NB < N ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code
 !        (last block is always handled by unblocked code).
 !
          NX = MAX( NB, ILAENV( 3, 'DSYTRD', UPLO, N, -1, -1, -1 ) )
-         IF( NX.LT.N ) THEN
+         IF( NX < N ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  determine the
 !              minimum value of NB, and reduce NB or force use of
@@ -6151,7 +5978,7 @@
 !
                NB = MAX( LWORK / LDWORK, 1 )
                NBMIN = ILAENV( 2, 'DSYTRD', UPLO, N, -1, -1, -1 )
-               IF( NB.LT.NBMIN ) NX = N
+               IF( NB < NBMIN ) NX = N
             END IF
          ELSE
             NX = N
@@ -6232,11 +6059,11 @@
 !     End of DSYTRD
 !
       END
-      DOUBLE PRECISION FUNCTION DZNRM2( N, X, INCX )
+      REAL FUNCTION DZNRM2( N, X, INCX )
 !     .. Scalar Arguments ..
       INTEGER                           INCX, N
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))                        X( * )
+      CPX                        X( * )
 !     ..
 !
 !  DZNRM2 returns the euclidean norm of a vector via the function
@@ -6251,17 +6078,12 @@
 !     Sven Hammarling, Nag Ltd.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION      ONE         , ZERO
-      PARAMETER           ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     .. Local Scalars ..
       INTEGER               IX
-      DOUBLE PRECISION      NORM, SCALE, SSQ, TEMP
-!     .. Intrinsic Functions ..
-      INTRINSIC             ABS, DBLE, SQRT
+      REAL      NORM, SCALE, SSQ, TEMP
 !     ..
 !     .. Executable Statements ..
-      IF( N.LT.1 .OR. INCX.LT.1 )THEN
+      IF( N < 1  OR  INCX < 1 )THEN
          NORM  = ZERO
       ELSE
          SCALE = ZERO
@@ -6271,18 +6093,18 @@
 !        CALL ZLASSQ( N, X, INCX, SCALE, SSQ )
 !
          DO 10, IX = 1, 1 + ( N - 1 )*INCX, INCX
-            IF( DBLE( X( IX ) ).NE.ZERO )THEN
+            IF( DBLE( X( IX ) )/=ZERO )THEN
                TEMP = ABS( DBLE( X( IX ) ) )
-               IF( SCALE.LT.TEMP )THEN
+               IF( SCALE < TEMP )THEN
                   SSQ   = ONE   + SSQ*( SCALE/TEMP )**2
                   SCALE = TEMP
                ELSE
                   SSQ   = SSQ   +     ( TEMP/SCALE )**2
                END IF
             END IF
-            IF( AIMAG( X( IX ) ).NE.ZERO )THEN
+            IF( AIMAG( X( IX ) )/=ZERO )THEN
                TEMP = ABS( AIMAG( X( IX ) ) )
-               IF( SCALE.LT.TEMP )THEN
+               IF( SCALE < TEMP )THEN
                   SSQ   = ONE   + SSQ*( SCALE/TEMP )**2
                   SCALE = TEMP
                ELSE
@@ -6299,21 +6121,21 @@
 !     End of DZNRM2.
 !
       END
-      integer function idamax(n,dx,incx)
+      INT function idamax(n,dx,incx)
 !
 !     finds the index of element having max. absolute value.
 !     jack dongarra, linpack, 3/11/78.
-!     modified 3/93 to return if incx .le. 0.
+!     modified 3/93 to return if incx  <=  0.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision dx(*),dmax
-      integer i,incx,ix,n
+      REAL dx(*),dmax
+      INT i,incx,ix,n
 !
       idamax = 0
-      if( n.lt.1 .or. incx.le.0 ) return
+      if ( n < 1 .or. incx <= 0 ) return
       idamax = 1
-      if(n.eq.1)return
-      if(incx.eq.1)go to 20
+      if (n == 1) return
+      if (incx == 1)go to 20
 !
 !        code for increment not equal to 1
 !
@@ -6321,7 +6143,7 @@
       dmax = dabs(dx(1))
       ix = ix + incx
       do 10 i = 2,n
-         if(dabs(dx(ix)).le.dmax) go to 5
+         if (dabs(dx(ix)) <= dmax) go to 5
          idamax = i
          dmax = dabs(dx(ix))
     5    ix = ix + incx
@@ -6332,7 +6154,7 @@
 !
    20 dmax = dabs(dx(1))
       do 30 i = 2,n
-         if(dabs(dx(i)).le.dmax) go to 30
+         if (dabs(dx(i)) <= dmax) go to 30
          idamax = i
          dmax = dabs(dx(i))
    30 continue
@@ -6346,8 +6168,8 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-!      CHARACTER*( * )    NAME, OPTS
-      CHARACTER(len=*)    NAME, OPTS
+!      STR*( * )    NAME, OPTS
+      STR(len=*)    NAME, OPTS
       INTEGER            ISPEC, N1, N2, N3, N4
 !     ..
 !
@@ -6391,11 +6213,11 @@
 !               the matrix to a triangular form.)
 !          = 7: the number of processors
 !
-!  NAME    (input) CHARACTER*(*)
+!  NAME    (input) STR*(*)
 !          The name of the calling subroutine, in either upper case or
 !          lower case.
 !
-!  OPTS    (input) CHARACTER*(*)
+!  OPTS    (input) STR*(*)
 !          The character options to the subroutine NAME, concatenated
 !          into a single character string.  For example, UPLO = 'U',
 !          TRANS = 'T', and DIAG = 'N' for a triangular routine would
@@ -6430,20 +6252,17 @@
 !      the optimal blocksize for STRTRI as follows:
 !
 !      NB = ILAENV( 1, 'STRTRI', UPLO // DIAG, N, -1, -1, -1 )
-!      IF( NB.LE.1 ) NB = MAX( 1, N )
+!      IF( NB <= 1 ) NB = MAX( 1, N )
 !
 !  =====================================================================
 !
 !     .. Local Scalars ..
       LOGICAL            CNAME, SNAME
-      character(len=1)        C1
-      character(len=2)        C2, C4
-      character(len=3)        C3
-      character(len=6)        SUBNAM
+      STR(len=1)        C1
+      STR(len=2)        C2, C4
+      STR(len=3)        C3
+      STR(len=6)        SUBNAM
       INTEGER            I, IC, IZ, NB, NBMIN, NX
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          CHAR, ICHAR, INT, MIN, REAL
 !     ..
 !     .. Executable Statements ..
 !
@@ -6458,52 +6277,52 @@
       SUBNAM = NAME
       IC = ICHAR( SUBNAM( 1:1 ) )
       IZ = ICHAR( 'Z' )
-      IF( IZ.EQ.90 .OR. IZ.EQ.122 ) THEN
+      IF( IZ == 90  OR  IZ == 122 ) THEN
 !
 !        ASCII character set
 !
-         IF( IC.GE.97 .AND. IC.LE.122 ) THEN
+         IF( IC.GE.97  AND  IC <= 122 ) THEN
             SUBNAM( 1:1 ) = CHAR( IC-32 )
             DO 10 I = 2, 6
                IC = ICHAR( SUBNAM( I:I ) )
-               IF( IC.GE.97 .AND. IC.LE.122 ) SUBNAM( I:I ) = CHAR( IC-32 )
+               IF( IC.GE.97  AND  IC <= 122 ) SUBNAM( I:I ) = CHAR( IC-32 )
    10       CONTINUE
          END IF
 !
-      ELSE IF( IZ.EQ.233 .OR. IZ.EQ.169 ) THEN
+      ELSE IF( IZ == 233  OR  IZ == 169 ) THEN
 !
 !        EBCDIC character set
 !
-         IF( ( IC.GE.129 .AND. IC.LE.137 ) .OR. &
-             ( IC.GE.145 .AND. IC.LE.153 ) .OR. &
-             ( IC.GE.162 .AND. IC.LE.169 ) ) THEN
+         IF( ( IC.GE.129  AND  IC <= 137 )  OR  &
+             ( IC.GE.145  AND  IC <= 153 )  OR  &
+             ( IC.GE.162  AND  IC <= 169 ) ) THEN
             SUBNAM( 1:1 ) = CHAR( IC+64 )
             DO 20 I = 2, 6
                IC = ICHAR( SUBNAM( I:I ) )
-               IF( ( IC.GE.129 .AND. IC.LE.137 ) .OR. &
-                   ( IC.GE.145 .AND. IC.LE.153 ) .OR. &
-                   ( IC.GE.162 .AND. IC.LE.169 ) ) &
+               IF( ( IC.GE.129  AND  IC <= 137 )  OR  &
+                   ( IC.GE.145  AND  IC <= 153 )  OR  &
+                   ( IC.GE.162  AND  IC <= 169 ) ) &
                   SUBNAM( I:I ) = CHAR( IC+64 )
    20       CONTINUE
          END IF
 !
-      ELSE IF( IZ.EQ.218 .OR. IZ.EQ.250 ) THEN
+      ELSE IF( IZ == 218  OR  IZ == 250 ) THEN
 !
 !        Prime machines:  ASCII+128
 !
-         IF( IC.GE.225 .AND. IC.LE.250 ) THEN
+         IF( IC.GE.225  AND  IC <= 250 ) THEN
             SUBNAM( 1:1 ) = CHAR( IC-32 )
             DO 30 I = 2, 6
                IC = ICHAR( SUBNAM( I:I ) )
-               IF( IC.GE.225 .AND. IC.LE.250 ) SUBNAM( I:I ) = CHAR( IC-32 )
+               IF( IC.GE.225  AND  IC <= 250 ) SUBNAM( I:I ) = CHAR( IC-32 )
    30       CONTINUE
          END IF
       END IF
 !
       C1 = SUBNAM( 1:1 )
-      SNAME = C1.EQ.'S' .OR. C1.EQ.'D'
-      CNAME = C1.EQ.'C' .OR. C1.EQ.'Z'
-      IF( .NOT.( CNAME .OR. SNAME ) ) RETURN
+      SNAME = C1 == 'S'  OR  C1 == 'D'
+      CNAME = C1 == 'C'  OR  C1 == 'Z'
+      IF(  NOT ( CNAME  OR  SNAME ) ) RETURN
       C2 = SUBNAM( 2:3 )
       C3 = SUBNAM( 4:6 )
       C4 = C3( 2:3 )
@@ -6518,149 +6337,149 @@
 !
 !     In these examples, separate code is provided for setting NB for
 !     real and complex.  We assume that NB will take the same value in
-!     single or double precision.
+!     single or REAL.
 !
       NB = 1
 !
-      IF( C2.EQ.'GE' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      IF( C2 == 'GE' ) THEN
+         IF( C3 == 'TRF' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
-         ELSE IF( C3.EQ.'QRF' .OR. C3.EQ.'RQF' .OR. C3.EQ.'LQF' .OR. &
-                  C3.EQ.'QLF' ) THEN
+         ELSE IF( C3 == 'QRF'  OR  C3 == 'RQF'  OR  C3 == 'LQF'  OR  &
+                  C3 == 'QLF' ) THEN
             IF( SNAME ) THEN
                NB = 32
             ELSE
                NB = 32
             END IF
-         ELSE IF( C3.EQ.'HRD' ) THEN
+         ELSE IF( C3 == 'HRD' ) THEN
             IF( SNAME ) THEN
                NB = 32
             ELSE
                NB = 32
             END IF
-         ELSE IF( C3.EQ.'BRD' ) THEN
+         ELSE IF( C3 == 'BRD' ) THEN
             IF( SNAME ) THEN
                NB = 32
             ELSE
                NB = 32
             END IF
-         ELSE IF( C3.EQ.'TRI' ) THEN
+         ELSE IF( C3 == 'TRI' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
          END IF
-      ELSE IF( C2.EQ.'PO' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      ELSE IF( C2 == 'PO' ) THEN
+         IF( C3 == 'TRF' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
          END IF
-      ELSE IF( C2.EQ.'SY' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      ELSE IF( C2 == 'SY' ) THEN
+         IF( C3 == 'TRF' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
-         ELSE IF( SNAME .AND. C3.EQ.'TRD' ) THEN
+         ELSE IF( SNAME  AND  C3 == 'TRD' ) THEN
             NB = 32
-         ELSE IF( SNAME .AND. C3.EQ.'GST' ) THEN
+         ELSE IF( SNAME  AND  C3 == 'GST' ) THEN
             NB = 64
          END IF
-      ELSE IF( CNAME .AND. C2.EQ.'HE' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'HE' ) THEN
+         IF( C3 == 'TRF' ) THEN
             NB = 64
-         ELSE IF( C3.EQ.'TRD' ) THEN
+         ELSE IF( C3 == 'TRD' ) THEN
             NB = 32
-         ELSE IF( C3.EQ.'GST' ) THEN
+         ELSE IF( C3 == 'GST' ) THEN
             NB = 64
          END IF
-      ELSE IF( SNAME .AND. C2.EQ.'OR' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+      ELSE IF( SNAME  AND  C2 == 'OR' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NB = 32
             END IF
-         ELSE IF( C3( 1:1 ).EQ.'M' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
-               NB = 32
-            END IF
-         END IF
-      ELSE IF( CNAME .AND. C2.EQ.'UN' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
-               NB = 32
-            END IF
-         ELSE IF( C3( 1:1 ).EQ.'M' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+         ELSE IF( C3( 1:1 ) == 'M' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NB = 32
             END IF
          END IF
-      ELSE IF( C2.EQ.'GB' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'UN' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
+               NB = 32
+            END IF
+         ELSE IF( C3( 1:1 ) == 'M' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
+               NB = 32
+            END IF
+         END IF
+      ELSE IF( C2 == 'GB' ) THEN
+         IF( C3 == 'TRF' ) THEN
             IF( SNAME ) THEN
-               IF( N4.LE.64 ) THEN
+               IF( N4 <= 64 ) THEN
                   NB = 1
                ELSE
                   NB = 32
                END IF
             ELSE
-               IF( N4.LE.64 ) THEN
-                  NB = 1
-               ELSE
-                  NB = 32
-               END IF
-            END IF
-         END IF
-      ELSE IF( C2.EQ.'PB' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
-            IF( SNAME ) THEN
-               IF( N2.LE.64 ) THEN
-                  NB = 1
-               ELSE
-                  NB = 32
-               END IF
-            ELSE
-               IF( N2.LE.64 ) THEN
+               IF( N4 <= 64 ) THEN
                   NB = 1
                ELSE
                   NB = 32
                END IF
             END IF
          END IF
-      ELSE IF( C2.EQ.'TR' ) THEN
-         IF( C3.EQ.'TRI' ) THEN
+      ELSE IF( C2 == 'PB' ) THEN
+         IF( C3 == 'TRF' ) THEN
+            IF( SNAME ) THEN
+               IF( N2 <= 64 ) THEN
+                  NB = 1
+               ELSE
+                  NB = 32
+               END IF
+            ELSE
+               IF( N2 <= 64 ) THEN
+                  NB = 1
+               ELSE
+                  NB = 32
+               END IF
+            END IF
+         END IF
+      ELSE IF( C2 == 'TR' ) THEN
+         IF( C3 == 'TRI' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
          END IF
-      ELSE IF( C2.EQ.'LA' ) THEN
-         IF( C3.EQ.'UUM' ) THEN
+      ELSE IF( C2 == 'LA' ) THEN
+         IF( C3 == 'UUM' ) THEN
             IF( SNAME ) THEN
                NB = 64
             ELSE
                NB = 64
             END IF
          END IF
-      ELSE IF( SNAME .AND. C2.EQ.'ST' ) THEN
-         IF( C3.EQ.'EBZ' ) THEN
+      ELSE IF( SNAME  AND  C2 == 'ST' ) THEN
+         IF( C3 == 'EBZ' ) THEN
             NB = 1
          END IF
       END IF
@@ -6673,71 +6492,71 @@
 !     ISPEC = 2:  minimum block size
 !
       NBMIN = 2
-      IF( C2.EQ.'GE' ) THEN
-         IF(C3.EQ.'QRF' .OR. C3.EQ.'RQF' .OR. C3.EQ.'LQF' .OR. C3.EQ.'QLF') THEN
+      IF( C2 == 'GE' ) THEN
+         IF(C3 == 'QRF'  OR  C3 == 'RQF'  OR  C3 == 'LQF'  OR  C3 == 'QLF') THEN
             IF( SNAME ) THEN
                NBMIN = 2
             ELSE
                NBMIN = 2
             END IF
-         ELSE IF( C3.EQ.'HRD' ) THEN
+         ELSE IF( C3 == 'HRD' ) THEN
             IF( SNAME ) THEN
                NBMIN = 2
             ELSE
                NBMIN = 2
             END IF
-         ELSE IF( C3.EQ.'BRD' ) THEN
+         ELSE IF( C3 == 'BRD' ) THEN
             IF( SNAME ) THEN
                NBMIN = 2
             ELSE
                NBMIN = 2
             END IF
-         ELSE IF( C3.EQ.'TRI' ) THEN
+         ELSE IF( C3 == 'TRI' ) THEN
             IF( SNAME ) THEN
                NBMIN = 2
             ELSE
                NBMIN = 2
             END IF
          END IF
-      ELSE IF( C2.EQ.'SY' ) THEN
-         IF( C3.EQ.'TRF' ) THEN
+      ELSE IF( C2 == 'SY' ) THEN
+         IF( C3 == 'TRF' ) THEN
             IF( SNAME ) THEN
                NBMIN = 8
             ELSE
                NBMIN = 8
             END IF
-         ELSE IF( SNAME .AND. C3.EQ.'TRD' ) THEN
+         ELSE IF( SNAME  AND  C3 == 'TRD' ) THEN
             NBMIN = 2
          END IF
-      ELSE IF( CNAME .AND. C2.EQ.'HE' ) THEN
-         IF( C3.EQ.'TRD' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'HE' ) THEN
+         IF( C3 == 'TRD' ) THEN
             NBMIN = 2
          END IF
-      ELSE IF( SNAME .AND. C2.EQ.'OR' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+      ELSE IF( SNAME  AND  C2 == 'OR' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NBMIN = 2
             END IF
-         ELSE IF( C3( 1:1 ).EQ.'M' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+         ELSE IF( C3( 1:1 ) == 'M' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NBMIN = 2
             END IF
          END IF
-      ELSE IF( CNAME .AND. C2.EQ.'UN' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'UN' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NBMIN = 2
             END IF
-         ELSE IF( C3( 1:1 ).EQ.'M' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+         ELSE IF( C3( 1:1 ) == 'M' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NBMIN = 2
             END IF
          END IF
@@ -6751,47 +6570,47 @@
 !     ISPEC = 3:  crossover point
 !
       NX = 0
-      IF( C2.EQ.'GE' ) THEN
-         IF(C3.EQ.'QRF' .OR. C3.EQ.'RQF' .OR. C3.EQ.'LQF' .OR. C3.EQ.'QLF') THEN
+      IF( C2 == 'GE' ) THEN
+         IF(C3 == 'QRF'  OR  C3 == 'RQF'  OR  C3 == 'LQF'  OR  C3 == 'QLF') THEN
             IF( SNAME ) THEN
                NX = 128
             ELSE
                NX = 128
             END IF
-         ELSE IF( C3.EQ.'HRD' ) THEN
+         ELSE IF( C3 == 'HRD' ) THEN
             IF( SNAME ) THEN
                NX = 128
             ELSE
                NX = 128
             END IF
-         ELSE IF( C3.EQ.'BRD' ) THEN
+         ELSE IF( C3 == 'BRD' ) THEN
             IF( SNAME ) THEN
                NX = 128
             ELSE
                NX = 128
             END IF
          END IF
-      ELSE IF( C2.EQ.'SY' ) THEN
-         IF( SNAME .AND. C3.EQ.'TRD' ) THEN
+      ELSE IF( C2 == 'SY' ) THEN
+         IF( SNAME  AND  C3 == 'TRD' ) THEN
             NX = 32
          END IF
-      ELSE IF( CNAME .AND. C2.EQ.'HE' ) THEN
-         IF( C3.EQ.'TRD' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'HE' ) THEN
+         IF( C3 == 'TRD' ) THEN
             NX = 32
          END IF
-      ELSE IF( SNAME .AND. C2.EQ.'OR' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+      ELSE IF( SNAME  AND  C2 == 'OR' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NX = 128
             END IF
          END IF
-      ELSE IF( CNAME .AND. C2.EQ.'UN' ) THEN
-         IF( C3( 1:1 ).EQ.'G' ) THEN
-            IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. &
-                C4.EQ.'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. &
-                C4.EQ.'BR' ) THEN
+      ELSE IF( CNAME  AND  C2 == 'UN' ) THEN
+         IF( C3( 1:1 ) == 'G' ) THEN
+            IF( C4 == 'QR'  OR  C4 == 'RQ'  OR  C4 == 'LQ'  OR  &
+                C4 == 'QL'  OR  C4 == 'HR'  OR  C4 == 'TR'  OR  &
+                C4 == 'BR' ) THEN
                NX = 128
             END IF
          END IF
@@ -6817,11 +6636,11 @@
       RETURN
 !
       case (6)
-!  600 CONTINUE 
+!  600 CONTINUE
 !
 !     ISPEC = 6:  crossover point for SVD (used by xGELSS and xGESVD)
 !
-      ILAENV = INT( REAL( MIN( N1, N2 ) )*1.6E0 )
+      ILAENV = int( real( MIN( N1, N2 ) ,kind=kind(ZERO))*1.6E0 )
       RETURN
 !
       case (7)
@@ -6849,19 +6668,19 @@
 !     jack dongarra, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) zx(*),zy(*),za
-      integer i,incx,incy,ix,iy,n
-      if(n.le.0)return
-      if (abs(za) .eq. 0.0d0) return
-      if (incx.eq.1.and.incy.eq.1)go to 20
+      CPX zx(*),zy(*),za
+      INT i,incx,incy,ix,iy,n
+      if (n <= 0) return
+      if (abs(za)  ==  ZERO) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         zy(iy) = zy(iy) + za*zx(ix)
         ix = ix + incx
@@ -6882,19 +6701,19 @@
 !     jack dongarra, linpack, 4/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) zx(*),zy(*)
-      integer i,incx,incy,ix,iy,n
+      CPX zx(*),zy(*)
+      INT i,incx,incy,ix,iy,n
 !
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      if (n <= 0) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         zy(iy) = zx(ix)
         ix = ix + incx
@@ -6909,26 +6728,26 @@
    30 continue
       return
       end
-      complex(kind=kind(1.0d0)) function zdotc(n,zx,incx,zy,incy)
+      CPX function zdotc(n,zx,incx,zy,incy)
 !
 !     forms the dot product of a vector.
 !     jack dongarra, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) zx(*),zy(*),ztemp
-      integer i,incx,incy,ix,iy,n
-      ztemp = (0.0d0,0.0d0)
-      zdotc = (0.0d0,0.0d0)
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      CPX zx(*),zy(*),ztemp
+      INT i,incx,incy,ix,iy,n
+      ztemp = (ZERO,ZERO)
+      zdotc = (ZERO,ZERO)
+      if (n <= 0) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         ztemp = ztemp + conjg(zx(ix))*zy(iy)
         ix = ix + incx
@@ -6949,21 +6768,21 @@
 !
 !     scales a vector by a constant.
 !     jack dongarra, 3/11/78.
-!     modified 3/93 to return if incx .le. 0.
+!     modified 3/93 to return if incx  <=  0.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) zx(*)
-      double precision da
-      integer i,incx,ix,n
+      CPX zx(*)
+      REAL da
+      INT i,incx,ix,n
 !
-      if( n.le.0 .or. incx.le.0 )return
-      if(incx.eq.1)go to 20
+      if ( n <= 0 .or. incx <= 0 ) return
+      if (incx == 1)go to 20
 !
 !        code for increment not equal to 1
 !
       ix = 1
       do 10 i = 1,n
-        zx(ix) = cmplx(da,0.0d0,kind=kind(0.0d0))*zx(ix)
+        zx(ix) = cmplx(da,ZERO,kind=kind(ZERO))*zx(ix)
         ix = ix + incx
    10 continue
       return
@@ -6971,7 +6790,7 @@
 !        code for increment equal to 1
 !
    20 do 30 i = 1,n
-        zx(i) = cmplx(da,0.0d0,kind=kind(0.0d0))*zx(i)
+        zx(i) = cmplx(da,ZERO,kind=kind(ZERO))*zx(i)
    30 continue
       return
       end
@@ -6983,12 +6802,12 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          JOBZ, UPLO
+      CHR          JOBZ, UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   RWORK( * ), W( * )
-      complex(kind=kind(1.0d0))         A( LDA, * ), WORK( * )
+      REAL   RWORK( * ), W( * )
+      CPX         A( LDA, * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -7000,18 +6819,18 @@
 !  Arguments
 !  =========
 !
-!  JOBZ    (input) character(len=1)
+!  JOBZ    (input) STR(len=1)
 !          = 'N':  Compute eigenvalues only;
 !          = 'V':  Compute eigenvalues and eigenvectors.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA, N)
+!  A       (input/output) CPX array, dimension (LDA, N)
 !          On entry, the Hermitian matrix A.  If UPLO = 'U', the
 !          leading N-by-N upper triangular part of A contains the
 !          upper triangular part of the matrix A.  If UPLO = 'L',
@@ -7026,10 +6845,10 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  W       (output) DOUBLE PRECISION array, dimension (N)
+!  W       (output) REAL array, dimension (N)
 !          If INFO = 0, the eigenvalues in ascending order.
 !
-!  WORK    (workspace/output) complex(kind=kind(1.0d0)) array, dimension (LWORK)
+!  WORK    (workspace/output) CPX array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -7042,7 +6861,7 @@
 !          this value as the first entry of the WORK array, and no error
 !          message related to LWORK is issued by XERBLA.
 !
-!  RWORK   (workspace) DOUBLE PRECISION array, dimension (max(1, 3*N-2))
+!  RWORK   (workspace) REAL array, dimension (max(1, 3*N-2))
 !
 !  INFO    (output) INTEGER
 !          = 0:  successful exit
@@ -7053,28 +6872,20 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
-      complex(kind=kind(1.0d0))         CONE
-      PARAMETER          ( CONE = ( 1.0D0, 0.0D0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LOWER, LQUERY, WANTZ
       INTEGER            IINFO, IMAX, INDE, INDTAU, INDWRK, ISCALE, &
                          LLWORK, LOPT, LWKOPT, NB
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
+      REAL   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
-      DOUBLE PRECISION   ZLANHE
+      REAL   ZLANHE
       EXTERNAL           ILAENV, ZLANHE
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DSCAL, DSTERF, XERBLA, ZHETRD, ZLASCL, ZSTEQR, ZUNGTR
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -7082,28 +6893,28 @@
 !
       WANTZ =  scan( JOBZ, 'Vv' )>0
       LOWER =  scan( UPLO, 'Ll' )>0
-      LQUERY = ( LWORK.EQ.-1 )
+      LQUERY = ( LWORK == -1 )
 !
       INFO = 0
-      IF( .NOT.( WANTZ .OR.  scan( JOBZ, 'Nn' )>0 ) ) THEN
+      IF(  NOT ( WANTZ  OR   scan( JOBZ, 'Nn' )>0 ) ) THEN
          INFO = -1
-      ELSE IF( .NOT.( LOWER .OR.  scan( UPLO, 'Uu' )>0 ) ) THEN
+      ELSE IF(  NOT ( LOWER  OR   scan( UPLO, 'Uu' )>0 ) ) THEN
          INFO = -2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, 2*N-1 ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, 2*N-1 )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
          NB = ILAENV( 1, 'ZHETRD', UPLO, N, -1, -1, -1 )
          LWKOPT = MAX( 1, ( NB+1 )*N )
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHEEV ', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -7112,15 +6923,15 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
 !
-      IF( N.EQ.1 ) THEN
+      IF( N == 1 ) THEN
          W( 1 ) = A( 1, 1 )
          WORK( 1 ) = 3
-         IF( WANTZ ) A( 1, 1 ) = CONE
+         IF( WANTZ ) A( 1, 1 ) = ONE
          RETURN
       END IF
 !
@@ -7137,14 +6948,14 @@
 !
       ANRM = ZLANHE( 'M', UPLO, N, A, LDA, RWORK )
       ISCALE = 0
-      IF( ANRM.GT.ZERO .AND. ANRM.LT.RMIN ) THEN
+      IF( ANRM > ZERO  AND  ANRM < RMIN ) THEN
          ISCALE = 1
          SIGMA = RMIN / ANRM
-      ELSE IF( ANRM.GT.RMAX ) THEN
+      ELSE IF( ANRM > RMAX ) THEN
          ISCALE = 1
          SIGMA = RMAX / ANRM
       END IF
-      IF( ISCALE.EQ.1 ) CALL ZLASCL( UPLO, 0, 0, ONE, SIGMA, N, N, A, LDA, INFO)
+      IF( ISCALE == 1 ) CALL ZLASCL( UPLO, 0, 0, ONE, SIGMA, N, N, A, LDA, INFO)
 !
 !     Call ZHETRD to reduce Hermitian matrix to tridiagonal form.
 !
@@ -7159,7 +6970,7 @@
 !     For eigenvalues only, call DSTERF.  For eigenvectors, first call
 !     ZUNGTR to generate the unitary matrix, then call ZSTEQR.
 !
-      IF( .NOT.WANTZ ) THEN
+      IF(  NOT WANTZ ) THEN
          CALL DSTERF( N, W, RWORK( INDE ), INFO )
       ELSE
          CALL ZUNGTR( UPLO, N, A, LDA, WORK( INDTAU ), WORK( INDWRK ), &
@@ -7171,8 +6982,8 @@
 !
 !     If matrix was scaled, then rescale eigenvalues appropriately.
 !
-      IF( ISCALE.EQ.1 ) THEN
-         IF( INFO.EQ.0 ) THEN
+      IF( ISCALE == 1 ) THEN
+         IF( INFO == 0 ) THEN
             IMAX = N
          ELSE
             IMAX = INFO - 1
@@ -7197,12 +7008,12 @@
 !     October 31, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * )
+      REAL   D( * ), E( * )
+      CPX         A( LDA, * ), TAU( * )
 !     ..
 !
 !  Purpose
@@ -7215,7 +7026,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the upper or lower triangular part of the
 !          Hermitian matrix A is stored:
 !          = 'U':  Upper triangular
@@ -7224,7 +7035,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 !          n-by-n upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -7246,15 +7057,15 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  D       (output) DOUBLE PRECISION array, dimension (N)
+!  D       (output) REAL array, dimension (N)
 !          The diagonal elements of the tridiagonal matrix T:
 !          D(i) = A(i,i).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          The off-diagonal elements of the tridiagonal matrix T:
 !          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 !
-!  TAU     (output) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (output) CPX array, dimension (N-1)
 !          The scalar factors of the elementary reflectors (see Further
 !          Details).
 !
@@ -7307,26 +7118,18 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO, HALF
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), &
-                         ZERO = ( 0.0D+0, 0.0D+0 ), &
-                         HALF = ( 0.5D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I
-      complex(kind=kind(1.0d0))         ALPHA, TAUI
+      CPX         ALPHA, TAUI
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZAXPY, ZHEMV, ZHER2, ZLARFG
 !     ..
 !     .. External Functions ..
-      complex(kind=kind(1.0d0))         ZDOTC
+      CPX         ZDOTC
       EXTERNAL           ZDOTC
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MAX, MIN
 !     ..
 !     .. Executable Statements ..
 !
@@ -7334,21 +7137,21 @@
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHETD2', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
       IF( UPPER ) THEN
 !
@@ -7364,7 +7167,7 @@
             CALL ZLARFG( I, ALPHA, A( 1, I+1 ), 1, TAUI )
             E( I ) = ALPHA
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(1:i,1:i)
 !
@@ -7406,7 +7209,7 @@
             CALL ZLARFG( N-I, ALPHA, A( MIN( I+2, N ), I ), 1, TAUI )
             E( I ) = ALPHA
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(i+1:n,i+1:n)
 !
@@ -7451,12 +7254,12 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      REAL   D( * ), E( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -7469,14 +7272,14 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 !          N-by-N upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -7498,19 +7301,19 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  D       (output) DOUBLE PRECISION array, dimension (N)
+!  D       (output) REAL array, dimension (N)
 !          The diagonal elements of the tridiagonal matrix T:
 !          D(i) = A(i,i).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          The off-diagonal elements of the tridiagonal matrix T:
 !          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 !
-!  TAU     (output) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (output) CPX array, dimension (N-1)
 !          The scalar factors of the elementary reflectors (see Further
 !          Details).
 !
-!  WORK    (workspace/output) complex(kind=kind(1.0d0)) array, dimension (LWORK)
+!  WORK    (workspace/output) CPX array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -7572,11 +7375,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
-      complex(kind=kind(1.0d0))         CONE
-      PARAMETER          ( CONE = ( 1.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY, UPPER
@@ -7584,9 +7382,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZHER2K, ZHETD2, ZLATRD
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -7598,18 +7393,18 @@
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
-      ELSE IF( LWORK.LT.1 .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < 1  AND   NOT LQUERY ) THEN
          INFO = -9
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
 !
 !        Determine the block size.
 !
@@ -7618,7 +7413,7 @@
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHETRD', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -7627,26 +7422,26 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
 !
       NX = N
       IWS = 1
-      IF( NB.GT.1 .AND. NB.LT.N ) THEN
+      IF( NB > 1  AND  NB < N ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code
 !        (last block is always handled by unblocked code).
 !
          NX = MAX( NB, ILAENV( 3, 'ZHETRD', UPLO, N, -1, -1, -1 ) )
-         IF( NX.LT.N ) THEN
+         IF( NX < N ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  determine the
 !              minimum value of NB, and reduce NB or force use of
@@ -7654,7 +7449,7 @@
 !
                NB = MAX( LWORK / LDWORK, 1 )
                NBMIN = ILAENV( 2, 'ZHETRD', UPLO, N, -1, -1, -1 )
-               IF( NB.LT.NBMIN ) NX = N
+               IF( NB < NBMIN ) NX = N
             END IF
          ELSE
             NX = N
@@ -7680,7 +7475,7 @@
 !           Update the unreduced submatrix A(1:i-1,1:i-1), using an
 !           update of the form:  A := A - V*W' - W*V'
 !
-            CALL ZHER2K( UPLO, 'No transpose', I-1, NB, -CONE, &
+            CALL ZHER2K( UPLO, 'No transpose', I-1, NB, -ONE, &
                          A( 1, I ), LDA, WORK, LDWORK, ONE, A, LDA )
 !
 !           Copy superdiagonal elements back into A, and diagonal
@@ -7711,7 +7506,7 @@
 !           Update the unreduced submatrix A(i+nb:n,i+nb:n), using
 !           an update of the form:  A := A - V*W' - W*V'
 !
-            CALL ZHER2K( UPLO, 'No transpose', N-I-NB+1, NB, -CONE, &
+            CALL ZHER2K( UPLO, 'No transpose', N-I-NB+1, NB, -ONE, &
                          A( I+NB, I ), LDA, WORK( NB+1 ), LDWORK, ONE, &
                          A( I+NB, I+NB ), LDA )
 !
@@ -7743,12 +7538,12 @@
 !     March 31, 1993
 !
 !     .. Scalar Arguments ..
-      CHARACTER          JOBZ, UPLO
+      CHR          JOBZ, UPLO
       INTEGER            INFO, LDZ, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   RWORK( * ), W( * )
-      complex(kind=kind(1.0d0))         AP( * ), WORK( * ), Z( LDZ, * )
+      REAL   RWORK( * ), W( * )
+      CPX         AP( * ), WORK( * ), Z( LDZ, * )
 !     ..
 !
 !  Purpose
@@ -7760,18 +7555,18 @@
 !  Arguments
 !  =========
 !
-!  JOBZ    (input) character(len=1)
+!  JOBZ    (input) STR(len=1)
 !          = 'N':  Compute eigenvalues only;
 !          = 'V':  Compute eigenvalues and eigenvectors.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  AP      (input/output) complex(kind=kind(1.0d0)) array, dimension (N*(N+1)/2)
+!  AP      (input/output) CPX array, dimension (N*(N+1)/2)
 !          On entry, the upper or lower triangle of the Hermitian matrix
 !          A, packed columnwise in a linear array.  The j-th column of A
 !          is stored in the array AP as follows:
@@ -7785,10 +7580,10 @@
 !          diagonal and first subdiagonal of T overwrite the
 !          corresponding elements of A.
 !
-!  W       (output) DOUBLE PRECISION array, dimension (N)
+!  W       (output) REAL array, dimension (N)
 !          If INFO = 0, the eigenvalues in ascending order.
 !
-!  Z       (output) complex(kind=kind(1.0d0)) array, dimension (LDZ, N)
+!  Z       (output) CPX array, dimension (LDZ, N)
 !          If JOBZ = 'V', then if INFO = 0, Z contains the orthonormal
 !          eigenvectors of the matrix A, with the i-th column of Z
 !          holding the eigenvector associated with W(i).
@@ -7798,9 +7593,9 @@
 !          The leading dimension of the array Z.  LDZ >= 1, and if
 !          JOBZ = 'V', LDZ >= max(1,N).
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension (max(1, 2*N-1))
+!  WORK    (workspace) CPX array, dimension (max(1, 2*N-1))
 !
-!  RWORK   (workspace) DOUBLE PRECISION array, dimension (max(1, 3*N-2))
+!  RWORK   (workspace) REAL array, dimension (max(1, 3*N-2))
 !
 !  INFO    (output) INTEGER
 !          = 0:  successful exit.
@@ -7811,24 +7606,18 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            WANTZ
       INTEGER            IINFO, IMAX, INDE, INDRWK, INDTAU, INDWRK, ISCALE
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
+      REAL   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA, SMLNUM
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   ZLANHP
+      REAL   ZLANHP
       EXTERNAL           ZLANHP
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DSCAL, DSTERF, XERBLA, ZDSCAL, ZHPTRD, ZSTEQR, ZUPGTR
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -7837,26 +7626,26 @@
       WANTZ =  scan( JOBZ, 'Vv' )>0
 !
       INFO = 0
-      IF( .NOT.( WANTZ .OR.  scan( JOBZ, 'Nn' )>0 ) ) THEN
+      IF(  NOT ( WANTZ  OR   scan( JOBZ, 'Nn' )>0 ) ) THEN
          INFO = -1
-      ELSE IF( .NOT. scan( UPLO, 'LlUu' )>0  ) THEN
+      ELSE IF(  NOT  scan( UPLO, 'LlUu' )>0  ) THEN
          INFO = -2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -3
-      ELSE IF( LDZ.LT.1 .OR. ( WANTZ .AND. LDZ.LT.N ) ) THEN
+      ELSE IF( LDZ < 1  OR  ( WANTZ  AND  LDZ < N ) ) THEN
          INFO = -7
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHPEV ', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
-      IF( N.EQ.1 ) THEN
+      IF( N == 1 ) THEN
          W( 1 ) = AP( 1 )
          RWORK( 1 ) = 1
          IF( WANTZ ) Z( 1, 1 ) = ONE
@@ -7876,14 +7665,14 @@
 !
       ANRM = ZLANHP( 'M', UPLO, N, AP, RWORK )
       ISCALE = 0
-      IF( ANRM.GT.ZERO .AND. ANRM.LT.RMIN ) THEN
+      IF( ANRM > ZERO  AND  ANRM < RMIN ) THEN
          ISCALE = 1
          SIGMA = RMIN / ANRM
-      ELSE IF( ANRM.GT.RMAX ) THEN
+      ELSE IF( ANRM > RMAX ) THEN
          ISCALE = 1
          SIGMA = RMAX / ANRM
       END IF
-      IF( ISCALE.EQ.1 ) THEN
+      IF( ISCALE == 1 ) THEN
          CALL ZDSCAL( ( N*( N+1 ) ) / 2, SIGMA, AP, 1 )
       END IF
 !
@@ -7896,7 +7685,7 @@
 !     For eigenvalues only, call DSTERF.  For eigenvectors, first call
 !     ZUPGTR to generate the orthogonal matrix, then call ZSTEQR.
 !
-      IF( .NOT.WANTZ ) THEN
+      IF(  NOT WANTZ ) THEN
          CALL DSTERF( N, W, RWORK( INDE ), INFO )
       ELSE
          INDWRK = INDTAU + N
@@ -7907,8 +7696,8 @@
 !
 !     If matrix was scaled, then rescale eigenvalues appropriately.
 !
-      IF( ISCALE.EQ.1 ) THEN
-         IF( INFO.EQ.0 ) THEN
+      IF( ISCALE == 1 ) THEN
+         IF( INFO == 0 ) THEN
             IMAX = N
          ELSE
             IMAX = INFO - 1
@@ -7929,12 +7718,12 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      complex(kind=kind(1.0d0))         AP( * ), TAU( * )
+      REAL   D( * ), E( * )
+      CPX         AP( * ), TAU( * )
 !     ..
 !
 !  Purpose
@@ -7947,14 +7736,14 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  Upper triangle of A is stored;
 !          = 'L':  Lower triangle of A is stored.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  AP      (input/output) complex(kind=kind(1.0d0)) array, dimension (N*(N+1)/2)
+!  AP      (input/output) CPX array, dimension (N*(N+1)/2)
 !          On entry, the upper or lower triangle of the Hermitian matrix
 !          A, packed columnwise in a linear array.  The j-th column of A
 !          is stored in the array AP as follows:
@@ -7971,15 +7760,15 @@
 !          the array TAU, represent the unitary matrix Q as a product
 !          of elementary reflectors. See Further Details.
 !
-!  D       (output) DOUBLE PRECISION array, dimension (N)
+!  D       (output) REAL array, dimension (N)
 !          The diagonal elements of the tridiagonal matrix T:
 !          D(i) = A(i,i).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          The off-diagonal elements of the tridiagonal matrix T:
 !          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 !
-!  TAU     (output) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (output) CPX array, dimension (N-1)
 !          The scalar factors of the elementary reflectors (see Further
 !          Details).
 !
@@ -8018,26 +7807,18 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO, HALF
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), &
-                         ZERO = ( 0.0D+0, 0.0D+0 ), &
-                         HALF = ( 0.5D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, I1, I1I1, II
-      complex(kind=kind(1.0d0))         ALPHA, TAUI
+      CPX         ALPHA, TAUI
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZAXPY, ZHPMV, ZHPR2, ZLARFG
 !     ..
 !     .. External Functions ..
-      complex(kind=kind(1.0d0))         ZDOTC
+      CPX         ZDOTC
       EXTERNAL           ZDOTC
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
 !     ..
 !     .. Executable Statements ..
 !
@@ -8045,19 +7826,19 @@
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHPTRD', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
       IF( UPPER ) THEN
 !
@@ -8075,7 +7856,7 @@
             CALL ZLARFG( I, ALPHA, AP( I1 ), 1, TAUI )
             E( I ) = ALPHA
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(1:i,1:i)
 !
@@ -8119,7 +7900,7 @@
             CALL ZLARFG( N-I, ALPHA, AP( II+2 ), 1, TAUI )
             E( I ) = ALPHA
 !
-            IF( TAUI.NE.ZERO ) THEN
+            IF( TAUI/=ZERO ) THEN
 !
 !              Apply H(i) from both sides to A(i+1:n,i+1:n)
 !
@@ -8165,7 +7946,7 @@
       INTEGER            INCX, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         X( * )
+      CPX         X( * )
 !     ..
 !
 !  Purpose
@@ -8179,7 +7960,7 @@
 !  N       (input) INTEGER
 !          The length of the vector X.  N >= 0.
 !
-!  X       (input/output) complex(kind=kind(1.0d0)) array, dimension
+!  X       (input/output) CPX array, dimension
 !                         (1+(N-1)*abs(INCX))
 !          On entry, the vector of length N to be conjugated.
 !          On exit, X is overwritten with conjg(X).
@@ -8192,18 +7973,15 @@
 !     .. Local Scalars ..
       INTEGER            I, IOFF
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          conjg
-!     ..
 !     .. Executable Statements ..
 !
-      IF( INCX.EQ.1 ) THEN
+      IF( INCX == 1 ) THEN
          DO 10 I = 1, N
             X( I ) = conjg( X( I ) )
    10    CONTINUE
       ELSE
          IOFF = 1
-         IF( INCX.LT.0 ) IOFF = 1 - ( N-1 )*INCX
+         IF( INCX < 0 ) IOFF = 1 - ( N-1 )*INCX
          DO 20 I = 1, N
             X( IOFF ) = conjg( X( IOFF ) )
             IOFF = IOFF + INCX
@@ -8214,7 +7992,7 @@
 !     End of ZLACGV
 !
       END
-      complex(kind=kind(1.0d0))   FUNCTION ZLADIV( X, Y )
+      CPX   FUNCTION ZLADIV( X, Y )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8222,7 +8000,7 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         X, Y
+      CPX         X, Y
 !     ..
 !
 !  Purpose
@@ -8235,20 +8013,17 @@
 !  Arguments
 !  =========
 !
-!  X       (input) complex(kind=kind(1.0d0))
-!  Y       (input) complex(kind=kind(1.0d0))
+!  X       (input) CPX
+!  Y       (input) CPX
 !          The complex scalars X and Y.
 !
 !  =====================================================================
 !
 !     .. Local Scalars ..
-      DOUBLE PRECISION   ZI, ZR
+      REAL   ZI, ZR
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLADIV
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
 !     ..
 !     .. Executable Statements ..
 !
@@ -8260,7 +8035,7 @@
 !     End of ZLADIV
 !
       END
-      DOUBLE PRECISION FUNCTION ZLANHE( NORM, UPLO, N, A, LDA, WORK )
+      REAL FUNCTION ZLANHE( NORM, UPLO, N, A, LDA, WORK )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8268,12 +8043,12 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          NORM, UPLO
+      CHR          NORM, UPLO
       INTEGER            LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   WORK( * )
-      complex(kind=kind(1.0d0))         A( LDA, * )
+      REAL   WORK( * )
+      CPX         A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -8304,11 +8079,11 @@
 !  Arguments
 !  =========
 !
-!  NORM    (input) character(len=1)
+!  NORM    (input) STR(len=1)
 !          Specifies the value to be returned in ZLANHE as described
 !          above.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the upper or lower triangular part of the
 !          hermitian matrix A is to be referenced.
 !          = 'U':  Upper triangular part of A is referenced
@@ -8318,7 +8093,7 @@
 !          The order of the matrix A.  N >= 0.  When N = 0, ZLANHE is
 !          set to zero.
 !
-!  A       (input) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input) CPX array, dimension (LDA,N)
 !          The hermitian matrix A.  If UPLO = 'U', the leading n by n
 !          upper triangular part of A contains the upper triangular part
 !          of the matrix A, and the strictly lower triangular part of A
@@ -8331,29 +8106,23 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(N,1).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+!  WORK    (workspace) REAL array, dimension (LWORK),
 !          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 !          WORK is not referenced.
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      REAL   ABSA, SCALE, SUM, VALUE
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZLASSQ
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, MAX, SQRT
-!     ..
 !     .. Executable Statements ..
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          VALUE = ZERO
       ELSE IF(  scan( NORM, 'Mm' )>0 ) THEN
 !
@@ -8424,9 +8193,9 @@
          END IF
          SUM = 2*SUM
          DO 130 I = 1, N
-            IF( DBLE( A( I, I ) ).NE.ZERO ) THEN
+            IF( DBLE( A( I, I ) )/=ZERO ) THEN
                ABSA = ABS( DBLE( A( I, I ) ) )
-               IF( SCALE.LT.ABSA ) THEN
+               IF( SCALE < ABSA ) THEN
                   SUM = ONE + SUM*( SCALE / ABSA )**2
                   SCALE = ABSA
                ELSE
@@ -8443,7 +8212,7 @@
 !     End of ZLANHE
 !
       END
-      DOUBLE PRECISION FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK )
+      REAL FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8451,12 +8220,12 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          NORM, UPLO
+      CHR          NORM, UPLO
       INTEGER            N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   WORK( * )
-      complex(kind=kind(1.0d0))         AP( * )
+      REAL   WORK( * )
+      CPX         AP( * )
 !     ..
 !
 !  Purpose
@@ -8487,11 +8256,11 @@
 !  Arguments
 !  =========
 !
-!  NORM    (input) character(len=1)
+!  NORM    (input) STR(len=1)
 !          Specifies the value to be returned in ZLANHP as described
 !          above.
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the upper or lower triangular part of the
 !          hermitian matrix A is supplied.
 !          = 'U':  Upper triangular part of A is supplied
@@ -8501,7 +8270,7 @@
 !          The order of the matrix A.  N >= 0.  When N = 0, ZLANHP is
 !          set to zero.
 !
-!  AP      (input) complex(kind=kind(1.0d0)) array, dimension (N*(N+1)/2)
+!  AP      (input) CPX array, dimension (N*(N+1)/2)
 !          The upper or lower triangle of the hermitian matrix A, packed
 !          columnwise in a linear array.  The j-th column of A is stored
 !          in the array AP as follows:
@@ -8510,29 +8279,23 @@
 !          Note that the  imaginary parts of the diagonal elements need
 !          not be set and are assumed to be zero.
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+!  WORK    (workspace) REAL array, dimension (LWORK),
 !          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 !          WORK is not referenced.
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J, K
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      REAL   ABSA, SCALE, SUM, VALUE
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZLASSQ
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, MAX, SQRT
-!     ..
 !     .. Executable Statements ..
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          VALUE = ZERO
       ELSE IF(  scan( NORM, 'Mm' )>0 ) THEN
 !
@@ -8616,9 +8379,9 @@
          SUM = 2*SUM
          K = 1
          DO 130 I = 1, N
-            IF( DBLE( AP( K ) ).NE.ZERO ) THEN
+            IF( DBLE( AP( K ) )/=ZERO ) THEN
                ABSA = ABS( DBLE( AP( K ) ) )
-               IF( SCALE.LT.ABSA ) THEN
+               IF( SCALE < ABSA ) THEN
                   SUM = ONE + SUM*( SCALE / ABSA )**2
                   SCALE = ABSA
                ELSE
@@ -8649,11 +8412,11 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, SIDE, STOREV, TRANS
+      CHR          DIRECT, SIDE, STOREV, TRANS
       INTEGER            K, LDC, LDT, LDV, LDWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         C( LDC, * ), T( LDT, * ), V( LDV, * ), WORK(LDWORK, *)
+      CPX         C( LDC, * ), T( LDT, * ), V( LDV, * ), WORK(LDWORK, *)
 !     ..
 !
 !  Purpose
@@ -8665,21 +8428,21 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          = 'L': apply H or H' from the Left
 !          = 'R': apply H or H' from the Right
 !
-!  TRANS   (input) character(len=1)
+!  TRANS   (input) STR(len=1)
 !          = 'N': apply H (No transpose)
 !          = 'C': apply H' (Conjugate transpose)
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Indicates how H is formed from a product of elementary
 !          reflectors
 !          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 !          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 !
-!  STOREV  (input) character(len=1)
+!  STOREV  (input) STR(len=1)
 !          Indicates how the vectors which define the elementary
 !          reflectors are stored:
 !          = 'C': Columnwise
@@ -8695,7 +8458,7 @@
 !          The order of the matrix T (= the number of elementary
 !          reflectors whose product defines the block reflector).
 !
-!  V       (input) complex(kind=kind(1.0d0)) array, dimension
+!  V       (input) CPX array, dimension
 !                                (LDV,K) if STOREV = 'C'
 !                                (LDV,M) if STOREV = 'R' and SIDE = 'L'
 !                                (LDV,N) if STOREV = 'R' and SIDE = 'R'
@@ -8707,21 +8470,21 @@
 !          if STOREV = 'C' and SIDE = 'R', LDV >= max(1,N);
 !          if STOREV = 'R', LDV >= K.
 !
-!  T       (input) complex(kind=kind(1.0d0)) array, dimension (LDT,K)
+!  T       (input) CPX array, dimension (LDT,K)
 !          The triangular K-by-K matrix T in the representation of the
 !          block reflector.
 !
 !  LDT     (input) INTEGER
 !          The leading dimension of the array T. LDT >= K.
 !
-!  C       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDC,N)
+!  C       (input/output) CPX array, dimension (LDC,N)
 !          On entry, the M-by-N matrix C.
 !          On exit, C is overwritten by H*C or H'*C or C*H or C*H'.
 !
 !  LDC     (input) INTEGER
 !          The leading dimension of the array C. LDC >= max(1,M).
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension (LDWORK,K)
+!  WORK    (workspace) CPX array, dimension (LDWORK,K)
 !
 !  LDWORK  (input) INTEGER
 !          The leading dimension of the array WORK.
@@ -8730,25 +8493,19 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
-      CHARACTER          TRANST
+      CHR          TRANST
       INTEGER            I, J
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZCOPY, ZGEMM, ZLACGV, ZTRMM
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          conjg
-!     ..
 !     .. Executable Statements ..
 !
 !     Quick return if possible
 !
-      IF( M.LE.0 .OR. N.LE.0 ) RETURN
+      IF( M <= 0  OR  N <= 0 ) RETURN
 !
       IF(  scan( TRANS, 'Nn' )>0 ) THEN
          TRANST = 'C'
@@ -8782,7 +8539,7 @@
 !
                CALL ZTRMM( 'Right', 'Lower', 'No transpose', 'Unit', N, &
                            K, ONE, V, LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C2'*V2
 !
@@ -8798,7 +8555,7 @@
 !
 !              C := C - V * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C2 := C2 - V2 * W'
 !
@@ -8836,7 +8593,7 @@
 !
                CALL ZTRMM( 'Right', 'Lower', 'No transpose', 'Unit', M, &
                            K, ONE, V, LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C2 * V2
 !
@@ -8852,7 +8609,7 @@
 !
 !              C := C - W * V'
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C2 := C2 - W * V2'
 !
@@ -8899,7 +8656,7 @@
 !
                CALL ZTRMM( 'Right', 'Upper', 'No transpose', 'Unit', N, &
                            K, ONE, V( M-K+1, 1 ), LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C1'*V1
 !
@@ -8914,7 +8671,7 @@
 !
 !              C := C - V * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C1 := C1 - V1 * W'
 !
@@ -8952,7 +8709,7 @@
 !
                CALL ZTRMM( 'Right', 'Upper', 'No transpose', 'Unit', M, &
                            K, ONE, V( N-K+1, 1 ), LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C1 * V1
 !
@@ -8967,7 +8724,7 @@
 !
 !              C := C - W * V'
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C1 := C1 - W * V1'
 !
@@ -9015,7 +8772,7 @@
 !
                CALL ZTRMM( 'Right', 'Upper', 'Conjugate transpose', &
                            'Unit', N, K, ONE, V, LDV, WORK, LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C2'*V2'
 !
@@ -9032,7 +8789,7 @@
 !
 !              C := C - V' * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C2 := C2 - V2' * W'
 !
@@ -9071,7 +8828,7 @@
 !
                CALL ZTRMM( 'Right', 'Upper', 'Conjugate transpose', &
                            'Unit', M, K, ONE, V, LDV, WORK, LDWORK )
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C2 * V2'
 !
@@ -9087,7 +8844,7 @@
 !
 !              C := C - W * V
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C2 := C2 - W * V2
 !
@@ -9135,7 +8892,7 @@
                CALL ZTRMM( 'Right', 'Lower', 'Conjugate transpose', &
                            'Unit', N, K, ONE, V( 1, M-K+1 ), LDV, WORK, &
                            LDWORK )
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 W := W + C1'*V1'
 !
@@ -9151,7 +8908,7 @@
 !
 !              C := C - V' * W'
 !
-               IF( M.GT.K ) THEN
+               IF( M > K ) THEN
 !
 !                 C1 := C1 - V1' * W'
 !
@@ -9189,7 +8946,7 @@
 !
                CALL ZTRMM( 'Right', 'Lower', 'Conjugate transpose', &
                            'Unit', M, K, ONE, V( 1, N-K+1 ), LDV, WORK, LDWORK)
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 W := W + C1 * V1'
 !
@@ -9204,7 +8961,7 @@
 !
 !              C := C - W * V
 !
-               IF( N.GT.K ) THEN
+               IF( N > K ) THEN
 !
 !                 C1 := C1 - W * V1
 !
@@ -9243,12 +9000,12 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          SIDE
+      CHR          SIDE
       INTEGER            INCV, LDC, M, N
-      complex(kind=kind(1.0d0))         TAU
+      CPX         TAU
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         C( LDC, * ), V( * ), WORK( * )
+      CPX         C( LDC, * ), V( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -9270,7 +9027,7 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          = 'L': form  H * C
 !          = 'R': form  C * H
 !
@@ -9280,7 +9037,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix C.
 !
-!  V       (input) complex(kind=kind(1.0d0)) array, dimension
+!  V       (input) CPX array, dimension
 !                     (1 + (M-1)*abs(INCV)) if SIDE = 'L'
 !                  or (1 + (N-1)*abs(INCV)) if SIDE = 'R'
 !          The vector v in the representation of H. V is not used if
@@ -9289,10 +9046,10 @@
 !  INCV    (input) INTEGER
 !          The increment between elements of v. INCV <> 0.
 !
-!  TAU     (input) complex(kind=kind(1.0d0))
+!  TAU     (input) CPX
 !          The value tau in the representation of H.
 !
-!  C       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDC,N)
+!  C       (input/output) CPX array, dimension (LDC,N)
 !          On entry, the M-by-N matrix C.
 !          On exit, C is overwritten by the matrix H * C if SIDE = 'L',
 !          or C * H if SIDE = 'R'.
@@ -9300,15 +9057,12 @@
 !  LDC     (input) INTEGER
 !          The leading dimension of the array C. LDC >= max(1,M).
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension
+!  WORK    (workspace) CPX array, dimension
 !                         (N) if SIDE = 'L'
 !                      or (M) if SIDE = 'R'
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), ZERO = ( 0.0D+0, 0.0D+0 ))
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZGEMV, ZGERC
@@ -9319,7 +9073,7 @@
 !
 !        Form  H * C
 !
-         IF( TAU.NE.ZERO ) THEN
+         IF( TAU/=ZERO ) THEN
 !
 !           w := C' * v
 !
@@ -9334,7 +9088,7 @@
 !
 !        Form  C * H
 !
-         IF( TAU.NE.ZERO ) THEN
+         IF( TAU/=ZERO ) THEN
 !
 !           w := C * v
 !
@@ -9359,10 +9113,10 @@
 !
 !     .. Scalar Arguments ..
       INTEGER            INCX, N
-      complex(kind=kind(1.0d0))         ALPHA, TAU
+      CPX         ALPHA, TAU
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         X( * )
+      CPX         X( * )
 !     ..
 !
 !  Purpose
@@ -9394,11 +9148,11 @@
 !  N       (input) INTEGER
 !          The order of the elementary reflector.
 !
-!  ALPHA   (input/output) complex(kind=kind(1.0d0))
+!  ALPHA   (input/output) CPX
 !          On entry, the value alpha.
 !          On exit, it is overwritten with the value beta.
 !
-!  X       (input/output) complex(kind=kind(1.0d0)) array, dimension
+!  X       (input/output) CPX array, dimension
 !                         (1+(N-2)*abs(INCX))
 !          On entry, the vector x.
 !          On exit, it is overwritten with the vector v.
@@ -9406,33 +9160,27 @@
 !  INCX    (input) INTEGER
 !          The increment between elements of X. INCX > 0.
 !
-!  TAU     (output) complex(kind=kind(1.0d0))
+!  TAU     (output) CPX
 !          The value tau.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            J, KNT
-      DOUBLE PRECISION   ALPHI, ALPHR, BETA, RSAFMN, SAFMIN, XNORM
+      REAL   ALPHI, ALPHR, BETA, RSAFMN, SAFMIN, XNORM
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DLAPY3, DZNRM2
-      complex(kind=kind(1.0d0))         ZLADIV
+      REAL   DLAPY3, DZNRM2
+      CPX         ZLADIV
       EXTERNAL           DLAPY3, DZNRM2, ZLADIV
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, SIGN
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZDSCAL, ZSCAL
 !     ..
 !     .. Executable Statements ..
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          TAU = ZERO
          RETURN
       END IF
@@ -9441,7 +9189,7 @@
       ALPHR = DBLE( ALPHA )
       ALPHI = AIMAG( ALPHA )
 !
-      IF( XNORM.EQ.ZERO .AND. ALPHI.EQ.ZERO ) THEN
+      IF( XNORM == ZERO  AND  ALPHI == ZERO ) THEN
 !
 !        H  =  I
 !
@@ -9454,7 +9202,7 @@
          SAFMIN = tiny(ZERO)*radix(ZERO)/epsilon(ZERO)
          RSAFMN = ONE / SAFMIN
 !
-         IF( ABS( BETA ).LT.SAFMIN ) THEN
+         IF( ABS( BETA ) < SAFMIN ) THEN
 !
 !           XNORM, BETA may be inaccurate; scale X and recompute them
 !
@@ -9465,7 +9213,7 @@
             BETA = BETA*RSAFMN
             ALPHI = ALPHI*RSAFMN
             ALPHR = ALPHR*RSAFMN
-            IF( ABS( BETA ).LT.SAFMIN ) GO TO 10
+            IF( ABS( BETA ) < SAFMIN ) GO TO 10
 !
 !           New BETA is at most 1, at least SAFMIN
 !
@@ -9503,11 +9251,11 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, STOREV
+      CHR          DIRECT, STOREV
       INTEGER            K, LDT, LDV, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         T( LDT, * ), TAU( * ), V( LDV, * )
+      CPX         T( LDT, * ), TAU( * ), V( LDV, * )
 !     ..
 !
 !  Purpose
@@ -9533,13 +9281,13 @@
 !  Arguments
 !  =========
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Specifies the order in which the elementary reflectors are
 !          multiplied to form the block reflector:
 !          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 !          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 !
-!  STOREV  (input) character(len=1)
+!  STOREV  (input) STR(len=1)
 !          Specifies how the vectors which define the elementary
 !          reflectors are stored (see also Further Details):
 !          = 'C': columnwise
@@ -9552,7 +9300,7 @@
 !          The order of the triangular factor T (= the number of
 !          elementary reflectors). K >= 1.
 !
-!  V       (input/output) complex(kind=kind(1.0d0)) array, dimension
+!  V       (input/output) CPX array, dimension
 !                               (LDV,K) if STOREV = 'C'
 !                               (LDV,N) if STOREV = 'R'
 !          The matrix V. See further details.
@@ -9561,11 +9309,11 @@
 !          The leading dimension of the array V.
 !          If STOREV = 'C', LDV >= max(1,N); if STOREV = 'R', LDV >= K.
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (K)
+!  TAU     (input) CPX array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i).
 !
-!  T       (output) complex(kind=kind(1.0d0)) array, dimension (LDT,K)
+!  T       (output) CPX array, dimension (LDT,K)
 !          The k by k triangular factor T of the block reflector.
 !          If DIRECT = 'F', T is upper triangular; if DIRECT = 'B', T is
 !          lower triangular. The rest of the array is not used.
@@ -9600,13 +9348,10 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J
-      complex(kind=kind(1.0d0))         VII
+      CPX         VII
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZGEMV, ZLACGV, ZTRMV
@@ -9615,11 +9360,11 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
       IF(  scan( DIRECT, 'Ff' )>0 ) THEN
          DO 20 I = 1, K
-            IF( TAU( I ).EQ.ZERO ) THEN
+            IF( TAU( I ) == ZERO ) THEN
 !
 !              H(i)  =  I
 !
@@ -9643,11 +9388,11 @@
 !
 !                 T(1:i-1,i) := - tau(i) * V(1:i-1,i:n) * V(i,i:n)'
 !
-                  IF( I.LT.N ) CALL ZLACGV( N-I, V( I, I+1 ), LDV )
+                  IF( I < N ) CALL ZLACGV( N-I, V( I, I+1 ), LDV )
                   CALL ZGEMV( 'No transpose', I-1, N-I+1, -TAU( I ), &
                               V( 1, I ), LDV, V( I, I ), LDV, ZERO, &
                               T( 1, I ), 1 )
-                  IF( I.LT.N ) CALL ZLACGV( N-I, V( I, I+1 ), LDV )
+                  IF( I < N ) CALL ZLACGV( N-I, V( I, I+1 ), LDV )
                END IF
                V( I, I ) = VII
 !
@@ -9660,7 +9405,7 @@
    20    CONTINUE
       ELSE
          DO 40 I = K, 1, -1
-            IF( TAU( I ).EQ.ZERO ) THEN
+            IF( TAU( I ) == ZERO ) THEN
 !
 !              H(i)  =  I
 !
@@ -9671,7 +9416,7 @@
 !
 !              general case
 !
-               IF( I.LT.K ) THEN
+               IF( I < K ) THEN
                   IF(  scan( STOREV, 'Cc' )>0 ) THEN
                      VII = V( N-K+I, I )
                      V( N-K+I, I ) = ONE
@@ -9720,12 +9465,12 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          TYPE
+      CHR          TYPE
       INTEGER            INFO, KL, KU, LDA, M, N
-      DOUBLE PRECISION   CFROM, CTO
+      REAL   CFROM, CTO
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * )
+      CPX         A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -9740,7 +9485,7 @@
 !  Arguments
 !  =========
 !
-!  TYPE    (input) character(len=1)
+!  TYPE    (input) STR(len=1)
 !          TYPE indices the storage type of the input matrix.
 !          = 'G':  A is a full matrix.
 !          = 'L':  A is a lower triangular matrix.
@@ -9763,8 +9508,8 @@
 !          The upper bandwidth of A.  Referenced only if TYPE = 'B',
 !          'Q' or 'Z'.
 !
-!  CFROM   (input) DOUBLE PRECISION
-!  CTO     (input) DOUBLE PRECISION
+!  CFROM   (input) REAL
+!  CTO     (input) REAL
 !          The matrix A is multiplied by CTO/CFROM. A(I,J) is computed
 !          without over/underflow if the final result CTO*A(I,J)/CFROM
 !          can be represented without over/underflow.  CFROM must be
@@ -9776,7 +9521,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.  N >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,M)
+!  A       (input/output) CPX array, dimension (LDA,M)
 !          The matrix to be multiplied by CTO/CFROM.  See TYPE for the
 !          storage type.
 !
@@ -9789,17 +9534,11 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
-      PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            DONE
       INTEGER            I, ITYPE, J, K1, K2, K3, K4
-      DOUBLE PRECISION   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN
+      REAL   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -9828,38 +9567,38 @@
          ITYPE = -1
       END IF
 !
-      IF( ITYPE.EQ.-1 ) THEN
+      IF( ITYPE == -1 ) THEN
          INFO = -1
-      ELSE IF( CFROM.EQ.ZERO ) THEN
+      ELSE IF( CFROM == ZERO ) THEN
          INFO = -4
-      ELSE IF( M.LT.0 ) THEN
+      ELSE IF( M < 0 ) THEN
          INFO = -6
-      ELSE IF( N.LT.0 .OR. ( ITYPE.EQ.4 .AND. N.NE.M ) .OR. &
-               ( ITYPE.EQ.5 .AND. N.NE.M ) ) THEN
+      ELSE IF( N < 0  OR  ( ITYPE == 4  AND  N/=M )  OR  &
+               ( ITYPE == 5  AND  N/=M ) ) THEN
          INFO = -7
-      ELSE IF( ITYPE.LE.3 .AND. LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( ITYPE <= 3  AND  LDA < MAX( 1, M ) ) THEN
          INFO = -9
       ELSE IF( ITYPE.GE.4 ) THEN
-         IF( KL.LT.0 .OR. KL.GT.MAX( M-1, 0 ) ) THEN
+         IF( KL < 0  OR  KL > MAX( M-1, 0 ) ) THEN
             INFO = -2
-         ELSE IF( KU.LT.0 .OR. KU.GT.MAX( N-1, 0 ) .OR. &
-                  ( ( ITYPE.EQ.4 .OR. ITYPE.EQ.5 ) .AND. KL.NE.KU ) ) THEN
+         ELSE IF( KU < 0  OR  KU > MAX( N-1, 0 )  OR  &
+                  ( ( ITYPE == 4  OR  ITYPE == 5 )  AND  KL/=KU ) ) THEN
             INFO = -3
-         ELSE IF( ( ITYPE.EQ.4 .AND. LDA.LT.KL+1 ) .OR. &
-                  ( ITYPE.EQ.5 .AND. LDA.LT.KU+1 ) .OR. &
-                  ( ITYPE.EQ.6 .AND. LDA.LT.2*KL+KU+1 ) ) THEN
+         ELSE IF( ( ITYPE == 4  AND  LDA < KL+1 )  OR  &
+                  ( ITYPE == 5  AND  LDA < KU+1 )  OR  &
+                  ( ITYPE == 6  AND  LDA < 2*KL+KU+1 ) ) THEN
             INFO = -9
          END IF
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZLASCL', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 .OR. M.EQ.0 ) RETURN
+      IF( N == 0  OR  M == 0 ) RETURN
 !
 !     Get machine parameters
 !
@@ -9872,20 +9611,20 @@
    10 CONTINUE
       CFROM1 = CFROMC*SMLNUM
       CTO1 = CTOC / BIGNUM
-      IF( ABS( CFROM1 ).GT.ABS( CTOC ) .AND. CTOC.NE.ZERO ) THEN
+      IF( ABS( CFROM1 ) > ABS( CTOC )  AND  CTOC/=ZERO ) THEN
          MUL = SMLNUM
-         DONE = .FALSE.
+         DONE =  FALSE
          CFROMC = CFROM1
-      ELSE IF( ABS( CTO1 ).GT.ABS( CFROMC ) ) THEN
+      ELSE IF( ABS( CTO1 ) > ABS( CFROMC ) ) THEN
          MUL = BIGNUM
-         DONE = .FALSE.
+         DONE =  FALSE
          CTOC = CTO1
       ELSE
          MUL = CTOC / CFROMC
-         DONE = .TRUE.
+         DONE =  TRUE
       END IF
 !
-      IF( ITYPE.EQ.0 ) THEN
+      IF( ITYPE == 0 ) THEN
 !
 !        Full matrix
 !
@@ -9895,7 +9634,7 @@
    20       CONTINUE
    30    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.1 ) THEN
+      ELSE IF( ITYPE == 1 ) THEN
 !
 !        Lower triangular matrix
 !
@@ -9905,7 +9644,7 @@
    40       CONTINUE
    50    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.2 ) THEN
+      ELSE IF( ITYPE == 2 ) THEN
 !
 !        Upper triangular matrix
 !
@@ -9915,7 +9654,7 @@
    60       CONTINUE
    70    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.3 ) THEN
+      ELSE IF( ITYPE == 3 ) THEN
 !
 !        Upper Hessenberg matrix
 !
@@ -9925,7 +9664,7 @@
    80       CONTINUE
    90    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.4 ) THEN
+      ELSE IF( ITYPE == 4 ) THEN
 !
 !        Lower half of a symmetric band matrix
 !
@@ -9937,7 +9676,7 @@
   100       CONTINUE
   110    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.5 ) THEN
+      ELSE IF( ITYPE == 5 ) THEN
 !
 !        Upper half of a symmetric band matrix
 !
@@ -9949,7 +9688,7 @@
   120       CONTINUE
   130    CONTINUE
 !
-      ELSE IF( ITYPE.EQ.6 ) THEN
+      ELSE IF( ITYPE == 6 ) THEN
 !
 !        Band matrix
 !
@@ -9965,7 +9704,7 @@
 !
       END IF
 !
-      IF( .NOT.DONE ) GO TO 10
+      IF(  NOT DONE ) GO TO 10
 !
       RETURN
 !
@@ -9980,12 +9719,12 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            LDA, M, N
-      complex(kind=kind(1.0d0))         ALPHA, BETA
+      CPX         ALPHA, BETA
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * )
+      CPX         A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -9997,7 +9736,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies the part of the matrix A to be set.
 !          = 'U':      Upper triangular part is set. The lower triangle
 !                      is unchanged.
@@ -10011,13 +9750,13 @@
 !  N       (input) INTEGER
 !          On entry, N specifies the number of columns of A.
 !
-!  ALPHA   (input) complex(kind=kind(1.0d0))
+!  ALPHA   (input) CPX
 !          All the offdiagonal array elements are set to ALPHA.
 !
-!  BETA    (input) complex(kind=kind(1.0d0))
+!  BETA    (input) CPX
 !          All the diagonal array elements are set to BETA.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the m by n matrix A.
 !          On exit, A(i,j) = ALPHA, 1 <= i <= m, 1 <= j <= n, i.ne.j;
 !                   A(i,i) = BETA , 1 <= i <= min(m,n)
@@ -10029,9 +9768,6 @@
 !
 !     .. Local Scalars ..
       INTEGER            I, J
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 !     ..
 !     .. Executable Statements ..
 !
@@ -10091,12 +9827,12 @@
 !     October 31, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIRECT, PIVOT, SIDE
+      CHR          DIRECT, PIVOT, SIDE
       INTEGER            LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   C( * ), S( * )
-      complex(kind=kind(1.0d0))         A( LDA, * )
+      REAL   C( * ), S( * )
+      CPX         A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -10142,19 +9878,19 @@
 !  Arguments
 !  =========
 !
-!  SIDE    (input) character(len=1)
+!  SIDE    (input) STR(len=1)
 !          Specifies whether the plane rotation matrix P is applied to
 !          A on the left or the right.
 !          = 'L':  Left, compute A := P*A
 !          = 'R':  Right, compute A:= A*P'
 !
-!  DIRECT  (input) character(len=1)
+!  DIRECT  (input) STR(len=1)
 !          Specifies whether P is a forward or backward sequence of
 !          plane rotations.
 !          = 'F':  Forward, P = P( z - 1 )*...*P( 2 )*P( 1 )
 !          = 'B':  Backward, P = P( 1 )*P( 2 )*...*P( z - 1 )
 !
-!  PIVOT   (input) character(len=1)
+!  PIVOT   (input) STR(len=1)
 !          Specifies the plane for which P(k) is a plane rotation
 !          matrix.
 !          = 'V':  Variable pivot, the plane (k,k+1)
@@ -10169,7 +9905,7 @@
 !          The number of columns of the matrix A.  If n <= 1, an
 !          immediate return is effected.
 !
-!  C, S    (input) DOUBLE PRECISION arrays, dimension
+!  C, S    (input) REAL arrays, dimension
 !                  (M-1) if SIDE = 'L'
 !                  (N-1) if SIDE = 'R'
 !          c(k) and s(k) contain the cosine and sine that define the
@@ -10178,7 +9914,7 @@
 !          R( k ) = (  c( k )  s( k ) ).
 !                   ( -s( k )  c( k ) )
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          The m by n matrix A.  On exit, A is overwritten by P*A if
 !          SIDE = 'R' or by A*P' if SIDE = 'L'.
 !
@@ -10187,17 +9923,11 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, INFO, J
-      DOUBLE PRECISION   CTEMP, STEMP
-      complex(kind=kind(1.0d0))         TEMP
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      REAL   CTEMP, STEMP
+      CPX         TEMP
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -10207,27 +9937,27 @@
 !     Test the input parameters
 !
       INFO = 0
-      IF( .NOT. scan( SIDE, 'LlRr' )>0 ) THEN
+      IF(  NOT  scan( SIDE, 'LlRr' )>0 ) THEN
          INFO = 1
-      ELSE IF( .NOT. scan( PIVOT, 'VvTtBb' )>0 ) THEN
+      ELSE IF(  NOT  scan( PIVOT, 'VvTtBb' )>0 ) THEN
          INFO = 2
-      ELSE IF( .NOT. scan( DIRECT, 'FfBb' )>0 ) THEN
+      ELSE IF(  NOT  scan( DIRECT, 'FfBb' )>0 ) THEN
          INFO = 3
-      ELSE IF( M.LT.0 ) THEN
+      ELSE IF( M < 0 ) THEN
          INFO = 4
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = 5
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZLASR ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( ( M.EQ.0 ) .OR. ( N.EQ.0 ) ) RETURN
+      IF( ( M == 0 )  OR  ( N == 0 ) ) RETURN
       IF(  scan( SIDE, 'Ll' )>0 ) THEN
 !
 !        Form  P * A
@@ -10237,7 +9967,7 @@
                DO 20 J = 1, M - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 10 I = 1, N
                         TEMP = A( J+1, I )
                         A( J+1, I ) = CTEMP*TEMP - STEMP*A( J, I )
@@ -10249,7 +9979,7 @@
                DO 40 J = M - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 30 I = 1, N
                         TEMP = A( J+1, I )
                         A( J+1, I ) = CTEMP*TEMP - STEMP*A( J, I )
@@ -10263,7 +9993,7 @@
                DO 60 J = 2, M
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 50 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = CTEMP*TEMP - STEMP*A( 1, I )
@@ -10275,7 +10005,7 @@
                DO 80 J = M, 2, -1
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 70 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = CTEMP*TEMP - STEMP*A( 1, I )
@@ -10289,7 +10019,7 @@
                DO 100 J = 1, M - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 90 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = STEMP*A( M, I ) + CTEMP*TEMP
@@ -10301,7 +10031,7 @@
                DO 120 J = M - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 110 I = 1, N
                         TEMP = A( J, I )
                         A( J, I ) = STEMP*A( M, I ) + CTEMP*TEMP
@@ -10320,7 +10050,7 @@
                DO 140 J = 1, N - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 130 I = 1, M
                         TEMP = A( I, J+1 )
                         A( I, J+1 ) = CTEMP*TEMP - STEMP*A( I, J )
@@ -10332,7 +10062,7 @@
                DO 160 J = N - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 150 I = 1, M
                         TEMP = A( I, J+1 )
                         A( I, J+1 ) = CTEMP*TEMP - STEMP*A( I, J )
@@ -10346,7 +10076,7 @@
                DO 180 J = 2, N
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 170 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = CTEMP*TEMP - STEMP*A( I, 1 )
@@ -10358,7 +10088,7 @@
                DO 200 J = N, 2, -1
                   CTEMP = C( J-1 )
                   STEMP = S( J-1 )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 190 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = CTEMP*TEMP - STEMP*A( I, 1 )
@@ -10372,7 +10102,7 @@
                DO 220 J = 1, N - 1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 210 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = STEMP*A( I, N ) + CTEMP*TEMP
@@ -10384,7 +10114,7 @@
                DO 240 J = N - 1, 1, -1
                   CTEMP = C( J )
                   STEMP = S( J )
-                  IF( ( CTEMP.NE.ONE ) .OR. ( STEMP.NE.ZERO ) ) THEN
+                  IF( ( CTEMP/=ONE )  OR  ( STEMP/=ZERO ) ) THEN
                      DO 230 I = 1, M
                         TEMP = A( I, J )
                         A( I, J ) = STEMP*A( I, N ) + CTEMP*TEMP
@@ -10410,10 +10140,10 @@
 !
 !     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   SCALE, SUMSQ
+      REAL   SCALE, SUMSQ
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         X( * )
+      CPX         X( * )
 !     ..
 !
 !  Purpose
@@ -10426,7 +10156,7 @@
 !  where x( i ) = abs( X( 1 + ( i - 1 )*INCX ) ). The value of sumsq is
 !  assumed to be at least unity and the value of ssq will then satisfy
 !
-!     1.0 .le. ssq .le. ( sumsq + 2*n ).
+!     1.0  <=  ssq  <=  ( sumsq + 2*n ).
 !
 !  scale is assumed to be non-negative and scl returns the value
 !
@@ -10444,7 +10174,7 @@
 !  N       (input) INTEGER
 !          The number of elements to be used from the vector X.
 !
-!  X       (input) complex(kind=kind(1.0d0)) array, dimension (N)
+!  X       (input) CPX array, dimension (N)
 !          The vector x as described above.
 !             x( i )  = X( 1 + ( i - 1 )*INCX ), 1 <= i <= n.
 !
@@ -10452,43 +10182,37 @@
 !          The increment between successive values of the vector X.
 !          INCX > 0.
 !
-!  SCALE   (input/output) DOUBLE PRECISION
+!  SCALE   (input/output) REAL
 !          On entry, the value  scale  in the equation above.
 !          On exit, SCALE is overwritten with the value  scl .
 !
-!  SUMSQ   (input/output) DOUBLE PRECISION
+!  SUMSQ   (input/output) REAL
 !          On entry, the value  sumsq  in the equation above.
 !          On exit, SUMSQ is overwritten with the value  ssq .
 !
 ! =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       INTEGER            IX
-      DOUBLE PRECISION   TEMP1
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE
+      REAL   TEMP1
 !     ..
 !     .. Executable Statements ..
 !
-      IF( N.GT.0 ) THEN
+      IF( N > 0 ) THEN
          DO 10 IX = 1, 1 + ( N-1 )*INCX, INCX
-            IF( DBLE( X( IX ) ).NE.ZERO ) THEN
+            IF( DBLE( X( IX ) )/=ZERO ) THEN
                TEMP1 = ABS( DBLE( X( IX ) ) )
-               IF( SCALE.LT.TEMP1 ) THEN
+               IF( SCALE < TEMP1 ) THEN
                   SUMSQ = 1 + SUMSQ*( SCALE / TEMP1 )**2
                   SCALE = TEMP1
                ELSE
                   SUMSQ = SUMSQ + ( TEMP1 / SCALE )**2
                END IF
             END IF
-            IF( AIMAG( X( IX ) ).NE.ZERO ) THEN
+            IF( AIMAG( X( IX ) )/=ZERO ) THEN
                TEMP1 = ABS( AIMAG( X( IX ) ) )
-               IF( SCALE.LT.TEMP1 ) THEN
+               IF( SCALE < TEMP1 ) THEN
                   SUMSQ = 1 + SUMSQ*( SCALE / TEMP1 )**2
                   SCALE = TEMP1
                ELSE
@@ -10511,12 +10235,12 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            LDA, LDW, N, NB
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   E( * )
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), W( LDW, * )
+      REAL   E( * )
+      CPX         A( LDA, * ), TAU( * ), W( LDW, * )
 !     ..
 !
 !  Purpose
@@ -10537,7 +10261,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) CHARACTER
+!  UPLO    (input) STR
 !          Specifies whether the upper or lower triangular part of the
 !          Hermitian matrix A is stored:
 !          = 'U': Upper triangular
@@ -10549,7 +10273,7 @@
 !  NB      (input) INTEGER
 !          The number of rows and columns to be reduced.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 !          n-by-n upper triangular part of A contains the upper
 !          triangular part of the matrix A, and the strictly lower
@@ -10573,18 +10297,18 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  E       (output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (output) REAL array, dimension (N-1)
 !          If UPLO = 'U', E(n-nb:n-1) contains the superdiagonal
 !          elements of the last NB columns of the reduced matrix;
 !          if UPLO = 'L', E(1:nb) contains the subdiagonal elements of
 !          the first NB columns of the reduced matrix.
 !
-!  TAU     (output) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (output) CPX array, dimension (N-1)
 !          The scalar factors of the elementary reflectors, stored in
 !          TAU(n-nb:n-1) if UPLO = 'U', and in TAU(1:nb) if UPLO = 'L'.
 !          See Further Details.
 !
-!  W       (output) complex(kind=kind(1.0d0)) array, dimension (LDW,NB)
+!  W       (output) CPX array, dimension (LDW,NB)
 !          The n-by-nb matrix W required to update the unreduced part
 !          of A.
 !
@@ -10642,31 +10366,23 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO, ONE, HALF
-      PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ), &
-                         ONE = ( 1.0D+0, 0.0D+0 ), &
-                         HALF = ( 0.5D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, IW
-      complex(kind=kind(1.0d0))         ALPHA
+      CPX         ALPHA
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           ZAXPY, ZGEMV, ZHEMV, ZLACGV, ZLARFG, ZSCAL
 !     ..
 !     .. External Functions ..
-      complex(kind=kind(1.0d0))         ZDOTC
+      CPX         ZDOTC
       EXTERNAL           ZDOTC
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MIN
 !     ..
 !     .. Executable Statements ..
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
       IF(  scan( UPLO, 'Uu' )>0 ) THEN
 !
@@ -10674,7 +10390,7 @@
 !
          DO 10 I = N, N - NB + 1, -1
             IW = I - N + NB
-            IF( I.LT.N ) THEN
+            IF( I < N ) THEN
 !
 !              Update A(1:i,i)
 !
@@ -10689,7 +10405,7 @@
                CALL ZLACGV( N-I, A( I, I+1 ), LDA )
                A( I, I ) = DBLE( A( I, I ) )
             END IF
-            IF( I.GT.1 ) THEN
+            IF( I > 1 ) THEN
 !
 !              Generate elementary reflector H(i) to annihilate
 !              A(1:i-2,i)
@@ -10703,7 +10419,7 @@
 !
                CALL ZHEMV( 'Upper', I-1, ONE, A, LDA, A( 1, I ), 1, &
                            ZERO, W( 1, IW ), 1 )
-               IF( I.LT.N ) THEN
+               IF( I < N ) THEN
                   CALL ZGEMV( 'Conjugate transpose', I-1, N-I, ONE, &
                               W( 1, IW+1 ), LDW, A( 1, I ), 1, ZERO, &
                               W( I+1, IW ), 1 )
@@ -10742,7 +10458,7 @@
                         LDW, A( I, 1 ), LDA, ONE, A( I, I ), 1 )
             CALL ZLACGV( I-1, A( I, 1 ), LDA )
             A( I, I ) = DBLE( A( I, I ) )
-            IF( I.LT.N ) THEN
+            IF( I < N ) THEN
 !
 !              Generate elementary reflector H(i) to annihilate
 !              A(i+2:n,i)
@@ -10781,14 +10497,14 @@
 !
 !     scales a vector by a constant.
 !     jack dongarra, 3/11/78.
-!     modified 3/93 to return if incx .le. 0.
+!     modified 3/93 to return if incx  <=  0.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) za,zx(*)
-      integer i,incx,ix,n
+      CPX za,zx(*)
+      INT i,incx,ix,n
 !
-      if( n.le.0 .or. incx.le.0 )return
-      if(incx.eq.1)go to 20
+      if ( n <= 0 .or. incx <= 0 ) return
+      if (incx == 1)go to 20
 !
 !        code for increment not equal to 1
 !
@@ -10814,12 +10530,12 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          COMPZ
+      CHR          COMPZ
       INTEGER            INFO, LDZ, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * ), WORK( * )
-      complex(kind=kind(1.0d0))         Z( LDZ, * )
+      REAL   D( * ), E( * ), WORK( * )
+      CPX         Z( LDZ, * )
 !     ..
 !
 !  Purpose
@@ -10834,7 +10550,7 @@
 !  Arguments
 !  =========
 !
-!  COMPZ   (input) character(len=1)
+!  COMPZ   (input) STR(len=1)
 !          = 'N':  Compute eigenvalues only.
 !          = 'V':  Compute eigenvalues and eigenvectors of the original
 !                  Hermitian matrix.  On entry, Z must contain the
@@ -10847,16 +10563,16 @@
 !  N       (input) INTEGER
 !          The order of the matrix.  N >= 0.
 !
-!  D       (input/output) DOUBLE PRECISION array, dimension (N)
+!  D       (input/output) REAL array, dimension (N)
 !          On entry, the diagonal elements of the tridiagonal matrix.
 !          On exit, if INFO = 0, the eigenvalues in ascending order.
 !
-!  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+!  E       (input/output) REAL array, dimension (N-1)
 !          On entry, the (n-1) subdiagonal elements of the tridiagonal
 !          matrix.
 !          On exit, E has been destroyed.
 !
-!  Z       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDZ, N)
+!  Z       (input/output) CPX array, dimension (LDZ, N)
 !          On entry, if  COMPZ = 'V', then Z contains the unitary
 !          matrix used in the reduction to tridiagonal form.
 !          On exit, if INFO = 0, then if COMPZ = 'V', Z contains the
@@ -10869,7 +10585,7 @@
 !          The leading dimension of the array Z.  LDZ >= 1, and if
 !          eigenvectors are desired, then  LDZ >= max(1,N).
 !
-!  WORK    (workspace) DOUBLE PRECISION array, dimension (max(1,2*N-2))
+!  WORK    (workspace) REAL array, dimension (max(1,2*N-2))
 !          If COMPZ = 'N', then WORK is not referenced.
 !
 !  INFO    (output) INTEGER
@@ -10885,10 +10601,6 @@
 !  =====================================================================
 !
 !     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
-      PARAMETER          (ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0, THREE = 3.0D0)
-      complex(kind=kind(1.0d0))         CZERO, CONE
-      PARAMETER          ( CZERO = ( 0.0D0, 0.0D0 ), CONE = ( 1.0D0, 0.0D0 ) )
       INTEGER            MAXIT
       PARAMETER          ( MAXIT = 30 )
 !     ..
@@ -10896,19 +10608,16 @@
       INTEGER            I, ICOMPZ, II, ISCALE, J, JTOT, K, L, L1, LEND, &
                          LENDM1, LENDP1, LENDSV, LM1, LSV, M, MM, MM1, &
                          NM1, NMAXIT
-      DOUBLE PRECISION   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2, &
+      REAL   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2, &
                          S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
 !     ..
 !     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      REAL   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DLAE2, DLAEV2, DLARTG, DLASCL, DLASRT, XERBLA, &
                          ZLASET, ZLASR, ZSWAP
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SIGN, SQRT
 !     ..
 !     .. Executable Statements ..
 !
@@ -10925,24 +10634,24 @@
       ELSE
          ICOMPZ = -1
       END IF
-      IF( ICOMPZ.LT.0 ) THEN
+      IF( ICOMPZ < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( ( LDZ.LT.1 ) .OR. ( ICOMPZ.GT.0 .AND. LDZ.LT.MAX(1,N) ) ) THEN
+      ELSE IF( ( LDZ < 1 )  OR  ( ICOMPZ > 0  AND  LDZ < MAX(1,N) ) ) THEN
          INFO = -6
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZSTEQR', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
-      IF( N.EQ.1 ) THEN
-         IF( ICOMPZ.EQ.2 ) Z( 1, 1 ) = CONE
+      IF( N == 1 ) THEN
+         IF( ICOMPZ == 2 ) Z( 1, 1 ) = ONE
          RETURN
       END IF
 !
@@ -10958,7 +10667,7 @@
 !     Compute the eigenvalues and eigenvectors of the tridiagonal
 !     matrix.
 !
-      IF( ICOMPZ.EQ.2 ) CALL ZLASET( 'Full', N, N, CZERO, CONE, Z, LDZ )
+      IF( ICOMPZ == 2 ) CALL ZLASET( 'Full', N, N, ZERO, ONE, Z, LDZ )
 !
       NMAXIT = N*MAXIT
       JTOT = 0
@@ -10971,13 +10680,13 @@
       NM1 = N - 1
 !
    10 CONTINUE
-      IF( L1.GT.N ) GO TO 160
-      IF( L1.GT.1 ) E( L1-1 ) = ZERO
-      IF( L1.LE.NM1 ) THEN
+      IF( L1 > N ) GO TO 160
+      IF( L1 > 1 ) E( L1-1 ) = ZERO
+      IF( L1 <= NM1 ) THEN
          DO 20 M = L1, NM1
             TST = ABS( E( M ) )
-            IF( TST.EQ.ZERO ) GO TO 30
-            IF( TST.LE.( SQRT( ABS( D( M ) ) )*SQRT( ABS( D( M+ &
+            IF( TST == ZERO ) GO TO 30
+            IF( TST <= ( SQRT( ABS( D( M ) ) )*SQRT( ABS( D( M+ &
                 1 ) ) ) )*EPS ) THEN
                E( M ) = ZERO
                GO TO 30
@@ -10992,18 +10701,18 @@
       LEND = M
       LENDSV = LEND
       L1 = M + 1
-      IF( LEND.EQ.L ) GO TO 10
+      IF( LEND == L ) GO TO 10
 !
 !     Scale submatrix in rows and columns L to LEND
 !
       ANORM = DLANST( 'I', LEND-L+1, D( L ), E( L ) )
       ISCALE = 0
-      IF( ANORM.EQ.ZERO ) GO TO 10
-      IF( ANORM.GT.SSFMAX ) THEN
+      IF( ANORM == ZERO ) GO TO 10
+      IF( ANORM > SSFMAX ) THEN
          ISCALE = 1
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMAX, LEND-L, 1, E( L ), N, INFO )
-      ELSE IF( ANORM.LT.SSFMIN ) THEN
+      ELSE IF( ANORM < SSFMIN ) THEN
          ISCALE = 2
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L+1, 1, D( L ), N, INFO )
          CALL DLASCL( 'G', 0, 0, ANORM, SSFMIN, LEND-L, 1, E( L ), N, INFO )
@@ -11011,38 +10720,38 @@
 !
 !     Choose between QL and QR iteration
 !
-      IF( ABS( D( LEND ) ).LT.ABS( D( L ) ) ) THEN
+      IF( ABS( D( LEND ) ) < ABS( D( L ) ) ) THEN
          LEND = LSV
          L = LENDSV
       END IF
 !
-      IF( LEND.GT.L ) THEN
+      IF( LEND > L ) THEN
 !
 !        QL Iteration
 !
 !        Look for small subdiagonal element.
 !
    40    CONTINUE
-         IF( L.NE.LEND ) THEN
+         IF( L/=LEND ) THEN
             LENDM1 = LEND - 1
             DO 50 M = L, LENDM1
                TST = ABS( E( M ) )**2
-               IF( TST.LE.( EPS2*ABS( D(M) ) )*ABS( D(M+1) )+ SAFMIN )GO TO 60
+               IF( TST <= ( EPS2*ABS( D(M) ) )*ABS( D(M+1) )+ SAFMIN )GO TO 60
    50       CONTINUE
          END IF
 !
          M = LEND
 !
    60    CONTINUE
-         IF( M.LT.LEND ) E( M ) = ZERO
+         IF( M < LEND ) E( M ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 80
+         IF( M == L ) GO TO 80
 !
 !        If remaining matrix is 2-by-2, use DLAE2 or SLAEV2
 !        to compute its eigensystem.
 !
-         IF( M.EQ.L+1 ) THEN
-            IF( ICOMPZ.GT.0 ) THEN
+         IF( M == L+1 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                CALL DLAEV2( D( L ), E( L ), D( L+1 ), RT1, RT2, C, S )
                WORK( L ) = C
                WORK( N-1+L ) = S
@@ -11055,11 +10764,11 @@
             D( L+1 ) = RT2
             E( L ) = ZERO
             L = L + 2
-            IF( L.LE.LEND ) GO TO 40
+            IF( L <= LEND ) GO TO 40
             GO TO 140
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 140
+         IF( JTOT == NMAXIT ) GO TO 140
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -11079,7 +10788,7 @@
             F = S*E( I )
             B = C*E( I )
             CALL DLARTG( G, F, C, S, R )
-            IF( I.NE.M-1 ) E( I+1 ) = R
+            IF( I/=M-1 ) E( I+1 ) = R
             G = D( I+1 ) - P
             R = ( D( I )-G )*S + TWO*C*B
             P = S*R
@@ -11088,7 +10797,7 @@
 !
 !           If eigenvectors are desired, then save rotations.
 !
-            IF( ICOMPZ.GT.0 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                WORK( I ) = C
                WORK( N-1+I ) = -S
             END IF
@@ -11097,7 +10806,7 @@
 !
 !        If eigenvectors are desired, then apply saved rotations.
 !
-         IF( ICOMPZ.GT.0 ) THEN
+         IF( ICOMPZ > 0 ) THEN
             MM = M - L + 1
             CALL ZLASR( 'R', 'V', 'B', N, MM, WORK( L ), WORK( N-1+L ), &
                         Z( 1, L ), LDZ )
@@ -11113,7 +10822,7 @@
          D( L ) = P
 !
          L = L + 1
-         IF( L.LE.LEND ) GO TO 40
+         IF( L <= LEND ) GO TO 40
          GO TO 140
 !
       ELSE
@@ -11123,26 +10832,26 @@
 !        Look for small superdiagonal element.
 !
    90    CONTINUE
-         IF( L.NE.LEND ) THEN
+         IF( L/=LEND ) THEN
             LENDP1 = LEND + 1
             DO 100 M = L, LENDP1, -1
                TST = ABS( E( M-1 ) )**2
-               IF( TST.LE.( EPS2*ABS( D(M) ) )*ABS( D(M-1) )+ SAFMIN )GO TO 110
+               IF( TST <= ( EPS2*ABS( D(M) ) )*ABS( D(M-1) )+ SAFMIN )GO TO 110
   100       CONTINUE
          END IF
 !
          M = LEND
 !
   110    CONTINUE
-         IF( M.GT.LEND ) E( M-1 ) = ZERO
+         IF( M > LEND ) E( M-1 ) = ZERO
          P = D( L )
-         IF( M.EQ.L ) GO TO 130
+         IF( M == L ) GO TO 130
 !
 !        If remaining matrix is 2-by-2, use DLAE2 or SLAEV2
 !        to compute its eigensystem.
 !
-         IF( M.EQ.L-1 ) THEN
-            IF( ICOMPZ.GT.0 ) THEN
+         IF( M == L-1 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                CALL DLAEV2( D( L-1 ), E( L-1 ), D( L ), RT1, RT2, C, S )
                WORK( M ) = C
                WORK( N-1+M ) = S
@@ -11159,7 +10868,7 @@
             GO TO 140
          END IF
 !
-         IF( JTOT.EQ.NMAXIT ) GO TO 140
+         IF( JTOT == NMAXIT ) GO TO 140
          JTOT = JTOT + 1
 !
 !        Form shift.
@@ -11179,7 +10888,7 @@
             F = S*E( I )
             B = C*E( I )
             CALL DLARTG( G, F, C, S, R )
-            IF( I.NE.M ) E( I-1 ) = R
+            IF( I/=M ) E( I-1 ) = R
             G = D( I ) - P
             R = ( D( I+1 )-G )*S + TWO*C*B
             P = S*R
@@ -11188,7 +10897,7 @@
 !
 !           If eigenvectors are desired, then save rotations.
 !
-            IF( ICOMPZ.GT.0 ) THEN
+            IF( ICOMPZ > 0 ) THEN
                WORK( I ) = C
                WORK( N-1+I ) = S
             END IF
@@ -11197,7 +10906,7 @@
 !
 !        If eigenvectors are desired, then apply saved rotations.
 !
-         IF( ICOMPZ.GT.0 ) THEN
+         IF( ICOMPZ > 0 ) THEN
             MM = L - M + 1
             CALL ZLASR('R', 'V', 'F', N, MM, WORK(M), WORK(N-1+M), Z(1,M), LDZ)
          END IF
@@ -11220,10 +10929,10 @@
 !     Undo scaling if necessary
 !
   140 CONTINUE
-      IF( ISCALE.EQ.1 ) THEN
+      IF( ISCALE == 1 ) THEN
          CALL DLASCL('G', 0, 0, SSFMAX, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
          CALL DLASCL('G', 0, 0, SSFMAX, ANORM, LENDSV-LSV, 1, E( LSV ), N, INFO)
-      ELSE IF( ISCALE.EQ.2 ) THEN
+      ELSE IF( ISCALE == 2 ) THEN
          CALL DLASCL('G', 0, 0, SSFMIN, ANORM, LENDSV-LSV+1, 1, D(LSV), N, INFO)
          CALL DLASCL('G', 0, 0, SSFMIN, ANORM, LENDSV-LSV, 1, E(LSV), N, INFO)
       END IF
@@ -11231,9 +10940,9 @@
 !     Check for no convergence to an eigenvalue after a total
 !     of N*MAXIT iterations.
 !
-      IF( JTOT.EQ.NMAXIT ) THEN
+      IF( JTOT == NMAXIT ) THEN
          DO 150 I = 1, N - 1
-            IF( E( I ).NE.ZERO ) INFO = INFO + 1
+            IF( E( I )/=ZERO ) INFO = INFO + 1
   150    CONTINUE
          RETURN
       END IF
@@ -11242,7 +10951,7 @@
 !     Order eigenvalues and eigenvectors.
 !
   160 CONTINUE
-      IF( ICOMPZ.EQ.0 ) THEN
+      IF( ICOMPZ == 0 ) THEN
 !
 !        Use Quick Sort
 !
@@ -11257,12 +10966,12 @@
             K = I
             P = D( I )
             DO 170 J = II, N
-               IF( D( J ).LT.P ) THEN
+               IF( D( J ) < P ) THEN
                   K = J
                   P = D( J )
                END IF
   170       CONTINUE
-            IF( K.NE.I ) THEN
+            IF( K/=I ) THEN
                D( K ) = D( I )
                D( I ) = P
                CALL ZSWAP( N, Z( 1, I ), 1, Z( 1, K ), 1 )
@@ -11280,19 +10989,19 @@
 !     jack dongarra, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      complex(kind=kind(1.0d0)) zx(*),zy(*),ztemp
-      integer i,incx,incy,ix,iy,n
+      CPX zx(*),zy(*),ztemp
+      INT i,incx,incy,ix,iy,n
 !
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      if (n <= 0) return
+      if (incx == 1 AND incy == 1)go to 20
 !
 !       code for unequal increments or equal increments not equal
 !         to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx < 0)ix = (-n+1)*incx + 1
+      if (incy < 0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         ztemp = zx(ix)
         zx(ix) = zy(iy)
@@ -11321,7 +11030,7 @@
       INTEGER            INFO, K, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -11348,7 +11057,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the (n-k+i)-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by ZGEQLF in the last k columns of its array
@@ -11358,11 +11067,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (K)
+!  TAU     (input) CPX array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZGEQLF.
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension (N)
+!  WORK    (workspace) CPX array, dimension (N)
 !
 !  INFO    (output) INTEGER
 !          = 0: successful exit
@@ -11370,9 +11079,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, II, J, L
@@ -11380,31 +11086,28 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARF, ZSCAL
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUNG2L', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
 !     Initialise columns 1:n-k to columns of the unit matrix
 !
@@ -11447,7 +11150,7 @@
       INTEGER            INFO, K, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -11474,7 +11177,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the i-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by ZGEQRF in the first k columns of its array
@@ -11484,11 +11187,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (K)
+!  TAU     (input) CPX array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZGEQRF.
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension (N)
+!  WORK    (workspace) CPX array, dimension (N)
 !
 !  INFO    (output) INTEGER
 !          = 0: successful exit
@@ -11496,9 +11199,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE, ZERO
-      PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ), ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       INTEGER            I, J, L
@@ -11506,31 +11206,28 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARF, ZSCAL
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUNG2R', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) RETURN
+      IF( N <= 0 ) RETURN
 !
 !     Initialise columns k+1:n to columns of the unit matrix
 !
@@ -11545,12 +11242,12 @@
 !
 !        Apply H(i) to A(i:m,i:n) from the left
 !
-         IF( I.LT.N ) THEN
+         IF( I < N ) THEN
             A( I, I ) = ONE
             CALL ZLARF( 'Left', M-I+1, N-I, A( I, I ), 1, TAU( I ), &
                         A( I, I+1 ), LDA, WORK )
          END IF
-         IF( I.LT.M ) CALL ZSCAL( M-I, -TAU( I ), A( I+1, I ), 1 )
+         IF( I < M ) CALL ZSCAL( M-I, -TAU( I ), A( I+1, I ), 1 )
          A( I, I ) = ONE - TAU( I )
 !
 !        Set A(1:i-1,i) to zero
@@ -11575,7 +11272,7 @@
       INTEGER            INFO, K, LDA, LWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -11602,7 +11299,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the (n-k+i)-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by ZGEQLF in the last k columns of its array
@@ -11612,11 +11309,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (K)
+!  TAU     (input) CPX array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZGEQLF.
 !
-!  WORK    (workspace/output) complex(kind=kind(1.0d0)) array, dimension (LWORK)
+!  WORK    (workspace/output) CPX array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -11635,9 +11332,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY
@@ -11646,9 +11340,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARFB, ZLARFT, ZUNG2L
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -11662,19 +11353,19 @@
       NB = ILAENV( 1, 'ZUNGQL', ' ', M, N, K, -1 )
       LWKOPT = MAX( 1, N )*NB
       WORK( 1 ) = LWKOPT
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( M.LT.0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUNGQL', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -11683,7 +11374,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -11691,18 +11382,18 @@
       NBMIN = 2
       NX = 0
       IWS = N
-      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+      IF( NB > 1  AND  NB < K ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code.
 !
          NX = MAX( 0, ILAENV( 3, 'ZUNGQL', ' ', M, N, K, -1 ) )
-         IF( NX.LT.K ) THEN
+         IF( NX < K ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  reduce NB and
 !              determine the minimum value of NB.
@@ -11713,7 +11404,7 @@
          END IF
       END IF
 !
-      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+      IF( NB.GE.NBMIN  AND  NB < K  AND  NX < K ) THEN
 !
 !        Use blocked code after the first block.
 !        The last kk columns are handled by the block method.
@@ -11735,13 +11426,13 @@
 !
       CALL ZUNG2L( M-KK, N-KK, K-KK, A, LDA, TAU, WORK, IINFO )
 !
-      IF( KK.GT.0 ) THEN
+      IF( KK > 0 ) THEN
 !
 !        Use blocked code
 !
          DO 50 I = K - KK + 1, K, NB
             IB = MIN( NB, K-I+1 )
-            IF( N-K+I.GT.1 ) THEN
+            IF( N-K+I > 1 ) THEN
 !
 !              Form the triangular factor of the block reflector
 !              H = H(i+ib-1) . . . H(i+1) H(i)
@@ -11789,7 +11480,7 @@
       INTEGER            INFO, K, LDA, LWORK, M, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -11816,7 +11507,7 @@
 !          The number of elementary reflectors whose product defines the
 !          matrix Q. N >= K >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the i-th column must contain the vector which
 !          defines the elementary reflector H(i), for i = 1,2,...,k, as
 !          returned by ZGEQRF in the first k columns of its array
@@ -11826,11 +11517,11 @@
 !  LDA     (input) INTEGER
 !          The first dimension of the array A. LDA >= max(1,M).
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (K)
+!  TAU     (input) CPX array, dimension (K)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZGEQRF.
 !
-!  WORK    (workspace/output) complex(kind=kind(1.0d0)) array, dimension (LWORK)
+!  WORK    (workspace/output) CPX array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -11849,9 +11540,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY
@@ -11860,9 +11548,6 @@
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARFB, ZLARFT, ZUNG2R
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 !     ..
 !     .. External Functions ..
       INTEGER            ILAENV
@@ -11876,19 +11561,19 @@
       NB = ILAENV( 1, 'ZUNGQR', ' ', M, N, K, -1 )
       LWKOPT = MAX( 1, N )*NB
       WORK( 1 ) = LWKOPT
-      LQUERY = ( LWORK.EQ.-1 )
-      IF( M.LT.0 ) THEN
+      LQUERY = ( LWORK == -1 )
+      IF( M < 0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 .OR. N.GT.M ) THEN
+      ELSE IF( N < 0  OR  N > M ) THEN
          INFO = -2
-      ELSE IF( K.LT.0 .OR. K.GT.N ) THEN
+      ELSE IF( K < 0  OR  K > N ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA < MAX( 1, M ) ) THEN
          INFO = -5
-      ELSE IF( LWORK.LT.MAX( 1, N ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N )  AND   NOT LQUERY ) THEN
          INFO = -8
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUNGQR', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -11897,7 +11582,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.LE.0 ) THEN
+      IF( N <= 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -11905,18 +11590,18 @@
       NBMIN = 2
       NX = 0
       IWS = N
-      IF( NB.GT.1 .AND. NB.LT.K ) THEN
+      IF( NB > 1  AND  NB < K ) THEN
 !
 !        Determine when to cross over from blocked to unblocked code.
 !
          NX = MAX( 0, ILAENV( 3, 'ZUNGQR', ' ', M, N, K, -1 ) )
-         IF( NX.LT.K ) THEN
+         IF( NX < K ) THEN
 !
 !           Determine if workspace is large enough for blocked code.
 !
             LDWORK = N
             IWS = LDWORK*NB
-            IF( LWORK.LT.IWS ) THEN
+            IF( LWORK < IWS ) THEN
 !
 !              Not enough workspace to use optimal NB:  reduce NB and
 !              determine the minimum value of NB.
@@ -11927,7 +11612,7 @@
          END IF
       END IF
 !
-      IF( NB.GE.NBMIN .AND. NB.LT.K .AND. NX.LT.K ) THEN
+      IF( NB.GE.NBMIN  AND  NB < K  AND  NX < K ) THEN
 !
 !        Use blocked code after the last block.
 !        The first kk columns are handled by the block method.
@@ -11948,16 +11633,16 @@
 !
 !     Use unblocked code for the last or only block.
 !
-      IF( KK.LT.N ) CALL ZUNG2R( M-KK, N-KK, K-KK, A( KK+1, KK+1 ), LDA, &
+      IF( KK < N ) CALL ZUNG2R( M-KK, N-KK, K-KK, A( KK+1, KK+1 ), LDA, &
                       TAU( KK+1 ), WORK, IINFO )
 !
-      IF( KK.GT.0 ) THEN
+      IF( KK > 0 ) THEN
 !
 !        Use blocked code
 !
          DO 50 I = KI + 1, 1, -NB
             IB = MIN( NB, K-I+1 )
-            IF( I+IB.LE.N ) THEN
+            IF( I+IB <= N ) THEN
 !
 !              Form the triangular factor of the block reflector
 !              H = H(i) H(i+1) . . . H(i+ib-1)
@@ -12001,11 +11686,11 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDA, LWORK, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), TAU( * ), WORK( * )
+      CPX         A( LDA, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -12022,7 +11707,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U': Upper triangle of A contains elementary reflectors
 !                 from ZHETRD;
 !          = 'L': Lower triangle of A contains elementary reflectors
@@ -12031,7 +11716,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix Q. N >= 0.
 !
-!  A       (input/output) complex(kind=kind(1.0d0)) array, dimension (LDA,N)
+!  A       (input/output) CPX array, dimension (LDA,N)
 !          On entry, the vectors which define the elementary reflectors,
 !          as returned by ZHETRD.
 !          On exit, the N-by-N unitary matrix Q.
@@ -12039,11 +11724,11 @@
 !  LDA     (input) INTEGER
 !          The leading dimension of the array A. LDA >= N.
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (input) CPX array, dimension (N-1)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZHETRD.
 !
-!  WORK    (workspace/output) complex(kind=kind(1.0d0)) array, dimension (LWORK)
+!  WORK    (workspace/output) CPX array, dimension (LWORK)
 !          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 !
 !  LWORK   (input) INTEGER
@@ -12062,9 +11747,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO, ONE
-      PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ), ONE = ( 1.0D+0, 0.0D+0 ) )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            LQUERY, UPPER
@@ -12077,27 +11759,24 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZUNGQL, ZUNGQR
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
-      LQUERY = ( LWORK.EQ.-1 )
+      LQUERY = ( LWORK == -1 )
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA < MAX( 1, N ) ) THEN
          INFO = -4
-      ELSE IF( LWORK.LT.MAX( 1, N-1 ) .AND. .NOT.LQUERY ) THEN
+      ELSE IF( LWORK < MAX( 1, N-1 )  AND   NOT LQUERY ) THEN
          INFO = -7
       END IF
 !
-      IF( INFO.EQ.0 ) THEN
+      IF( INFO == 0 ) THEN
          IF( UPPER ) THEN
             NB = ILAENV( 1, 'ZUNGQL', ' ', N-1, N-1, N-1, -1 )
          ELSE
@@ -12107,7 +11786,7 @@
          WORK( 1 ) = LWKOPT
       END IF
 !
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUNGTR', -INFO )
          RETURN
       ELSE IF( LQUERY ) THEN
@@ -12116,7 +11795,7 @@
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) THEN
+      IF( N == 0 ) THEN
          WORK( 1 ) = 1
          RETURN
       END IF
@@ -12162,7 +11841,7 @@
          DO 60 I = 2, N
             A( I, 1 ) = ZERO
    60    CONTINUE
-         IF( N.GT.1 ) THEN
+         IF( N > 1 ) THEN
 !
 !           Generate Q(2:n,2:n)
 !
@@ -12183,11 +11862,11 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      CHARACTER          UPLO
+      CHR          UPLO
       INTEGER            INFO, LDQ, N
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         AP( * ), Q( LDQ, * ), TAU( * ), WORK( * )
+      CPX         AP( * ), Q( LDQ, * ), TAU( * ), WORK( * )
 !     ..
 !
 !  Purpose
@@ -12204,7 +11883,7 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U': Upper triangular packed storage used in previous
 !                 call to ZHPTRD;
 !          = 'L': Lower triangular packed storage used in previous
@@ -12213,21 +11892,21 @@
 !  N       (input) INTEGER
 !          The order of the matrix Q. N >= 0.
 !
-!  AP      (input) complex(kind=kind(1.0d0)) array, dimension (N*(N+1)/2)
+!  AP      (input) CPX array, dimension (N*(N+1)/2)
 !          The vectors which define the elementary reflectors, as
 !          returned by ZHPTRD.
 !
-!  TAU     (input) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  TAU     (input) CPX array, dimension (N-1)
 !          TAU(i) must contain the scalar factor of the elementary
 !          reflector H(i), as returned by ZHPTRD.
 !
-!  Q       (output) complex(kind=kind(1.0d0)) array, dimension (LDQ,N)
+!  Q       (output) CPX array, dimension (LDQ,N)
 !          The N-by-N unitary matrix Q.
 !
 !  LDQ     (input) INTEGER
 !          The leading dimension of the array Q. LDQ >= max(1,N).
 !
-!  WORK    (workspace) complex(kind=kind(1.0d0)) array, dimension (N-1)
+!  WORK    (workspace) CPX array, dimension (N-1)
 !
 !  INFO    (output) INTEGER
 !          = 0:  successful exit
@@ -12235,9 +11914,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         CZERO, CONE
-      PARAMETER          (CZERO = ( 0.0D+0, 0.0D+0 ), CONE = ( 1.0D+0, 0.0D+0 ))
 !     ..
 !     .. Local Scalars ..
       LOGICAL            UPPER
@@ -12246,30 +11922,27 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA, ZUNG2L, ZUNG2R
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input arguments
 !
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF(  NOT UPPER  AND   NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N < 0 ) THEN
          INFO = -2
-      ELSE IF( LDQ.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDQ < MAX( 1, N ) ) THEN
          INFO = -6
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZUPGTR', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N == 0 ) RETURN
 !
       IF( UPPER ) THEN
 !
@@ -12286,12 +11959,12 @@
                IJ = IJ + 1
    10       CONTINUE
             IJ = IJ + 2
-            Q( N, J ) = CZERO
+            Q( N, J ) = ZERO
    20    CONTINUE
          DO 30 I = 1, N - 1
-            Q( I, N ) = CZERO
+            Q( I, N ) = ZERO
    30    CONTINUE
-         Q( N, N ) = CONE
+         Q( N, N ) = ONE
 !
 !        Generate Q(1:n-1,1:n-1)
 !
@@ -12305,20 +11978,20 @@
 !        set the first row and column of Q equal to those of the unit
 !        matrix
 !
-         Q( 1, 1 ) = CONE
+         Q( 1, 1 ) = ONE
          DO 40 I = 2, N
-            Q( I, 1 ) = CZERO
+            Q( I, 1 ) = ZERO
    40    CONTINUE
          IJ = 3
          DO 60 J = 2, N
-            Q( 1, J ) = CZERO
+            Q( 1, J ) = ZERO
             DO 50 I = J + 1, N
                Q( I, J ) = AP( IJ )
                IJ = IJ + 1
    50       CONTINUE
             IJ = IJ + 2
    60    CONTINUE
-         IF( N.GT.1 ) THEN
+         IF( N > 1 ) THEN
 !
 !           Generate Q(2:n,2:n)
 !
