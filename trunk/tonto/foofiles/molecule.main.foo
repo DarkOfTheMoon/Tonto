@@ -81,13 +81,17 @@ contains
    ! name of the cif file concatenated with the data block name.  
       cif :: CIF
       found :: BIN, optional, OUT
-      ENSURE(cif.file.created,"no CIF file name")
-      ENSURE(cif.file.name/=" ","no CIF file name")
+   ENSURE(cif.file.created,"no CIF file name")
+   ENSURE(cif.file.name/=" ","no CIF file name")
+      fnd :: BIN
       head :: STR
       if (NOT cif.file.is_open) cif.open
-      cif.find_crystal_data_block(found)
+      cif.find_crystal_data_block(fnd)
       if (present(found)) then
+         found = fnd
          if (NOT found) return
+      else 
+         DIE_IF(NOT fnd,"couldn't find crystal data block")
       end
       .CIF_data_block_name = cif.data_block_name ! <<<<<<<<<
       head = cif.file.name.filename_head
@@ -188,17 +192,17 @@ contains
       cif.create(.CIF_file_name)
       do
          main.find_CIF_crystal_data_block(cif,found)
-         if (NOT found) exit            ! No more crystal data blocks
-         main.process_CIF_data_block(cif)   ! Read new crystal, atom info
+         if (NOT found) exit              ! No more crystal data blocks
+         main.process_CIF_data_block(cif) ! Read new crystal, atom info
          .cluster.create(.crystal,.atom)
          .cluster.radius = ZERO       
          .cluster.generation_method = "fragment"
          .cluster.start_with_fragment = TRUE
          .cluster.defragment = FALSE
-         .cluster.make_info             ! Create the cluster
+         .cluster.make_info               ! Create the cluster
          .cluster.put
-         main.put_CX_data(CX_file)          ! Write out the data
-         .destroy                       ! Destroy self, create from cif
+         main.put_CX_data(CX_file)        ! Write out the data
+         .destroy                         ! Destroy self, create from cif
          .create
          cif.start_of_data = cif.end_of_data  
       end
@@ -258,6 +262,98 @@ contains
      stdout.text("Spartan data")
      .cluster.put_spartan(CX_label)     ! Spartan data
      stdout => save                     ! Put back stdout
+   end
+
+   read_rotate
+   ! Rotate the whole molecule using matrix defined by its rotation "axis" and
+   ! the "angle" of rotation around that axis, which are both inputted.
+      self :: target
+      main :: MOLECULE.MAIN*
+      R :: MAT{REAL}(3,3)
+      axis :: VEC{REAL}(3)
+      angle :: REAL
+      main => self
+      stdin.read(axis)
+      stdin.read(angle)
+      R.to_3x3_rotation_matrix(axis,angle)
+      main.rotate_by(R)
+   end
+
+   rotate_by(R)
+   ! Rotate the whole molecule using matrix "R" which specifies how positions in
+   ! space are to be transformed i.e. x' = Rx.
+      self :: target
+      R :: MAT{REAL}
+   ENSURE(R.is_square,"rotation matrix is not square")
+   ENSURE(R.dim1==3,"rotation matrix must be 3x3")
+      main :: MOLECULE.MAIN*
+      main => self
+      .atom.rotate_by(R)
+      main.rotate_molecular_orbitals(R)
+   end
+
+   rotate_molecular_orbitals(R)
+   ! Rotate the whole molecule using matrix "R" which specifies how positions in
+   ! space are to be transformed i.e. x' = Rx.
+      self :: target
+      R :: MAT{REAL}
+      mo_kind :: STR
+      main :: MOLECULE.MAIN*
+      main => self
+      if (.molecular_orbitals.destroyed) return
+      if (.molecular_orbitals.all_destroyed) return
+      mo_kind = .molecular_orbitals.spinorbital_kind
+      select case(mo_kind)
+         case("restricted")
+                  main.rotate_orbitals(.molecular_orbitals.restricted,R)
+         case("unrestricted")
+                  main.rotate_orbitals(.molecular_orbitals.alpha,R)
+                  main.rotate_orbitals(.molecular_orbitals.beta,R)
+         case("general")
+                  main.rotate_orbitals(.molecular_orbitals.general.alpha_alpha,R)
+                  main.rotate_orbitals(.molecular_orbitals.general.alpha_beta,R)
+                  main.rotate_orbitals(.molecular_orbitals.general.beta_alpha,R)
+                  main.rotate_orbitals(.molecular_orbitals.general.beta_beta,R)
+         case("restricted_complex")
+                ! main.rotate_orbitals(.molecular_orbitals.restricted_complex,R)
+         case("unrestricted_complex")
+                ! main.rotate_orbitals(.molecular_orbitals.alpha_complex,R)
+                ! main.rotate_orbitals(.molecular_orbitals.beta_complex,R)
+         case("general_complex")
+                ! main.rotate_orbitals(.molecular_orbitals.general_complex.alpha_alpha,R)
+                ! main.rotate_orbitals(.molecular_orbitals.general_complex.alpha_beta,R)
+                ! main.rotate_orbitals(.molecular_orbitals.general_complex.beta_alpha,R)
+                ! main.rotate_orbitals(.molecular_orbitals.general_complex.beta_beta,R)
+         case default;   DIE("unknown kind, "//trim(mo_kind))
+      end
+      if (.density_matrix.created) then
+      if (.density_matrix.any_created) then
+         .make_scf_density_matrix
+      end
+      end
+   end
+
+   rotate_orbitals(MO,R)
+   ! Rotate the molecular orbitals "MO" using matrix "R", where "R" specifies
+   ! how positions in space are to be transformed i.e. x' = Rx.
+      MO,R :: MAT{REAL}
+   ENSURE(MO.dim1==.n_bf,"wrong dim1 for MO orbitals")
+   ENSURE(R.is_square,"rotation matrix R is not square")
+   ENSURE(R.dim1==3,"rotation matrix R is not 3x3")
+      new :: MAT{REAL}*
+      tr :: VEC{MAT_{REAL}}*
+      s,f,l,a :: INT
+      new.create(.n_bf,.n_bf)
+      tr.make_gaussian_xyz_matrices(R)
+      do s = 1,.n_shell
+         f = .first_basis_fn_for_shell(s)
+         l = .last_basis_fn_for_shell(s)
+         a = .angular_moment_for_shell(s)
+         new(f:l,:).to_product_of(tr(a)[:,:],MO(f:l,:))
+      end
+      MO = new
+      tr.destroy
+      new.destroy
    end
 
 ! *********
@@ -3469,6 +3565,7 @@ contains
       std_time.start
       stdin.create_stdin;   stdin.open
       stdout.create_stdout; stdout.open
+      stderr.create_stderr; stderr.open
       tonto.set_error_output_file(stdout)
       .create
       main => self
@@ -3691,6 +3788,8 @@ contains
         case ("process_cif                   "); main.process_CIF
         case ("process_cif_for_cx            "); main.process_CIF_for_CX
         case ("put_cx_data                   "); main.put_CX_data
+        ! Test commands ...
+        case ("rotate                        "); main.read_rotate
         case ("test_e_field_matrices         "); main.test_E_field_matrices
         case ("test_inv_sqrt_s               "); main.test_inv_sqrt_S
         case ("test_rchf_s                   "); main.test_rchf_S
