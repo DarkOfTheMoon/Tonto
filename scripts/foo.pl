@@ -278,6 +278,7 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{tonto}}    = &analyse_type_name('SYSTEM');
 %{$global_var_info{stdin}}    = &analyse_type_name('TEXTFILE');
 %{$global_var_info{stdout}}   = &analyse_type_name('TEXTFILE');
+%{$global_var_info{stderr}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
 
@@ -2161,6 +2162,7 @@ sub fortran_dump_use {
          if ($mod eq "TEXTFILE" && $first==0 && $mod ne $module_full_name) {
             print USEFILE "   use TEXTFILE_MODULE, only: stdin";
             print USEFILE "   use TEXTFILE_MODULE, only: stdout";
+            print USEFILE "   use TEXTFILE_MODULE, only: stderr";
             $first = 1;
          }
 
