@@ -1,3 +1,5 @@
+#include "../foofiles/macros"
+
       subroutine daxpy(n,da,dx,incx,dy,incy)
 !
 !     constant times a vector plus a vector.
@@ -5,20 +7,20 @@
 !     jack dongarra, linpack, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision dx(*),dy(*),da
-      integer i,incx,incy,ix,iy,m,mp1,n
+      REAL dx(*),dy(*),da
+      INT i,incx,incy,ix,iy,m,mp1,n
 !
-      if(n.le.0)return
-      if (da .eq. 0.0d0) return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      if (n<=0) return
+      if (da == ZERO) return
+      if (incx==1 AND incy==1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx<0)ix = (-n+1)*incx + 1
+      if (incy<0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         dy(iy) = dy(iy) + da*dx(ix)
         ix = ix + incx
@@ -32,11 +34,11 @@
 !        clean-up loop
 !
    20 m = mod(n,4)
-      if( m .eq. 0 ) go to 40
+      if ( m == 0 ) go to 40
       do 30 i = 1,m
         dy(i) = dy(i) + da*dx(i)
    30 continue
-      if( n .lt. 4 ) return
+      if ( n < 4 ) return
    40 mp1 = m + 1
       do 50 i = mp1,n,4
         dy(i) = dy(i) + da*dx(i)
@@ -53,19 +55,19 @@
 !     jack dongarra, linpack, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      double precision dx(*),dy(*)
-      integer i,incx,incy,ix,iy,m,mp1,n
+      REAL dx(*),dy(*)
+      INT i,incx,incy,ix,iy,m,mp1,n
 !
-      if(n.le.0)return
-      if(incx.eq.1.and.incy.eq.1)go to 20
+      if (n<=0) return
+      if (incx==1 AND incy==1)go to 20
 !
 !        code for unequal increments or equal increments
 !          not equal to 1
 !
       ix = 1
       iy = 1
-      if(incx.lt.0)ix = (-n+1)*incx + 1
-      if(incy.lt.0)iy = (-n+1)*incy + 1
+      if (incx<0)ix = (-n+1)*incx + 1
+      if (incy<0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
         dy(iy) = dx(ix)
         ix = ix + incx
@@ -79,11 +81,11 @@
 !        clean-up loop
 !
    20 m = mod(n,7)
-      if( m .eq. 0 ) go to 40
+      if ( m == 0 ) go to 40
       do 30 i = 1,m
         dy(i) = dx(i)
    30 continue
-      if( n .lt. 7 ) return
+      if ( n < 7 ) return
    40 mp1 = m + 1
       do 50 i = mp1,n,7
         dy(i) = dx(i)
@@ -98,11 +100,11 @@
       end
       SUBROUTINE DGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC )
 !     .. Scalar Arguments ..
-      character(len=1)        TRANSA, TRANSB
+      STR(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
-      DOUBLE PRECISION   ALPHA, BETA
+      REAL   ALPHA, BETA
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * ), C( LDC, * )
+      REAL   A( LDA, * ), B( LDB, * ), C( LDC, * )
 !     ..
 !
 !  Purpose
@@ -122,7 +124,7 @@
 !  Parameters
 !  ==========
 !
-!  TRANSA - character(len=1).
+!  TRANSA - STR(len=1).
 !           On entry, TRANSA specifies the form of op( A ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -134,7 +136,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANSB - character(len=1).
+!  TRANSB - STR(len=1).
 !           On entry, TRANSB specifies the form of op( B ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -163,11 +165,11 @@
 !           be at least  zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, ka ), where ka is
+!  A      - REAL array of DIMENSION ( LDA, ka ), where ka is
 !           k  when  TRANSA = 'N' or 'n',  and is  m  otherwise.
 !           Before entry with  TRANSA = 'N' or 'n',  the leading  m by k
 !           part of the array  A  must contain the matrix  A,  otherwise
@@ -182,7 +184,7 @@
 !           least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  B      - DOUBLE PRECISION array of DIMENSION ( LDB, kb ), where kb is
+!  B      - REAL array of DIMENSION ( LDB, kb ), where kb is
 !           n  when  TRANSB = 'N' or 'n',  and is  k  otherwise.
 !           Before entry with  TRANSB = 'N' or 'n',  the leading  k by n
 !           part of the array  B  must contain the matrix  B,  otherwise
@@ -197,12 +199,12 @@
 !           least  max( 1, n ).
 !           Unchanged on exit.
 !
-!  BETA   - DOUBLE PRECISION.
+!  BETA   - REAL.
 !           On entry,  BETA  specifies the scalar  beta.  When  BETA  is
 !           supplied as zero then C need not be set on input.
 !           Unchanged on exit.
 !
-!  C      - DOUBLE PRECISION array of DIMENSION ( LDC, n ).
+!  C      - REAL array of DIMENSION ( LDC, n ).
 !           Before entry, the leading  m by n  part of the array  C must
 !           contain the matrix  C,  except when  beta  is zero, in which
 !           case C need not be set on entry.
@@ -227,24 +229,19 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
-      LOGICAL            NOTA, NOTB
+      LOGICAL           NOTA, NOTB
       INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
-      DOUBLE PRECISION   TEMP
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
+      REAL   TEMP
 !     ..
 !     .. Executable Statements ..
 !
-!     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
+!     Set NOTA  and NOTB  as  true if  A  and  B  respectively are not
 !     transposed and set  NROWA, NCOLA and  NROWB  as the number of rows
 !     and  columns of  A  and the  number of  rows  of  B  respectively.
 !
-      NOTA  = scan(TRANSA,"Nn") > 0
-      NOTB  = scan(TRANSB,"Nn") > 0
+     NOTA  = scan(TRANSA,"Nn") > 0
+     NOTB  = scan(TRANSB,"Nn") > 0
       IF( NOTA )THEN
          NROWA = M
          NCOLA = K
@@ -261,42 +258,42 @@
 !     Test the input parameters.
 !
       INFO = 0
-      IF(      ( .NOT.NOTA                 ).AND. &
-               ( .NOT. scan(TRANSA, 'Cc' )>0 ).AND. &
-               ( .NOT. scan(TRANSA, 'Tt' )>0 )      )THEN
+      IF(      ( NOT NOTA                 ) AND  &
+               ( NOT  scan(TRANSA, 'Cc' )>0 ) AND  &
+               ( NOT  scan(TRANSA, 'Tt' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT.NOTB                 ).AND. &
-               ( .NOT. scan( TRANSB, 'Cc' )>0 ).AND. &
-               ( .NOT. scan( TRANSB, 'Tt' )>0 )      )THEN
+      ELSE IF( ( NOT NOTB                 ) AND  &
+               ( NOT  scan( TRANSB, 'Cc' )>0 ) AND  &
+               ( NOT  scan( TRANSB, 'Tt' )>0 )      )THEN
          INFO = 2
-      ELSE IF( M  .LT.0               )THEN
+      ELSE IF( M  <0               )THEN
          INFO = 3
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 4
-      ELSE IF( K  .LT.0               )THEN
+      ELSE IF( K  <0               )THEN
          INFO = 5
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 8
-      ELSE IF( LDB.LT.MAX( 1, NROWB ) )THEN
+      ELSE IF( LDB<MAX( 1, NROWB ) )THEN
          INFO = 10
-      ELSE IF( LDC.LT.MAX( 1, M     ) )THEN
+      ELSE IF( LDC<MAX( 1, M     ) )THEN
          INFO = 13
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DGEMM ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR. &
-          ( ( ( ALPHA.EQ.ZERO ).OR.( K.EQ.0 ) ).AND.( BETA.EQ.ONE ) ) ) &
+      IF( ( M==0 ) OR ( N==0 ) OR  &
+          ( ( ( ALPHA==ZERO ) OR ( K==0 ) ) AND ( BETA==ONE ) ) ) &
          RETURN
 !
-!     And if  alpha.eq.zero.
+!     And if  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
-         IF( BETA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
+         IF( BETA==ZERO )THEN
             DO 20, J = 1, N
                DO 10, I = 1, M
                   C( I, J ) = ZERO
@@ -320,17 +317,17 @@
 !           Form  C := alpha*A*B + beta*C.
 !
             DO 90, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 50, I = 1, M
                      C( I, J ) = ZERO
    50             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 60, I = 1, M
                      C( I, J ) = BETA*C( I, J )
    60             CONTINUE
                END IF
                DO 80, L = 1, K
-                  IF( B( L, J ).NE.ZERO )THEN
+                  IF( B( L, J )/=ZERO )THEN
                      TEMP = ALPHA*B( L, J )
                      DO 70, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
@@ -348,7 +345,7 @@
                   DO 100, L = 1, K
                      TEMP = TEMP + A( L, I )*B( L, J )
   100             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -362,17 +359,17 @@
 !           Form  C := alpha*A*B' + beta*C
 !
             DO 170, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 130, I = 1, M
                      C( I, J ) = ZERO
   130             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 140, I = 1, M
                      C( I, J ) = BETA*C( I, J )
   140             CONTINUE
                END IF
                DO 160, L = 1, K
-                  IF( B( J, L ).NE.ZERO )THEN
+                  IF( B( J, L )/=ZERO )THEN
                      TEMP = ALPHA*B( J, L )
                      DO 150, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
@@ -390,7 +387,7 @@
                   DO 180, L = 1, K
                      TEMP = TEMP + A( L, I )*B( J, L )
   180             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -407,11 +404,11 @@
       END
       SUBROUTINE DGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA, BETA
+      REAL   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
-      character(len=1)        TRANS
+      STR(len=1)        TRANS
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      REAL   A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -427,7 +424,7 @@
 !  Parameters
 !  ==========
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry, TRANS specifies the operation to be performed as
 !           follows:
 !
@@ -449,11 +446,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+!  A      - REAL array of DIMENSION ( LDA, n ).
 !           Before entry, the leading m by n part of the array A must
 !           contain the matrix of coefficients.
 !           Unchanged on exit.
@@ -464,7 +461,7 @@
 !           max( 1, m ).
 !           Unchanged on exit.
 !
-!  X      - DOUBLE PRECISION array of DIMENSION at least
+!  X      - REAL array of DIMENSION at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
 !           and at least
 !           ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
@@ -477,12 +474,12 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  BETA   - DOUBLE PRECISION.
+!  BETA   - REAL.
 !           On entry, BETA specifies the scalar beta. When BETA is
 !           supplied as zero then Y need not be set on input.
 !           Unchanged on exit.
 !
-!  Y      - DOUBLE PRECISION array of DIMENSION at least
+!  Y      - REAL array of DIMENSION at least
 !           ( 1 + ( m - 1 )*abs( INCY ) ) when TRANS = 'N' or 'n'
 !           and at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ) otherwise.
@@ -505,46 +502,41 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      REAL   TEMP
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( TRANS, 'Nn' )>0.AND. &
-               .NOT. scan( TRANS, 'Tt' )>0.AND. &
-               .NOT. scan( TRANS, 'Cc' )>0      )THEN
+      IF     ( NOT  scan( TRANS, 'Nn' )>0 AND  &
+               NOT  scan( TRANS, 'Tt' )>0 AND  &
+               NOT  scan( TRANS, 'Cc' )>0      )THEN
          INFO = 1
-      ELSE IF( M.LT.0 )THEN
+      ELSE IF( M<0 )THEN
          INFO = 2
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 3
-      ELSE IF( LDA.LT.MAX( 1, M ) )THEN
+      ELSE IF( LDA<MAX( 1, M ) )THEN
          INFO = 6
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 8
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 11
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DGEMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR. &
-          ( ( ALPHA.EQ.ZERO ).AND.( BETA.EQ.ONE ) ) ) &
+      IF( ( M==0 ) OR ( N==0 ) OR  &
+          ( ( ALPHA==ZERO ) AND ( BETA==ONE ) ) ) &
          RETURN
 !
 !     Set  LENX  and  LENY, the lengths of the vectors x and y, and set
@@ -573,9 +565,9 @@
 !
 !     First form  y := beta*y.
 !
-      IF( BETA.NE.ONE )THEN
-         IF( INCY.EQ.1 )THEN
-            IF( BETA.EQ.ZERO )THEN
+      IF( BETA/=ONE )THEN
+         IF( INCY==1 )THEN
+            IF( BETA==ZERO )THEN
                DO 10, I = 1, LENY
                   Y( I ) = ZERO
    10          CONTINUE
@@ -586,7 +578,7 @@
             END IF
          ELSE
             IY = KY
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 30, I = 1, LENY
                   Y( IY ) = ZERO
                   IY      = IY   + INCY
@@ -599,15 +591,15 @@
             END IF
          END IF
       END IF
-      IF( ALPHA.EQ.ZERO ) RETURN
+      IF( ALPHA==ZERO ) RETURN
       IF(  scan( TRANS, 'Nn' )>0 )THEN
 !
 !        Form  y := alpha*A*x + y.
 !
          JX = KX
-         IF( INCY.EQ.1 )THEN
+         IF( INCY==1 )THEN
             DO 60, J = 1, N
-               IF( X( JX ).NE.ZERO )THEN
+               IF( X( JX )/=ZERO )THEN
                   TEMP = ALPHA*X( JX )
                   DO 50, I = 1, M
                      Y( I ) = Y( I ) + TEMP*A( I, J )
@@ -617,7 +609,7 @@
    60       CONTINUE
          ELSE
             DO 80, J = 1, N
-               IF( X( JX ).NE.ZERO )THEN
+               IF( X( JX )/=ZERO )THEN
                   TEMP = ALPHA*X( JX )
                   IY   = KY
                   DO 70, I = 1, M
@@ -633,7 +625,7 @@
 !        Form  y := alpha*A'*x + y.
 !
          JY = KY
-         IF( INCX.EQ.1 )THEN
+         IF( INCX==1 )THEN
             DO 100, J = 1, N
                TEMP = ZERO
                DO 90, I = 1, M
@@ -663,10 +655,10 @@
       END
       SUBROUTINE DGER  ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA
+      REAL   ALPHA
       INTEGER            INCX, INCY, LDA, M, N
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      REAL   A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -692,11 +684,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  X      - DOUBLE PRECISION array of dimension at least
+!  X      - REAL array of dimension at least
 !           ( 1 + ( m - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the m
 !           element vector x.
@@ -707,7 +699,7 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  Y      - DOUBLE PRECISION array of dimension at least
+!  Y      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y.
@@ -718,7 +710,7 @@
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+!  A      - REAL array of DIMENSION ( LDA, n ).
 !           Before entry, the leading m by n part of the array A must
 !           contain the matrix of coefficients. On exit, A is
 !           overwritten by the updated matrix.
@@ -739,41 +731,36 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER        ( ZERO = 0.0D+0 )
 !     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      REAL   TEMP
       INTEGER            I, INFO, IX, J, JY, KX
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( M.LT.0 )THEN
+      IF     ( M<0 )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 5
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 7
-      ELSE IF( LDA.LT.MAX( 1, M ) )THEN
+      ELSE IF( LDA<MAX( 1, M ) )THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DGER  ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR.( ALPHA.EQ.ZERO ) ) RETURN
+      IF( ( M==0 ) OR ( N==0 ) OR ( ALPHA==ZERO ) ) RETURN
 !
 !     Start the operations. In this version the elements of A are
 !     accessed sequentially with one pass through A.
@@ -783,9 +770,9 @@
       ELSE
          JY = 1 - ( N - 1 )*INCY
       END IF
-      IF( INCX.EQ.1 )THEN
+      IF( INCX==1 )THEN
          DO 20, J = 1, N
-            IF( Y( JY ).NE.ZERO )THEN
+            IF( Y( JY )/=ZERO )THEN
                TEMP = ALPHA*Y( JY )
                DO 10, I = 1, M
                   A( I, J ) = A( I, J ) + X( I )*TEMP
@@ -800,7 +787,7 @@
             KX = 1 - ( M - 1 )*INCX
          END IF
          DO 40, J = 1, N
-            IF( Y( JY ).NE.ZERO )THEN
+            IF( Y( JY )/=ZERO )THEN
                TEMP = ALPHA*Y( JY )
                IX   = KX
                DO 30, I = 1, M
@@ -829,7 +816,7 @@
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -855,7 +842,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the m by n matrix to be factored.
 !          On exit, the factors L and U from the factorization
 !          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -877,10 +864,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
-!     ..
 !     .. Local Scalars ..
       INTEGER            J, JP
 !     ..
@@ -891,29 +874,26 @@
 !     .. External Subroutines ..
       EXTERNAL           DGER, DSCAL, DSWAP, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M<0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N<0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA<MAX( 1, M ) ) THEN
          INFO = -4
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DGETF2', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( M.EQ.0 .OR. N.EQ.0 ) RETURN
+      IF( M==0  OR  N==0 ) RETURN
 !
       DO 10 J = 1, MIN( M, N )
 !
@@ -921,22 +901,22 @@
 !
          JP = J - 1 + IDAMAX( M-J+1, A( J, J ), 1 )
          IPIV( J ) = JP
-         IF( A( JP, J ).NE.ZERO ) THEN
+         IF( A( JP, J )/=ZERO ) THEN
 !
 !           Apply the interchange to columns 1:N.
 !
-            IF( JP.NE.J ) CALL DSWAP( N, A( J, 1 ), LDA, A( JP, 1 ), LDA )
+            IF( JP/=J ) CALL DSWAP( N, A( J, 1 ), LDA, A( JP, 1 ), LDA )
 !
 !           Compute elements J+1:M of J-th column.
 !
-            IF( J.LT.M ) CALL DSCAL( M-J, ONE / A( J, J ), A( J+1, J ), 1 )
+            IF( J<M ) CALL DSCAL( M-J, ONE / A( J, J ), A( J+1, J ), 1 )
 !
-         ELSE IF( INFO.EQ.0 ) THEN
+         ELSE IF( INFO==0 ) THEN
 !
             INFO = J
          END IF
 !
-         IF( J.LT.MIN( M, N ) ) THEN
+         IF( J<MIN( M, N ) ) THEN
 !
 !           Update trailing submatrix.
 !
@@ -961,7 +941,7 @@
 !     ..
 !     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -987,7 +967,7 @@
 !  N       (input) INTEGER
 !          The number of columns of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the M-by-N matrix to be factored.
 !          On exit, the factors L and U from the factorization
 !          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -1009,10 +989,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
-!     ..
 !     .. Local Scalars ..
       INTEGER            I, IINFO, J, JB, NB
 !     ..
@@ -1023,34 +999,31 @@
       INTEGER            ILAENV
       EXTERNAL           ILAENV
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF( M.LT.0 ) THEN
+      IF( M<0 ) THEN
          INFO = -1
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N<0 ) THEN
          INFO = -2
-      ELSE IF( LDA.LT.MAX( 1, M ) ) THEN
+      ELSE IF( LDA<MAX( 1, M ) ) THEN
          INFO = -4
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DGETRF', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( M.EQ.0 .OR. N.EQ.0 ) RETURN
+      IF( M==0  OR  N==0 ) RETURN
 !
 !     Determine the block size for this environment.
 !
       NB = ILAENV( 1, 'DGETRF', ' ', M, N, -1, -1 )
-      IF( NB.LE.1 .OR. NB.GE.MIN( M, N ) ) THEN
+      IF( NB.LE.1  OR  NB.GE.MIN( M, N ) ) THEN
 !
 !        Use unblocked code.
 !
@@ -1069,7 +1042,7 @@
 !
 !           Adjust INFO and the pivot indices.
 !
-            IF( INFO.EQ.0 .AND. IINFO.GT.0 ) INFO = IINFO + J - 1
+            IF( INFO==0  AND  IINFO.GT.0 ) INFO = IINFO + J - 1
             DO 10 I = J, MIN( M, J+JB-1 )
                IPIV( I ) = J - 1 + IPIV( I )
    10       CONTINUE
@@ -1112,7 +1085,7 @@
 !     September 30, 1994
 !
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   CS, F, G, R, SN
+      REAL   CS, F, G, R, SN
 !     ..
 !
 !  Purpose
@@ -1136,60 +1109,49 @@
 !  Arguments
 !  =========
 !
-!  F       (input) DOUBLE PRECISION
+!  F       (input) REAL
 !          The first component of vector to be rotated.
 !
-!  G       (input) DOUBLE PRECISION
+!  G       (input) REAL
 !          The second component of vector to be rotated.
 !
-!  CS      (output) DOUBLE PRECISION
+!  CS      (output) REAL
 !          The cosine of the rotation.
 !
-!  SN      (output) DOUBLE PRECISION
+!  SN      (output) REAL
 !          The sine of the rotation.
 !
-!  R       (output) DOUBLE PRECISION
+!  R       (output) REAL
 !          The nonzero component of the rotated vector.
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
-      PARAMETER          ( TWO = 2.0D0 )
-!     ..
 !     .. Local Scalars ..
       LOGICAL            FIRST
       INTEGER            COUNT, I
-      DOUBLE PRECISION   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE, RAD
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          ABS, INT, LOG, MAX, SQRT
+      REAL   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE, RAD
 !     ..
 !     .. Save statement ..
       SAVE               FIRST, SAFMX2, SAFMIN, SAFMN2
 !     ..
 !     .. Data statements ..
-      DATA               FIRST / .TRUE. /
+      DATA               FIRST / TRUE /
 !     ..
 !     .. Executable Statements ..
 !
       IF( FIRST ) THEN
-         FIRST = .FALSE.
+         FIRST = FALSE
          SAFMIN = tiny(ZERO)
          RAD = radix(ZERO)
          EPS = epsilon(ZERO)/RAD
-         SAFMN2 = RAD**INT( LOG( SAFMIN / EPS ) / LOG(RAD) / TWO )
+         SAFMN2 = RAD**int( log( SAFMIN / EPS ) / log(RAD) / TWO )
          SAFMX2 = ONE / SAFMN2
       END IF
-      IF( G.EQ.ZERO ) THEN
+      IF( G==ZERO ) THEN
          CS = ONE
          SN = ZERO
          R = F
-      ELSE IF( F.EQ.ZERO ) THEN
+      ELSE IF( F==ZERO ) THEN
          CS = ZERO
          SN = ONE
          R = G
@@ -1230,7 +1192,7 @@
             CS = F1 / R
             SN = G1 / R
          END IF
-         IF( ABS( F ).GT.ABS( G ) .AND. CS.LT.ZERO ) THEN
+         IF( ABS( F ).GT.ABS( G )  AND  CS<ZERO ) THEN
             CS = -CS
             SN = -SN
             R = -R
@@ -1243,11 +1205,11 @@
       END
       SUBROUTINE DSYMV ( UPLO, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA, BETA
+      REAL   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      REAL   A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -1263,7 +1225,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the array A is to be referenced as
 !           follows:
@@ -1281,11 +1243,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+!  A      - REAL array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular part of the symmetric matrix and the strictly
@@ -1302,7 +1264,7 @@
 !           max( 1, n ).
 !           Unchanged on exit.
 !
-!  X      - DOUBLE PRECISION array of dimension at least
+!  X      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -1313,12 +1275,12 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  BETA   - DOUBLE PRECISION.
+!  BETA   - REAL.
 !           On entry, BETA specifies the scalar beta. When BETA is
 !           supplied as zero then Y need not be set on input.
 !           Unchanged on exit.
 !
-!  Y      - DOUBLE PRECISION array of dimension at least
+!  Y      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y. On exit, Y is overwritten by the updated
@@ -1339,42 +1301,36 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP1, TEMP2
+      REAL   TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO, 'Uu' )>0.AND. &
-               .NOT. scan( UPLO, 'Ll' )>0      )THEN
+      IF     ( NOT  scan( UPLO, 'Uu' )>0 AND  &
+               NOT  scan( UPLO, 'Ll' )>0      )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 5
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 7
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 10
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DSYMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ( ALPHA.EQ.ZERO ).AND.( BETA.EQ.ONE ) ) ) RETURN
+      IF( ( N==0 ) OR ( ( ALPHA==ZERO ) AND ( BETA==ONE ) ) ) RETURN
 !
 !     Set up the start points in  X  and  Y.
 !
@@ -1395,9 +1351,9 @@
 !
 !     First form  y := beta*y.
 !
-      IF( BETA.NE.ONE )THEN
-         IF( INCY.EQ.1 )THEN
-            IF( BETA.EQ.ZERO )THEN
+      IF( BETA/=ONE )THEN
+         IF( INCY==1 )THEN
+            IF( BETA==ZERO )THEN
                DO 10, I = 1, N
                   Y( I ) = ZERO
    10          CONTINUE
@@ -1408,7 +1364,7 @@
             END IF
          ELSE
             IY = KY
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 30, I = 1, N
                   Y( IY ) = ZERO
                   IY      = IY   + INCY
@@ -1421,12 +1377,12 @@
             END IF
          END IF
       END IF
-      IF( ALPHA.EQ.ZERO ) RETURN
+      IF( ALPHA==ZERO ) RETURN
       IF( scan( UPLO, 'Uu' )>0 )THEN
 !
 !        Form  y  when A is stored in upper triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
                TEMP1 = ALPHA*X( J )
                TEMP2 = ZERO
@@ -1459,7 +1415,7 @@
 !
 !        Form  y  when A is stored in lower triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 100, J = 1, N
                TEMP1  = ALPHA*X( J )
                TEMP2  = ZERO
@@ -1499,11 +1455,11 @@
       END
       SUBROUTINE DSYR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA
+      REAL   ALPHA
       INTEGER            INCX, INCY, LDA, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      REAL   A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -1519,7 +1475,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the array A is to be referenced as
 !           follows:
@@ -1537,11 +1493,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  X      - DOUBLE PRECISION array of dimension at least
+!  X      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -1552,7 +1508,7 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  Y      - DOUBLE PRECISION array of dimension at least
+!  Y      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y.
@@ -1563,7 +1519,7 @@
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+!  A      - REAL array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular part of the symmetric matrix and the strictly
@@ -1593,46 +1549,41 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER        ( ZERO = 0.0D+0 )
 !     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP1, TEMP2
+      REAL   TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF ( .NOT. scan( UPLO, 'Uu' )>0.AND. .NOT. scan( UPLO, 'Ll' )>0 )THEN
+      IF ( NOT  scan( UPLO, 'Uu' )>0 AND  NOT  scan( UPLO, 'Ll' )>0 )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 5
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 7
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DSYR2 ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ALPHA.EQ.ZERO ) ) RETURN
+      IF( ( N==0 ) OR ( ALPHA==ZERO ) ) RETURN
 !
 !     Set up the start points in X and Y if the increments are not both
 !     unity.
 !
-      IF( ( INCX.NE.1 ).OR.( INCY.NE.1 ) )THEN
+      IF( ( INCX/=1 ) OR ( INCY/=1 ) )THEN
          IF( INCX.GT.0 )THEN
             KX = 1
          ELSE
@@ -1655,9 +1606,9 @@
 !
 !        Form  A  when A is stored in the upper triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 20, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1 = ALPHA*Y( J )
                   TEMP2 = ALPHA*X( J )
                   DO 10, I = 1, J
@@ -1667,7 +1618,7 @@
    20       CONTINUE
          ELSE
             DO 40, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1 = ALPHA*Y( JY )
                   TEMP2 = ALPHA*X( JX )
                   IX    = KX
@@ -1687,9 +1638,9 @@
 !
 !        Form  A  when A is stored in the lower triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1 = ALPHA*Y( J )
                   TEMP2 = ALPHA*X( J )
                   DO 50, I = J, N
@@ -1699,7 +1650,7 @@
    60       CONTINUE
          ELSE
             DO 80, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1 = ALPHA*Y( JY )
                   TEMP2 = ALPHA*X( JX )
                   IX    = JX
@@ -1724,11 +1675,11 @@
       END
       SUBROUTINE DSYR2K( UPLO, TRANS, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC )
 !     .. Scalar Arguments ..
-      character(len=1)        UPLO, TRANS
+      STR(len=1)        UPLO, TRANS
       INTEGER            N, K, LDA, LDB, LDC
-      DOUBLE PRECISION   ALPHA, BETA
+      REAL   ALPHA, BETA
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * ), C( LDC, * )
+      REAL   A( LDA, * ), B( LDB, * ), C( LDC, * )
 !     ..
 !
 !  Purpose
@@ -1749,7 +1700,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On  entry,   UPLO  specifies  whether  the  upper  or  lower
 !           triangular  part  of the  array  C  is to be  referenced  as
 !           follows:
@@ -1762,7 +1713,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry,  TRANS  specifies the operation to be performed as
 !           follows:
 !
@@ -1789,11 +1740,11 @@
 !           of rows of the matrices  A and B.  K must be at least  zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, ka ), where ka is
+!  A      - REAL array of DIMENSION ( LDA, ka ), where ka is
 !           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 !           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 !           part of the array  A  must contain the matrix  A,  otherwise
@@ -1808,7 +1759,7 @@
 !           be at least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  B      - DOUBLE PRECISION array of DIMENSION ( LDB, kb ), where kb is
+!  B      - REAL array of DIMENSION ( LDB, kb ), where kb is
 !           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 !           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 !           part of the array  B  must contain the matrix  B,  otherwise
@@ -1823,11 +1774,11 @@
 !           be at least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  BETA   - DOUBLE PRECISION.
+!  BETA   - REAL.
 !           On entry, BETA specifies the scalar beta.
 !           Unchanged on exit.
 !
-!  C      - DOUBLE PRECISION array of DIMENSION ( LDC, n ).
+!  C      - REAL array of DIMENSION ( LDC, n ).
 !           Before entry  with  UPLO = 'U' or 'u',  the leading  n by n
 !           upper triangular part of the array C must contain the upper
 !           triangular part  of the  symmetric matrix  and the strictly
@@ -1859,15 +1810,10 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, INFO, J, L, NROWA
-      DOUBLE PRECISION   TEMP1, TEMP2
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
+      REAL   TEMP1, TEMP2
 !     ..
 !     .. Executable Statements ..
 !
@@ -1881,40 +1827,40 @@
       UPPER =  scan( UPLO, 'Uu' )>0
 !
       INFO = 0
-      IF(      ( .NOT.UPPER               ).AND. &
-               ( .NOT. scan( UPLO , 'Ll' )>0 )      )THEN
+      IF(      ( NOT UPPER               ) AND  &
+               ( NOT  scan( UPLO , 'Ll' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT. scan( TRANS, 'Nn' )>0 ).AND. &
-               ( .NOT. scan( TRANS, 'Tt' )>0 ).AND. &
-               ( .NOT. scan( TRANS, 'Cc' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( TRANS, 'Nn' )>0 ) AND  &
+               ( NOT  scan( TRANS, 'Tt' )>0 ) AND  &
+               ( NOT  scan( TRANS, 'Cc' )>0 )      )THEN
          INFO = 2
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 3
-      ELSE IF( K  .LT.0               )THEN
+      ELSE IF( K  <0               )THEN
          INFO = 4
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 7
-      ELSE IF( LDB.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDB<MAX( 1, NROWA ) )THEN
          INFO = 9
-      ELSE IF( LDC.LT.MAX( 1, N     ) )THEN
+      ELSE IF( LDC<MAX( 1, N     ) )THEN
          INFO = 12
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DSYR2K', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR. &
-          ( ( ( ALPHA.EQ.ZERO ).OR.( K.EQ.0 ) ).AND.( BETA.EQ.ONE ) ) ) &
+      IF( ( N==0 ) OR  &
+          ( ( ( ALPHA==ZERO ) OR ( K==0 ) ) AND ( BETA==ONE ) ) ) &
          RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
          IF( UPPER )THEN
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 20, J = 1, N
                   DO 10, I = 1, J
                      C( I, J ) = ZERO
@@ -1928,7 +1874,7 @@
    40          CONTINUE
             END IF
          ELSE
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 60, J = 1, N
                   DO 50, I = J, N
                      C( I, J ) = ZERO
@@ -1953,18 +1899,18 @@
 !
          IF( UPPER )THEN
             DO 130, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 90, I = 1, J
                      C( I, J ) = ZERO
    90             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 100, I = 1, J
                      C( I, J ) = BETA*C( I, J )
   100             CONTINUE
                END IF
                DO 120, L = 1, K
-                  IF( ( A( J, L ).NE.ZERO ).OR. &
-                      ( B( J, L ).NE.ZERO )     )THEN
+                  IF( ( A( J, L )/=ZERO ) OR  &
+                      ( B( J, L )/=ZERO )     )THEN
                      TEMP1 = ALPHA*B( J, L )
                      TEMP2 = ALPHA*A( J, L )
                      DO 110, I = 1, J
@@ -1976,17 +1922,17 @@
   130       CONTINUE
          ELSE
             DO 180, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 140, I = J, N
                      C( I, J ) = ZERO
   140             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 150, I = J, N
                      C( I, J ) = BETA*C( I, J )
   150             CONTINUE
                END IF
                DO 170, L = 1, K
-                  IF( ( A( J, L ).NE.ZERO ).OR. ( B( J, L ).NE.ZERO )) THEN
+                  IF( ( A( J, L )/=ZERO ) OR  ( B( J, L )/=ZERO )) THEN
                      TEMP1 = ALPHA*B( J, L )
                      TEMP2 = ALPHA*A( J, L )
                      DO 160, I = J, N
@@ -2010,7 +1956,7 @@
                      TEMP1 = TEMP1 + A( L, I )*B( L, J )
                      TEMP2 = TEMP2 + B( L, I )*A( L, J )
   190             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP1 + ALPHA*TEMP2
                   ELSE
                      C( I, J ) = BETA *C( I, J ) + &
@@ -2027,7 +1973,7 @@
                      TEMP1 = TEMP1 + A( L, I )*B( L, J )
                      TEMP2 = TEMP2 + B( L, I )*A( L, J )
   220             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP1 + ALPHA*TEMP2
                   ELSE
                      C( I, J ) = BETA *C( I, J ) + ALPHA*TEMP1 + ALPHA*TEMP2
@@ -2044,11 +1990,11 @@
       END
       SUBROUTINE DTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB)
 !     .. Scalar Arguments ..
-      character(len=1)        SIDE, UPLO, TRANSA, DIAG
+      STR(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      DOUBLE PRECISION   ALPHA
+      REAL   ALPHA
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      REAL   A( LDA, * ), B( LDB, * )
 !     ..
 !
 !  Purpose
@@ -2066,7 +2012,7 @@
 !  Parameters
 !  ==========
 !
-!  SIDE   - character(len=1).
+!  SIDE   - STR(len=1).
 !           On entry,  SIDE specifies whether  op( A ) multiplies B from
 !           the left or right as follows:
 !
@@ -2076,7 +2022,7 @@
 !
 !           Unchanged on exit.
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the matrix A is an upper or
 !           lower triangular matrix as follows:
 !
@@ -2086,7 +2032,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANSA - character(len=1).
+!  TRANSA - STR(len=1).
 !           On entry, TRANSA specifies the form of op( A ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -2098,7 +2044,7 @@
 !
 !           Unchanged on exit.
 !
-!  DIAG   - character(len=1).
+!  DIAG   - STR(len=1).
 !           On entry, DIAG specifies whether or not A is unit triangular
 !           as follows:
 !
@@ -2119,13 +2065,13 @@
 !           at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 !           zero then  A is not referenced and  B need not be set before
 !           entry.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, k ), where k is m
+!  A      - REAL array of DIMENSION ( LDA, k ), where k is m
 !           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 !           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 !           upper triangular part of the array  A must contain the upper
@@ -2146,7 +2092,7 @@
 !           then LDA must be at least max( 1, n ).
 !           Unchanged on exit.
 !
-!  B      - DOUBLE PRECISION array of DIMENSION ( LDB, n ).
+!  B      - REAL array of DIMENSION ( LDB, n ).
 !           Before entry,  the leading  m by n part of the array  B must
 !           contain the matrix  B,  and  on exit  is overwritten  by the
 !           transformed matrix.
@@ -2168,15 +2114,10 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
       LOGICAL            LSIDE, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      DOUBLE PRECISION   TEMP
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
+      REAL   TEMP
 !     ..
 !     .. Executable Statements ..
 !
@@ -2192,40 +2133,40 @@
       UPPER  =  scan( UPLO  , 'Uu' )>0
 !
       INFO   = 0
-      IF(      ( .NOT.LSIDE                ).AND. &
-               ( .NOT. scan( SIDE  , 'Rr' )>0 )      )THEN
+      IF(      ( NOT LSIDE                ) AND  &
+               ( NOT  scan( SIDE  , 'Rr' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT.UPPER                ).AND. &
-               ( .NOT. scan( UPLO  , 'Ll' )>0 )      )THEN
+      ELSE IF( ( NOT UPPER                ) AND  &
+               ( NOT  scan( UPLO  , 'Ll' )>0 )      )THEN
          INFO = 2
-      ELSE IF( ( .NOT. scan( TRANSA, 'Nn' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Tt' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Cc' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( TRANSA, 'Nn' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Tt' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Cc' )>0 )      )THEN
          INFO = 3
-      ELSE IF( ( .NOT. scan( DIAG  , 'Uu' )>0 ).AND. &
-               ( .NOT. scan( DIAG  , 'Nn' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( DIAG  , 'Uu' )>0 ) AND  &
+               ( NOT  scan( DIAG  , 'Nn' )>0 )      )THEN
          INFO = 4
-      ELSE IF( M  .LT.0               )THEN
+      ELSE IF( M  <0               )THEN
          INFO = 5
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 6
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 9
-      ELSE IF( LDB.LT.MAX( 1, M     ) )THEN
+      ELSE IF( LDB<MAX( 1, M     ) )THEN
          INFO = 11
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DTRMM ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
          DO 20, J = 1, N
             DO 10, I = 1, M
                B( I, J ) = ZERO
@@ -2244,7 +2185,7 @@
             IF( UPPER )THEN
                DO 50, J = 1, N
                   DO 40, K = 1, M
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         TEMP = ALPHA*B( K, J )
                         DO 30, I = 1, K - 1
                            B( I, J ) = B( I, J ) + TEMP*A( I, K )
@@ -2257,7 +2198,7 @@
             ELSE
                DO 80, J = 1, N
                   DO 70 K = M, 1, -1
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         TEMP      = ALPHA*B( K, J )
                         B( K, J ) = TEMP
                         IF( NOUNIT ) B( K, J ) = B( K, J )*A( K, K )
@@ -2309,7 +2250,7 @@
                      B( I, J ) = TEMP*B( I, J )
   150             CONTINUE
                   DO 170, K = 1, J - 1
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         TEMP = ALPHA*A( K, J )
                         DO 160, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -2325,7 +2266,7 @@
                      B( I, J ) = TEMP*B( I, J )
   190             CONTINUE
                   DO 210, K = J + 1, N
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         TEMP = ALPHA*A( K, J )
                         DO 200, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -2341,7 +2282,7 @@
             IF( UPPER )THEN
                DO 260, K = 1, N
                   DO 240, J = 1, K - 1
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         TEMP = ALPHA*A( J, K )
                         DO 230, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -2350,7 +2291,7 @@
   240             CONTINUE
                   TEMP = ALPHA
                   IF( NOUNIT ) TEMP = TEMP*A( K, K )
-                  IF( TEMP.NE.ONE )THEN
+                  IF( TEMP/=ONE )THEN
                      DO 250, I = 1, M
                         B( I, K ) = TEMP*B( I, K )
   250                CONTINUE
@@ -2359,7 +2300,7 @@
             ELSE
                DO 300, K = N, 1, -1
                   DO 280, J = K + 1, N
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         TEMP = ALPHA*A( J, K )
                         DO 270, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -2368,7 +2309,7 @@
   280             CONTINUE
                   TEMP = ALPHA
                   IF( NOUNIT ) TEMP = TEMP*A( K, K )
-                  IF( TEMP.NE.ONE )THEN
+                  IF( TEMP/=ONE )THEN
                      DO 290, I = 1, M
                         B( I, K ) = TEMP*B( I, K )
   290                CONTINUE
@@ -2386,9 +2327,9 @@
       SUBROUTINE DTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 !     .. Scalar Arguments ..
       INTEGER            INCX, LDA, N
-      character(len=1)        DIAG, TRANS, UPLO
+      STR(len=1)        DIAG, TRANS, UPLO
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * )
+      REAL   A( LDA, * ), X( * )
 !     ..
 !
 !  Purpose
@@ -2404,7 +2345,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the matrix is an upper or
 !           lower triangular matrix as follows:
 !
@@ -2414,7 +2355,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry, TRANS specifies the operation to be performed as
 !           follows:
 !
@@ -2426,7 +2367,7 @@
 !
 !           Unchanged on exit.
 !
-!  DIAG   - character(len=1).
+!  DIAG   - STR(len=1).
 !           On entry, DIAG specifies whether or not A is unit
 !           triangular as follows:
 !
@@ -2442,7 +2383,7 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+!  A      - REAL array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular matrix and the strictly lower triangular part of
@@ -2461,7 +2402,7 @@
 !           max( 1, n ).
 !           Unchanged on exit.
 !
-!  X      - DOUBLE PRECISION array of dimension at least
+!  X      - REAL array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x. On exit, X is overwritten with the
@@ -2482,48 +2423,43 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ZERO
-      PARAMETER        ( ZERO = 0.0D+0 )
 !     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      REAL   TEMP
       INTEGER            I, INFO, IX, J, JX, KX
       LOGICAL            NOUNIT
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO , 'Uu' )>0.AND. &
-               .NOT. scan( UPLO , 'Ll' )>0      )THEN
+      IF     ( NOT  scan( UPLO , 'Uu' )>0 AND  &
+               NOT  scan( UPLO , 'Ll' )>0      )THEN
          INFO = 1
-      ELSE IF( .NOT. scan( TRANS, 'Nn' )>0.AND. &
-               .NOT. scan( TRANS, 'Tt' )>0.AND. &
-               .NOT. scan( TRANS, 'Cc' )>0      )THEN
+      ELSE IF( NOT  scan( TRANS, 'Nn' )>0 AND  &
+               NOT  scan( TRANS, 'Tt' )>0 AND  &
+               NOT  scan( TRANS, 'Cc' )>0      )THEN
          INFO = 2
-      ELSE IF( .NOT. scan( DIAG , 'Uu' )>0.AND. &
-               .NOT. scan( DIAG , 'Nn' )>0      )THEN
+      ELSE IF( NOT  scan( DIAG , 'Uu' )>0 AND  &
+               NOT  scan( DIAG , 'Nn' )>0      )THEN
          INFO = 3
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 4
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 6
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 8
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DTRMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
       NOUNIT =  scan( DIAG, 'Nn' )>0
 !
@@ -2532,7 +2468,7 @@
 !
       IF( INCX.LE.0 )THEN
          KX = 1 - ( N - 1 )*INCX
-      ELSE IF( INCX.NE.1 )THEN
+      ELSE IF( INCX/=1 )THEN
          KX = 1
       END IF
 !
@@ -2544,9 +2480,9 @@
 !        Form  x := A*x.
 !
          IF(  scan( UPLO, 'Uu' )>0 )THEN
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 20, J = 1, N
-                  IF( X( J ).NE.ZERO )THEN
+                  IF( X( J )/=ZERO )THEN
                      TEMP = X( J )
                      DO 10, I = 1, J - 1
                         X( I ) = X( I ) + TEMP*A( I, J )
@@ -2557,7 +2493,7 @@
             ELSE
                JX = KX
                DO 40, J = 1, N
-                  IF( X( JX ).NE.ZERO )THEN
+                  IF( X( JX )/=ZERO )THEN
                      TEMP = X( JX )
                      IX   = KX
                      DO 30, I = 1, J - 1
@@ -2570,9 +2506,9 @@
    40          CONTINUE
             END IF
          ELSE
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 60, J = N, 1, -1
-                  IF( X( J ).NE.ZERO )THEN
+                  IF( X( J )/=ZERO )THEN
                      TEMP = X( J )
                      DO 50, I = N, J + 1, -1
                         X( I ) = X( I ) + TEMP*A( I, J )
@@ -2584,7 +2520,7 @@
                KX = KX + ( N - 1 )*INCX
                JX = KX
                DO 80, J = N, 1, -1
-                  IF( X( JX ).NE.ZERO )THEN
+                  IF( X( JX )/=ZERO )THEN
                      TEMP = X( JX )
                      IX   = KX
                      DO 70, I = N, J + 1, -1
@@ -2602,7 +2538,7 @@
 !        Form  x := A'*x.
 !
          IF(  scan( UPLO, 'Uu' )>0 )THEN
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 100, J = N, 1, -1
                   TEMP = X( J )
                   IF( NOUNIT ) TEMP = TEMP*A( J, J )
@@ -2626,7 +2562,7 @@
   120          CONTINUE
             END IF
          ELSE
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 140, J = 1, N
                   TEMP = X( J )
                   IF( NOUNIT ) TEMP = TEMP*A( J, J )
@@ -2659,11 +2595,11 @@
       END
       SUBROUTINE DTRSM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB )
 !     .. Scalar Arguments ..
-      character(len=1)        SIDE, UPLO, TRANSA, DIAG
+      STR(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      DOUBLE PRECISION   ALPHA
+      REAL   ALPHA
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      REAL   A( LDA, * ), B( LDB, * )
 !     ..
 !
 !  Purpose
@@ -2683,7 +2619,7 @@
 !  Parameters
 !  ==========
 !
-!  SIDE   - character(len=1).
+!  SIDE   - STR(len=1).
 !           On entry, SIDE specifies whether op( A ) appears on the left
 !           or right of X as follows:
 !
@@ -2693,7 +2629,7 @@
 !
 !           Unchanged on exit.
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the matrix A is an upper or
 !           lower triangular matrix as follows:
 !
@@ -2703,7 +2639,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANSA - character(len=1).
+!  TRANSA - STR(len=1).
 !           On entry, TRANSA specifies the form of op( A ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -2715,7 +2651,7 @@
 !
 !           Unchanged on exit.
 !
-!  DIAG   - character(len=1).
+!  DIAG   - STR(len=1).
 !           On entry, DIAG specifies whether or not A is unit triangular
 !           as follows:
 !
@@ -2736,13 +2672,13 @@
 !           at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - DOUBLE PRECISION.
+!  ALPHA  - REAL.
 !           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 !           zero then  A is not referenced and  B need not be set before
 !           entry.
 !           Unchanged on exit.
 !
-!  A      - DOUBLE PRECISION array of DIMENSION ( LDA, k ), where k is m
+!  A      - REAL array of DIMENSION ( LDA, k ), where k is m
 !           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 !           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 !           upper triangular part of the array  A must contain the upper
@@ -2763,7 +2699,7 @@
 !           then LDA must be at least max( 1, n ).
 !           Unchanged on exit.
 !
-!  B      - DOUBLE PRECISION array of DIMENSION ( LDB, n ).
+!  B      - REAL array of DIMENSION ( LDB, n ).
 !           Before entry,  the leading  m by n part of the array  B must
 !           contain  the  right-hand  side  matrix  B,  and  on exit  is
 !           overwritten by the solution matrix  X.
@@ -2786,15 +2722,10 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
       LOGICAL            LSIDE, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      DOUBLE PRECISION   TEMP
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
-      PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
+      REAL   TEMP
 !     ..
 !     .. Executable Statements ..
 !
@@ -2810,40 +2741,40 @@
       UPPER  =  scan( UPLO  , 'Uu' )>0
 !
       INFO   = 0
-      IF(      ( .NOT.LSIDE                ).AND. &
-               ( .NOT. scan( SIDE  , 'Rr' )>0 )      )THEN
+      IF(      ( NOT LSIDE                ) AND  &
+               ( NOT  scan( SIDE  , 'Rr' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT.UPPER                ).AND. &
-               ( .NOT. scan( UPLO  , 'Ll' )>0 )      )THEN
+      ELSE IF( ( NOT UPPER                ) AND  &
+               ( NOT  scan( UPLO  , 'Ll' )>0 )      )THEN
          INFO = 2
-      ELSE IF( ( .NOT. scan( TRANSA, 'Nn' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Tt' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Cc' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( TRANSA, 'Nn' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Tt' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Cc' )>0 )      )THEN
          INFO = 3
-      ELSE IF( ( .NOT. scan( DIAG  , 'Uu' )>0 ).AND. &
-               ( .NOT. scan( DIAG  , 'Nn' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( DIAG  , 'Uu' )>0 ) AND  &
+               ( NOT  scan( DIAG  , 'Nn' )>0 )      )THEN
          INFO = 4
-      ELSE IF( M  .LT.0               )THEN
+      ELSE IF( M  <0               )THEN
          INFO = 5
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 6
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 9
-      ELSE IF( LDB.LT.MAX( 1, M     ) )THEN
+      ELSE IF( LDB<MAX( 1, M     ) )THEN
          INFO = 11
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'DTRSM ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
          DO 20, J = 1, N
             DO 10, I = 1, M
                B( I, J ) = ZERO
@@ -2861,13 +2792,13 @@
 !
             IF( UPPER )THEN
                DO 60, J = 1, N
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 30, I = 1, M
                         B( I, J ) = ALPHA*B( I, J )
    30                CONTINUE
                   END IF
                   DO 50, K = M, 1, -1
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         IF( NOUNIT ) B( K, J ) = B( K, J )/A( K, K )
                         DO 40, I = 1, K - 1
                            B( I, J ) = B( I, J ) - B( K, J )*A( I, K )
@@ -2877,13 +2808,13 @@
    60          CONTINUE
             ELSE
                DO 100, J = 1, N
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 70, I = 1, M
                         B( I, J ) = ALPHA*B( I, J )
    70                CONTINUE
                   END IF
                   DO 90 K = 1, M
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         IF( NOUNIT ) B( K, J ) = B( K, J )/A( K, K )
                         DO 80, I = K + 1, M
                            B( I, J ) = B( I, J ) - B( K, J )*A( I, K )
@@ -2927,13 +2858,13 @@
 !
             IF( UPPER )THEN
                DO 210, J = 1, N
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 170, I = 1, M
                         B( I, J ) = ALPHA*B( I, J )
   170                CONTINUE
                   END IF
                   DO 190, K = 1, J - 1
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         DO 180, I = 1, M
                            B( I, J ) = B( I, J ) - A( K, J )*B( I, K )
   180                   CONTINUE
@@ -2948,13 +2879,13 @@
   210          CONTINUE
             ELSE
                DO 260, J = N, 1, -1
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 220, I = 1, M
                         B( I, J ) = ALPHA*B( I, J )
   220                CONTINUE
                   END IF
                   DO 240, K = J + 1, N
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         DO 230, I = 1, M
                            B( I, J ) = B( I, J ) - A( K, J )*B( I, K )
   230                   CONTINUE
@@ -2981,14 +2912,14 @@
   270                CONTINUE
                   END IF
                   DO 290, J = 1, K - 1
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         TEMP = A( J, K )
                         DO 280, I = 1, M
                            B( I, J ) = B( I, J ) - TEMP*B( I, K )
   280                   CONTINUE
                      END IF
   290             CONTINUE
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 300, I = 1, M
                         B( I, K ) = ALPHA*B( I, K )
   300                CONTINUE
@@ -3003,14 +2934,14 @@
   320                CONTINUE
                   END IF
                   DO 340, J = K + 1, N
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         TEMP = A( J, K )
                         DO 330, I = 1, M
                            B( I, J ) = B( I, J ) - TEMP*B( I, K )
   330                   CONTINUE
                      END IF
   340             CONTINUE
-                  IF( ALPHA.NE.ONE )THEN
+                  IF( ALPHA/=ONE )THEN
                      DO 350, I = 1, M
                         B( I, K ) = ALPHA*B( I, K )
   350                CONTINUE
@@ -3033,11 +2964,11 @@
 !     February 29, 1992
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIAG, UPLO
+      CHR          DIAG, UPLO
       INTEGER            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -3051,12 +2982,12 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          Specifies whether the matrix A is upper or lower triangular.
 !          = 'U':  Upper triangular
 !          = 'L':  Lower triangular
 !
-!  DIAG    (input) character(len=1)
+!  DIAG    (input) STR(len=1)
 !          Specifies whether or not the matrix A is unit triangular.
 !          = 'N':  Non-unit triangular
 !          = 'U':  Unit triangular
@@ -3064,7 +2995,7 @@
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the triangular matrix A.  If UPLO = 'U', the
 !          leading n by n upper triangular part of the array A contains
 !          the upper triangular matrix, and the strictly lower
@@ -3087,20 +3018,14 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            NOUNIT, UPPER
       INTEGER            J
-      DOUBLE PRECISION   AJJ
+      REAL   AJJ
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DSCAL, DTRMV, XERBLA
-!     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
@@ -3109,16 +3034,16 @@
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
       NOUNIT =  scan( DIAG, 'Nn' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF( NOT UPPER  AND  NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( .NOT.NOUNIT .AND. .NOT. scan( DIAG, 'Uu' )>0 ) THEN
+      ELSE IF( NOT NOUNIT  AND  NOT  scan( DIAG, 'Uu' )>0 ) THEN
          INFO = -2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N<0 ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA<MAX( 1, N ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DTRTI2', -INFO )
          RETURN
       END IF
@@ -3152,7 +3077,7 @@
             ELSE
                AJJ = -ONE
             END IF
-            IF( J.LT.N ) THEN
+            IF( J<N ) THEN
 !
 !              Compute elements j+1:n of j-th column.
 !
@@ -3176,11 +3101,11 @@
 !     March 31, 1993
 !
 !     .. Scalar Arguments ..
-      CHARACTER          DIAG, UPLO
+      CHR          DIAG, UPLO
       INTEGER            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      REAL   A( LDA, * )
 !     ..
 !
 !  Purpose
@@ -3194,18 +3119,18 @@
 !  Arguments
 !  =========
 !
-!  UPLO    (input) character(len=1)
+!  UPLO    (input) STR(len=1)
 !          = 'U':  A is upper triangular;
 !          = 'L':  A is lower triangular.
 !
-!  DIAG    (input) character(len=1)
+!  DIAG    (input) STR(len=1)
 !          = 'N':  A is non-unit triangular;
 !          = 'U':  A is unit triangular.
 !
 !  N       (input) INTEGER
 !          The order of the matrix A.  N >= 0.
 !
-!  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+!  A       (input/output) REAL array, dimension (LDA,N)
 !          On entry, the triangular matrix A.  If UPLO = 'U', the
 !          leading N-by-N upper triangular part of the array A contains
 !          the upper triangular matrix, and the strictly lower
@@ -3229,9 +3154,6 @@
 !
 !  =====================================================================
 !
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
-      PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 !     ..
 !     .. Local Scalars ..
       LOGICAL            NOUNIT, UPPER
@@ -3244,9 +3166,6 @@
 !     .. External Subroutines ..
       EXTERNAL           DTRMM, DTRSM, DTRTI2, XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
-!     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
@@ -3254,29 +3173,29 @@
       INFO = 0
       UPPER =  scan( UPLO, 'Uu' )>0
       NOUNIT =  scan( DIAG, 'Nn' )>0
-      IF( .NOT.UPPER .AND. .NOT. scan( UPLO, 'Ll' )>0 ) THEN
+      IF( NOT UPPER  AND  NOT  scan( UPLO, 'Ll' )>0 ) THEN
          INFO = -1
-      ELSE IF( .NOT.NOUNIT .AND. .NOT. scan( DIAG, 'Uu' )>0 ) THEN
+      ELSE IF( NOT NOUNIT  AND  NOT  scan( DIAG, 'Uu' )>0 ) THEN
          INFO = -2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N<0 ) THEN
          INFO = -3
-      ELSE IF( LDA.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDA<MAX( 1, N ) ) THEN
          INFO = -5
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'DTRTRI', -INFO )
          RETURN
       END IF
 !
 !     Quick return if possible
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
 !     Check for singularity if non-unit.
 !
       IF( NOUNIT ) THEN
          DO 10 INFO = 1, N
-            IF( A( INFO, INFO ).EQ.ZERO ) RETURN
+            IF( A( INFO, INFO )==ZERO ) RETURN
    10    CONTINUE
          INFO = 0
       END IF
@@ -3284,7 +3203,7 @@
 !     Determine the block size for this environment.
 !
       NB = ILAENV( 1, 'DTRTRI', UPLO // DIAG, N, -1, -1, -1 )
-      IF( NB.LE.1 .OR. NB.GE.N ) THEN
+      IF( NB.LE.1  OR  NB.GE.N ) THEN
 !
 !        Use unblocked code
 !
@@ -3391,11 +3310,11 @@
       SUBROUTINE ZGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB, &
                          BETA, C, LDC )
 !     .. Scalar Arguments ..
-      character(len=1)        TRANSA, TRANSB
+      STR(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
-      complex(kind=kind(1.0d0))         ALPHA, BETA
+      CPX         ALPHA, BETA
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      CPX         A( LDA, * ), B( LDB, * ), C( LDC, * )
 !     ..
 !
 !  Purpose
@@ -3415,7 +3334,7 @@
 !  Parameters
 !  ==========
 !
-!  TRANSA - character(len=1).
+!  TRANSA - STR(len=1).
 !           On entry, TRANSA specifies the form of op( A ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -3427,7 +3346,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANSB - character(len=1).
+!  TRANSB - STR(len=1).
 !           On entry, TRANSB specifies the form of op( B ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -3456,11 +3375,11 @@
 !           be at least  zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, ka ), where ka is
+!  A      - CPX       array of DIMENSION ( LDA, ka ), where ka is
 !           k  when  TRANSA = 'N' or 'n',  and is  m  otherwise.
 !           Before entry with  TRANSA = 'N' or 'n',  the leading  m by k
 !           part of the array  A  must contain the matrix  A,  otherwise
@@ -3475,7 +3394,7 @@
 !           least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  B      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDB, kb ), where kb is
+!  B      - CPX       array of DIMENSION ( LDB, kb ), where kb is
 !           n  when  TRANSB = 'N' or 'n',  and is  k  otherwise.
 !           Before entry with  TRANSB = 'N' or 'n',  the leading  k by n
 !           part of the array  B  must contain the matrix  B,  otherwise
@@ -3490,12 +3409,12 @@
 !           least  max( 1, n ).
 !           Unchanged on exit.
 !
-!  BETA   - complex(kind=kind(1.0d0))      .
+!  BETA   - CPX      .
 !           On entry,  BETA  specifies the scalar  beta.  When  BETA  is
 !           supplied as zero then C need not be set on input.
 !           Unchanged on exit.
 !
-!  C      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDC, n ).
+!  C      - CPX       array of DIMENSION ( LDC, n ).
 !           Before entry, the leading  m by n  part of the array  C must
 !           contain the matrix  C,  except when  beta  is zero, in which
 !           case C need not be set on entry.
@@ -3519,28 +3438,21 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
       LOGICAL            CONJA, CONJB, NOTA, NOTB
       INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
-      complex(kind=kind(1.0d0))         TEMP
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
+      CPX         TEMP
 !     ..
 !     .. Executable Statements ..
 !
-!     Set  NOTA  and  NOTB  as  true if  A  and  B  respectively are not
+!     Set NOTA  and NOTB  as  true if  A  and  B  respectively are not
 !     conjugated or transposed, set  CONJA and CONJB  as true if  A  and
 !     B  respectively are to be  transposed but  not conjugated  and set
 !     NROWA, NCOLA and  NROWB  as the number of rows and  columns  of  A
 !     and the number of rows of  B  respectively.
 !
-      NOTA  =  scan( TRANSA, 'Nn' )>0
-      NOTB  =  scan( TRANSB, 'Nn' )>0
+     NOTA  =  scan( TRANSA, 'Nn' )>0
+     NOTB  =  scan( TRANSB, 'Nn' )>0
       CONJA =  scan( TRANSA, 'Cc' )>0
       CONJB =  scan( TRANSB, 'Cc' )>0
       IF( NOTA )THEN
@@ -3559,42 +3471,42 @@
 !     Test the input parameters.
 !
       INFO = 0
-      IF(      ( .NOT.NOTA                 ).AND. &
-               ( .NOT.CONJA                ).AND. &
-               ( .NOT. scan( TRANSA, 'Tt' )>0 )      )THEN
+      IF(      ( NOT NOTA                 ) AND  &
+               ( NOT CONJA                ) AND  &
+               ( NOT  scan( TRANSA, 'Tt' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT.NOTB                 ).AND. &
-               ( .NOT.CONJB                ).AND. &
-               ( .NOT. scan( TRANSB, 'Tt' )>0 )      )THEN
+      ELSE IF( ( NOT NOTB                 ) AND  &
+               ( NOT CONJB                ) AND  &
+               ( NOT  scan( TRANSB, 'Tt' )>0 )      )THEN
          INFO = 2
-      ELSE IF( M  .LT.0               )THEN
+      ELSE IF( M  <0               )THEN
          INFO = 3
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 4
-      ELSE IF( K  .LT.0               )THEN
+      ELSE IF( K  <0               )THEN
          INFO = 5
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 8
-      ELSE IF( LDB.LT.MAX( 1, NROWB ) )THEN
+      ELSE IF( LDB<MAX( 1, NROWB ) )THEN
          INFO = 10
-      ELSE IF( LDC.LT.MAX( 1, M     ) )THEN
+      ELSE IF( LDC<MAX( 1, M     ) )THEN
          INFO = 13
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZGEMM ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR. &
-          ( ( ( ALPHA.EQ.ZERO ).OR.( K.EQ.0 ) ).AND.( BETA.EQ.ONE ) ) ) &
+      IF( ( M==0 ) OR ( N==0 ) OR  &
+          ( ( ( ALPHA==ZERO ) OR ( K==0 ) ) AND ( BETA==ONE ) ) ) &
          RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
-         IF( BETA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
+         IF( BETA==ZERO )THEN
             DO 20, J = 1, N
                DO 10, I = 1, M
                   C( I, J ) = ZERO
@@ -3618,17 +3530,17 @@
 !           Form  C := alpha*A*B + beta*C.
 !
             DO 90, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 50, I = 1, M
                      C( I, J ) = ZERO
    50             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 60, I = 1, M
                      C( I, J ) = BETA*C( I, J )
    60             CONTINUE
                END IF
                DO 80, L = 1, K
-                  IF( B( L, J ).NE.ZERO )THEN
+                  IF( B( L, J )/=ZERO )THEN
                      TEMP = ALPHA*B( L, J )
                      DO 70, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
@@ -3646,7 +3558,7 @@
                   DO 100, L = 1, K
                      TEMP = TEMP + CONJG( A( L, I ) )*B( L, J )
   100             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3663,7 +3575,7 @@
                   DO 130, L = 1, K
                      TEMP = TEMP + A( L, I )*B( L, J )
   130             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3677,17 +3589,17 @@
 !           Form  C := alpha*A*conjg( B' ) + beta*C.
 !
             DO 200, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 160, I = 1, M
                      C( I, J ) = ZERO
   160             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 170, I = 1, M
                      C( I, J ) = BETA*C( I, J )
   170             CONTINUE
                END IF
                DO 190, L = 1, K
-                  IF( B( J, L ).NE.ZERO )THEN
+                  IF( B( J, L )/=ZERO )THEN
                      TEMP = ALPHA*CONJG( B( J, L ) )
                      DO 180, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
@@ -3700,17 +3612,17 @@
 !           Form  C := alpha*A*B'          + beta*C
 !
             DO 250, J = 1, N
-               IF( BETA.EQ.ZERO )THEN
+               IF( BETA==ZERO )THEN
                   DO 210, I = 1, M
                      C( I, J ) = ZERO
   210             CONTINUE
-               ELSE IF( BETA.NE.ONE )THEN
+               ELSE IF( BETA/=ONE )THEN
                   DO 220, I = 1, M
                      C( I, J ) = BETA*C( I, J )
   220             CONTINUE
                END IF
                DO 240, L = 1, K
-                  IF( B( J, L ).NE.ZERO )THEN
+                  IF( B( J, L )/=ZERO )THEN
                      TEMP = ALPHA*B( J, L )
                      DO 230, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
@@ -3730,7 +3642,7 @@
                   DO 260, L = 1, K
                      TEMP = TEMP + CONJG( A( L, I ) )*CONJG( B( J, L ) )
   260             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3747,7 +3659,7 @@
                   DO 290, L = 1, K
                      TEMP = TEMP + CONJG( A( L, I ) )*B( J, L )
   290             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3766,7 +3678,7 @@
                   DO 320, L = 1, K
                      TEMP = TEMP + A( L, I )*CONJG( B( J, L ) )
   320             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3783,7 +3695,7 @@
                   DO 350, L = 1, K
                      TEMP = TEMP + A( L, I )*B( J, L )
   350             CONTINUE
-                  IF( BETA.EQ.ZERO )THEN
+                  IF( BETA==ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
                   ELSE
                      C( I, J ) = ALPHA*TEMP + BETA*C( I, J )
@@ -3800,11 +3712,11 @@
       END
       SUBROUTINE ZGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA, BETA
+      CPX         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
-      character(len=1)        TRANS
+      STR(len=1)        TRANS
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), X( * ), Y( * )
+      CPX         A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -3822,7 +3734,7 @@
 !  Parameters
 !  ==========
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry, TRANS specifies the operation to be performed as
 !           follows:
 !
@@ -3844,11 +3756,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, n ).
+!  A      - CPX       array of DIMENSION ( LDA, n ).
 !           Before entry, the leading m by n part of the array A must
 !           contain the matrix of coefficients.
 !           Unchanged on exit.
@@ -3859,7 +3771,7 @@
 !           max( 1, m ).
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of DIMENSION at least
+!  X      - CPX       array of DIMENSION at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
 !           and at least
 !           ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
@@ -3872,12 +3784,12 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  BETA   - complex(kind=kind(1.0d0))      .
+!  BETA   - CPX      .
 !           On entry, BETA specifies the scalar beta. When BETA is
 !           supplied as zero then Y need not be set on input.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of DIMENSION at least
+!  Y      - CPX       array of DIMENSION at least
 !           ( 1 + ( m - 1 )*abs( INCY ) ) when TRANS = 'N' or 'n'
 !           and at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ) otherwise.
@@ -3900,49 +3812,42 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP
+      CPX         TEMP
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
       LOGICAL            NOCONJ
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( TRANS, 'Nn' )>0.AND. &
-               .NOT. scan( TRANS, 'Tt' )>0.AND. &
-               .NOT. scan( TRANS, 'Cc' )>0      )THEN
+      IF     ( NOT  scan( TRANS, 'Nn' )>0 AND  &
+               NOT  scan( TRANS, 'Tt' )>0 AND  &
+               NOT  scan( TRANS, 'Cc' )>0      )THEN
          INFO = 1
-      ELSE IF( M.LT.0 )THEN
+      ELSE IF( M<0 )THEN
          INFO = 2
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 3
-      ELSE IF( LDA.LT.MAX( 1, M ) )THEN
+      ELSE IF( LDA<MAX( 1, M ) )THEN
          INFO = 6
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 8
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 11
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZGEMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR. &
-          ( ( ALPHA.EQ.ZERO ).AND.( BETA.EQ.ONE ) ) ) &
+      IF( ( M==0 ) OR ( N==0 ) OR  &
+          ( ( ALPHA==ZERO ) AND ( BETA==ONE ) ) ) &
          RETURN
 !
       NOCONJ =  scan( TRANS, 'Tt' )>0
@@ -3973,9 +3878,9 @@
 !
 !     First form  y := beta*y.
 !
-      IF( BETA.NE.ONE )THEN
-         IF( INCY.EQ.1 )THEN
-            IF( BETA.EQ.ZERO )THEN
+      IF( BETA/=ONE )THEN
+         IF( INCY==1 )THEN
+            IF( BETA==ZERO )THEN
                DO 10, I = 1, LENY
                   Y( I ) = ZERO
    10          CONTINUE
@@ -3986,7 +3891,7 @@
             END IF
          ELSE
             IY = KY
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 30, I = 1, LENY
                   Y( IY ) = ZERO
                   IY      = IY   + INCY
@@ -3999,15 +3904,15 @@
             END IF
          END IF
       END IF
-      IF( ALPHA.EQ.ZERO ) RETURN
+      IF( ALPHA==ZERO ) RETURN
       IF(  scan( TRANS, 'Nn' )>0 )THEN
 !
 !        Form  y := alpha*A*x + y.
 !
          JX = KX
-         IF( INCY.EQ.1 )THEN
+         IF( INCY==1 )THEN
             DO 60, J = 1, N
-               IF( X( JX ).NE.ZERO )THEN
+               IF( X( JX )/=ZERO )THEN
                   TEMP = ALPHA*X( JX )
                   DO 50, I = 1, M
                      Y( I ) = Y( I ) + TEMP*A( I, J )
@@ -4017,7 +3922,7 @@
    60       CONTINUE
          ELSE
             DO 80, J = 1, N
-               IF( X( JX ).NE.ZERO )THEN
+               IF( X( JX )/=ZERO )THEN
                   TEMP = ALPHA*X( JX )
                   IY   = KY
                   DO 70, I = 1, M
@@ -4033,7 +3938,7 @@
 !        Form  y := alpha*A'*x + y  or  y := alpha*conjg( A' )*x + y.
 !
          JY = KY
-         IF( INCX.EQ.1 )THEN
+         IF( INCX==1 )THEN
             DO 110, J = 1, N
                TEMP = ZERO
                IF( NOCONJ )THEN
@@ -4076,10 +3981,10 @@
       END
       SUBROUTINE ZGERC ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA
+      CPX         ALPHA
       INTEGER            INCX, INCY, LDA, M, N
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), X( * ), Y( * )
+      CPX         A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -4105,11 +4010,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( m - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the m
 !           element vector x.
@@ -4120,7 +4025,7 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of dimension at least
+!  Y      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y.
@@ -4131,7 +4036,7 @@
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, n ).
+!  A      - CPX       array of DIMENSION ( LDA, n ).
 !           Before entry, the leading m by n part of the array A must
 !           contain the matrix of coefficients. On exit, A is
 !           overwritten by the updated matrix.
@@ -4152,41 +4057,36 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP
+      CPX         TEMP
       INTEGER            I, INFO, IX, J, JY, KX
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( M.LT.0 )THEN
+      IF     ( M<0 )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 5
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 7
-      ELSE IF( LDA.LT.MAX( 1, M ) )THEN
+      ELSE IF( LDA<MAX( 1, M ) )THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZGERC ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( M.EQ.0 ).OR.( N.EQ.0 ).OR.( ALPHA.EQ.ZERO ) ) RETURN
+      IF( ( M==0 ) OR ( N==0 ) OR ( ALPHA==ZERO ) ) RETURN
 !
 !     Start the operations. In this version the elements of A are
 !     accessed sequentially with one pass through A.
@@ -4196,9 +4096,9 @@
       ELSE
          JY = 1 - ( N - 1 )*INCY
       END IF
-      IF( INCX.EQ.1 )THEN
+      IF( INCX==1 )THEN
          DO 20, J = 1, N
-            IF( Y( JY ).NE.ZERO )THEN
+            IF( Y( JY )/=ZERO )THEN
                TEMP = ALPHA*CONJG( Y( JY ) )
                DO 10, I = 1, M
                   A( I, J ) = A( I, J ) + X( I )*TEMP
@@ -4213,7 +4113,7 @@
             KX = 1 - ( M - 1 )*INCX
          END IF
          DO 40, J = 1, N
-            IF( Y( JY ).NE.ZERO )THEN
+            IF( Y( JY )/=ZERO )THEN
                TEMP = ALPHA*CONJG( Y( JY ) )
                IX   = KX
                DO 30, I = 1, M
@@ -4232,11 +4132,11 @@
       END
       SUBROUTINE ZHEMV ( UPLO, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA, BETA
+      CPX         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), X( * ), Y( * )
+      CPX         A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -4252,7 +4152,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the array A is to be referenced as
 !           follows:
@@ -4270,11 +4170,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, n ).
+!  A      - CPX       array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular part of the hermitian matrix and the strictly
@@ -4293,7 +4193,7 @@
 !           max( 1, n ).
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -4304,12 +4204,12 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  BETA   - complex(kind=kind(1.0d0))      .
+!  BETA   - CPX      .
 !           On entry, BETA specifies the scalar beta. When BETA is
 !           supplied as zero then Y need not be set on input.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of dimension at least
+!  Y      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y. On exit, Y is overwritten by the updated
@@ -4330,44 +4230,37 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP1, TEMP2
+      CPX         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, DBLE
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO, 'Uu' )>0.AND. &
-               .NOT. scan( UPLO, 'Ll' )>0      )THEN
+      IF     ( NOT  scan( UPLO, 'Uu' )>0 AND  &
+               NOT  scan( UPLO, 'Ll' )>0      )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 5
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 7
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 10
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZHEMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ( ALPHA.EQ.ZERO ).AND.( BETA.EQ.ONE ) ) ) RETURN
+      IF( ( N==0 ) OR ( ( ALPHA==ZERO ) AND ( BETA==ONE ) ) ) RETURN
 !
 !     Set up the start points in  X  and  Y.
 !
@@ -4388,9 +4281,9 @@
 !
 !     First form  y := beta*y.
 !
-      IF( BETA.NE.ONE )THEN
-         IF( INCY.EQ.1 )THEN
-            IF( BETA.EQ.ZERO )THEN
+      IF( BETA/=ONE )THEN
+         IF( INCY==1 )THEN
+            IF( BETA==ZERO )THEN
                DO 10, I = 1, N
                   Y( I ) = ZERO
    10          CONTINUE
@@ -4401,7 +4294,7 @@
             END IF
          ELSE
             IY = KY
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 30, I = 1, N
                   Y( IY ) = ZERO
                   IY      = IY   + INCY
@@ -4414,12 +4307,12 @@
             END IF
          END IF
       END IF
-      IF( ALPHA.EQ.ZERO ) RETURN
+      IF( ALPHA==ZERO ) RETURN
       IF(  scan( UPLO, 'Uu' )>0 )THEN
 !
 !        Form  y  when A is stored in upper triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
                TEMP1 = ALPHA*X( J )
                TEMP2 = ZERO
@@ -4452,7 +4345,7 @@
 !
 !        Form  y  when A is stored in lower triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 100, J = 1, N
                TEMP1  = ALPHA*X( J )
                TEMP2  = ZERO
@@ -4492,11 +4385,11 @@
       END
       SUBROUTINE ZHER2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA
+      CPX         ALPHA
       INTEGER            INCX, INCY, LDA, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), X( * ), Y( * )
+      CPX         A( LDA, * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -4512,7 +4405,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the array A is to be referenced as
 !           follows:
@@ -4530,11 +4423,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -4545,7 +4438,7 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of dimension at least
+!  Y      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y.
@@ -4556,7 +4449,7 @@
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, n ).
+!  A      - CPX       array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular part of the hermitian matrix and the strictly
@@ -4589,47 +4482,42 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP1, TEMP2
+      CPX         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX, DBLE
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO, 'Uu' )>0.AND. &
-               .NOT. scan( UPLO, 'Ll' )>0      )THEN
+      IF     ( NOT  scan( UPLO, 'Uu' )>0 AND  &
+               NOT  scan( UPLO, 'Ll' )>0      )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 5
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 7
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZHER2 ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ALPHA.EQ.ZERO ) ) RETURN
+      IF( ( N==0 ) OR ( ALPHA==ZERO ) ) RETURN
 !
 !     Set up the start points in X and Y if the increments are not both
 !     unity.
 !
-      IF( ( INCX.NE.1 ).OR.( INCY.NE.1 ) )THEN
+      IF( ( INCX/=1 ) OR ( INCY/=1 ) )THEN
          IF( INCX.GT.0 )THEN
             KX = 1
          ELSE
@@ -4652,9 +4540,9 @@
 !
 !        Form  A  when A is stored in the upper triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 20, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1 = ALPHA*CONJG( Y( J ) )
                   TEMP2 = CONJG( ALPHA*X( J ) )
                   DO 10, I = 1, J - 1
@@ -4668,7 +4556,7 @@
    20       CONTINUE
          ELSE
             DO 40, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1 = ALPHA*CONJG( Y( JY ) )
                   TEMP2 = CONJG( ALPHA*X( JX ) )
                   IX    = KX
@@ -4692,9 +4580,9 @@
 !
 !        Form  A  when A is stored in the lower triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1     = ALPHA*CONJG( Y( J ) )
                   TEMP2     = CONJG( ALPHA*X( J ) )
                   A( J, J ) = DBLE( A( J, J ) ) + &
@@ -4708,7 +4596,7 @@
    60       CONTINUE
          ELSE
             DO 80, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1     = ALPHA*CONJG( Y( JY ) )
                   TEMP2     = CONJG( ALPHA*X( JX ) )
                   A( J, J ) = DBLE( A( J, J ) ) + &
@@ -4737,13 +4625,13 @@
       END
       SUBROUTINE ZHER2K( UPLO, TRANS, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC)
 !     .. Scalar Arguments ..
-      CHARACTER          TRANS, UPLO
+      CHR          TRANS, UPLO
       INTEGER            K, LDA, LDB, LDC, N
-      DOUBLE PRECISION   BETA
-      complex(kind=kind(1.0d0))         ALPHA
+      REAL   BETA
+      CPX         ALPHA
 !     ..
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      CPX         A( LDA, * ), B( LDB, * ), C( LDC, * )
 !     ..
 !
 !  Purpose
@@ -4764,7 +4652,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On  entry,   UPLO  specifies  whether  the  upper  or  lower
 !           triangular  part  of the  array  C  is to be  referenced  as
 !           follows:
@@ -4777,7 +4665,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry,  TRANS  specifies the operation to be performed as
 !           follows:
 !
@@ -4803,11 +4691,11 @@
 !           matrices  A and B.  K must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))         .
+!  ALPHA  - CPX         .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, ka ), where ka is
+!  A      - CPX       array of DIMENSION ( LDA, ka ), where ka is
 !           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 !           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 !           part of the array  A  must contain the matrix  A,  otherwise
@@ -4822,7 +4710,7 @@
 !           be at least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  B      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDB, kb ), where kb is
+!  B      - CPX       array of DIMENSION ( LDB, kb ), where kb is
 !           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 !           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 !           part of the array  B  must contain the matrix  B,  otherwise
@@ -4837,11 +4725,11 @@
 !           be at least  max( 1, k ).
 !           Unchanged on exit.
 !
-!  BETA   - DOUBLE PRECISION            .
+!  BETA   - REAL            .
 !           On entry, BETA specifies the scalar beta.
 !           Unchanged on exit.
 !
-!  C      - complex(kind=kind(1.0d0))          array of DIMENSION ( LDC, n ).
+!  C      - CPX          array of DIMENSION ( LDC, n ).
 !           Before entry  with  UPLO = 'U' or 'u',  the leading  n by n
 !           upper triangular part of the array C must contain the upper
 !           triangular part  of the  hermitian matrix  and the strictly
@@ -4879,19 +4767,10 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MAX
-!     ..
 !     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, INFO, J, L, NROWA
-      complex(kind=kind(1.0d0))         TEMP1, TEMP2
-!     ..
-!     .. Parameters ..
-      DOUBLE PRECISION   ONE
-      PARAMETER          ( ONE = 1.0D+0 )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
+      CPX         TEMP1, TEMP2
 !     ..
 !     .. Executable Statements ..
 !
@@ -4905,37 +4784,37 @@
       UPPER =  scan( UPLO, 'Uu' )>0
 !
       INFO = 0
-      IF( ( .NOT.UPPER ) .AND. ( .NOT. scan( UPLO, 'Ll' )>0 ) ) THEN
+      IF( ( NOT UPPER )  AND  ( NOT  scan( UPLO, 'Ll' )>0 ) ) THEN
          INFO = 1
-      ELSE IF( ( .NOT. scan( TRANS, 'Nn' )>0 ) .AND. &
-               ( .NOT. scan( TRANS, 'Cc' )>0 ) ) THEN
+      ELSE IF( ( NOT  scan( TRANS, 'Nn' )>0 )  AND  &
+               ( NOT  scan( TRANS, 'Cc' )>0 ) ) THEN
          INFO = 2
-      ELSE IF( N.LT.0 ) THEN
+      ELSE IF( N<0 ) THEN
          INFO = 3
-      ELSE IF( K.LT.0 ) THEN
+      ELSE IF( K<0 ) THEN
          INFO = 4
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) ) THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) ) THEN
          INFO = 7
-      ELSE IF( LDB.LT.MAX( 1, NROWA ) ) THEN
+      ELSE IF( LDB<MAX( 1, NROWA ) ) THEN
          INFO = 9
-      ELSE IF( LDC.LT.MAX( 1, N ) ) THEN
+      ELSE IF( LDC<MAX( 1, N ) ) THEN
          INFO = 12
       END IF
-      IF( INFO.NE.0 ) THEN
+      IF( INFO/=0 ) THEN
          CALL XERBLA( 'ZHER2K', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ) .OR. ( ( ( ALPHA.EQ.ZERO ) .OR. ( K.EQ.0 ) ) .AND. &
-          ( BETA.EQ.ONE ) ) )RETURN
+      IF( ( N==0 )  OR  ( ( ( ALPHA==ZERO )  OR  ( K==0 ) )  AND  &
+          ( BETA==ONE ) ) )RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO ) THEN
+      IF( ALPHA==ZERO ) THEN
          IF( UPPER ) THEN
-            IF( BETA.EQ.DBLE( ZERO ) ) THEN
+            IF( BETA==DBLE( ZERO ) ) THEN
                DO 20 J = 1, N
                   DO 10 I = 1, J
                      C( I, J ) = ZERO
@@ -4950,7 +4829,7 @@
    40          CONTINUE
             END IF
          ELSE
-            IF( BETA.EQ.DBLE( ZERO ) ) THEN
+            IF( BETA==DBLE( ZERO ) ) THEN
                DO 60 J = 1, N
                   DO 50 I = J, N
                      C( I, J ) = ZERO
@@ -4977,11 +4856,11 @@
 !
          IF( UPPER ) THEN
             DO 130 J = 1, N
-               IF( BETA.EQ.DBLE( ZERO ) ) THEN
+               IF( BETA==DBLE( ZERO ) ) THEN
                   DO 90 I = 1, J
                      C( I, J ) = ZERO
    90             CONTINUE
-               ELSE IF( BETA.NE.ONE ) THEN
+               ELSE IF( BETA/=ONE ) THEN
                   DO 100 I = 1, J - 1
                      C( I, J ) = BETA*C( I, J )
   100             CONTINUE
@@ -4990,7 +4869,7 @@
                   C( J, J ) = DBLE( C( J, J ) )
                END IF
                DO 120 L = 1, K
-                  IF( ( A( J, L ).NE.ZERO ) .OR. ( B( J, L ).NE.ZERO ) ) THEN
+                  IF( ( A( J, L )/=ZERO )  OR  ( B( J, L )/=ZERO ) ) THEN
                      TEMP1 = ALPHA*CONJG( B( J, L ) )
                      TEMP2 = CONJG( ALPHA*A( J, L ) )
                      DO 110 I = 1, J - 1
@@ -5003,11 +4882,11 @@
   130       CONTINUE
          ELSE
             DO 180 J = 1, N
-               IF( BETA.EQ.DBLE( ZERO ) ) THEN
+               IF( BETA==DBLE( ZERO ) ) THEN
                   DO 140 I = J, N
                      C( I, J ) = ZERO
   140             CONTINUE
-               ELSE IF( BETA.NE.ONE ) THEN
+               ELSE IF( BETA/=ONE ) THEN
                   DO 150 I = J + 1, N
                      C( I, J ) = BETA*C( I, J )
   150             CONTINUE
@@ -5016,7 +4895,7 @@
                   C( J, J ) = DBLE( C( J, J ) )
                END IF
                DO 170 L = 1, K
-                  IF( ( A( J, L ).NE.ZERO ) .OR. ( B( J, L ).NE.ZERO ) ) THEN
+                  IF( ( A( J, L )/=ZERO )  OR  ( B( J, L )/=ZERO ) ) THEN
                      TEMP1 = ALPHA*CONJG( B( J, L ) )
                      TEMP2 = CONJG( ALPHA*A( J, L ) )
                      DO 160 I = J + 1, N
@@ -5043,8 +4922,8 @@
                      TEMP1 = TEMP1 + CONJG( A( L, I ) )*B( L, J )
                      TEMP2 = TEMP2 + CONJG( B( L, I ) )*A( L, J )
   190             CONTINUE
-                  IF( I.EQ.J ) THEN
-                     IF( BETA.EQ.DBLE( ZERO ) ) THEN
+                  IF( I==J ) THEN
+                     IF( BETA==DBLE( ZERO ) ) THEN
                         C( J, J ) = DBLE( ALPHA*TEMP1+CONJG( ALPHA )* TEMP2 )
                      ELSE
                         C( J, J ) = BETA*DBLE( C( J, J ) ) + &
@@ -5052,7 +4931,7 @@
                                     TEMP2 )
                      END IF
                   ELSE
-                     IF( BETA.EQ.DBLE( ZERO ) ) THEN
+                     IF( BETA==DBLE( ZERO ) ) THEN
                         C( I, J ) = ALPHA*TEMP1 + CONJG( ALPHA )*TEMP2
                      ELSE
                         C( I, J ) = BETA*C( I, J ) + ALPHA*TEMP1 + &
@@ -5070,15 +4949,15 @@
                      TEMP1 = TEMP1 + CONJG( A( L, I ) )*B( L, J )
                      TEMP2 = TEMP2 + CONJG( B( L, I ) )*A( L, J )
   220             CONTINUE
-                  IF( I.EQ.J ) THEN
-                     IF( BETA.EQ.DBLE( ZERO ) ) THEN
+                  IF( I==J ) THEN
+                     IF( BETA==DBLE( ZERO ) ) THEN
                         C( J, J ) = DBLE( ALPHA*TEMP1+CONJG( ALPHA )* TEMP2 )
                      ELSE
                         C( J, J ) = BETA*DBLE( C( J, J ) ) + &
                                     DBLE( ALPHA*TEMP1+CONJG( ALPHA )* TEMP2 )
                      END IF
                   ELSE
-                     IF( BETA.EQ.DBLE( ZERO ) ) THEN
+                     IF( BETA==DBLE( ZERO ) ) THEN
                         C( I, J ) = ALPHA*TEMP1 + CONJG( ALPHA )*TEMP2
                      ELSE
                         C( I, J ) = BETA*C( I, J ) + ALPHA*TEMP1 + &
@@ -5097,11 +4976,11 @@
       END
       SUBROUTINE ZHPMV ( UPLO, N, ALPHA, AP, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA, BETA
+      CPX         ALPHA, BETA
       INTEGER            INCX, INCY, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         AP( * ), X( * ), Y( * )
+      CPX         AP( * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -5117,7 +4996,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the matrix A is supplied in the packed
 !           array AP as follows:
@@ -5135,11 +5014,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  AP     - complex(kind=kind(1.0d0))       array of DIMENSION at least
+!  AP     - CPX       array of DIMENSION at least
 !           ( ( n*( n + 1 ) )/2 ).
 !           Before entry with UPLO = 'U' or 'u', the array AP must
 !           contain the upper triangular part of the hermitian matrix
@@ -5155,7 +5034,7 @@
 !           not be set and are assumed to be zero.
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -5166,12 +5045,12 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  BETA   - complex(kind=kind(1.0d0))      .
+!  BETA   - CPX      .
 !           On entry, BETA specifies the scalar beta. When BETA is
 !           supplied as zero then Y need not be set on input.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of dimension at least
+!  Y      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y. On exit, Y is overwritten by the updated
@@ -5192,41 +5071,34 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP1, TEMP2
+      CPX         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO, 'Uu' )>0.AND. .NOT. scan( UPLO, 'Ll' )>0 )THEN
+      IF     ( NOT  scan( UPLO, 'Uu' )>0 AND  NOT  scan( UPLO, 'Ll' )>0 )THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 6
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 9
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZHPMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ( ALPHA.EQ.ZERO ).AND.( BETA.EQ.ONE ) ) ) RETURN
+      IF( ( N==0 ) OR ( ( ALPHA==ZERO ) AND ( BETA==ONE ) ) ) RETURN
 !
 !     Set up the start points in  X  and  Y.
 !
@@ -5246,9 +5118,9 @@
 !
 !     First form  y := beta*y.
 !
-      IF( BETA.NE.ONE )THEN
-         IF( INCY.EQ.1 )THEN
-            IF( BETA.EQ.ZERO )THEN
+      IF( BETA/=ONE )THEN
+         IF( INCY==1 )THEN
+            IF( BETA==ZERO )THEN
                DO 10, I = 1, N
                   Y( I ) = ZERO
    10          CONTINUE
@@ -5259,7 +5131,7 @@
             END IF
          ELSE
             IY = KY
-            IF( BETA.EQ.ZERO )THEN
+            IF( BETA==ZERO )THEN
                DO 30, I = 1, N
                   Y( IY ) = ZERO
                   IY      = IY   + INCY
@@ -5272,13 +5144,13 @@
             END IF
          END IF
       END IF
-      IF( ALPHA.EQ.ZERO ) RETURN
+      IF( ALPHA==ZERO ) RETURN
       KK = 1
       IF(  scan( UPLO, 'Uu' )>0 )THEN
 !
 !        Form  y  when AP contains the upper triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
                TEMP1 = ALPHA*X( J )
                TEMP2 = ZERO
@@ -5315,7 +5187,7 @@
 !
 !        Form  y  when AP contains the lower triangle.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 100, J = 1, N
                TEMP1  = ALPHA*X( J )
                TEMP2  = ZERO
@@ -5359,11 +5231,11 @@
       END
       SUBROUTINE ZHPR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, AP )
 !     .. Scalar Arguments ..
-      complex(kind=kind(1.0d0))         ALPHA
+      CPX         ALPHA
       INTEGER            INCX, INCY, N
-      character(len=1)        UPLO
+      STR(len=1)        UPLO
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         AP( * ), X( * ), Y( * )
+      CPX         AP( * ), X( * ), Y( * )
 !     ..
 !
 !  Purpose
@@ -5379,7 +5251,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the upper or lower
 !           triangular part of the matrix A is supplied in the packed
 !           array AP as follows:
@@ -5397,11 +5269,11 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry, ALPHA specifies the scalar alpha.
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x.
@@ -5412,7 +5284,7 @@
 !           X. INCX must not be zero.
 !           Unchanged on exit.
 !
-!  Y      - complex(kind=kind(1.0d0))       array of dimension at least
+!  Y      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCY ) ).
 !           Before entry, the incremented array Y must contain the n
 !           element vector y.
@@ -5423,7 +5295,7 @@
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
 !
-!  AP     - complex(kind=kind(1.0d0))       array of DIMENSION at least
+!  AP     - CPX       array of DIMENSION at least
 !           ( ( n*( n + 1 ) )/2 ).
 !           Before entry with  UPLO = 'U' or 'u', the array AP must
 !           contain the upper triangular part of the hermitian matrix
@@ -5453,44 +5325,39 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP1, TEMP2
+      CPX         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO, 'Uu' )>0.AND. .NOT. scan( UPLO, 'Ll' )>0) THEN
+      IF     ( NOT  scan( UPLO, 'Uu' )>0 AND  NOT  scan( UPLO, 'Ll' )>0) THEN
          INFO = 1
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 2
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 5
-      ELSE IF( INCY.EQ.0 )THEN
+      ELSE IF( INCY==0 )THEN
          INFO = 7
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZHPR2 ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( ( N.EQ.0 ).OR.( ALPHA.EQ.ZERO ) ) RETURN
+      IF( ( N==0 ) OR ( ALPHA==ZERO ) ) RETURN
 !
 !     Set up the start points in X and Y if the increments are not both
 !     unity.
 !
-      IF( ( INCX.NE.1 ).OR.( INCY.NE.1 ) )THEN
+      IF( ( INCX/=1 ) OR ( INCY/=1 ) )THEN
          IF( INCX.GT.0 )THEN
             KX = 1
          ELSE
@@ -5513,9 +5380,9 @@
 !
 !        Form  A  when upper triangle is stored in AP.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 20, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1 = ALPHA*CONJG( Y( J ) )
                   TEMP2 = CONJG( ALPHA*X( J ) )
                   K     = KK
@@ -5532,7 +5399,7 @@
    20       CONTINUE
          ELSE
             DO 40, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1 = ALPHA*CONJG( Y( JY ) )
                   TEMP2 = CONJG( ALPHA*X( JX ) )
                   IX    = KX
@@ -5556,9 +5423,9 @@
 !
 !        Form  A  when lower triangle is stored in AP.
 !
-         IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
+         IF( ( INCX==1 ) AND ( INCY==1 ) )THEN
             DO 60, J = 1, N
-               IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
+               IF( ( X( J )/=ZERO ) OR ( Y( J )/=ZERO ) )THEN
                   TEMP1   = ALPHA*CONJG( Y( J ) )
                   TEMP2   = CONJG( ALPHA*X( J ) )
                   AP( KK ) = DBLE( AP( KK ) ) + &
@@ -5575,7 +5442,7 @@
    60       CONTINUE
          ELSE
             DO 80, J = 1, N
-               IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
+               IF( ( X( JX )/=ZERO ) OR ( Y( JY )/=ZERO ) )THEN
                   TEMP1    = ALPHA*CONJG( Y( JY ) )
                   TEMP2    = CONJG( ALPHA*X( JX ) )
                   AP( KK ) = DBLE( AP( KK ) ) + &
@@ -5604,11 +5471,11 @@
       END
       SUBROUTINE ZTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB )
 !     .. Scalar Arguments ..
-      character(len=1)        SIDE, UPLO, TRANSA, DIAG
+      STR(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      complex(kind=kind(1.0d0))         ALPHA
+      CPX         ALPHA
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), B( LDB, * )
+      CPX         A( LDA, * ), B( LDB, * )
 !     ..
 !
 !  Purpose
@@ -5626,7 +5493,7 @@
 !  Parameters
 !  ==========
 !
-!  SIDE   - character(len=1).
+!  SIDE   - STR(len=1).
 !           On entry,  SIDE specifies whether  op( A ) multiplies B from
 !           the left or right as follows:
 !
@@ -5636,7 +5503,7 @@
 !
 !           Unchanged on exit.
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the matrix A is an upper or
 !           lower triangular matrix as follows:
 !
@@ -5646,7 +5513,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANSA - character(len=1).
+!  TRANSA - STR(len=1).
 !           On entry, TRANSA specifies the form of op( A ) to be used in
 !           the matrix multiplication as follows:
 !
@@ -5658,7 +5525,7 @@
 !
 !           Unchanged on exit.
 !
-!  DIAG   - character(len=1).
+!  DIAG   - STR(len=1).
 !           On entry, DIAG specifies whether or not A is unit triangular
 !           as follows:
 !
@@ -5679,13 +5546,13 @@
 !           at least zero.
 !           Unchanged on exit.
 !
-!  ALPHA  - complex(kind=kind(1.0d0))      .
+!  ALPHA  - CPX      .
 !           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 !           zero then  A is not referenced and  B need not be set before
 !           entry.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, k ), where k is m
+!  A      - CPX       array of DIMENSION ( LDA, k ), where k is m
 !           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 !           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 !           upper triangular part of the array  A must contain the upper
@@ -5706,7 +5573,7 @@
 !           then LDA must be at least max( 1, n ).
 !           Unchanged on exit.
 !
-!  B      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDB, n ).
+!  B      - CPX       array of DIMENSION ( LDB, n ).
 !           Before entry,  the leading  m by n part of the array  B must
 !           contain the matrix  B,  and  on exit  is overwritten  by the
 !           transformed matrix.
@@ -5728,17 +5595,10 @@
 !
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     .. Local Scalars ..
       LOGICAL            LSIDE, NOCONJ, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      complex(kind=kind(1.0d0))         TEMP
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ONE
-      PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
+      CPX         TEMP
 !     ..
 !     .. Executable Statements ..
 !
@@ -5755,40 +5615,40 @@
       UPPER  =  scan( UPLO  , 'Uu' )>0
 !
       INFO   = 0
-      IF(      ( .NOT.LSIDE                ).AND. &
-               ( .NOT. scan( SIDE  , 'Rr' )>0 )      )THEN
+      IF(      ( NOT LSIDE                ) AND  &
+               ( NOT  scan( SIDE  , 'Rr' )>0 )      )THEN
          INFO = 1
-      ELSE IF( ( .NOT.UPPER                ).AND. &
-               ( .NOT. scan( UPLO  , 'Ll' )>0 )      )THEN
+      ELSE IF( ( NOT UPPER                ) AND  &
+               ( NOT  scan( UPLO  , 'Ll' )>0 )      )THEN
          INFO = 2
-      ELSE IF( ( .NOT. scan( TRANSA, 'Nn' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Tt' )>0 ).AND. &
-               ( .NOT. scan( TRANSA, 'Cc' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( TRANSA, 'Nn' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Tt' )>0 ) AND  &
+               ( NOT  scan( TRANSA, 'Cc' )>0 )      )THEN
          INFO = 3
-      ELSE IF( ( .NOT. scan( DIAG  , 'Uu' )>0 ).AND. &
-               ( .NOT. scan( DIAG  , 'Nn' )>0 )      )THEN
+      ELSE IF( ( NOT  scan( DIAG  , 'Uu' )>0 ) AND  &
+               ( NOT  scan( DIAG  , 'Nn' )>0 )      )THEN
          INFO = 4
-      ELSE IF( M  .LT.0               )THEN
+      ELSE IF( M  <0               )THEN
          INFO = 5
-      ELSE IF( N  .LT.0               )THEN
+      ELSE IF( N  <0               )THEN
          INFO = 6
-      ELSE IF( LDA.LT.MAX( 1, NROWA ) )THEN
+      ELSE IF( LDA<MAX( 1, NROWA ) )THEN
          INFO = 9
-      ELSE IF( LDB.LT.MAX( 1, M     ) )THEN
+      ELSE IF( LDB<MAX( 1, M     ) )THEN
          INFO = 11
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZTRMM ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
-!     And when  alpha.eq.zero.
+!     And when  alpha==zero.
 !
-      IF( ALPHA.EQ.ZERO )THEN
+      IF( ALPHA==ZERO )THEN
          DO 20, J = 1, N
             DO 10, I = 1, M
                B( I, J ) = ZERO
@@ -5807,7 +5667,7 @@
             IF( UPPER )THEN
                DO 50, J = 1, N
                   DO 40, K = 1, M
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         TEMP = ALPHA*B( K, J )
                         DO 30, I = 1, K - 1
                            B( I, J ) = B( I, J ) + TEMP*A( I, K )
@@ -5820,7 +5680,7 @@
             ELSE
                DO 80, J = 1, N
                   DO 70 K = M, 1, -1
-                     IF( B( K, J ).NE.ZERO )THEN
+                     IF( B( K, J )/=ZERO )THEN
                         TEMP      = ALPHA*B( K, J )
                         B( K, J ) = TEMP
                         IF( NOUNIT ) B( K, J ) = B( K, J )*A( K, K )
@@ -5886,7 +5746,7 @@
                      B( I, J ) = TEMP*B( I, J )
   170             CONTINUE
                   DO 190, K = 1, J - 1
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         TEMP = ALPHA*A( K, J )
                         DO 180, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -5902,7 +5762,7 @@
                      B( I, J ) = TEMP*B( I, J )
   210             CONTINUE
                   DO 230, K = J + 1, N
-                     IF( A( K, J ).NE.ZERO )THEN
+                     IF( A( K, J )/=ZERO )THEN
                         TEMP = ALPHA*A( K, J )
                         DO 220, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -5918,7 +5778,7 @@
             IF( UPPER )THEN
                DO 280, K = 1, N
                   DO 260, J = 1, K - 1
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         IF( NOCONJ )THEN
                            TEMP = ALPHA*A( J, K )
                         ELSE
@@ -5937,7 +5797,7 @@
                         TEMP = TEMP*CONJG( A( K, K ) )
                      END IF
                   END IF
-                  IF( TEMP.NE.ONE )THEN
+                  IF( TEMP/=ONE )THEN
                      DO 270, I = 1, M
                         B( I, K ) = TEMP*B( I, K )
   270                CONTINUE
@@ -5946,7 +5806,7 @@
             ELSE
                DO 320, K = N, 1, -1
                   DO 300, J = K + 1, N
-                     IF( A( J, K ).NE.ZERO )THEN
+                     IF( A( J, K )/=ZERO )THEN
                         IF( NOCONJ )THEN
                            TEMP = ALPHA*A( J, K )
                         ELSE
@@ -5965,7 +5825,7 @@
                         TEMP = TEMP*CONJG( A( K, K ) )
                      END IF
                   END IF
-                  IF( TEMP.NE.ONE )THEN
+                  IF( TEMP/=ONE )THEN
                      DO 310, I = 1, M
                         B( I, K ) = TEMP*B( I, K )
   310                CONTINUE
@@ -5983,9 +5843,9 @@
       SUBROUTINE ZTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 !     .. Scalar Arguments ..
       INTEGER            INCX, LDA, N
-      character(len=1)        DIAG, TRANS, UPLO
+      STR(len=1)        DIAG, TRANS, UPLO
 !     .. Array Arguments ..
-      complex(kind=kind(1.0d0))         A( LDA, * ), X( * )
+      CPX         A( LDA, * ), X( * )
 !     ..
 !
 !  Purpose
@@ -6001,7 +5861,7 @@
 !  Parameters
 !  ==========
 !
-!  UPLO   - character(len=1).
+!  UPLO   - STR(len=1).
 !           On entry, UPLO specifies whether the matrix is an upper or
 !           lower triangular matrix as follows:
 !
@@ -6011,7 +5871,7 @@
 !
 !           Unchanged on exit.
 !
-!  TRANS  - character(len=1).
+!  TRANS  - STR(len=1).
 !           On entry, TRANS specifies the operation to be performed as
 !           follows:
 !
@@ -6023,7 +5883,7 @@
 !
 !           Unchanged on exit.
 !
-!  DIAG   - character(len=1).
+!  DIAG   - STR(len=1).
 !           On entry, DIAG specifies whether or not A is unit
 !           triangular as follows:
 !
@@ -6039,7 +5899,7 @@
 !           N must be at least zero.
 !           Unchanged on exit.
 !
-!  A      - complex(kind=kind(1.0d0))       array of DIMENSION ( LDA, n ).
+!  A      - CPX       array of DIMENSION ( LDA, n ).
 !           Before entry with  UPLO = 'U' or 'u', the leading n by n
 !           upper triangular part of the array A must contain the upper
 !           triangular matrix and the strictly lower triangular part of
@@ -6058,7 +5918,7 @@
 !           max( 1, n ).
 !           Unchanged on exit.
 !
-!  X      - complex(kind=kind(1.0d0))       array of dimension at least
+!  X      - CPX       array of dimension at least
 !           ( 1 + ( n - 1 )*abs( INCX ) ).
 !           Before entry, the incremented array X must contain the n
 !           element vector x. On exit, X is overwritten with the
@@ -6079,48 +5939,43 @@
 !     Richard Hanson, Sandia National Labs.
 !
 !
-!     .. Parameters ..
-      complex(kind=kind(1.0d0))         ZERO
-      PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 !     .. Local Scalars ..
-      complex(kind=kind(1.0d0))         TEMP
+      CPX         TEMP
       INTEGER            I, INFO, IX, J, JX, KX
       LOGICAL            NOCONJ, NOUNIT
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
-!     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 !     ..
 !     .. Executable Statements ..
 !
 !     Test the input parameters.
 !
       INFO = 0
-      IF     ( .NOT. scan( UPLO , 'Uu' )>0.AND. &
-               .NOT. scan( UPLO , 'Ll' )>0      )THEN
+      IF     ( NOT  scan( UPLO , 'Uu' )>0 AND  &
+               NOT  scan( UPLO , 'Ll' )>0      )THEN
          INFO = 1
-      ELSE IF( .NOT. scan( TRANS, 'Nn' )>0.AND. &
-               .NOT. scan( TRANS, 'Tt' )>0.AND. &
-               .NOT. scan( TRANS, 'Cc' )>0      )THEN
+      ELSE IF( NOT  scan( TRANS, 'Nn' )>0 AND  &
+               NOT  scan( TRANS, 'Tt' )>0 AND  &
+               NOT  scan( TRANS, 'Cc' )>0      )THEN
          INFO = 2
-      ELSE IF( .NOT. scan( DIAG , 'Uu' )>0.AND. &
-               .NOT. scan( DIAG , 'Nn' )>0      )THEN
+      ELSE IF( NOT  scan( DIAG , 'Uu' )>0 AND  &
+               NOT  scan( DIAG , 'Nn' )>0      )THEN
          INFO = 3
-      ELSE IF( N.LT.0 )THEN
+      ELSE IF( N<0 )THEN
          INFO = 4
-      ELSE IF( LDA.LT.MAX( 1, N ) )THEN
+      ELSE IF( LDA<MAX( 1, N ) )THEN
          INFO = 6
-      ELSE IF( INCX.EQ.0 )THEN
+      ELSE IF( INCX==0 )THEN
          INFO = 8
       END IF
-      IF( INFO.NE.0 )THEN
+      IF( INFO/=0 )THEN
          CALL XERBLA( 'ZTRMV ', INFO )
          RETURN
       END IF
 !
 !     Quick return if possible.
 !
-      IF( N.EQ.0 ) RETURN
+      IF( N==0 ) RETURN
 !
       NOCONJ =  scan( TRANS, 'Tt' )>0
       NOUNIT =  scan( DIAG , 'Nn' )>0
@@ -6130,7 +5985,7 @@
 !
       IF( INCX.LE.0 )THEN
          KX = 1 - ( N - 1 )*INCX
-      ELSE IF( INCX.NE.1 )THEN
+      ELSE IF( INCX/=1 )THEN
          KX = 1
       END IF
 !
@@ -6142,9 +5997,9 @@
 !        Form  x := A*x.
 !
          IF(  scan( UPLO, 'Uu' )>0 )THEN
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 20, J = 1, N
-                  IF( X( J ).NE.ZERO )THEN
+                  IF( X( J )/=ZERO )THEN
                      TEMP = X( J )
                      DO 10, I = 1, J - 1
                         X( I ) = X( I ) + TEMP*A( I, J )
@@ -6155,7 +6010,7 @@
             ELSE
                JX = KX
                DO 40, J = 1, N
-                  IF( X( JX ).NE.ZERO )THEN
+                  IF( X( JX )/=ZERO )THEN
                      TEMP = X( JX )
                      IX   = KX
                      DO 30, I = 1, J - 1
@@ -6168,9 +6023,9 @@
    40          CONTINUE
             END IF
          ELSE
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 60, J = N, 1, -1
-                  IF( X( J ).NE.ZERO )THEN
+                  IF( X( J )/=ZERO )THEN
                      TEMP = X( J )
                      DO 50, I = N, J + 1, -1
                         X( I ) = X( I ) + TEMP*A( I, J )
@@ -6182,7 +6037,7 @@
                KX = KX + ( N - 1 )*INCX
                JX = KX
                DO 80, J = N, 1, -1
-                  IF( X( JX ).NE.ZERO )THEN
+                  IF( X( JX )/=ZERO )THEN
                      TEMP = X( JX )
                      IX   = KX
                      DO 70, I = N, J + 1, -1
@@ -6200,7 +6055,7 @@
 !        Form  x := A'*x  or  x := conjg( A' )*x.
 !
          IF(  scan( UPLO, 'Uu' )>0 )THEN
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 110, J = N, 1, -1
                   TEMP = X( J )
                   IF( NOCONJ )THEN
@@ -6239,7 +6094,7 @@
   140          CONTINUE
             END IF
          ELSE
-            IF( INCX.EQ.1 )THEN
+            IF( INCX==1 )THEN
                DO 170, J = 1, N
                   TEMP = X( J )
                   IF( NOCONJ )THEN
