@@ -175,8 +175,9 @@ while (chop($X = <TYPES>)) {
     
     last if ($X =~ /^end/ );                        # End of types.foo
     next if ($X !~ /type +([a-zA-Z]\w*)_type\b/);   # Look for next type definition
-
-    $type_name = uc($1);                            # Get the type name
+    ($type_name = $X) =~ s/.*type +//s;             # Get the type name
+    $type_name =~ s/_type\b.*//s;
+    $type_name = uc($type_name);
     $tonto_type{$type_name}{"--exists--"} = 1;      # Create the hash table for this type
 
     while (chop($X = <TYPES>)) {                    # Analyse the type declaration line
@@ -227,7 +228,7 @@ LINE: while (<FOOFILE>) {
                 # Get the module name #
 
 		$inp =~ /^[ ]*module ([A-Z][A-Z_0-9]*)\b/;           
-		$long_module_name = $1;
+		($long_module_name = $inp) =~ s/^[ ]*module //s;
 		$long_module_name =~ /^([A-Z0-9]*)/;
 		$module_name = $1;
 
