@@ -860,6 +860,11 @@ sub analyse_variable_declaration {
             if ($scopeunit eq 'function' ||
                 $scopeunit eq 'subroutine') {
                if (&routine_has_arg($var) == 1) {
+                  if (defined $current_rout_name &&
+                      defined $routine{$current_rout_name}{in_routine_body} &&
+                      $routine{$current_rout_name}{in_routine_body} == 1) {
+                    &report_error("variable declared in routine body!\n\n$X");
+                  }
                   if ($routine{$current_rout_name}{found_local_var_decl}) {
                      &report_error("declare all routine arguments before local variables:\n\n$X");
                   }
@@ -2171,10 +2176,11 @@ sub fortran_dump_use {
             $ftime = 1;
          }
 
-         if ($mod eq "PARALLEL" && $fpara==0 && $mod ne $module_full_name) {
-            print USEFILE "   use SYSTEM_MODULE, only: tonto_parallel";
-            $fpara = 1;
-         }
+# SYSTEM_MODULE is already used by default.
+#         if ($mod eq "PARALLEL" && $fpara==0 && $mod ne $module_full_name) {
+#            print USEFILE "   use SYSTEM_MODULE, only: tonto_parallel";
+#            $fpara = 1;
+#         }
 
          if ($mod ne "unknown" && $mod ne $module_full_name) {
             if ($do_generic) {
