@@ -166,14 +166,6 @@ contains
     .d.unnormalize
   end
 
-  ERI_block_size result(size)
-     IVEC(4) :: size
-     size(1) = .a%n_comp
-     size(2) = .b%n_comp
-     size(3) = .c%n_comp
-     size(4) = .d%n_comp
-  end
-
   skip_ERI result (res)
   ! Whether the ERI block will be less than a cutoff value.
     BIN :: res
@@ -363,40 +355,25 @@ contains
   ! Creates the initial (es|fs) integrals, summed over the primitives
     IN :: self
     MAT, INOUT:: esfs
-    MAT, PTR :: esfsadd
-    MAT3, PTR :: Ix,Iy,Iz
+    MAT3, PTR :: esfsadd
+    MAT4, PTR :: Ix,Iy,Iz
     RYS, PTR :: rysa
-    VEC(3) :: P,Q,PA,QC,QP,ara,crc,AB,CD,C_tmp,A_tmp
-    DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
-    INT :: ag,bg,cg,dg,n_e,n_f,nroots,eub,fub,dim1,dim2
-    DBL :: norma,normb,normc,norm
-    IMAT, PTR :: e_powers,f_powers
+    VEC(3) :: P,Q,PAi,QCi,QPi,ara,crc,AB,CD,C_tmp,A_tmp
+    DBL :: QP2,a,b,c,d,zeta,kab,eta,kcd,xx,r2ab,r2cd
+    INT :: ag,bg,cg,dg,nroots,eub,fub,dim1,dim2,i,n_cc
+    DBL :: norma,normb,normc,zinvi,rhoi,einvi
     IVEC, PTR :: e_x,e_y,e_z,f_x,f_y,f_z
+    VEC, PTR :: norm,rho,zinv,einv
+    MAT, PTR :: weights,roots,PA,QC,QP
 
-    n_e = .a%l + .b%l
-    n_f = .c%l + .d%l
+    n_cc = .a%n_cc * .b%n_cc * .c%n_cc * .d%n_cc
     eub = size(esfs,1)
     fub = size(esfs,2)
 
-    dim1 = n_e+1
-    dim2 = n_f+1
+    dim1 = .a%l + .b%l + 1
+    dim2 = .c%l + .d%l + 1
     nroots = (dim1+dim2)/2
-    rysa.create(nroots)
-    Ix.create(nroots,dim1,dim2)
-    Iy.create(nroots,dim1,dim2)
-    Iz.create(nroots,dim1,dim2)
-    esfsadd.create(eub,fub)
 
-    e_powers.create(3,eub)
-    e_powers.make_cartesian_components(max(.a%l,.b%l), n_e)
-    e_powers = e_powers+1
-    e_x => e_powers(1,:); e_y => e_powers(2,:); e_z => e_powers(3,:)
-    f_powers.create(3,fub)
-    f_powers.make_cartesian_components(max(.c%l,.d%l), n_f)
-    f_powers = f_powers+1
-    f_x => f_powers(1,:); f_y => f_powers(2,:); f_z => f_powers(3,:)
-
-    esfs=ZERO
     AB = .a%pos - .b%pos
     CD = .c%pos - .d%pos
     r2ab=dot_product(AB,AB)
@@ -412,172 +389,452 @@ contains
       C_tmp = .d%pos
     end
 
+    rysa.create(nroots)
+    norm.create(n_cc)
+    weights.create(n_cc,nroots)
+    roots.create(n_cc,nroots)
+    rho.create(n_cc)
+    zinv.create(n_cc)
+    einv.create(n_cc)
+    PA.create(3,n_cc)
+    QC.create(3,n_cc)
+    QP.create(3,n_cc)
+
+    i = 1
     do ag = 1, .a%n_cc
       a     = .a%ex(ag) 
       norma = .a%cc(ag)
       ara   = a* .a%pos
       do bg = 1, .b%n_cc
-        b     = .b%ex(bg)
-        zeta  = a + b
-        zinv  = ONE / zeta
-        kab   = TWOPI5ON2 * (zinv**1.5) * exp(-a * b * r2ab * zinv)
-        normb = norma * .b%cc(bg) * kab
-        P     = (ara + b* .b%pos) * zinv
-        PA    = P - A_tmp
+        b       = .b%ex(bg)
+        zeta    = a + b
+        zinvi   = ONE / zeta
+        kab     = TWOPI5ON2 * (zinvi**1.5) * exp(-a * b * r2ab * zinvi)
+        normb   = norma * .b%cc(bg) * kab
+        P       = (ara + b* .b%pos) * zinvi
+        PAi     = P - A_tmp
         do cg = 1, .c%n_cc
           normc = normb * .c%cc(cg)
           c     = .c%ex(cg)
           crc   = c* .c%pos
           do dg = 1, .d%n_cc
-            d    = .d%ex(dg)
-            eta  = c + d
-            einv = ONE / eta
-            kcd  = exp(-c * d * r2cd * einv)
-            Q    = (crc + d * .d%pos) * einv
-            QC   = Q - C_tmp
-            QP   = Q - P
-            QP2  = dot_product(QP,QP)
-            rho  = zeta * eta / (zeta + eta)
-            xx   = rho * QP2
+            d     = .d%ex(dg)
+            eta   = c + d
+            einvi = ONE / eta
+            kcd   = exp(-c * d * r2cd * einvi)
+            Q     = (crc + d * .d%pos) * einvi
+            QCi   = Q - C_tmp
+            QPi   = Q - P
+            QP2   = dot_product(QPi,QPi)
+            rhoi  = zeta * eta / (zeta + eta)
+            xx    = rhoi * QP2
             rysa.get_weights(xx)
-            .form_2d_ints(Ix,Iy,Iz,nroots,rysa%r,rho,zinv,einv,PA,QC,QP)
-            .form_esfs(Ix,Iy,Iz,rysa%w,esfsadd,e_x,e_y,e_z,f_x,f_y,f_z,eub,fub,nroots,dim1,dim2)
-            norm=normc* .d%cc(dg)*sqrt(rho*einv)*einv*kcd ! einv**1.5 simplified
-            esfs=esfs+norm*esfsadd
+            norm(i) = normc* .d%cc(dg)*sqrt(rhoi*einvi)*einvi*kcd
+            weights(i,:) = rysa%w
+            roots(i,:) = rysa%r
+            rho(i)  = rhoi
+            einv(i) = einvi
+            zinv(i) = zinvi
+            PA(:,i) = PAi
+            QC(:,i) = QCi
+            QP(:,i) = QPi
+            i = i + 1
           end
         end
       end
     end
-    e_powers.destroy
-    f_powers.destroy
-    Ix.destroy
-    Iy.destroy
+
+    Ix.create(n_cc,nroots,dim1,dim2)
+    Iy.create(n_cc,nroots,dim1,dim2)
+    Iz.create(n_cc,nroots,dim1,dim2)
+    .form_2d_ints(Ix,Iy,Iz,nroots,roots,rho,zinv,einv,PA,QC,QP,n_cc)
+    .form_esfs(Ix,Iy,Iz,weights,esfs,eub,fub,nroots,dim1,dim2,n_cc,norm)
     Iz.destroy
-    esfsadd.destroy
+    Iy.destroy
+    Ix.destroy
+
+    QP.destroy
+    QC.destroy
+    PA.destroy
+    einv.destroy
+    zinv.destroy
+    rho.destroy
+    roots.destroy
+    weights.destroy
+    norm.destroy
     rysa.destroy
   end
 
-  form_2d_ints(Ix,Iy,Iz,nroots,t2,rho,zinv,einv,PA,QC,QP)
+  form_2d_ints(Ix,Iy,Iz,nroots,t2,rho,zinv,einv,PA,QC,QP,n_cc)
   ! Forms the two dimentional integrals
     IN :: self
-    MAT3, target, OUT :: Ix,Iy,Iz
-    INT, IN :: nroots
-    VEC, IN :: t2
-    DBL, IN :: rho,zinv,einv
-    VEC(3), IN :: PA,QC,QP
-    VEC(nroots) :: ret,rzt,ce,cf,bb,ce1,cf1
-    VEC, PTR :: Ix12,Iy12,Iz12,Ix21,Iy21,Iz21
-    INT :: e,f,e1,f1,fp1,ep1,n_e,n_f
-    DBL :: temp
+    MAT4, target, OUT :: Ix,Iy,Iz
+    INT, IN :: nroots,n_cc
+    MAT :: t2,PA,QC,QP
+    VEC, IN :: rho,zinv,einv
+    MAT(n_cc,nroots) :: ce,cf,bb,ce1
+    MAT, PTR :: Ix12,Iy12,Iz12,Ix21,Iy21,Iz21,Ix22,Iy22,Iz22
+    MAT, PTR :: Ixa,Ixb,Ixc,Ixd,Iya,Iyb,Iyc,Iyd,Iza,Izb,Izc,Izd ! temp matrices
+    MAT, PTR :: Ixe,Iye,Ize,Ixf,Iyf,Izf
+    INT :: e,f,e1,f1,fp1,ep1,n_e,n_f,i,n
+    DBL :: tmp,tmp2,tmp3
+    
     n_e = .a%l + .b%l
     n_f = .c%l + .d%l
-    Ix(:,1,1) = ONE
-    Iy(:,1,1) = ONE
-    Iz(:,1,1) = ONE
-    if (n_e>0 OR n_f>0) then
-      if (n_f>0) then
-        temp = rho * einv
-        ret = t2(:) * temp
-        Ix12 => Ix(:,1,2)
-        Iy12 => Iy(:,1,2)
-        Iz12 => Iz(:,1,2)
-        Ix12 = QC(1) - ret(:) * QP(1)
-        Iy12 = QC(2) - ret(:) * QP(2)
-        Iz12 = QC(3) - ret(:) * QP(3)
-        if (n_f>1) then
-          cf(:) = (ONE - ret(:)) * HALF * einv
-          do f = 2,n_f
-            f1  = f - 1
-            fp1 = f + 1
-            cf1(:) = f1 * cf(:)
-            Ix(:,1,fp1) = Ix12 * Ix(:,1,f) + cf1(:) * Ix(:,1,f1)
-            Iy(:,1,fp1) = Iy12 * Iy(:,1,f) + cf1(:) * Iy(:,1,f1)
-            Iz(:,1,fp1) = Iz12 * Iz(:,1,f) + cf1(:) * Iz(:,1,f1)
-          end
-        end
-      end
-      if (n_e>0) then
-        temp = rho * zinv
-        rzt(:) = t2(:) * temp
-        Ix21 => Ix(:,2,1)
-        Iy21 => Iy(:,2,1)
-        Iz21 => Iz(:,2,1)
-        Ix21 = PA(1) + rzt(:) * QP(1)
-        Iy21 = PA(2) + rzt(:) * QP(2)
-        Iz21 = PA(3) + rzt(:) * QP(3)
-        if (n_e>1) then
-          ce(:) = (ONE - rzt(:)) * HALF * zinv
-          do e = 2, n_e
-            e1  = e - 1
-            ep1 = e + 1
-            ce1(:) = e1 * ce(:)
-            Ix(:,ep1,1) = Ix21 * Ix(:,e,1) + ce1(:) * Ix(:,e1,1)
-            Iy(:,ep1,1) = Iy21 * Iy(:,e,1) + ce1(:) * Iy(:,e1,1)
-            Iz(:,ep1,1) = Iz21 * Iz(:,e,1) + ce1(:) * Iz(:,e1,1)
-          end
-        end
-      end
-      if (n_f>0 AND n_e>0) then
-        temp = HALF * einv
-        bb(:) = rzt(:) * temp
-        Ix(:,2,2)=Ix12*Ix21+bb(:)
-        Iy(:,2,2)=Iy12*Iy21+bb(:)
-        Iz(:,2,2)=Iz12*Iz21+bb(:)
-        if (n_f>1) then
-          do f=2,n_f
-            f1  = f - 1
-            fp1 = f + 1
-            cf1(:) = f1 * cf(:)
-            Ix(:,2,fp1) = Ix12 * Ix(:,2,f) + cf1(:) * Ix(:,2,f1) + bb(:)*Ix(:,1,f)
-            Iy(:,2,fp1) = Iy12 * Iy(:,2,f) + cf1(:) * Iy(:,2,f1) + bb(:)*Iy(:,1,f)
-            Iz(:,2,fp1) = Iz12 * Iz(:,2,f) + cf1(:) * Iz(:,2,f1) + bb(:)*Iz(:,1,f)
-          end
-        end
-        if (n_e>1) then
-          do e = 2, n_e
-            e1  =e - 1
-            ep1 =e + 1
-            ce1 =e1 * ce
-            do f=2, n_f + 1
-              f1 = f - 1
-              Ix(:,ep1,f) = Ix21*Ix(:,e,f)+ce1*Ix(:,e1,f)+f1*bb(:)*Ix(:,e,f1)
-              Iy(:,ep1,f) = Iy21*Iy(:,e,f)+ce1*Iy(:,e1,f)+f1*bb(:)*Iy(:,e,f1)
-              Iz(:,ep1,f) = Iz21*Iz(:,e,f)+ce1*Iz(:,e1,f)+f1*bb(:)*Iz(:,e,f1)
+    Ix(:,:,1,1) = ONE
+    Iy(:,:,1,1) = ONE
+    Iz(:,:,1,1) = ONE
+
+    select case (n_f)
+      case (0)
+        select case (n_e)
+          case (0)                         ! n_f = 0, n_e = 0
+          case (1)                         ! n_f = 0, n_e = 1
+            Ix21 => Ix(:,:,2,1)
+            Iy21 => Iy(:,:,2,1)
+            Iz21 => Iz(:,:,2,1)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp = t2(i,n) * zinv(i) * rho(i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+              end
             end
-          end
+          case default                     ! n_f = 0, n_e = *
+            Ix21 => Ix(:,:,2,1)
+            Iy21 => Iy(:,:,2,1)
+            Iz21 => Iz(:,:,2,1)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp = t2(i,n) * zinv(i) * rho(i)
+                ce(i,n) = (ONE - tmp) * HALF * zinv(i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+              end
+            end
+            do e = 2, n_e
+              e1  = e - 1
+              ep1 = e + 1
+              Ixa => Ix(:,:,ep1,1); Iya => Iy(:,:,ep1,1); Iza => Iz(:,:,ep1,1)
+              Ixb => Ix(:,:,e,1);   Iyb => Iy(:,:,e,1);   Izb => Iz(:,:,e,1)
+              Ixc => Ix(:,:,e1,1);  Iyc => Iy(:,:,e1,1);  Izc => Iz(:,:,e1,1)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = e1 * ce(i,n)
+                  Ixa(i,n) = Ix21(i,n) * Ixb(i,n) + tmp * Ixc(i,n)
+                  Iya(i,n) = Iy21(i,n) * Iyb(i,n) + tmp * Iyc(i,n)
+                  Iza(i,n) = Iz21(i,n) * Izb(i,n) + tmp * Izc(i,n)
+                end
+              end
+            end
         end
-      end
+      case (1)
+        select case (n_e)
+          case (0)                         ! n_f = 1, n_e = 0
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp = t2(i,n) * rho(i) * einv(i)
+                Ix12(i,n) = QC(1,i) - tmp * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp * QP(3,i)
+              end
+            end
+          case (1)                         ! n_f = 1, n_e = 1
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            Ix21 => Ix(:,:,2,1); Iy21 => Iy(:,:,2,1); Iz21 => Iz(:,:,2,1)
+            Ix22 => Ix(:,:,2,2); Iy22 => Iy(:,:,2,2); Iz22 => Iz(:,:,2,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp  = t2(i,n) * rho(i) * zinv(i)
+                tmp3 = t2(i,n) * rho(i) * einv(i)
+                tmp2 = tmp * HALF * einv(i)
+                Ix12(i,n) = QC(1,i) - tmp3 * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp3 * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp3 * QP(3,i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+                Ix22(i,n) = Ix12(i,n) * Ix21(i,n) + tmp2
+                Iy22(i,n) = Iy12(i,n) * Iy21(i,n) + tmp2
+                Iz22(i,n) = Iz12(i,n) * Iz21(i,n) + tmp2
+              end
+            end
+          case default                     ! n_f = 1, n_e = *
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            Ix21 => Ix(:,:,2,1); Iy21 => Iy(:,:,2,1); Iz21 => Iz(:,:,2,1)
+            Ix22 => Ix(:,:,2,2); Iy22 => Iy(:,:,2,2); Iz22 => Iz(:,:,2,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp  = t2(i,n) * rho(i) * zinv(i)
+                tmp3 = t2(i,n) * rho(i) * einv(i)
+                tmp2 = tmp * HALF * einv(i)
+                ce(i,n) = (ONE - tmp) * HALF * zinv(i)
+                bb(i,n) = tmp2
+                Ix12(i,n) = QC(1,i) - tmp3 * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp3 * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp3 * QP(3,i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+                Ix22(i,n) = Ix12(i,n) * Ix21(i,n) + tmp2
+                Iy22(i,n) = Iy12(i,n) * Iy21(i,n) + tmp2
+                Iz22(i,n) = Iz12(i,n) * Iz21(i,n) + tmp2
+              end
+            end
+            do e = 2, n_e
+              e1  =e - 1
+              ep1 =e + 1
+              Ixa => Ix(:,:,ep1,1); Iya => Iy(:,:,ep1,1); Iza => Iz(:,:,ep1,1)
+              Ixb => Ix(:,:,e,1);   Iyb => Iy(:,:,e,1);   Izb => Iz(:,:,e,1)
+              Ixc => Ix(:,:,e1,1);  Iyc => Iy(:,:,e1,1);  Izc => Iz(:,:,e1,1)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = e1 * ce(i,n)
+                  ce1(i,n) = tmp
+                  Ixa(i,n) = Ix21(i,n) * Ixb(i,n) + tmp * Ixc(i,n)
+                  Iya(i,n) = Iy21(i,n) * Iyb(i,n) + tmp * Iyc(i,n)
+                  Iza(i,n) = Iz21(i,n) * Izb(i,n) + tmp * Izc(i,n)
+                end
+              end
+              do f1=1, n_f
+                f = f1 + 1
+                Ixa => Ix(:,:,ep1,f); Iya => Iy(:,:,ep1,f); Iza => Iz(:,:,ep1,f)
+                Ixb => Ix(:,:,e,f);   Iyb => Iy(:,:,e,f);   Izb => Iz(:,:,e,f)
+                Ixc => Ix(:,:,e1,f);  Iyc => Iy(:,:,e1,f);  Izc => Iz(:,:,e1,f)
+                Ixd => Ix(:,:,e,f1);  Iyd => Iy(:,:,e,f1);  Izd => Iz(:,:,e,f1)
+                do n=1,nroots
+                  do i=1,n_cc
+                    tmp = ce1(i,n)
+                    tmp2 = f1*bb(i,n)
+                    Ixa(i,n) = Ix21(i,n)*Ixb(i,n) + tmp*Ixc(i,n) + tmp2*Ixd(i,n)
+                    Iya(i,n) = Iy21(i,n)*Iyb(i,n) + tmp*Iyc(i,n) + tmp2*Iyd(i,n)
+                    Iza(i,n) = Iz21(i,n)*Izb(i,n) + tmp*Izc(i,n) + tmp2*Izd(i,n)
+                  end
+                end
+              end
+            end
+        end
+      case default
+        select case (n_e)
+          case (0)                         ! n_f = *, n_e = 0
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp3 = t2(i,n) * rho(i) * einv(i)
+                Ix12(i,n) = QC(1,i) - tmp3 * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp3 * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp3 * QP(3,i)
+                cf(i,n) = (ONE - tmp3) * HALF * einv(i)
+              end
+            end
+            do f = 2,n_f
+              f1  = f - 1
+              fp1 = f + 1
+              Ixa => Ix(:,:,1,fp1); Iya => Iy(:,:,1,fp1); Iza => Iz(:,:,1,fp1)
+              Ixb => Ix(:,:,1,f);   Iyb => Iy(:,:,1,f);   Izb => Iz(:,:,1,f)
+              Ixc => Ix(:,:,1,f1);  Iyc => Iy(:,:,1,f1);  Izc => Iz(:,:,1,f1)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = f1*cf(i,n)
+                  Ixa(i,n) = Ix12(i,n) * Ixb(i,n) + tmp * Ixc(i,n)
+                  Iya(i,n) = Iy12(i,n) * Iyb(i,n) + tmp * Iyc(i,n)
+                  Iza(i,n) = Iz12(i,n) * Izb(i,n) + tmp * Izc(i,n)
+                end
+              end
+            end
+          case (1)                         ! n_f = *, n_e = 1
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            Ix21 => Ix(:,:,2,1); Iy21 => Iy(:,:,2,1); Iz21 => Iz(:,:,2,1)
+            Ix22 => Ix(:,:,2,2); Iy22 => Iy(:,:,2,2); Iz22 => Iz(:,:,2,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp  = t2(i,n) * rho(i) * zinv(i)
+                tmp3 = t2(i,n) * rho(i) * einv(i)
+                tmp2 = tmp * HALF * einv(i)
+                cf(i,n) = (ONE - tmp3) * HALF * einv(i)
+                bb(i,n) = tmp2
+                Ix12(i,n) = QC(1,i) - tmp3 * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp3 * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp3 * QP(3,i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+                Ix22(i,n) = Ix12(i,n) * Ix21(i,n) + tmp2
+                Iy22(i,n) = Iy12(i,n) * Iy21(i,n) + tmp2
+                Iz22(i,n) = Iz12(i,n) * Iz21(i,n) + tmp2
+              end
+            end
+            do f=2,n_f
+              f1  = f - 1
+              fp1 = f + 1
+              Ixa => Ix(:,:,2,fp1); Iya => Iy(:,:,2,fp1); Iza => Iz(:,:,2,fp1)
+              Ixb => Ix(:,:,2,f);   Iyb => Iy(:,:,2,f);   Izb => Iz(:,:,2,f)
+              Ixc => Ix(:,:,2,f1);  Iyc => Iy(:,:,2,f1);  Izc => Iz(:,:,2,f1)
+              Ixd => Ix(:,:,1,fp1); Iyd => Iy(:,:,1,fp1); Izd => Iz(:,:,1,fp1)
+              Ixe => Ix(:,:,1,f);   Iye => Iy(:,:,1,f);   Ize => Iz(:,:,1,f)
+              Ixf => Ix(:,:,1,f1);  Iyf => Iy(:,:,1,f1);  Izf => Iz(:,:,1,f1)
+              do i=1,n_cc
+                do n=1,nroots
+                  tmp = f1 * cf(i,n)
+                  tmp2 = bb(i,n)
+                  Ixd(i,n) = Ix12(i,n) * Ixe(i,n) + tmp * Ixf(i,n)
+                  Iyd(i,n) = Iy12(i,n) * Iye(i,n) + tmp * Iyf(i,n)
+                  Izd(i,n) = Iz12(i,n) * Ize(i,n) + tmp * Izf(i,n)
+                  Ixa(i,n) = Ix12(i,n)*Ixb(i,n) + tmp*Ixc(i,n) + tmp2*Ixe(i,n)
+                  Iya(i,n) = Iy12(i,n)*Iyb(i,n) + tmp*Iyc(i,n) + tmp2*Iye(i,n)
+                  Iza(i,n) = Iz12(i,n)*Izb(i,n) + tmp*Izc(i,n) + tmp2*Ize(i,n)
+                end
+              end
+            end
+          case default                     ! n_f = *, n_e = *
+            Ix12 => Ix(:,:,1,2); Iy12 => Iy(:,:,1,2); Iz12 => Iz(:,:,1,2)
+            Ix21 => Ix(:,:,2,1); Iy21 => Iy(:,:,2,1); Iz21 => Iz(:,:,2,1)
+            Ix22 => Ix(:,:,2,2); Iy22 => Iy(:,:,2,2); Iz22 => Iz(:,:,2,2)
+            do n=1,nroots
+              do i=1,n_cc
+                tmp =  t2(i,n) * rho(i) * zinv(i)
+                tmp3 = t2(i,n) * rho(i) * einv(i)
+                tmp2 = tmp * HALF * einv(i)
+                cf(i,n) = (ONE - tmp3) * HALF * einv(i)
+                ce(i,n) = (ONE - tmp)  * HALF * zinv(i)
+                bb(i,n) = tmp2
+                Ix12(i,n) = QC(1,i) - tmp3 * QP(1,i)
+                Iy12(i,n) = QC(2,i) - tmp3 * QP(2,i)
+                Iz12(i,n) = QC(3,i) - tmp3 * QP(3,i)
+                Ix21(i,n) = PA(1,i) + tmp * QP(1,i)
+                Iy21(i,n) = PA(2,i) + tmp * QP(2,i)
+                Iz21(i,n) = PA(3,i) + tmp * QP(3,i)
+                Ix22(i,n) = Ix12(i,n) * Ix21(i,n) + tmp2
+                Iy22(i,n) = Iy12(i,n) * Iy21(i,n) + tmp2
+                Iz22(i,n) = Iz12(i,n) * Iz21(i,n) + tmp2
+              end
+            end
+            do f = 2,n_f
+              f1  = f - 1
+              fp1 = f + 1
+              Ixa => Ix(:,:,1,fp1); Iya => Iy(:,:,1,fp1); Iza => Iz(:,:,1,fp1)
+              Ixb => Ix(:,:,1,f);   Iyb => Iy(:,:,1,f);   Izb => Iz(:,:,1,f)
+              Ixc => Ix(:,:,1,f1);  Iyc => Iy(:,:,1,f1);  Izc => Iz(:,:,1,f1)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = f1*cf(i,n)
+                  Ixa(i,n) = Ix12(i,n) * Ixb(i,n) + tmp * Ixc(i,n)
+                  Iya(i,n) = Iy12(i,n) * Iyb(i,n) + tmp * Iyc(i,n)
+                  Iza(i,n) = Iz12(i,n) * Izb(i,n) + tmp * Izc(i,n)
+                end
+              end
+            end
+            do e = 2, n_e
+              e1  = e - 1
+              ep1 = e + 1
+              Ixa => Ix(:,:,ep1,1); Iya => Iy(:,:,ep1,1); Iza => Iz(:,:,ep1,1)
+              Ixb => Ix(:,:,e,1);   Iyb => Iy(:,:,e,1);   Izb => Iz(:,:,e,1)
+              Ixc => Ix(:,:,e1,1);  Iyc => Iy(:,:,e1,1);  Izc => Iz(:,:,e1,1)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = e1 * ce(i,n)
+                  Ixa(i,n) = Ix21(i,n) * Ixb(i,n) + tmp * Ixc(i,n)
+                  Iya(i,n) = Iy21(i,n) * Iyb(i,n) + tmp * Iyc(i,n)
+                  Iza(i,n) = Iz21(i,n) * Izb(i,n) + tmp * Izc(i,n)
+                end
+              end
+            end
+            do f=2,n_f
+              f1  = f - 1
+              fp1 = f + 1
+              Ixa => Ix(:,:,2,fp1); Iya => Iy(:,:,2,fp1); Iza => Iz(:,:,2,fp1)
+              Ixb => Ix(:,:,2,f);   Iyb => Iy(:,:,2,f);   Izb => Iz(:,:,2,f)
+              Ixc => Ix(:,:,2,f1);  Iyc => Iy(:,:,2,f1);  Izc => Iz(:,:,2,f1)
+              Ixd => Ix(:,:,1,f);   Iyd => Iy(:,:,1,f);   Izd => Iz(:,:,1,f)
+              do n=1,nroots
+                do i=1,n_cc
+                  tmp = f1 * cf(i,n)
+                  tmp2 = bb(i,n)
+                  Ixa(i,n) = Ix12(i,n)*Ixb(i,n) + tmp*Ixc(i,n) + tmp2*Ixd(i,n)
+                  Iya(i,n) = Iy12(i,n)*Iyb(i,n) + tmp*Iyc(i,n) + tmp2*Iyd(i,n)
+                  Iza(i,n) = Iz12(i,n)*Izb(i,n) + tmp*Izc(i,n) + tmp2*Izd(i,n)
+                end
+              end
+            end
+            do e = 2, n_e
+              e1  =e - 1
+              ep1 =e + 1
+              ce1 =e1 * ce
+              do f1=1, n_f
+                f = f1 + 1
+                Ixa => Ix(:,:,ep1,f); Iya => Iy(:,:,ep1,f); Iza => Iz(:,:,ep1,f)
+                Ixb => Ix(:,:,e,f);   Iyb => Iy(:,:,e,f);   Izb => Iz(:,:,e,f)
+                Ixc => Ix(:,:,e1,f);  Iyc => Iy(:,:,e1,f);  Izc => Iz(:,:,e1,f)
+                Ixd => Ix(:,:,e,f1);  Iyd => Iy(:,:,e,f1);  Izd => Iz(:,:,e,f1)
+                do n=1,nroots
+                  do i=1,n_cc
+                    tmp = ce1(i,n)
+                    tmp2 = f1*bb(i,n)
+                    Ixa(i,n) = Ix21(i,n)*Ixb(i,n) + tmp*Ixc(i,n) + tmp2*Ixd(i,n)
+                    Iya(i,n) = Iy21(i,n)*Iyb(i,n) + tmp*Iyc(i,n) + tmp2*Iyd(i,n)
+                    Iza(i,n) = Iz21(i,n)*Izb(i,n) + tmp*Izc(i,n) + tmp2*Izd(i,n)
+                  end
+                end
+              end
+            end
+        end
     end
   end
 
-  form_esfs(Ix,Iy,Iz,W,esfsadd,e_x,e_y,e_z,f_x,f_y,f_z,eub,fub,nroots,dim1,dim2)
+  form_esfs(Ix,Iy,Iz,W,esfs,eub,fub,nroots,dim1,dim2,n_cc,norm)
   ! Forms (es|fs) from the two dimensional integrals for a single
   ! set of primitives
     IN :: self
-    MAT3, target :: Ix,Iy,Iz
-    VEC, IN :: W
-    MAT, OUT :: esfsadd
-    IVEC, IN :: e_x,e_y,e_z,f_x,f_y,f_z
-    MAT, PTR :: Ixf,Iyf,Izf
-    INT, IN :: eub,fub,dim1,dim2,nroots
-    INT :: e,f,ub1,ub2,n
+    MAT4, target :: Ix,Iy,Iz
+    MAT, IN :: W
+    MAT, OUT :: esfs
+    INT, IN :: eub,fub,nroots,dim1,dim2,n_cc
+    VEC, IN :: norm
+    IVEC, PTR :: e_x,e_y,e_z,f_x,f_y,f_z
+    MAT, PTR :: Ixef,Iyef,Izef
+    IMAT, allocatable, target :: e_powers,f_powers
+    INT :: e,f,ub1,ub2,n,i
+    DBL :: temp
+
+    allocate(e_powers(3,eub))
+    allocate(f_powers(3,fub))
+    e_powers.make_cartesian_components(max(.a%l,.b%l), .a%l+.b%l)
+    f_powers.make_cartesian_components(max(.c%l,.d%l), .c%l+.d%l)
+    e_powers = e_powers+1
+    f_powers = f_powers+1
+    e_x => e_powers(1,:); e_y => e_powers(2,:); e_z => e_powers(3,:)
+    f_x => f_powers(1,:); f_y => f_powers(2,:); f_z => f_powers(3,:)
 
     do f=1,dim2
       do e=1,dim1
+        Izef => Iz(:,:,e,f)
         do n=1,nroots
-          Iz(n,e,f) = Iz(n,e,f) * W(n)
+          do i=1,n_cc
+            Izef(i,n) = Izef(i,n) * W(i,n)
+          end
         end
       end
     end
 
+    esfs=ZERO
     do f=1,fub
-      Ixf => Ix(:,:,f_x(f))
-      Iyf => Iy(:,:,f_y(f))
-      Izf => Iz(:,:,f_z(f))
       do e=1,eub
-        esfsadd(e,f) = sum(Ixf(:,e_x(e)) * Iyf(:,e_y(e)) * Izf(:,e_z(e)))
+        Ixef => Ix(:,:,e_x(e),f_x(f))
+        Iyef => Iy(:,:,e_y(e),f_y(f))
+        Izef => Iz(:,:,e_z(e),f_z(f))
+        temp = esfs(e,f)
+        do i=1,n_cc
+          temp = temp + norm(i) * sum(Ixef(i,:) * Iyef(i,:) * Izef(i,:))
+        end
+        esfs(e,f) = temp
       end
     end
+
+    deallocate(f_powers)
+    deallocate(e_powers)
   end
 
   make_esfs_0(esfs)
@@ -745,27 +1002,39 @@ contains
     DBL, IN :: rho,einv
     INT, IN :: n_f,nroots
     VEC(3), IN :: QC,QP
-    VEC(nroots) :: ret,c,cf1
-    INT :: f,f1,fp1
+    VEC(nroots) :: c
+    DBL :: ret,cf1
+    INT :: f,f1,fp1,n
     Ix(:,1) = ONE
     Iy(:,1) = ONE
     Iz(:,1) = ONE
-    if (n_f/=0) then
-      ret     = rho * t2 * einv
-      Ix(:,2) = QC(1) - ret(:) * QP(1)
-      Iy(:,2) = QC(2) - ret(:) * QP(2)
-      Iz(:,2) = QC(3) - ret(:) * QP(3)
-      if (n_f>1) then
-        c = (ONE - ret) * HALF * einv
+    select case (n_f)
+      case (0)
+      case (1)
+        do n=1,nroots
+          ret     = rho * t2(n) * einv
+          Ix(n,2) = QC(1) - ret * QP(1)
+          Iy(n,2) = QC(2) - ret * QP(2)
+          Iz(n,2) = QC(3) - ret * QP(3)
+        end
+      case default
+        do n=1,nroots
+          ret     = rho * t2(n) * einv
+          Ix(n,2) = QC(1) - ret * QP(1)
+          Iy(n,2) = QC(2) - ret * QP(2)
+          Iz(n,2) = QC(3) - ret * QP(3)
+          c(n) = (ONE - ret) * HALF * einv
+        end
         do f = 2, n_f
           f1  = f - 1
           fp1 = f + 1
-          cf1 = f1 * c
-          Ix(:,fp1) = Ix(:,2) * Ix(:,f) + cf1 * Ix(:,f1)
-          Iy(:,fp1) = Iy(:,2) * Iy(:,f) + cf1 * Iy(:,f1)
-          Iz(:,fp1) = Iz(:,2) * Iz(:,f) + cf1 * Iz(:,f1)
+          do n=1, nroots
+            cf1 = f1 * c(n)
+            Ix(n,fp1) = Ix(n,2) * Ix(n,f) + cf1 * Ix(n,f1)
+            Iy(n,fp1) = Iy(n,2) * Iy(n,f) + cf1 * Iy(n,f1)
+            Iz(n,fp1) = Iz(n,2) * Iz(n,f) + cf1 * Iz(n,f1)
+          end
         end
-      end
     end
   end
 
