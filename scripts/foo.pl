@@ -1395,8 +1395,7 @@ sub is_new_routine_scope {
 # Return TRUE if the scope is WITHIN a routine interface
 sub in_routine_scope {
    if (defined $scopeunit && (
-       $scopeunit eq 'subroutine' || $scopeunit eq 'function' || $scopeunit eq
-       'program'))
+       $scopeunit eq 'subroutine' || $scopeunit eq 'function'))
         { return 1; }
    else { return undef; }
 }
