@@ -251,7 +251,7 @@ LINE: while (<FOOFILE>) {
 	        $ns = $ns - 1; $scopeunit = $scope{$ns};
 
 	        if ($ns < 0) {
-		    print 'FOO error: unmatched end at $linenum of $foofile';
+		    print "FOO error: unmatched end at line $linenum of $foofile";
 		    $ExitValue = 1;
                     last LINE;
 	        }
@@ -264,7 +264,7 @@ LINE: while (<FOOFILE>) {
 	        $ns = $ns - 1; $scopeunit = $scope{$ns};
 
 	        if ($ns < 0) {
-		    print 'FOO error: unmatched end at $linenum of $foofile';
+		    print "FOO error: unmatched end at line $linenum of $foofile";
 		    $ExitValue = 1;
                     last LINE;
 	        }
