@@ -11,7 +11,6 @@ module MOL
    use STR
    use INT
    use DBL
- use TIME
 
    use IVEC
    use VEC
@@ -171,9 +170,6 @@ module MOL
 !   OPMAT* :: fock_matrix
 !   ! The real fock matrix
 !
-!   MAT4VEC* :: ab_ab_ERI
-!   ! The two electron integrals of the form ab|ab
-!
 !   BIN :: optimise_thermals
 !   ! Whether to optimise the thermal parameters
 !
@@ -227,8 +223,12 @@ contains
       nullify(.natural_orbitals)
       nullify(.occupation)
       nullify(.fock_matrix)
+      nullify(.old_molecular_orbitals)
+      nullify(.old_density_matrix)
+      nullify(.old_fock_matrix)
+      nullify(.old_constraint_matrix)
+      nullify(.constraint_matrix)
       nullify(.atom_group)
-      nullify(.ab_ab_ERI)
       nullify(.saved)
    end
 
@@ -258,6 +258,11 @@ contains
       .natural_orbitals.destroy
       .occupation.destroy
       .fock_matrix.destroy
+      .old_molecular_orbitals.destroy
+      .old_density_matrix.destroy
+      .old_fock_matrix.destroy
+      .old_constraint_matrix.destroy
+      .constraint_matrix.destroy
       .atom_group.destroy
    end
 
@@ -902,8 +907,7 @@ contains
     if (.scfdata.destroyed) then; kind = .molecular_orbitals.spinorbital_kind
     else;                          kind = .scfdata.spinorbital_kind
     end
-    .density_matrix.destroy(kind)
-    .density_matrix.create(kind)
+    if (.density_matrix.destroyed(kind)) .density_matrix.create(kind)
     archive.set(.name,"density_matrix",kind)
     if (present(scf_kind)) then;        kind = scf_kind
     else if (.scfdata.destroyed) then; kind = .molecular_orbitals.guess_scf_kind
@@ -958,28 +962,11 @@ contains
         CMO => .molecular_orbitals.general_complex(:,1:.n_e)
         CD =>  .density_matrix.general_complex
         CD.to_product(CMO,CMO,dagger_b=TRUE)
+      case default
+        DIE("unknown kind : " // trim(kind))
     end
     if (damping) then
-      mix = .scfdata.damp_factor
-      select case (kind)
-        case ("rhf","restricted_hartree_fock","xray_rhf","xray_rks")
-          D = (1-mix)*D + mix*D_old.restricted
-        case ("rohf","restricted_open_shell_hartree_fock")
-          Da = (1-mix)*Da + mix*D_old.alpha
-          Db = (1-mix)*Db + mix*D_old.beta
-        case ("uhf","unrestricted_hartree_fock")
-          Da = (1-mix)*Da + mix*D_old.alpha
-          Db = (1-mix)*Db + mix*D_old.beta
-        case ("ghf","general_hartree_fock")
-          D = (1-mix)*D + mix*D_old.general
-        case ("rchf","restricted_complex_hartree_fock")
-          CD = (1-mix)*CD + mix*D_old.restricted_complex
-        case ("uchf","unrestricted_complex_hartree_fock")
-          CDa = (1-mix)*CDa + mix*D_old.alpha_complex
-          CDb = (1-mix)*CDb + mix*D_old.beta_complex
-        case ("gchf","general_complex_hartree_fock")
-          CD = (1-mix)*CD + mix*D_old.general_complex
-      end
+      .density_matrix.damp(D_old,.scfdata.damp_factor)
       D_old.destroy
     end
     archive.write(.density_matrix)
@@ -4048,7 +4035,7 @@ contains
       end
 
       ! Extract MP2 density matrix to file.  UHF untested
-      if (chkfile.includes("MP2 Density")) then
+      if (chkfile.has_string("MP2 Density")) then
         if (u==0) then
            D.create(.n_bf, "restricted")
            D.triangle.create(D.l_compress("restricted"))
@@ -4455,16 +4442,15 @@ contains
   ! Do a Hartree-Fock SCF calculation. The following :
   !   .molecular_orbitals, .orbital_energies, .density_matrix
   ! are produced as results.
-    OPMAT* :: dP,dF,old_P,old_F,old_MO
     DBL :: E_HF,E_K,diis_error
     ENSURE(.atom.created,  "no atom list")
     ENSURE(.atom.bases_are_all_resolved, "no basis set")
     ! Initialize cycles
     .get_initial_guess
-    .make_fock_matrix(core=TRUE)
-    dP.create(.n_bf); old_P.create_copy(.density_matrix)
-    dF.create(.n_bf); old_F.create_copy(.fock_matrix)
-    old_MO.create_copy(.molecular_orbitals)
+    .make_fock_matrix
+    .old_density_matrix.create_copy(.density_matrix)
+    .old_fock_matrix.create_copy(.fock_matrix)
+    .old_molecular_orbitals.create_copy(.molecular_orbitals)
     ! Zeroth iteration.
     E_HF = .scf_energy
     E_K = .kinetic_energy
@@ -4475,38 +4461,27 @@ contains
     .scfdata.put_results
     do
       if (.scfdata.scf_done) exit
-      old_P.set_to(.density_matrix)
-      old_F.set_to(.fock_matrix)
-      old_MO.set_to(.molecular_orbitals)
+      .old_density_matrix.set_to(.density_matrix)
+      .old_fock_matrix.set_to(.fock_matrix)
+      .old_molecular_orbitals.set_to(.molecular_orbitals)
       .extrapolate_scf
       .update_molecular_orbitals
       .schmidt_orthonormalise(.molecular_orbitals)
       .make_scf_density_matrix
       .save_scf_results
-      if (.scfdata.rough_converge AND .scfdata.rough_converged) then
-        .make_fock_matrix(core=TRUE)
-        .scfdata.rough_converge=FALSE
-      else
-        dP.set_to(.density_matrix)
-        dP.minus(old_P)
-        .make_fock_matrix(dP,dF,core=FALSE)
-        .fock_matrix.set_to(old_F)
-        .fock_matrix.plus(dF)
-      end
+      .make_fock_matrix
       E_HF = .scf_energy
       E_K = .kinetic_energy
-      if (.scfdata.apply_camp_king) .camp_king(old_MO,old_F,E_HF,E_K)
+      if (.scfdata.apply_camp_king) .camp_king(E_HF,E_K)
       .make_diis_error(diis_error)
       .scfdata.update(E_HF,E_K)
       .scfdata.set_diis_error(diis_error)
       .scfdata.check_rough_convergence
       .scfdata.put_results
     end
-    dF.destroy
-    dP.destroy
-    old_MO.destroy
-    old_F.destroy
-    old_P.destroy
+    .old_molecular_orbitals.destroy
+    .old_fock_matrix.destroy
+    .old_density_matrix.destroy
     .scfdata.cleanup_diis
     .fock_matrix.destroy("all")
   end
@@ -5331,7 +5306,7 @@ contains
       VEC* :: core_energy
       MAT* :: pair_energy
       INT :: i,j
-      DBL :: energy,fac
+      DBL :: energy
       BIN :: direct
       core_energy.create(.n_a)
       pair_energy.create(.n_a,.n_a)
@@ -5343,14 +5318,16 @@ contains
       do i = 1,.n_a
          .make_scf_density_matrix(i)
          Di.set_to(.density_matrix)
-         .make_fock_matrix(core=TRUE,r12=FALSE)
+         .make_fock_matrix(.density_matrix,.fock_matrix,core=TRUE,r12=FALSE)
          core_energy(i) = .scf_electronic_energy(Di,core=TRUE)
          do j = 1,i
             .make_scf_density_matrix(j)
-            .make_fock_matrix(core=FALSE,r12=TRUE)
-            fac = TWO
-            if (i==j) fac = ONE
-            pair_energy(i,j) = fac*.scf_electronic_energy(Di,core=FALSE)
+            .make_fock_matrix(.density_matrix,.fock_matrix,core=FALSE,r12=TRUE)
+            if (i==j) then ! fac = ONE
+              pair_energy(i,j) = .scf_electronic_energy(Di,core=FALSE)
+            else           ! fac = TWO
+              pair_energy(i,j) = TWO*.scf_electronic_energy(Di,core=FALSE)
+            end
          end
       end
       Di.destroy
@@ -5394,8 +5371,8 @@ contains
 !*********************
 
   get_fock_matrix [leaky]
-  ! Get the Fock matrix. If already in memory, do nothing. Else if
-  ! the archive file exists, read it. Otherwise make it.
+  ! Get the Fock matrix.
+  ! If the archive file exists, read it. Otherwise make it.
      ARCHIVE :: archive
      STR :: kind
      kind = .scfdata.spinorbital_kind
@@ -5406,14 +5383,36 @@ contains
   end
 
   make_fock_matrix(core,r12) [leaky]
-  ! If core is present and FALSE, the core hamiltonian is not added
   ! If r12  is present and FALSE, the r12 part is not computed
     BIN, optional :: core,r12
-    .make_fock_matrix(.density_matrix,.fock_matrix,core,r12)
+    OPMAT* :: dP,dF
+    if (.old_fock_matrix.created) then
+      if (.scfdata.rough_converge AND .scfdata.rough_converged) then
+        .make_fock_matrix(.density_matrix,.fock_matrix,core=TRUE,r12=r12)
+        .scfdata.rough_converge=FALSE
+      else
+        dP.create_copy(.density_matrix)
+        dP.minus(.old_density_matrix)
+        dF.create(.n_bf)
+        .make_fock_matrix(dP,dF,core=FALSE,r12=r12)
+        .fock_matrix.set_to(.old_fock_matrix)
+        .fock_matrix.plus(dF)
+        dF.destroy
+        dP.destroy
+      end
+    else
+      if (.scfdata.rough_converge AND .scfdata.rough_converged) then
+        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12)
+        .scfdata.rough_converge=FALSE
+      else
+        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12)
+      end
+    end
   end
 
   make_fock_matrix(P,F,core,r12) [leaky]
   ! For the quicker ERI method.
+  ! If r12  is present and FALSE, the r12 part is not computed
     OPMAT* :: P,F
     BIN, optional :: core,r12
     STR :: scf_kind
@@ -5426,8 +5425,8 @@ contains
        case ("rhf","restricted_hartree_fock","xray_rhf")
           .make_r_fock(P,F,direct,core,r12,test)
        case ("xray_rks")
-          F.destroy("restricted")
-          F.create("restricted")
+!          F.destroy("restricted")
+!          F.create("restricted")
           if (present(core)) then
              if (core) then; .get_kinetic_matrix(F.restricted)
              else;           F.restricted = ZERO
@@ -6699,7 +6698,6 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT* :: dP,dF,old_P,old_F,old_C,constraint,old_MO
     DBL :: E_HF,E_K,diis_error
 
     ENSURE(.atom.created,  "no atom list")
@@ -6708,18 +6706,13 @@ contains
 
     .get_initial_guess
     .make_fock_matrix
-    dP.create(.n_bf); old_P.create_copy(.density_matrix)
-    dF.create(.n_bf); old_F.create_copy(.fock_matrix)
-    old_MO.create_copy(.molecular_orbitals)
-    constraint.create(.n_bf,"restricted")
-    old_C.create(.n_bf,"restricted")
-
     .make_structure_factors
     E_HF = .scf_energy
     E_K = .kinetic_energy
 
-    .make_constraint(constraint, .scfdata.lambda )
-    .add_constraint(constraint)
+    .old_constraint_matrix.create(.n_bf,"restricted")
+    .constraint_matrix.create(.n_bf,"restricted")
+    .add_constraint
     .make_diis_error(diis_error)
 
     .scfdata.reset(.atom.nuclear_energy,E_HF,E_K,.crystal)
@@ -6727,14 +6720,18 @@ contains
     .scfdata.put_banner
     .crystal.put_correction_data(stdout)
 
+    .old_density_matrix.create(.n_bf)
+    .old_fock_matrix.create(.n_bf)
+    .old_molecular_orbitals.create(.n_bf)
     do
       .scfdata.put_results                     ! Zeroth iteration (important!)
       .scfdata.diis.cleanup
       do
-        old_MO.set_to(.molecular_orbitals)
-        old_P.set_to(.density_matrix)
-        old_F.set_to(.fock_matrix)
-        old_C.set_to(constraint)
+        .old_molecular_orbitals.set_to(.molecular_orbitals)
+        .old_density_matrix.set_to(.density_matrix)
+        .old_fock_matrix.set_to(.fock_matrix)
+        .old_constraint_matrix.set_to(.constraint_matrix)
+        .make_structure_factors
         .extrapolate_scf
         .update_molecular_orbitals
         .schmidt_orthonormalise(.molecular_orbitals)
@@ -6742,24 +6739,17 @@ contains
         .save_scf_results
         .make_structure_factors
 
-!        .make_fock_matrix
-!        E_HF = .scf_energy
-!        E_K = .kinetic_energy
+        .make_fock_matrix
+!        .fock_matrix.minus(.old_constraint_matrix)
 !        .make_constraint(constraint, .scfdata.lambda )
-!        .add_constraint(constraint)
-
-        dP.set_to(.density_matrix)
-        dP.minus(old_P)
-        .make_fock_matrix(dP,dF,core=FALSE)
-        .fock_matrix.set_to(old_F)
-        .fock_matrix.plus(dF)
+!        .fock_matrix.plus(constraint)
+        .fock_matrix.minus(.old_constraint_matrix)
         E_HF = .scf_energy
         E_K = .kinetic_energy
-        .make_constraint(constraint, .scfdata.lambda )
-        constraint.minus(old_C)
-        .fock_matrix.plus(constraint)
+        .add_constraint
 
-        if (.scfdata.apply_camp_king) .camp_king(old_MO,old_F,E_HF,E_K,old_F,old_C)
+        if (.scfdata.apply_camp_king) .camp_king(E_HF,E_K)
+        if (.scfdata.apply_dynamic_damping) .dynamic_damp(E_HF,E_K)
 
         .make_diis_error(diis_error)
         .scfdata.update(E_HF,E_K,.crystal)
@@ -6772,51 +6762,21 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
-    old_C.destroy
-    constraint.destroy
-    old_MO.destroy
+    .constraint_matrix.destroy
+    .old_constraint_matrix.destroy
+    .old_molecular_orbitals.destroy
+    .old_density_matrix.destroy
+    .old_fock_matrix.destroy
     .scfdata.cleanup_diis
     .fock_matrix.destroy("all")
-    dF.destroy
-    dP.destroy
-    old_F.destroy
-    old_P.destroy
-
     .crystal.put_reflection_data
   end
 
-  add_constraint(constraint)
+  add_constraint
   ! Make the constraint matrix for wavefunction fitting and add it to the fock
   ! matrix.
-    MAT* :: MO,temp,S
-    OPMAT :: constraint
-    STR :: kind
-    kind = .scfdata.spinorbital_kind
-    if (kind == "restricted") then
-      if (.molecular_orbitals.destroyed(kind) ) .make_fock_guess
-      MO => .molecular_orbitals.restricted
-    else
-      DIE("can only do restricted calculations.")
-    end
-    ! Add the constraint in the MO basis
-
-!    constraint.restricted.change_basis(MO)          ! Zero out the occ-occ and vir-vir
-!    constraint.restricted(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
-!    constraint.restricted(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
-!    .fock_matrix.restricted.change_basis(MO)
-!    .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
-!    .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
-
-    .fock_matrix.plus(constraint)
-
-    ! Change .fock_matrix back to the AO basis
-!    temp.create(.n_bf, .n_bf)
-!    S.create(.n_bf, .n_bf)
-!    .get_overlap_matrix(S)
-!    temp.to_product(MO,S,transpose_a=TRUE)
-!    S.destroy
-!    .fock_matrix.restricted.change_basis(temp) ! Back to AO basis.
-!    temp.destroy
+    .make_constraint(.constraint_matrix, .scfdata.lambda )
+    .fock_matrix.plus(.constraint_matrix)
   end
 
   make_constraint(constraint,lambda)
@@ -6830,6 +6790,7 @@ contains
     SHELL2 :: shell
     DBL :: fac,cutoff
     INT :: q,a,b,fa,la,fb,lb,n,i,j,n_refl,n_unique,atom_a,atom_b
+    ENSURE(.scfdata.spinorbital_kind=="restricted", "")
     ENSURE(.crystal.created,  "no crystal info")
     ENSURE(.crystal.reflection_data_exists, "no reflection data")
     ENSURE(.atom.created,  "no atom list")
@@ -8479,37 +8440,37 @@ contains
 !                        Camp-King routines
 !*******************************************************************************
 
-  camp_king(MO_old,F_old,E_HF,E_K,P_old,C_old)
-  ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
-  ! lambda should be between 0 and 1.
+  camp_king(E_HF,E_K)
+  ! Uses .old_molecular_orbitals (lambda=0) and .molecular_orbitals (lambda=1)
+  ! to generate molecular orbitals at optimal lambda.  These overwrite
+  ! .molecular_orbitals.
   ! E_HF and E_K are only changed if the orbitals are changed.
-    OPMAT, IN :: MO_old,F_old
+  ! Can do restricted case only.
     DBL, INOUT :: E_HF,E_K
-    OPMAT, IN, optional :: P_old,C_old
-    OPMAT* :: F_backup,MO_backup,P_backup,constraint,dP,dF
+    OPMAT* :: F_backup,MO_backup,P_backup
     MAT* :: old_MO,new_MO,old_F
     MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl
     VEC* :: theta
     INT :: minpq,n,n_p,n_q,i,k,j
-    DBL :: ded0,ded1,ded1a,E1,El,lambda
+    DBL :: ded0,ded1,ded1a,lambda,El
     DBL :: tol,diis0,diis1,diisl
 
     .scfdata.camp_king_iters=0
     F_backup.create_copy(.fock_matrix)
     MO_backup.create_copy(.molecular_orbitals)
     P_backup.create_copy(.density_matrix)
-
-    .make_scf_density_matrix(damp=FALSE)
     .make_diis_error(diis1)
-    .fock_matrix.restricted = F_old.restricted
-    .molecular_orbitals.restricted = MO_old.restricted
-    .make_scf_density_matrix(damp=FALSE)
+
+    .fock_matrix.restricted = .old_fock_matrix.restricted
+    .molecular_orbitals.restricted = .old_molecular_orbitals.restricted
+    .density_matrix.restricted = .old_density_matrix.restricted
     .make_diis_error(diis0)
+
     .fock_matrix.set_to(F_backup)
     .molecular_orbitals.set_to(MO_backup)
     .density_matrix.set_to(P_backup)
 
-    if (diis1 < 0.9*diis0) then
+    if (diis1 < 0.95*diis0) then
       F_backup.destroy
       P_backup.destroy
       MO_backup.destroy
@@ -8519,9 +8480,9 @@ contains
     n_p = .n_e/2
     n_q = .n_bf - n_p
     minpq = min(n_p,n_q)
-    old_MO => MO_old.restricted
-    old_F => F_old.restricted
+    old_MO => .old_molecular_orbitals.restricted
     new_MO => .molecular_orbitals.restricted
+    old_F => .old_fock_matrix.restricted
 
     Q.create(.n_bf,.n_bf)
     Q = old_MO                                  ! Q is an orthogonal basis.
@@ -8586,13 +8547,10 @@ contains
     else
       lambda = HALF
     end
-    if (present(P_old)) then
-      .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,diis0,P_old,C_old,F_old)
-    else
-      .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,diis0)
-    end
+ .old_fock_matrix.minus(.old_constraint_matrix)
+    .minimise_Camp_King_lambda(lambda,ded0,ded1a,Q,CV,theta,n_p,diis0)
     .make_diis_error(diisl)
-    if (diisl < 0.9*diis1) then ! it's convergence that counts.
+    if (diisl < 0.95*diis1 OR abs(ded1a) < abs(ded1)) then
       Uh.create(.n_bf,.n_bf)
       .make_Camp_King_U_hat(Uh,lambda,theta)
       Cl.create(.n_bf,.n_bf)
@@ -8605,44 +8563,29 @@ contains
       .make_structure_factors
       .scfdata.set(crystal=.crystal)
 
-      if (present(P_old)) then
-        dP.create_copy(.density_matrix)
-        dF.create(.n_bf,dP.spinorbital_kind)
-        dP.minus(P_old)
-        .make_fock_matrix(dP,dF,core=FALSE)
-        dP.destroy
-        .fock_matrix.set_to(F_old)
-        .fock_matrix.plus(dF)
-        dF.destroy
-        if (.scfdata.kind == "xray_rhf") then
-          ENSURE(present(C_old), "routine must be called with old constraint when fitting")
-          constraint.create(.n_bf,"restricted")
-          .make_constraint(constraint, .scfdata.lambda )
-          constraint.minus(C_old)
-          E_HF = .scf_energy
-          E_K = .kinetic_energy
-          .fock_matrix.plus(constraint)
-          constraint.destroy
-        else
-          E_HF = .scf_energy
-          E_K = .kinetic_energy
-        end
-      else
-        .make_fock_matrix
+      .make_fock_matrix
+      if (.scfdata.kind == "xray_rhf") then
         E_HF = .scf_energy
         E_K = .kinetic_energy
-        if (.scfdata.kind == "xray_rhf") then
-          constraint.create(.n_bf,"restricted")
-          .make_constraint(constraint, .scfdata.lambda )
-          .add_constraint(constraint)
-          constraint.destroy
-        end
+        .add_constraint
+      else
+        E_HF = .scf_energy
+        E_K = .kinetic_energy
       end
     else
       .fock_matrix.set_to(F_backup)
       .molecular_orbitals.set_to(MO_backup)
       .density_matrix.set_to(P_backup)
     end
+ .old_fock_matrix.plus(.old_constraint_matrix)
+ stdout.put(lambda)
+ stdout.put(ded0)
+ stdout.put(ded1a)
+ stdout.put(ded1)
+ stdout.put(diis0)
+ stdout.put(diisl)
+ stdout.put(diis1)
+ stdout.flush
 
     CV.destroy
     theta.destroy
@@ -8652,11 +8595,10 @@ contains
     MO_backup.destroy
   end
 
-  minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,diis0,P_old,C_old,F_old) [private]
-    DBL, IN :: diis0
-    DBL :: lambda,f,tol,dedx
+  minimise_Camp_King_lambda(lambda,ded0,dedx,Ql,CV,theta,n_p,diis0) [private]
+    DBL, IN :: ded0,diis0
+    DBL :: lambda,tol,dedx
     INT, IN :: n_p
-    OPMAT, IN, optional :: P_old,C_old,F_old
     MAT :: Ql,CV
     VEC :: theta
     INT :: i
@@ -8666,23 +8608,26 @@ contains
 
     tol=0.1
     a=ZERO
+    if (ded0>0) a=-0.2
     b=ONE
     v=lambda
     w=lambda
     x=lambda
     e=ZERO
-    .get_Camp_King_energy(x,fx,dx,Ql,CV,theta,n_p,diisl,P_old,C_old,F_old)
+    d=ZERO
+    .get_Camp_King_energy(x,fx,dx,Ql,CV,theta,n_p,diisl)
     fv=fx
     fw=fx
     dv=dx
     dw=dx
     .scfdata.camp_king_iters=0
     do i=1,100
+! write(*,'(9f13.7)') x,v,w,fx,fv,fw,dx,dv,dw
       .scfdata.camp_king_iters=.scfdata.camp_king_iters+1
       xm=HALF*(a+b)
       tol1=tol*abs(x)+TOL(10)
       tol2=TWO*tol1
-      if (diisl < diis0) exit
+!      if (diisl < diis0) exit
       if (abs(x-xm)<=(tol2-HALF*(b-a))) exit
       if (abs(e)>tol1) then
         d1=TWO*(b-a)
@@ -8729,10 +8674,10 @@ contains
       end if
       if (abs(d)>=tol1) then
         u=x+d
-        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl,P_old,C_old,F_old)
+        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl)
       else
         u=x+sign(tol1,d)
-        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl,P_old,C_old,F_old)
+        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl)
         if (fu > fx) exit
       end if
       if (fu <= fx) then
@@ -8757,22 +8702,22 @@ contains
           v=u; fv=fu; dv=du
         end if
       end if
+      if (abs(fv-fw) < .scfdata.convergence AND abs(fv-fx) < .scfdata.convergence) then
+        exit
+      end
     end do
-    f = fx
     lambda = x
     dedx=dx
   end
 
-  get_Camp_King_energy(lambda,El,dedl,Q,CV,theta,n_p,diisl,P_old,C_old,F_old) [private]
+  get_Camp_King_energy(lambda,El,dedl,Q,CV,theta,n_p,diisl) [private]
     MAT, IN :: Q,CV
     VEC, IN :: theta
     INT, IN :: n_p
-    OPMAT, IN, optional :: P_old,C_old,F_old
-    OPMAT* :: constraint,dP,dF
+    OPMAT* :: constraint
     DBL :: lambda,El,dedl,diisl
     MAT* :: Uh,Cl,F
     INT :: n
-
     Uh.create(.n_bf,.n_bf)
     .make_Camp_King_U_hat(Uh,lambda,theta)
     Cl.create(.n_bf,.n_bf)
@@ -8782,46 +8727,13 @@ contains
     .schmidt_orthonormalise(.molecular_orbitals)
     .make_scf_density_matrix(damp=FALSE)
     .make_structure_factors
-
     .make_fock_matrix
     if (.scfdata.kind == "xray_rhf") then
-      constraint.create(.n_bf,"restricted")
-      .make_constraint(constraint, .scfdata.lambda )
-      .add_constraint(constraint)
-      constraint.destroy
+      El = .scf_energy + .scfdata.lambda * .crystal.F_chi2
+      .add_constraint
+    else
+      El = .scf_energy
     end
-
-      if (present(P_old)) then
-        dP.create_copy(.density_matrix)
-        dF.create(.n_bf,dP.spinorbital_kind)
-        dP.minus(P_old)
-        .make_fock_matrix(dP,dF,core=FALSE)
-        dP.destroy
-        .fock_matrix.set_to(F_old)
-        .fock_matrix.plus(dF)
-        dF.destroy
-        if (.scfdata.kind == "xray_rhf") then
-          ENSURE(present(C_old), "routine must be called with old constraint when fitting")
-          constraint.create(.n_bf,"restricted")
-          .make_constraint(constraint, .scfdata.lambda )
-          constraint.minus(C_old)
-          El = .scf_energy
-          .fock_matrix.plus(constraint)
-          constraint.destroy
-        else
-          El = .scf_energy
-        end
-      else
-        .make_fock_matrix
-        El = .scf_energy
-        if (.scfdata.kind == "xray_rhf") then
-          constraint.create(.n_bf,"restricted")
-          .make_constraint(constraint, .scfdata.lambda )
-          .add_constraint(constraint)
-          constraint.destroy
-        end
-      end
-
     .make_diis_error(diisl)
     F.create(.n_bf,.n_bf)
     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
@@ -8881,6 +8793,97 @@ contains
 
     cos_theta.destroy
     sin_theta.destroy
+  end
+
+  dynamic_damp(E_HF,E_K)
+  ! Increase the damp factor until the new density matrix gives better results
+  ! than the previous one.  Good for difficult convergence.
+  ! E_HF and E_K are only changed if the orbitals are changed.
+    DBL, INOUT :: E_HF,E_K
+    OPMAT* :: F_backup,MO_backup,P_backup
+    VEC* :: theta
+    INT :: n
+    DBL :: diis0,diis1,diisl,damp,delta_damp,E0,E1,El,mix
+    DBL :: chi2
+
+    chi2=ZERO
+
+    F_backup.create_copy(.fock_matrix)
+    MO_backup.create_copy(.molecular_orbitals)
+    P_backup.create_copy(.density_matrix)
+    ! .fock_matrix contains .constraint_matrix
+    ! .old_fock_matrix contains .old_constraint_matrix
+
+    ! Get DIIS error and energy for new density
+    .make_diis_error(diis1)
+    if (.scfdata.kind == "xray_rhf") then
+      ! Remove the constraint matrix from the new fock matrix.
+      F_backup.minus(.constraint_matrix)
+      .fock_matrix.set_to(F_backup)
+      .make_structure_factors
+      chi2 = .crystal.F_chi2
+    end
+    E1 = .scf_energy + .scfdata.lambda * chi2
+
+    ! Get DIIS error and energy for old density
+    .fock_matrix.set_to(.old_fock_matrix)
+    .density_matrix.set_to(.old_density_matrix)
+    .make_diis_error(diis0)
+    if (.scfdata.kind == "xray_rhf") then
+      ! Remove the constraint matrix from the old fock matrix.
+      .old_fock_matrix.minus(.old_constraint_matrix)
+      .fock_matrix.set_to(.old_fock_matrix)
+      .make_structure_factors
+      chi2 = .crystal.F_chi2
+    end
+    E0 = .scf_energy + .scfdata.lambda * chi2
+
+    ! .fock_matrix does not contain .constraint_matrix
+    ! .old_fock_matrix does not contain .old_constraint_matrix
+
+    if (diis1 < 1.1*diis0 AND E1<E0+TOL(3)) then
+      if (.scfdata.kind == "xray_rhf") then
+        ! reinsert contraint matrices
+        F_backup.plus(.constraint_matrix)
+        .old_fock_matrix.plus(.old_constraint_matrix)
+      end
+      .fock_matrix.set_to(F_backup)
+      .molecular_orbitals.set_to(MO_backup)
+      .density_matrix.set_to(P_backup)
+      P_backup.destroy
+      MO_backup.destroy
+      F_backup.destroy
+      RETURN ! the new orbitals are better than the old.
+    end
+
+    mix = 0.9 ! How much of the new, not the old.
+    do n=1,20
+      .density_matrix.set_to(P_backup)
+      .fock_matrix.set_to(F_backup)
+      .density_matrix.damp(.old_density_matrix,ONE-mix)
+      .fock_matrix.damp(.old_fock_matrix,ONE-mix)
+      E_HF = .scf_energy
+      if (.scfdata.kind == "xray_rhf") then
+        .make_structure_factors
+        .add_constraint
+        El = E_HF + .scfdata.lambda * .crystal.F_chi2
+      else
+        El = E_HF
+      end
+      .make_diis_error(diisl)
+!    stdout.put(mix)
+!    stdout.put(E_HF)
+!    stdout.put(.crystal.F_chi2)
+!    stdout.put(diisl)
+!    stdout.put(El)
+!    stdout.flush
+      if ((diisl < 1.1*diis0) AND El<(E0+TOL(3))) exit
+      mix = HALF * mix
+    end
+    E_K = .kinetic_energy ! move this outside of loop
+    F_backup.destroy
+    P_backup.destroy
+    MO_backup.destroy
   end
 
 end
