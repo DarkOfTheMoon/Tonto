@@ -69,13 +69,11 @@ contains
 
    nullify_ptr_part
    ! Nullify the pointer parts of self
-      nullify(.coeff)
       .archive.nullify_ptr_part
    end
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts of self
-      .coeff.destroy
       .archive.destroy_ptr_part
    end
 
@@ -92,7 +90,6 @@ contains
       diis :: DIIS
       self = diis
       .archive.copy(diis.archive)
-      if (diis.coeff.created) .coeff.create_copy(diis.coeff)
    end
 
    delete_archives
@@ -102,14 +99,14 @@ contains
      name = .archive.name
      .archive.set_name( trim(name) // ",mat" )
      if (.archive.exists)  .archive.delete
-     do i=1, .n_vec
+     do i = 1,.n_vec
        .archive.set_name(trim(name) // ",p" // trim(i.to_str))
        if (.archive.exists)  .archive.delete
        .archive.set_name(trim(name) // ",e" // trim(i.to_str))
        if (.archive.exists)  .archive.delete
      end
      .archive.set_name(trim(name))
-     .new=0
+     .new = 0
      .n_vec = 0
      .error_length = ZERO
    end
@@ -122,7 +119,6 @@ contains
      .n_vec = 0
      .new = 0
      .error_length = ZERO
-     .coeff.destroy
    end
 
    set_defaults
@@ -324,20 +320,35 @@ contains
    end
 
    get_old_diis_matrix(mat) ::: private
-   ! Get the old DIIS matrix to "mat", if it is smaller
+   ! Get the old DIIS matrix to "mat", if it is smaller than the current DIIS
+   ! matrix.
       mat :: MAT{REAL}
       if (.n_vec==1) then
+         ! This is the first item; there is nothing to extrapolate.
+         ! So, we set the diis matrix to zero.
          mat = ZERO
       else if (.n_vec<=.keep) then
+         ! We still have not exceeded .keep number of vectors.
+         ! The dimension of "mat" must be: .n_vec+1 by .n_vec+1;
+         ! The dimension of the previous DIIS "mat" was: .n_vec by .n_vec;
+         ! We are reading that in here ...
          .get_diis_mat(mat(1:.n_vec,1:.n_vec))
+         ! The row and column .n_vec will be replaced in the DIIS procedure.
+         ! This row and column were the previous DIIS auxiliary row and column, 
+         ! so they can be trashed without loss of information.
       else
-        .get_diis_mat(mat)
+         ! Here .n_vec exceeds .keep; so one of the parameter and error vectors
+         ! from 1 to .keep must be replaced. The dimension of the matrix is
+         ! .keep+1 by .keep+1; previously, the dimension of the matrix was also
+         ! this big, so we read in the whole matrix ...
+         .get_diis_mat(mat)
       end
    end
 
    make_diis_matrix(mat,err,old_err) ::: private
    ! Make the current diis matrix "mat" using "err" as the current error vector
-   ! for item ".new". "old_err" is used to hold the old error vectors.
+   ! for item ".new". "old_err" is simply used as space to hold the old error
+   ! vectors. The matrix "mat" is saved to disk for the next iteration.
       mat :: MAT{REAL}
       err,old_err :: VEC{REAL}
       dim,old :: INT
@@ -345,14 +356,15 @@ contains
       dim = .dimension
       do old = 1,dim-1                         ! Calculate the DIIS matrix
          .get_error_item(old,old_err)
-         ! max and min are because we are doing only the upper triangle -
-         ! symmetric reflect later....
+         ! The column or row .new is the one we are replacing....
          mat(max(.new,old),min(.new,old)) = dot_product(err,old_err)
-         mat(dim,old) = ONE
+         ! The max and min are because we are doing only the lower triangle
+         ! We will symmetric reflect later.... 
+         mat(dim,old) = ONE   ! Here we set the auxiliary row on the bottom
       end
-      mat(dim,dim) = ZERO
+      mat(dim,dim) = ZERO     ! And here we set the corner
       mat.symmetric_reflect
-      .save_diis_mat(mat)
+      .save_diis_mat(mat)     ! Now save it for next time
       .error_length = sqrt(mat(.new,.new))
    end
 
@@ -410,44 +422,44 @@ contains
    ENSURE(.archive.file_name/=" ","no archive name specified")
       dim,j :: INT
       rhs,coeff,diag :: VEC{REAL}*
-      mat1 :: MAT{REAL}*
-      .n_vec = .n_vec+1
-      dim    = .dimension
+      mat :: MAT{REAL}*
+      .n_vec = .n_vec+1                ! Increment number of vectors
+      dim    = .dimension              ! "dim" is never larger than .keep+1
       .new   = .next_replacement
-      .save_pair(par,err,item=.new)
-      mat1.create(dim,dim)
-      .make_diis_matrix(mat1,err,par)  ! Calculate the new diis matrix
-      mat1(.new,.new).times(1.02d0)    ! Weight the last vector a bit more
+      .save_pair(par,err,item=.new)    ! Replace the old par,err pair on disk
+      mat.create(dim,dim)
+      .make_diis_matrix(mat,err,par)   ! Calculate the new diis matrix
+      mat(.new,.new).times(1.02d0)     ! Weight the last vector a bit more
       .get_parameter_item(.new,par)
-      if (.n_vec>1) then
+      if (.n_vec>1) then               ! Now set up and solve the DIIS equations
          coeff.create(dim)
          rhs.create(dim)
-         coeff = ZERO                  ! the diis coefficients
-         rhs = ZERO                    ! right hand side of the linear equations
+         coeff = ZERO                  ! The diis coefficients
+         rhs = ZERO                    ! Right hand side of the linear equations
          rhs(dim) = ONE
 
          ! Rescale using the diagonals to make solution more numerically stable.
          diag.create(dim-1)
-         mat1(1:dim-1,1:dim-1).put_diagonal_to(diag)
+         mat(1:dim-1,1:dim-1).put_diagonal_to(diag)
          forall (j=1:dim-1)
-           mat1(1:dim-1,j) = mat1(1:dim-1,j)/diag(:)
+           mat(1:dim-1,j) = mat(1:dim-1,j)/diag(:)
          end
-         mat1(1:dim-1,dim) = TOL(8)/diag(:)
+         mat(1:dim-1,dim) = TOL(8)/diag(:)
          diag.destroy
 
-         mat1(dim,:) = ONE
-         mat1(dim,dim) = ZERO
-         !stdout.put(mat1)
+         mat(dim,:) = ONE
+         mat(dim,dim) = ZERO
+         !stdout.put(mat)
          !stdout.put(rhs)
          !stdout.put(coeff)
-         mat1.solve_linear_equation(rhs,coeff)      ! Solve diis equations
+         mat.solve_linear_equation(rhs,coeff)      ! Solve diis equations
 
          rhs.destroy
          .update(par,err,coeff)
          .get_error_item(.new,err)                   ! Put back old error item
          coeff.destroy
       end
-      mat1.destroy
+      mat.destroy
    end
 
    extrapolate(par,err)

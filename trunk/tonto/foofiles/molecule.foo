@@ -5553,6 +5553,7 @@ contains
       FM_s, FM_l, FM_r, Fc :: VEC{CPX}*
       n_refl :: INT
       arch :: ARCHIVE
+      .crystal.assign_pnd
       n_refl = .crystal.n_refl
       Fc.create(n_refl)
       ! Spin contribution
@@ -5561,23 +5562,23 @@ contains
       arch.set(.name,"PND_spin_sf")
       arch.read(FM_s)
       ! Orbital contribution
-      .make_PND_nabla_sf
-      FM_l.create(n_refl)
-      arch.set(.name,"PND_nabla_sf")
-      arch.read(FM_l)
+    ! .make_PND_nabla_sf
+    ! FM_l.create(n_refl)
+    ! arch.set(.name,"PND_nabla_sf")
+    ! arch.read(FM_l)
       ! Diamagnetic contribution
     ! .make_PND_r_sf
     ! FM_r.create(n_refl)
     ! arch.set(.name,"PND_r_sf")
     ! arch.read(FM_r)
       ! Make F_calc
-      Fc = FM_s + FM_l ! + FM_r
+      Fc = FM_s ! + FM_l ! + FM_r
       arch.set(.name,"PND_scalar_magnetic_sf")
       arch.write(Fc)
       .crystal.set_F_calc(Fc)
       .crystal.make_F_predicted
-      FM_r.destroy
-      FM_l.destroy
+    ! FM_r.destroy
+    ! FM_l.destroy
       FM_s.destroy
       Fc.destroy
    end
@@ -9745,7 +9746,8 @@ contains
       .molecular_orbitals.convert_to(.scfdata.molecular_orbital_kind,.n_a,.n_b, &
                                      .scfdata.quantization_axis)
       .make_scf_density_matrix
-      .orbital_energies.create(opveckind=.scfdata.orbital_energies_kind)
+      .orbital_energies.destroy
+      .orbital_energies.create(.n_bf,opveckind=.scfdata.orbital_energies_kind)
    end
 
    make_atom_MOs_guess ::: leaky
@@ -10237,9 +10239,9 @@ contains
       .make_diis_error(error)
       error.compress
       if (.scfdata.scf_kind == "gchf") then
-         length = sqrt(dot_product(error.square,error.square)) / tri
+         length = sqrt(dot_product(error.square,error.square))
       else
-         length = sqrt(dot_product(error.triangle,error.triangle))/tri
+         length = sqrt(dot_product(error.triangle,error.triangle))
       end
       error.destroy
    end
@@ -10275,10 +10277,11 @@ contains
      Fr,Pr :: MAT{REAL}*
      Fc,Pc :: MAT{CPX}*
      err_len :: REAL
+     name :: STR
      tri :: INT
+     tri = .n_bf.triangle
      if (NOT .scfdata.apply_fock_diis) return
      scf_kind = .scfdata.scf_kind
-     tri = .n_bf.triangle
      select case (scf_kind)
        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
           error.create(.n_bf,"restricted")
@@ -10286,47 +10289,66 @@ contains
           Pr  => .density_matrix.restricted
           .make_r_diis_error(error.restricted,Fr,Pr)
           error.compress
-          err_len = error.triangle.norm/tri
+          err_len = error.triangle.norm
           .fock_matrix.compress
           .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          error.destroy
+          .fock_matrix.uncompress
        case ("rohf")
           error.create(.n_bf,"restricted")
           Fr  => .fock_matrix.restricted
           Pr  => .density_matrix.alpha ! ??? really ???
           .make_r_diis_error(error.restricted,Fr,Pr)
           error.compress
-          err_len = error.triangle.norm/tri
+          err_len = error.triangle.norm
           .fock_matrix.compress("restricted")
           .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          error.destroy
+          .fock_matrix.uncompress
        case ("uhf","uks","xray_uhf","xray_uks","pnd_uhf","xray_pnd_uhf")
-          error.create(.n_bf,"unrestricted")
+          name = .scfdata.diis.archive.name
+          ! Do alpha part first .... pretend restricted is alpha ...
+          error.create(.n_bf,"restricted")
+          .scfdata.diis.archive.set_name(name.trim//",alpha")
           Fr  => .fock_matrix.alpha
           Pr  => .density_matrix.alpha
-          .make_r_diis_error(error.alpha,Fr,Pr)
+          .make_r_diis_error(error.restricted,Fr,Pr)
+          error.compress("restricted")
+          err_len = error.triangle.norm
+          .fock_matrix.restricted => .fock_matrix.alpha
+          .fock_matrix.compress("restricted")
+          .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
+          .fock_matrix.uncompress
+          .fock_matrix.alpha => .fock_matrix.restricted
+          nullify(.fock_matrix.restricted)
+          error.destroy
+          ! Now do beta part ...
+          error.create(.n_bf,"restricted")
+          .scfdata.diis.archive.set_name(name.trim//",beta")
+          .scfdata.diis.n_vec = .scfdata.diis.n_vec - 1 ! reset n_vec as it was
           Fr  => .fock_matrix.beta
           Pr  => .density_matrix.beta
-          .make_r_diis_error(error.beta, Fr,Pr)
-          error.compress
-          err_len = error.triangle.norm/tri
-          .fock_matrix.compress
+          .make_r_diis_error(error.restricted,Fr,Pr)
+          error.compress("restricted")
+          err_len = sqrt(error.triangle.norm**2 + err_len**2)
+          .fock_matrix.restricted => .fock_matrix.beta
+          .fock_matrix.compress("restricted")
           .scfdata.diis.extrapolate(.fock_matrix.triangle,error.triangle)
-          error.destroy
+          .fock_matrix.uncompress
+          .fock_matrix.beta => .fock_matrix.restricted
+          nullify(.fock_matrix.restricted)
+          .scfdata.diis.archive.set_name(name.trim) ! put back archive name
        case ("gchf")
           error.create(.n_bf,"general_complex")
           Fc  => .fock_matrix.general_complex
           Pc  => .density_matrix.general_complex
           .make_gc_diis_error(error.general_complex,Fc,Pc)
           error.compress
-          err_len = error.square.norm/tri
+          err_len = error.square.norm
           .fock_matrix.compress
           .scfdata.diis.extrapolate(.fock_matrix.square,error.square)
-          error.destroy
+          .fock_matrix.uncompress
        case default;          DIE("unknown SCF kind, "//trim(scf_kind))
      end
      .scfdata.set_diis_error(err_len)
-     .fock_matrix.uncompress
      error.destroy
    end
 
@@ -10445,7 +10467,7 @@ contains
            .make_r_group_fock(P,F,direct,core,r12)
         case ("rohf","restricted_open_shell_hartree_fock")
            .make_ro_fock(P,F,direct,core,r12)
-        case ("xray_pnd_uhf","pnd_uhf","uhf","xray_uhf","unrestricted_hartree_fock")
+        case ("uhf","xray_pnd_uhf","pnd_uhf","xray_uhf","unrestricted_hartree_fock")
            .make_u_fock(P,F,direct,core,r12)
         case ("gchf","cghf", &
               "general_complex_hartree_fock","complex_general_hartree_fock")
