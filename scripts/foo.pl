@@ -4196,7 +4196,7 @@ sub module_colon_to_fortran {
     return $X;
   }
 
-  if ($X =~ /^(\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # A routine call
+  if ($X =~ /^(\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # A routine call, at start of line
      my $pre = $1;
      my $rout_type = $2; 
      my $rout = $3; 
@@ -4216,8 +4216,13 @@ sub module_colon_to_fortran {
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
   }
 
-  while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
+  while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call, NOT following .
      my $pre = $PREMATCH;
+     my $last = $pre; $last = chop($last);
+     if ($last eq '.') { next };
+#print "X = $X";
+#print "pre = $pre";
+#print "last = $last";
      my $rout_type = $1; 
      my $rout = $2; 
      my $post = $POSTMATCH;
@@ -4262,6 +4267,7 @@ sub dots_to_fortran {
 
   my($pre,$left,$right,$i);
   my($rout,$post,$fixedpost,$arg,$call,$underscore,$arg_type);
+  my ($fortran_type_name,$fortran_mod_name,$sub_mod_name);
 
   $i = 0;
   THIS : while ($i < length $X) {
@@ -4271,10 +4277,15 @@ sub dots_to_fortran {
       if (! &outside_of_string($left)) { next THIS; }
 
       # What is to the right of the dot - object feature and other stuff.
-      if ($right !~ m'^([a-zA-Z_]\w*)(.*)'o) {next THIS};
-      $rout = $1;
-      $post = $2;
-      $fixedpost = $2;
+      if ($right !~ m'^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)'o) {next THIS};
+      undef $sub_mod_name;
+      if (defined $1) {  # If preceded by a colon this is the submodule name
+         $sub_mod_name = $1; 
+         $sub_mod_name =~ s/:$//; 
+      }
+      $rout = $2;
+      $post = $3;
+      $fixedpost = $3;
 
       # Separate out the argument from the previous stuff on the line.
       $arg = &get_last_foo_object($left);
@@ -4335,18 +4346,19 @@ sub dots_to_fortran {
         # Deal with a "normal" routine
         if (! $done) {                            # Do a normal routine
           # add to use list.
-          my ($fortran_type_name,$fortran_mod_name);
           $arg_type = $local_var_info{$arg}{full_type_name};
           if (defined $arg_type) {
+             if (defined $sub_mod_name) { $arg_type = $arg_type . '.' . $sub_mod_name; }
              $fortran_type_name = $local_var_info{$arg}{fortran_type_name}; 
              $fortran_mod_name  = $local_var_info{$arg}{fortran_mod_name}; 
           } else {
              $arg_type = &type_of_this($arg);
+             if (defined $sub_mod_name) { $arg_type = $arg_type . '.' . $sub_mod_name; }
              $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
              $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
           }
           if (! defined $fortran_mod_name) {
-            &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
+             &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
           }
           $called_routines{$arg_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
           $called_routines{$arg_type}{$rout}{fortran_type_name} = $fortran_type_name;

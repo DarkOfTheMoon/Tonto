@@ -560,6 +560,7 @@ contains
       .molecular_orbitals.destroy
       .molecular_orbitals.create_copy(.natural_orbitals)
       NO_kind = .natural_orbitals.spinorbital_kind
+      .occupation_numbers.destroy
       .occupation_numbers.create(NO_kind)
       .occupation_numbers.zero
       .set_scf_occupations(NO_kind)
@@ -614,6 +615,7 @@ contains
       if (.scfdata.created) scf_kind = .scfdata.kind
       select case (scf_kind)
          case ("embedded_rhf"); res = .atom.nuclear_energy([(i,i=1,.saved.n_atom)])
+         case ("crystal_rhf "); res = .atom.nuclear_energy([(i,i=1,.saved.n_atom)])
          case default;          res = .atom.nuclear_energy
       end
    end
@@ -1218,7 +1220,7 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.molecular_orbitals.created, "no molecular orbitals")
    ENSURE(.molecular_orbitals.any_created, "no molecular orbitals")
-     damping,embedded,do_archive,do_delta_archive :: BIN
+     damping,embedded,crystal,do_archive,do_delta_archive :: BIN
      D_old,P_old :: OPMATRIX*
      MO,D,MOa,MOb,Da,Db :: MAT{REAL}*
      CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
@@ -1234,17 +1236,18 @@ contains
      else;                       orb_kind = .molecular_orbitals.spinorbital_kind
      end
      ! Is this an embeded SCF? If so performs some checks.
-     embedded = scf_method.includes("embedded",at_start=TRUE)
-     if (embedded) then
-        DIE_IF(NOT present(n_a),"n_a must be given for embedded SCF calculations")
-        DIE_IF(.saved.destroyed,".saved must exist for embedded SCF calculations")
-        DIE_IF(.cluster.destroyed,".cluster must exist for embedded SCF calculations")
+     embedded = scf_method.includes("embedded_",at_start=TRUE)
+     crystal  = scf_method.includes("crystal_",at_start=TRUE)
+     if (embedded OR crystal) then
+        DIE_IF(NOT present(n_a),"n_a must be given for embedded/crystal SCF calculations")
+        DIE_IF(.saved.destroyed,".saved must exist for embedded/crystal SCF calculations")
+        DIE_IF(.cluster.destroyed,".cluster must exist for embedded/crystal SCF calculations")
         DIE_IF(.cluster.n_fragment_symop==0,".cluster has no fragment symops")
      end
-     ! Determine whether to archive the density matrix: because in embedded
-     ! calculations we don't want to archive the fragment density matrix. We
-     ! know it is a fragment when n_a==.saved.n_a.
-     if      (NOT embedded) then;                              do_archive = TRUE
+     ! Determine whether to archive the density matrix: because in embedded or
+     ! crystal calculations we don't want to archive the fragment density
+     ! matrix. We know it is a fragment when n_a==.saved.n_a.
+     if      (NOT embedded AND NOT crystal) then;              do_archive = TRUE
      else if (n_a==.saved.n_a*.cluster.n_fragment_symop) then; do_archive = TRUE
      else;                                                     do_archive = FALSE
      end
@@ -1261,8 +1264,9 @@ contains
      if (.density_matrix.destroyed) .density_matrix.create(.n_bf)
      .density_matrix.destroy(orb_kind)
      .density_matrix.create(orb_kind)
-     ! Create/read the previous density matrix from disk ... needed for embedded SCF
-     ! calculations where the current density matrix may not be the correct one.
+     ! Create/read the previous density matrix from disk ... needed for embedded
+     ! or crystal SCF calculations where the current density matrix may not be
+     ! the correct one.
      nullify(D_old)
      if (do_delta_archive OR damping) then
         D_old.create(.n_bf)
@@ -1276,7 +1280,7 @@ contains
          MO => .molecular_orbitals.restricted(:,1:.n_a)
          D  => .density_matrix.restricted
          D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-       case ("embedded_rhf","embedded_rks","embedded_xray_rks","embedded_xray_rhf")
+       case ("embedded_rhf","embedded_rks","embedded_xray_rks","embedded_xray_rhf","crystal_rhf")
          ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
          ENSURE(.mult==1,"this is not a singlet state")
          ENSURE(.saved.created,"no saved molecule")
@@ -7679,6 +7683,8 @@ contains
      select case (scf_kind)
        case ("embedded_rhf")
          .initialise_embedded_scf
+       case ("crystal_rhf")
+         .initialise_crystal_scf
        case ("xray_rhf","xray_rks","xray_uhf","xray_uks")
          .initialise_constrained_scf
        case default;
@@ -7777,7 +7783,7 @@ contains
    ENSURE(.n_bf==.saved.n_bf*.cluster.n_fragment_symop,"cluster is not a whole multiple of the fragment")
       scf_kind :: STR
       scf_kind = .scfdata.kind
-      if ((scf_kind == "embedded_rks" OR scf_kind=="embedded_uks") AND .dftgrid.destroyed) then
+      if (.dftgrid.destroyed) then
         .dftgrid.create
         .dftgrid.set_defaults
       end
@@ -7811,7 +7817,7 @@ contains
       no  = nso*.cluster.n_fragment_symop
       nv  = nsv*.cluster.n_fragment_symop
       select case (.scfdata.kind)
-         case ("embedded_rhf")
+         case ("embedded_rhf","crystal_rhf")
             .molecular_orbitals.destroy("restricted")
             .molecular_orbitals.restricted.create(.n_bf,.n_bf)
             .molecular_orbitals.restricted = ZERO
@@ -7832,7 +7838,7 @@ contains
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.saved.created,"no scfdata")
       select case (.scfdata.kind)
-         case ("embedded_rhf")
+         case ("embedded_rhf","crystal_rhf")
             .transform_embedded_orbitals_r(MO.restricted,do_virtual)
          case default
             DIE("unknown or unimplemented SCF kind, "//trim(.scfdata.kind))
@@ -8063,10 +8069,10 @@ contains
    ENSURE(.n_bf==.saved.n_bf*.cluster.n_fragment_symop,"cluster is not a whole multiple of the fragment")
       scf_kind :: STR
       scf_kind = .scfdata.kind
-      if (.dftgrid.destroyed) then
-        .dftgrid.create
-        .dftgrid.set_defaults
-      end
+    ! if (.dftgrid.destroyed) then
+    !   .dftgrid.create
+    !   .dftgrid.set_defaults
+    ! end
       ! Initialise and archive the MO's
       .initialise_embedded_orbitals
       .transform_embedded_orbitals(.molecular_orbitals,do_virtual=TRUE)
@@ -8080,6 +8086,412 @@ contains
       .initialise_scfdata
       .initialise_scfdata_error
       .scfdata.diis.cleanup
+   end
+ 
+   make_periodic_fmm_levels ::: leaky
+   ! Make a multipole representation of the entire crystal, from the charge
+   ! density of the unit cell.
+      self :: target
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.atom.created,"Need a list of atoms")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.dftgrid.created,"Need saved DFT grid")
+   ENSURE(.molecular_orbitals.created,"Need saved molecular orbitals")
+      fmm :: PERIODIC_FMM_LEVEL*
+      values,charges :: VEC{REAL}*
+      positions :: MAT{REAL}*
+      level_max,l_max,n_pts,n_charges :: INT
+      ! Get the level the depth, from the crystallite size
+      fmm.create(self)
+      level_max = fmm.level_max
+      fmm.destroy
+      ! Assign the natural orbitals ready to evaluate charges, then make the
+      ! effective charges
+      .assign_natural_orbitals
+      .set_crystal_scf_occupations
+      n_charges = (.dftgrid.n_pts+1)*.n_atom
+      values.create(n_charges)
+      charges.create(n_charges)
+      positions.create(3,n_charges)
+      .make_effective_charges(charges,positions)
+      ! Create the hierarchy of crystal multipoles and determine the maximum
+      ! multipole order l_max
+      .periodic_fmm_level.create(0,level_max,self,charges,positions)
+      .periodic_fmm_level.make_positions_and_charges
+      .periodic_fmm_level.make_box_charges
+      .periodic_fmm_level.set_l_max
+      l_max = maxval(.periodic_fmm_level(:).l_max)
+    ! .periodic_fmm_level.put
+      ! Now make the multipoles
+      .periodic_fmm_level.make_box_multipoles(l_max)
+    ! .periodic_fmm_level.put
+    ! .periodic_fmm_level.make_potential(values)
+   end
+
+   set_crystal_scf_occupations
+   ! Set the SCF occupation numbers for the natural orbitals
+   ENSURE(.saved.created,"no saved molecule fragment")
+      NO_kind :: STR
+      n_a,n_b,n_e :: INT
+      n_a = .saved.n_a
+      n_b = .saved.n_b
+      n_e = .saved.n_e
+      NO_kind = .natural_orbitals.spinorbital_kind
+      select case (NO_kind)
+         case ("restricted")
+            .occupation_numbers.restricted(1:n_a) = TWO
+         case ("unrestricted")
+            .occupation_numbers.alpha(1:n_a) = ONE
+            .occupation_numbers.beta(1:n_b) = ONE
+         case ("general")
+            .occupation_numbers.general(1:n_e) = ONE
+         case ("restricted_complex")
+            .occupation_numbers.restricted(1:n_a) = TWO
+         case ("unrestricted_complex")
+            .occupation_numbers.alpha(1:n_a) = ONE
+            .occupation_numbers.beta(1:n_b) = ONE
+         case ("general_complex")
+            .occupation_numbers.general(1:n_e) = ONE
+      end
+   end
+
+   make_effective_charges(charges,positions)
+   ! Make a list of effective point charges that accurately represents the total
+   ! charge of the unit cell.  Includes contributions from electrons and nuclei.
+   ! NOTE: this is normally called on a .saved fragment
+     charges :: VEC{REAL}, target
+     positions :: MAT{REAL}, target
+   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.n_atom,"charges has wrong size")
+   ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
+   ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
+   ENSURE(.atom.created,"Need a list of atoms")
+   ENSURE(.dftgrid.created,"no DFT grid")
+     ch,wt,rho,deficit :: VEC{REAL}*
+     pt :: MAT{REAL}*
+     shift,pos3 :: VEC{REAL}(3)
+     n_pt,n,i,f,l,ff,ll :: INT
+     Z,val :: REAL
+     ! Make the effective electronic charges "ch" and positions "pt"
+     n_pt = .dftgrid.n_pts*.n_atom
+     ch.create(n_pt); pt.create(n_pt,3)
+     wt.create(n_pt); rho.create(n_pt)
+     .dftgrid.make_grid(pt,wt,.atom)
+     .make_density_grid(rho,pt)
+     ch = -rho*wt
+     rho.destroy; wt.destroy
+   ! stdout.set_real_style("e")
+   ! stdout.text("charges:")
+   ! stdout.put(ch,"column")
+   ! stdout.text("pt:")
+   ! stdout.put(pt)
+     ! First get the atomic charges, which are assigned to balance the
+     ! electronic charge in case the DFT integration grid is poor.
+     deficit.create(.n_atom)
+     n_pt = .dftgrid.n_pts
+     l = 0
+     do n = 1,.n_atom
+        f = l + 1
+        l = l + n_pt
+        Z = ZERO
+        do i = f,l
+           Z = Z + ch(i)
+        end
+        deficit(n) = -Z
+     end
+     ! Now set the full "charges" and "positions" arrays, including the
+     ! (corrected) atomic charges, at the end of the list
+     l = 0
+     ll = 0
+     do n = 1,.n_atom
+        f  = l  + 1
+        l  = l  + n_pt
+        ff = ll + 1
+        ll = ll + n_pt
+        charges(f:l) = ch(ff:ll)
+        positions(:,f:l) = transpose(pt(ff:ll,:))
+        l = l + 1
+        charges(l) = deficit(n)  
+        deficit(n) = .atom(n).atomic_number - deficit(n)
+        positions(:,l) = .atom(n).pos
+     end
+     stdout.set_real_style("e")
+     stdout.flush
+     stdout.text("Deficit charges:")
+     stdout.put(deficit,"column")
+     stdout.show("sum of deficit charges =",sum(deficit))
+     stdout.show("sum of charges         =",sum(charges))
+     deficit.destroy
+   ! stdout.flush
+   ! stdout.text("Charges:")
+   ! stdout.flush
+   ! stdout.put(charges,"column")
+   ! stdout.flush
+   ! stdout.text("Positions:")
+   ! stdout.flush
+   ! stdout.put(positions,"transpose")
+     stdout.set_real_style("f")
+     pt.destroy; ch.destroy
+   end
+
+!   make_uc_effective_charges(charges,positions)
+!   ! Make a list of effective point charges that accurately represents the total
+!   ! charge of the unit cell.  Includes contributions from electrons and nuclei.
+!     charges :: VEC{REAL}, target
+!     positions :: MAT{REAL}, target
+!   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.n_atom,"charges has wrong size")
+!   ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
+!   ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
+!   ENSURE(.atom.created,"Need a list of atoms")
+!   ENSURE(.saved.dftgrid.created,"no DFT grid")
+!     ch,wt,rho,deficit :: VEC{REAL}*
+!     pt :: MAT{REAL}*
+!     shift,pos3 :: VEC{REAL}(3)
+!     n_pt,n,i,f,l,ff,ll :: INT
+!     ZZ,val :: REAL
+!
+!     pos,new_pos :: MAT{REAL}*
+!     Z,n_ch,n_pt,n,f,l,s :: INT
+!
+!     stdout.text("making saved dft grid")
+!     n_ch = .saved.dftgrid.n_pts
+!     n_pt = .saved.dftgrid.n_pts
+!     ch.create(n_pt)
+!     pos.create(3,n_pt)
+!     .saved.dftgrid.make_grid(pos,wt,.saved.atom)
+!     ! Change fragment positions into fractionals
+!     .crystal.unitcell.change_into_fractional(pos)
+!     new_pos.create(pos.dim1,pos.dim2)
+!     ! Use symmetry to generate the effective charges and their positions in the
+!     ! whole unit cell. This assumes that the fragment cell is generated from
+!     ! the *whole* fragment by .crystal.Z symops.
+!     l = 0
+!     do n = 1,Z
+!        f = l + 1
+!        l = l + n_ch
+!        .charges(f:l) = .fragment_charges
+!        new_pos = pos
+!        s = .crystal.symop_for_frag_cell_atom(1+(n-1)*.crystal.n_fragment_atoms)
+!        .crystal.transform_geometry(new_pos,op=s)
+!        .crystal.put_to_unitcell(new_pos)
+!        .positions(:,f:l) = new_pos ! in cartesians
+!     end
+!     new_pos.destroy; pos.destroy
+!
+!     do n = 1,.n_atoms          ! Loop over atoms in whole cluster
+!     do q = 1,.n_fragment_symop ! Loop over fragment symops
+!        child = .geometry(:,n)  ! Get the image of the parent p under the fragment symop s
+!        op = int(.fragment_symop(1,q))
+!        tr = .fragment_symop(2:4,q)
+!        .crystal.transform_position(child,op,tr)
+!        if (NOT .geometry.has_column(child,col=c)) cycle
+!        .fragment_parents_for_atom(c,q) = n
+!     end
+!     end
+!
+!     ! Make the effective electronic charges "ch" and positions "pt"
+!     Z = .n_atom/.saved.n_atom
+!     n_pt = .saved.dftgrid.n_pts*Z
+!     stdout.show("n_pt =",n_pt)
+!     ch.create(n_pt); pt.create(n_pt,3)
+!     wt.create(n_pt); rho.create(n_pt)
+!
+!     stdout.text("made dft grid")
+!     stdout.text("making density grid")
+!     .make_density_grid(rho,pt)
+!     stdout.text("made density grid")
+!     ch = -rho*wt
+!     rho.destroy; wt.destroy
+!     stdout.set_real_style("e")
+!     stdout.text("charges:")
+!     stdout.put(ch,"column")
+!     stdout.text("pt:")
+!     stdout.put(pt)
+!     ! First get the atomic charges, which are assigned to balance the
+!     ! electronic charge in case the DFT integration grid is poor.
+!     deficit.create(.n_atom)
+!     n_pt = .dftgrid.n_pts
+!     l = 0
+!     do n = 1,.n_atom
+!        f = l + 1
+!        l = l + n_pt
+!        ZZ = ZERO
+!        do i = f,l
+!           ZZ = ZZ + ch(i)
+!        end
+!        deficit(n) = -ZZ
+!     end
+!     ! Now set the full "charges" and "positions" arrays, including the
+!     ! (corrected) atomic charges, at the end of the list
+!     l = 0
+!     ll = 0
+!     do n = 1,.n_atom
+!        f  = l  + 1
+!        l  = l  + n_pt
+!        ff = ll + 1
+!        ll = ll + n_pt
+!        charges(f:l) = ch(ff:ll)
+!        positions(:,f:l) = transpose(pt(ff:ll,:))
+!        l = l + 1
+!        charges(l) = deficit(n)  
+!        deficit(n) = .atom(n).atomic_number - deficit(n)
+!        positions(:,l) = .atom(n).pos
+!     end
+!     stdout.set_real_style("e")
+!     stdout.flush
+!     stdout.text("Deficit charges:")
+!     stdout.put(deficit,"column")
+!     stdout.show("sum of deficit charges =",sum(deficit))
+!     stdout.show("sum of charges         =",sum(charges))
+!     deficit.destroy
+!   ! stdout.flush
+!   ! stdout.text("Charges:")
+!   ! stdout.flush
+!   ! stdout.put(charges,"column")
+!   ! stdout.flush
+!   ! stdout.text("Positions:")
+!   ! stdout.flush
+!   ! stdout.put(positions,"transpose")
+!     stdout.set_real_style("f")
+!     pt.destroy; ch.destroy
+!   end
+
+!   make_unit_cell_point_charges(charges,positions)
+!   ! Make a list of point charges that accurately represents the total charge of
+!   ! the unit cell.  Includes contributions from electrons and nuclei.
+!   ! NOTE: this is normally called on a .saved fragment
+!     charges :: VEC{REAL}, target
+!     positions :: MAT{REAL}, target
+!   ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
+!   ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
+!   ENSURE(.atom.created,"Need a list of atoms")
+!   ENSURE(.dftgrid.created,"no DFT grid")
+!   ENSURE(.crystal.created,"no crystal data")
+!   ENSURE(.crystal.Z.is_int(TOL(3)), "must have an integer number of fragments in the unit cell")
+!   ENSURE(.crystal.frag_atom_for_frag_cell_atom.created,"fragment cell map not created")
+!   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.crystal.n_unit_cell_atoms,"charges has wrong size")
+!     ch,wt,rho,deficit :: VEC{REAL}*
+!     pos,pt,uc_pos :: MAT{REAL}*
+!     shift,pos3 :: VEC{REAL}(3)
+!     n_pt,Z,n,f,l,s :: INT
+!     e_sum,n_sum :: REAL
+!     ! Make the effective electronic charges for the fragment.
+!     n_pt = .dftgrid.n_pts*.n_atom
+!     deficit.create(.n_atom)
+!     ch.create(n_pt); pos.create(3,n_pt)
+!     wt.create(n_pt); pt.create(n_pt,3); rho.create(n_pt)
+!     .dftgrid.make_grid(pt,wt,.atom)
+!     .make_density_grid(rho,pt)
+!     ch = -rho*wt
+!     pos = transpose(pt)
+!     ! Work out the deficit charge for each atom, which is the charge that can
+!     ! be ascribed to the dft integration grid point at the atomic nucleus. It
+!     ! should normally be negative because near the nucleus the density should
+!     ! be evaluated in the midpoint of the region but it is evaluated closer to
+!     ! the nucleus and hence is larger than it should be (?). Thats my
+!     ! explanation anyhow --- dylan
+!     Z = .crystal.Z
+!     n_pt = .dftgrid.n_pts
+!     l = 0
+!     do n = 1,.n_atom
+!        f = l + 1
+!        l = l + n_pt
+!        deficit(n) = .atom(n).atomic_number + sum(ch(f:l))
+!     end
+!     stdout.flush
+!     stdout.text("Deficit charges:")
+!     stdout.put(deficit,"column")
+!     stdout.show("sum of deficit charges =",sum(deficit))
+!     stdout.show("Z times sum of deficit =",Z*sum(deficit))
+!     rho.destroy; pt.destroy; wt.destroy
+!     ! When added to any fractional position, "shift" will convert that
+!     ! position to be such that the centre of the fragment molecule is at the
+!     ! centre of the unit cell. 
+!     shift = .centre_of_atoms ! The fragment molecule centre
+!     .crystal.unitcell.change_into_fractional(shift)
+!     shift = [HALF,HALF,HALF] - shift
+!     ! Use symmetry to generate the effective electronic charges and their
+!     ! positions in the whole unit cell. This assumes that the fragment cell is
+!     ! generated from the *whole* fragment by .crystal.Z symops.
+!     .crystal.unitcell.change_into_fractional(pos)
+!     n_pt = .dftgrid.n_pts*.n_atom
+!     l = 0
+!     do n = 1,Z
+!        f = l + 1
+!        l = l + n_pt
+!        charges(f:l) = ch
+!        positions(:,f:l) = pos
+!        s = .crystal.symop_for_frag_cell_atom(1+(n-1)*Z)
+!        .crystal.transform_geometry(positions(:,f:l),op=s)
+!        ! Shift the positions so that they are relative to the fragment molecule
+!        ! centre before changing to the unit cell -- so the unit cell surrounds
+!        ! the central fragment molecule.
+!        positions(:,f:l) = positions(:,f:l) + spread(shift,dim=2,ncopies=n_pt)
+!        .crystal.put_to_unit_cell(positions(:,f:l))
+!        positions(:,f:l) = positions(:,f:l) - spread(shift,dim=2,ncopies=n_pt)
+!        .crystal.unitcell.change_from_fractional(positions(:,f:l))
+!     end
+!     pos.destroy; ch.destroy
+!     ! Sum electron charges
+!     n_pt = n_pt*Z
+!     e_sum = sum(charges(1:n_pt))
+!     stdout.show("sum of electrn charges =",e_sum)
+!     ! Add the nuclear charges to the list. Don't forget to add the deficit
+!     ! charges.
+!     do n = 1,.crystal.n_unit_cell_atoms
+!        f = .crystal.frag_atom_for_unit_cell_atom(n)
+!        charges(n_pt+n) = .atom(f).atomic_number - deficit(f)
+!        pos3 = .atom(f).pos
+!        .crystal.unitcell.change_into_fractional(pos3)
+!        pos3 = pos3 + shift
+!        .crystal.put_to_unit_cell(pos3)
+!        pos3 = pos3 - shift
+!        .crystal.unitcell.change_from_fractional(pos3)
+!        positions(:,n_pt+n) = pos3
+!     end
+!     deficit.destroy
+!     n_sum = sum(charges(n_pt+1:))
+!     stdout.show("sum of nuclear charges =",n_sum)
+!   end
+
+   make_periodic_fmm_J_matrix(J)
+   ! Calculate the periodic fmm J matrix
+      J :: MAT{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
+   ENSURE(.periodic_fmm_level.created, "need to define periodic_fmm_level")
+    ! V  :: VEC{REAL}*
+      S,JJ :: MAT{REAL}*
+      sh :: SHELL2
+      q,fa,la,fb,lb :: INT
+    ! V.create(.dftgrid.n_pts*.n_atom)
+    ! .periodic_fmm_level.make_potential(V)
+      S.create(.n_bf,.n_bf)
+      .get_overlap_matrix(S)
+      J = ZERO
+      do q = 1,.n_shell_pairs
+         .get_shell_pair(sh,q,fa,la,fb,lb)
+         if (maxval(S(fa:la,fb:lb))<TOL(5)) cycle
+         JJ.create(sh.a.n_comp,sh.b.n_comp)
+         .dftgrid.make_matrix_elements_of(MOLECULE:periodic_fmm_potential,self,sh,JJ)
+         J(fa:la,fb:lb) = J(fa:la,fb:lb) + JJ
+         JJ.destroy
+         sh.destroy_ptr_part
+      end
+      J.symmetric_reflect
+      S.destroy
+    ! V.destroy
+   end
+
+   periodic_fmm_potential(values,positions)
+   ! Make the the "values" of the potential at the positions of the effective
+   ! charges describing the initial fragment. If "adjust_surface_dipoles" is
+   ! present and TRUE, most of the dipoles on the surface of the outer level are
+   ! reversed, to simulate the neutralisation of the surface charge, in order to
+   ! get a potential close to the Ewald potential.
+      values :: VEC{REAL}
+      positions :: MAT{REAL}
+      .periodic_fmm_level.make_potential(values,positions)
    end
 
 !  ******************
@@ -8384,7 +8796,7 @@ contains
         case ("rhf","rks","rohf","xray_rhf","xray_rks", &
               "embedded_rhf","embedded_rks","embedded_rohf", &
               "embedded_xray_rhf","embedded_xray_rks", &
-              "noninteracting-group-rhf")
+              "crystal_rhf", "noninteracting-group-rhf")
            e   => .orbital_energies.restricted
            MO  => .molecular_orbitals.restricted
            F   => .fock_matrix.restricted
@@ -8508,7 +8920,7 @@ contains
         case ("rhf","rks","xray_rhf","xray_rks", &
               "embedded_rhf","embedded_rks", &
               "embedded_xray_rhf","embedded_xray_rks", &
-              "noninteracting-group-rhf")
+              "crystal_rhf", "noninteracting-group-rhf")
            g.create(.n_bf,.n_bf)
            F  => .fock_matrix.restricted
            P  => .density_matrix.restricted
@@ -8586,7 +8998,7 @@ contains
      HH :: MAT{CPX}*
      scf_kind = .scfdata.kind
      select case (scf_kind)
-        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","noninteracting-group-rhf")
+        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
            H.create(.n_bf,.n_bf); .get_kinetic_matrix(H)
            res = .density_matrix.restricted.trace_product_with(H)
            H.destroy
@@ -8692,11 +9104,12 @@ contains
      add_core = TRUE
      if (present(core)) add_core = core
      select case (scf_kind)
-        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","noninteracting-group-rhf")
+        case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
            Fr.create(.n_bf,.n_bf)
            Fr = F.restricted
            if (add_core) .add_core_hamiltonian(Fr)
            res = HALF * P.restricted.trace_product_with(Fr)
+           Fr.destroy
 !        case ("xray_rks","rks")
 !           Fr.create(.n_bf,.n_bf)
 !           Fr = F.restricted
@@ -9705,7 +10118,7 @@ contains
       scf_kind = .scfdata.kind
       tri = .n_bf.triangle
       select case (scf_kind)
-         case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","noninteracting-group-rhf")
+         case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
             error.create(.n_bf,"restricted")
             .make_r_diis_error(error.restricted,.fock_matrix.restricted,.density_matrix.restricted)
             error.compress
@@ -9749,7 +10162,7 @@ contains
      scf_kind = .scfdata.kind
      tri = .n_bf.triangle
      select case (scf_kind)
-       case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","noninteracting-group-rhf")
+       case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
           error.create(.n_bf,"restricted")
           Fr  => .fock_matrix.restricted
           Pr  => .density_matrix.restricted
@@ -9908,6 +10321,8 @@ contains
            .make_r_fock(P,F,direct,core,r12)
         case ("rks","xray_rks")
            .make_r_KS_fock(P,F,direct,core,r12)
+        case ("crystal_rhf")
+           .make_r_crystal_fock(P,F,direct,core,r12)
         case ("uks","xray_uks")
            .make_u_KS_fock(P,F,direct,core,r12)
         case ("noninteracting-group-rhf")
@@ -10136,6 +10551,54 @@ contains
         F.restricted = ZERO
      end
      if (add_core) .add_core_hamiltonian(F.restricted)
+   end
+
+   make_r_crystal_fock(P,F,direct,core,r12) ::: leaky
+   ! Make a new restricted crystal Fock matrix "F" from the density matrix "P".
+   ! If present and TRUE , "direct" means calculate integrals on the fly
+   ! If present and FALSE, "core" removes the core matrix contribution
+   ! If present and FALSE, "r12"  removes the two electron contribution
+     direct,core,r12 :: BIN, optional
+     P,F :: OPMATRIX*
+   ENSURE(P.created,"no density matrix")
+   ENSURE(F.created,"no fock matrix")
+   ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
+   ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
+   ENSURE(P.restricted.created, "no density matrix")
+   ENSURE(.saved.created, "no saved fragment molecule")
+     J,K :: MAT{REAL}*
+     do_direct,add_core,add_r12 :: BIN
+     n_bf :: INT
+     F.destroy("restricted")
+     F.create("restricted")
+     do_direct= FALSE
+     add_core = TRUE
+     add_r12  = TRUE
+     if (present(direct)) do_direct = direct
+     if (present(core))   add_core = core
+     if (present(r12))    add_r12  = r12
+     F.restricted = ZERO
+     if (add_r12) then
+        DIE_IF(NOT do_direct,"must use direct method")
+        n_bf = .saved.n_bf
+        J.create(n_bf,n_bf)   ! J part
+        .saved.make_r_J_direct(J,P.restricted(1:n_bf,1:n_bf))
+        F.restricted(1:n_bf,1:n_bf) = J
+        J.destroy
+        K.create(.n_bf,.n_bf) ! K part
+        .make_r_K_direct(K,P.restricted)
+        F.restricted = F.restricted - HALF*K
+        K.destroy
+     end
+     if (add_core) .saved.add_core_hamiltonian(F.restricted(1:n_bf,1:n_bf))
+   stdout.text("F :")
+   stdout.put(F.restricted)
+     .make_periodic_fmm_levels
+     .make_periodic_fmm_J_matrix(J)
+   stdout.text("F, after fmm :")
+   stdout.put(F.restricted)
+     .periodic_fmm_level.destroy
+     stop
    end
 
    make_u_KS_fock(P,F,direct,core,r12) ::: leaky
