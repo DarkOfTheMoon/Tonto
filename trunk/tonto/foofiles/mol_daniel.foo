@@ -10,6 +10,7 @@ module MOL_DANIEL
    use SYSTEM
    use DBL
    use STR
+   use TIME
 
    use VEC
    use MAT
@@ -22,6 +23,7 @@ module MOL_DANIEL
    use TEXTFILE
    use ARCHIVE
    use CRYSTAL
+   use BASISVEC
    use ATOMVEC
 
    use SCFDATA
@@ -727,9 +729,10 @@ contains
   end
 
   create_cluster [leaky]
-  ! Outputs the a cluster of molecules around the centre of the molecule.
+  ! Self gets shifted to saved_self, and self becomes a new molecule which is a
+  ! cluster defined by the original molecule.
   ! Optional input position must be in crystal coordinates.
-  ! Output atom positions are in crystal coordinates.
+    PTR :: self
     IMAT* :: op_list
     VEC* :: dist_list
     VEC(3) :: pos
@@ -743,7 +746,8 @@ contains
     DBL :: dist_max
     MOL* :: mol
 
-    DIE_IF(NOT .crystal.created,            "no crystal data")
+    ENSURE(.crystal.created, "no crystal data")
+    ENSURE(.atom.created, "no atom data")
     ! defaults
     dist_max  = 5
     position = (/ZERO,ZERO,ZERO/)
@@ -752,10 +756,10 @@ contains
       stdin.read(word)
       word.to_lower_case
       select case (word)
-         case("end");                     exit read_loop
-         case("distance");                stdin.read(dist_max)
-         case("position");                stdin.read(position)
-         case("centre");                  stdin.read(position)
+         case("end");                      exit read_loop
+         case("distance=");                stdin.read(dist_max)
+         case("position=");                stdin.read(position)
+         case("centre=");                  stdin.read(position)
          case default; DIE("unknown keyword : " // trim(word))
       end
     end do read_loop
@@ -764,30 +768,41 @@ contains
     .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
     dist_list.destroy
 
-    mol.create
-    mol.set_defaults
-    mol.name  =  trim(.name) // "_cluster"
-    .create_cluster_from_molecule(mol,op_list,map,count)
-    mol.basis => .basis
-    mol.set_basis_info
-    mol.set_scf_defaults
-    mol.set_atom_info
-    .create_cluster_density_from_molecule(mol,op_list,map,count)
+    .save
+    .crystal.create
+    .crystal.set_to(.saved.crystal)
+    .crystal.destroy_fragment_data
+
+    .set_defaults
+    .name  =  trim(.saved.name) // "_cluster"
+    .create_cluster_from_molecule(op_list,map,count)
+
+    .set_atom_info
+    if (.saved.basis.created) then
+      .basis.create_copy(.saved.basis)
+      .resolve_basis_labels
+      .set_basis_info
+      .set_scf_defaults
+      if (.saved.density_matrix.created) then
+        .create_cluster_density_from_molecule(op_list,map,count)
+      end
+    end
+
   write(*,*) map
   write(*,*)
   write(*,*) count
+
     count.destroy
     map.destroy
     op_list.destroy
 
-    mol.make_structure_factors
-    mol.put_crystal
-    mol.atom.nullify_ptr_part ! do not destroy these
-    nullify(mol.basis)        ! do not destroy this
-    mol.destroy
+    stdout.flush
+    stdout.text("new molecule created with name " // trim(.name))
+    stdout.text('input file now acting on new molecule until "end_new_molecule" keyword found')
+    .put_atoms
   end
 
-  create_cluster_from_molecule(mol,symops,map,count) [leaky]
+  create_cluster_from_molecule(symops,map,count) [leaky]
   ! Make a cluster "mol" as a single molecule, make from one molecule and
   ! symmetry operations "symops".  WARNING: dont destroy basis of mol !
   ! The "map" vector is a n_symops*n_atom vector that contains the a mapping of
@@ -795,7 +810,6 @@ contains
   ! The "count" vector contains the number of atoms that have the same
   ! position as each corresponding atom in the list.
     IMAT :: symops
-    MOL :: mol
     POINTGROUP* :: pg
     MAT* :: old_pos,new_pos,dens,dtr,ftr,w,old_dens,tra,trb
     MAT(3,3), target :: seitz
@@ -806,21 +820,21 @@ contains
     INT :: n_atoms,n_symops,n_unique,n,x,q,s,h,k,l,fs,fbf,lbf
     INT :: na,nb,a,b,fa,la,fb,lb,fi,li,fj,lj,newx,jj,j,y
     BIN :: found
-    ENSURE(.crystal.created,            "no crystal data")
-    ENSURE(.atom.created,               "no atom data")
-    ENSURE(.atom.bases_are_all_labeled, "atoms must all have basis labes")
+    ENSURE(.saved.crystal.created, "no crystal data")
+    ENSURE(.saved.atom.created, "no atom data")
+    ENSURE(.saved.atom.bases_are_all_labeled, "atoms must all have basis labes")
     n_symops = size(symops,2)
-    n_unique = size(.atom)
+    n_unique = size(.saved.atom)
     n_atoms = n_symops * n_unique
     map.create(n_atoms)
     count.create(n_atoms)
-    mol.atom.create(n_atoms)
+    .atom.create(n_atoms)
 
-    old_pos.create(3,.n_atom)
-    old_pos = .crystal.fragment_geometry
-    .crystal.move_to_unit_cell(old_pos)
-    new_pos.create(3,.n_atom)
-    .atom.change_thermal_axis_system_to("crystal",.crystal)
+    old_pos.create(3,n_unique)
+    old_pos = .saved.crystal.fragment_geometry
+    .saved.crystal.move_to_unit_cell(old_pos)
+    new_pos.create(3,n_unique)
+    .saved.atom.change_thermal_axis_system_to("crystal",.saved.crystal)
 
     count=0
     x=0 ! The counter in the new unique   array
@@ -834,14 +848,14 @@ contains
 
       ! Transform geometry and thermal tensors.
       new_pos = old_pos
-      .crystal.transform_geometry(new_pos,s)
-      seitz = .crystal.spacegroup.seitz(1:3,1:3,s)
+      .saved.crystal.transform_geometry(new_pos,s)
+      seitz = .saved.crystal.spacegroup.seitz(1:3,1:3,s)
       do n=1,n_unique
         np = new_pos(:,n) + (/h,k,l/)
         y=y+1
         found = FALSE
         do j=1,x
-          if (mol.atom(j).pos.same_as(np)) then
+          if (.atom(j).pos.same_as(np)) then
             jj=j
             found=TRUE
             exit
@@ -854,31 +868,30 @@ contains
           x=x+1
           map(y)=x
           count(x)=count(x)+1
-          mol.atom(x).copy(.atom(n))
-          mol.atom(x).pos = np
-          mol.atom(x).axis_system = "crystal"
-          mol.atom(x).thermal_tensor = .atom(n).thermal_tensor
-          mol.atom(x).thermal_tensor.change_basis(seitz)
+          .atom(x).copy(.saved.atom(n))                    ! make copy of basis
+          .atom(x).nullify_ptr_part                        ! so it/self can be
+          .atom(x).basis.create
+          .atom(x).basis.copy(.saved.atom(n).basis) ! destroyed later.
+          .atom(x).pos = np
+          .atom(x).axis_system = "crystal"
+          .atom(x).thermal_tensor = .saved.atom(n).thermal_tensor
+          .atom(x).thermal_tensor.change_basis(seitz)
         end
       end
     end
     count.shrink(x)
-    mol.atom.shrink(x)
-    .atom.change_thermal_axis_system_to("cartesian",.crystal)
-    mol.atom.change_axis_system_to("cartesian",.crystal)
-    mol.crystal.create
-    mol.crystal.set_to(.crystal)
-    mol.crystal.destroy_fragment_data
-    mol.crystal.make_reduced_group_data(mol.atom)
+    .atom.shrink(x)
+    .saved.atom.change_thermal_axis_system_to("cartesian",.saved.crystal)
+    .atom.change_axis_system_to("cartesian",.saved.crystal)
+    .crystal.make_reduced_group_data(.atom)
   end
 
-  create_cluster_density_from_molecule(mol,symops,map,count) [leaky]
+  create_cluster_density_from_molecule(symops,map,count) [leaky]
   ! Given the cluster "mol", defined from "self" by "symops", "map", and
   ! "count", create the density matrix for "mol" from that of "self".
   ! Can only do up to f functions.
     IMAT, IN :: symops
     IVEC, IN :: map,count
-    MOL :: mol
     MAT* :: new_dens,dtr,ftr,w,old_dens,tra,trb
     MAT(3,3), target :: seitz
     MAT(1,1), target :: mat1
@@ -889,24 +902,23 @@ contains
     INT :: f1,l1,f2,l2,c1,c2,nf1,nf2,nl1,nl2,s1,s2,of1,of2,newa2,oabf2
     INT :: na1fbf,na2fbf,oabf1,bf_offset,newa1,oa2
     INT :: ol2,na2,atom_offset,oa1,ol1
-    DIE_IF(NOT .crystal.created,            "no crystal data")
-    DIE_IF(NOT .atom.created,               "no atom data")
-    DIE_IF(NOT .atom.bases_are_all_labeled, "atoms must all have basis labes")
-    DIE_IF(NOT .density_matrix.created,"no density matrix")
-    DIE_IF(NOT .density_matrix.restricted.created,"no density matrix")
+    ENSURE(.saved.crystal.created, "no crystal data")
+    ENSURE(.saved.atom.created, "no atom data")
+    ENSURE(.saved.atom.bases_are_all_labeled, "atoms must all have basis labes")
+    ENSURE(.saved.density_matrix.created,"no density matrix")
+    ENSURE(.saved.density_matrix.restricted.created,"no density matrix")
     n_symops = size(symops,2)
-    n_unique = size(.atom)
+    n_unique = size(.saved.atom)
     n_atoms = n_symops * n_unique
-    mol.density_matrix.create("restricted")
- write(*,*) self%n_bf,mol%n_bf
+    .density_matrix.create("restricted")
     dtr.create(6,6)
     ftr.create(10,10)
 
-    first => .first_basis_fn_for_shell
-    last => .last_basis_fn_for_shell
-    mol.density_matrix.restricted = ZERO
+    first => .saved.first_basis_fn_for_shell
+    last => .saved.last_basis_fn_for_shell
+    .density_matrix.restricted = ZERO
     mat1 = ONE
-    old_dens => .density_matrix.restricted
+    old_dens => .saved.density_matrix.restricted
     x=0
     do q=1,n_symops
       s = symops(1,q)
@@ -917,17 +929,17 @@ contains
 
       ! Transform geometry and thermal tensors.
       atom_offset = (q-1) * n_unique
-      seitz = .crystal.spacegroup.seitz(1:3,1:3,s)
-      .make_rotation_matrices(seitz,dtr,ftr)
+      seitz = .saved.crystal.spacegroup.seitz(1:3,1:3,s)
+      .saved.make_rotation_matrices(seitz,dtr,ftr)
 
       ! Have to do it one shell pair at a time.
-      do s1 = 1, .n_shell
-        oa1 = .atom_for_shell(s1)
-        of1 = .first_basis_fn_for_shell(s1)
-        ol1 = .last_basis_fn_for_shell(s1)
+      do s1 = 1, .saved.n_shell
+        oa1 = .saved.atom_for_shell(s1)
+        of1 = .saved.first_basis_fn_for_shell(s1)
+        ol1 = .saved.last_basis_fn_for_shell(s1)
         newa1= map(oa1+atom_offset)                  ! the new atom
-        na1fbf = mol.first_basis_fn_for_atom(newa1) ! first basis fn on new atom
-        oabf1 = .first_basis_fn_for_atom(oa1)       ! first basis fn on old atom
+        na1fbf = .first_basis_fn_for_atom(newa1) ! first basis fn on new atom
+        oabf1 = .saved.first_basis_fn_for_atom(oa1)       ! first basis fn on old atom
         na=ol1-of1+1                                ! number of basis funtions
         bf_offset = of1 - oabf1            ! shell offset wrt that atom's shells
         nf1=na1fbf+bf_offset
@@ -939,15 +951,15 @@ contains
           case (10); tra => ftr
         end
 
-        do s2 = 1, .n_shell
-          oa2 = .atom_for_shell(s2)
-          of2 = .first_basis_fn_for_shell(s2)
-          ol2 = .last_basis_fn_for_shell(s2)
+        do s2 = 1, .saved.n_shell
+          oa2 = .saved.atom_for_shell(s2)
+          of2 = .saved.first_basis_fn_for_shell(s2)
+          ol2 = .saved.last_basis_fn_for_shell(s2)
           newa2= map(oa2+atom_offset)
-          oabf2 = .first_basis_fn_for_atom(oa2)
+          oabf2 = .saved.first_basis_fn_for_atom(oa2)
           nb=ol2-of2+1
           bf_offset = of2 - oabf2
-          na2fbf = mol.first_basis_fn_for_atom(newa2)
+          na2fbf = .first_basis_fn_for_atom(newa2)
           nf2=na2fbf+bf_offset
           nl2=nf2+nb-1
           select case (nb)
@@ -958,8 +970,8 @@ contains
           end
 
           ! Transform density matrix.
-          new_dens => mol.density_matrix.restricted(nf1:nl1,nf2:nl2)
-          old_dens => .density_matrix.restricted(of1:ol1,of2:ol2)
+          new_dens => .density_matrix.restricted(nf1:nl1,nf2:nl2)
+          old_dens => .saved.density_matrix.restricted(of1:ol1,of2:ol2)
           w.create(na,nb)
           w = matmul(tra,old_dens)
           new_dens = new_dens + matmul(w,transpose(trb))
@@ -971,18 +983,17 @@ contains
     dtr.destroy
 
     ! now to put the right factors in.
-    new_dens => mol.density_matrix.restricted
-    do s1=1,mol.n_shell
-      oa1= mol.atom_for_shell(s1)
-      f1= mol.first_basis_fn_for_shell(s1)
-      l1= mol.last_basis_fn_for_shell(s1)
+    new_dens => .density_matrix.restricted
+    do s1=1,.n_shell
+      oa1= .atom_for_shell(s1)
+      f1= .first_basis_fn_for_shell(s1)
+      l1= .last_basis_fn_for_shell(s1)
       c1= count(oa1)
-      do s2=1,mol.n_shell
-        oa2= mol.atom_for_shell(s2)
-        f2= mol.first_basis_fn_for_shell(s2)
-        l2= mol.last_basis_fn_for_shell(s2)
+      do s2=1,.n_shell
+        oa2= .atom_for_shell(s2)
+        f2= .first_basis_fn_for_shell(s2)
+        l2= .last_basis_fn_for_shell(s2)
         c2= count(oa2)
-!        new_dens(f1:l1,f2:l2) = new_dens(f1:l1,f2:l2) * (ONE/(c1*c2))
         new_dens(f1:l1,f2:l2) = new_dens(f1:l1,f2:l2) * (ONE/(c1+c2))
       end
     end
@@ -993,8 +1004,9 @@ contains
   ! seitz matrix.
   ! ptr is the seitz matrix.
   ! dtr is a 6x6 matrix, ftr is a 10x10 matrix.
+    IN :: self
     MAT, IN :: ptr
-    MAT :: dtr,ftr
+    MAT, OUT :: dtr,ftr
     INT :: n,j,i1,i2,i3
     IVEC(6)  :: d1 = (/1,2,3,1,1,2/)
     IVEC(6)  :: d2 = (/1,2,3,2,3,3/)
