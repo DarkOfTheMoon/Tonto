@@ -9,61 +9,82 @@
 #   to standard compliant Fortran 95 code, and/or produce HTML documentation.
 #
 # Usage :
-#
-#   perl -w ./foo.pl  [ -fortran file.f95 [-fortranint file.int] [-fortranuse file.use] ]
-#
-#                     [-htmlshort short.html -htmllong long.html] [-types types.foo] [-tidy] 
-#
-#                     [-routine_calls file.rcf] [-used_routines file.usd]
-#
-#                     [dir/]file.foo
+# 
+# perl -w ./foo.pl  [ -fortran file.f95 [-fortran_int file.int] [-fortran_use file.use] ]
+#                   [-html_short short.html -html_long long.html] [-types types.foo] 
+#                   [-routine_calls file.rcf] [-used_routines file.usd]
+#                   [-stack] [-timer] [-no_generic] [-no_unknown] [-no_system] [-tidy]
+#                   [dir/]file.foo
+# 
 # Where :
+# 
+# [dir/]file.foo           is the foo file to be preprocessed. The .foo extension
+#                          is required.  Also, "file" must be the lower case name
+#                          of any module or program defined in "file.foo". If
+#                          "dir/" is present, then the directory "dir" is used to
+#                          find any required inherited foo modules.
+# 
+# -fortran file.f95        is the generated fortran90+ file.
+# 
+# -fortran_int file.int    is the generated fortran90+ generic interface file; if
+#                          not supplied and -fortran supplied, defaults to "file.int" 
+#                          where "file" is the head part of argument "file.foo". 
+#                          Note that -fortran must be supplied.
+# 
+# -fortran_use file.use    is the generated fortran90+ USE file; if not supplied
+#                          and -fortran is supplied, defaults to "file.int" where
+#                          "file" is the head part of argument "file.foo". Note
+#                          that -fortran must be supplied.
+# 
+# -types types.foo         specifies the foo types file, containing all type
+#                          definitions; if not supplied, defaults to "dir/types.foo" 
+#                          where "dir" is the directory head for the foo file.
+# 
+# -html_long long.html     specifies the name of the long version of the HTML
+#                          documentation to be produced.
+# 
+# -html_short short.html   specifies the name of the short version of the HTML
+#                          documentation to be produced.  Note that both -html_long 
+#                          and -htmlshort must be given in order to produce HTML 
+#                          documentation.
 #
-#   [dir/]file.foo        is the foo file to be preprocessed. The .foo extension
-#                         is required.  Also, "file" must be the lower case name
-#                         of any module or program defined in "file.foo". If
-#                         "dir/" is present, then the directory "dir" is used to
-#                         find any required inherited foo modules.
+# -stack                   specifies that STACK, UNSTACK and CHECK macros will be 
+#                          outputted in the generated fortran source. These macros 
+#                          are usually defined in the "macros" file.  
 #
-#   -fortran file.f95     is the generated fortran90+ file.
+# -timer                   specifies that START_TIMER and STOP_TIMER macros are
+#                          outputted in the generated fortran source.
 #
-#   -fortranint file.int  is the generated fortran90+ generic interface file; if
-#                         not supplied and -fortran supplied, defaults to
-#                         "file.int" where "file" is the head part of argument
-#                         "file.foo".  -fortran must be supplied.
+# -no_generic              specifies that no or fewer generic interfaces will be
+#                          used, by appending the name of the module to the
+#                          routine name, so that it becomes unique. This option
+#                          will normally lead to routine names longer than 31
+#                          characters which is not standard F95. However, the
+#                          names should be less than 63 characters so it should
+#                          be standard F03.
 #
-#   -fortranuse file.use  is the generated fortran90+ USE file; if not supplied
-#                         and -fortran is supplied, defaults to "file.int" where
-#                         "file" is the head part of argument "file.foo"
-#                         -fortran must be supplied.
+# -no_unknown              specifies that the UNKNOWN macro *not* be expanded to 
+#                          display a list of all allowed case options, which is 
+#                          useful for avoiding calls to the SYSTEM module.
 #
-#   -types types.foo      specifies the foo types file, containing all type
-#                         definitions; if not supplied, defaults to
-#                         "dir/types.foo" where "dir" is the directory head for
-#                         the foo file.
+# -no_system               specifies that the SYSTEM module *not* be used by
+#                          default, in the outputted fortran source.
 #
-#   -htmllong.html        specifies the name of the long version of the HTML
-#                         documentation to be produced.
+#                       
+# -tidy                    specfies that a tidied up version of file.foo,
+#                          called "file.tidy", will be produced. The tidied
+#                          file has the recommended 3 space indent, and ENSURE
+#                          macros are placed before local variable declarations.
 #
-#   -htmlshort.html       specifies the name of the short version of the HTML
-#                         documentation to be produced.  Note that both
-#                         -htmllong and -htmlshort must be given in order to
-#                         produce HTML documentation.
+# -routine_calls file.rcf  specifies that the calls from each routine are to be 
+#                          outputted to file.rcf, for later use in compactification, 
+#                          by an associated script compactify_calls.pl
 #
-#   -tidy                 specfies that a tidied up version of file.foo,
-#                         called "file.tidy", will be produced.
+# -used_routines file.usd  specifies a .usd file which lists the routines which are 
+#                          to be compiled. If the file does not exist, then none of 
+#                          the routines are compiled.
 #
-#   -routine_calls file.rcf  specifies that the calls from each routine
-#                         are to be outputted to file.rcf, for later use
-#                         in compactification, by an associated script 
-#                         compactify_calls.pl
-#
-#   -used_routines file.usd  specifies a .usd file which lists the routines 
-#                         which are to be compiled. If the file does not exist, 
-#                         then none of the routines are compiled.
-#
-# (c) Dylan Jayatilaka, University of Western Australia, 2002.
-# (c) Daniel Grimwood, University of Western Australia, 2002.
+# (c) Dylan Jayatilaka, Daniel Grimwood, University of Western Australia, 2005
 #
 # $Id$
 #-------------------------------------------------------------------------------
@@ -107,8 +128,11 @@ my $foofile_directory;        # .foo file directory
 my $do_fortran = 0;           # Translate to fortran
 my $do_html = 0;              # Translate to HTML
 my $do_inherit = 0;           # Whether to follow inheritance inclusion
+my $do_stack = 0;             # Set TRUE if STACK/UNSTACK macros are to be made
+my $do_timer = 0;             # Set TRUE if START_TIMER/STOP_TIMER macros are to be made
 my $do_unknown = 1;           # Set TRUE if UNKNOWN construct is made
 my $do_generic = 1;           # Set TRUE if generic interfaces are to be used
+my $do_system  = 1;           # Set TRUE if SYSTEM module is always to be used
 my $do_routine_calls = 0;     # Set TRUE if routine calls are to be stored
 my $do_tidy    = 0;           # Set TRUE if preprocessor will tidy code
 my $do_usd = 0;               # Set TRUE if eliminatinmg unused routines AND the .usd file exists 
@@ -387,23 +411,32 @@ sub analyse_command_arguments {
        if (/^-/) {
            /^-types\b/          && do { $typesfile      = shift; next; };
            /^-fortran\b/        && do { $fortranfile    = shift; next; };
-           /^-fortranint\b/     && do { $fortranintfile = shift; next; };
-           /^-fortranuse\b/     && do { $fortranusefile = shift; next; };
-           /^-htmlshort\b/      && do { $htmlshortfile  = shift; next; };
-           /^-htmllong\b/       && do { $htmllongfile   = shift; next; };
-           /^-nogeneric\b/      && do { $do_generic     = 0;     next; };
+           /^-fortran_int\b/    && do { $fortranintfile = shift; next; };
+           /^-fortran_use\b/    && do { $fortranusefile = shift; next; };
+           /^-html_short\b/     && do { $htmlshortfile  = shift; next; };
+           /^-html_long\b/      && do { $htmllongfile   = shift; next; };
            /^-generic\b/        && do { $do_generic     = 1;     next; };
+           /^-no_generic\b/     && do { $do_generic     = 0;     next; };
+           /^-stack\b/          && do { $do_stack       = 1;     next; };
+           /^-no_stack\b/       && do { $do_stack       = 0;     next; };
+           /^-timer\b/          && do { $do_timer       = 1;     next; };
+           /^-no_timer\b/       && do { $do_timer       = 0;     next; };
+           /^-unknown\b/        && do { $do_unknown     = 1;     next; };
+           /^-no_unknown\b/     && do { $do_unknown     = 0;     next; };
+           /^-system\b/         && do { $do_system      = 1;     next; };
+           /^-no_system\b/      && do { $do_system      = 0;     next; };
            /^-routine_calls\b/  && do { $routcallfile   = shift; next; };
            /^-used_routines\b/  && do { $usdfile        = shift; next; };
            /^-tidy\b/           && do { $do_tidy        = 1;     next; };
            warn "\n Error : unexpected argument $arg\n";
            $argerr=1;
+           goto ERROR;
        }
        $foofile = $arg;
        if (@_ > 0) {
            warn "\n Error : more than one foo file specified, @ARGV\n";
            $argerr=1;
-           last;
+           goto ERROR;
        }
    }
    
@@ -414,8 +447,9 @@ sub analyse_command_arguments {
    if ($fortranfile ne "") { $do_fortran=1 };
 
    if (! $do_fortran && ! $do_html && ! $do_tidy ) {
-           warn "\n Error : must specify conversion to one of fortran, HTML, or tidy\n @ARGV\n";
+           warn "\n Error : must specify one of -fortran, -html_short, -html_long, -tidy\n @ARGV\n";
            $argerr=1;
+           goto ERROR;
    }
    
    $foofile   =~ /([\w{,}]+)(\.\w+)*?(\.foo)?$/;
@@ -428,10 +462,12 @@ sub analyse_command_arguments {
    if ($foofile_head_name eq "") {
            warn "\n Error : no head part for file.foo\n";
            $argerr=1;
+           goto ERROR;
    }
    if ($foofile_tail_name eq "") {
            warn "\n Error : tail of file.foo does not end in .foo\n";
            $argerr=1;
+           goto ERROR;
    }
    
    my $file;
@@ -444,6 +480,7 @@ sub analyse_command_arguments {
       if ($fortranintfile ne '' || $fortranusefile ne '') {
            warn "\n Error : must specify -fortran option";
            $argerr=1;
+           goto ERROR;
       }
    }
    
@@ -454,11 +491,13 @@ sub analyse_command_arguments {
    if (! open(FOOFILE, $foofile)) {
            warn "\n Error : foofile \"$foofile\" does not exist";
            $argerr=1;
+           goto ERROR;
    }
    close FOOFILE;
    if (! open(TYPESFILE,$typesfile)) {
            warn "\n Error : type file \"$typesfile\" does not exist";
            $argerr=1;
+           goto ERROR;
    }
    close TYPESFILE;
 
@@ -487,64 +526,91 @@ sub analyse_command_arguments {
    
    return if ($argerr==0);
 
+   ERROR: ;
+
    # A command line argument error occured ... given them the full info.
 
    print << '-----EOF';
    
-    Usage :
+   Usage :
  
-       perl -w ./foo.pl  [ -fortran file.f95 [-fortranint file.int] [-fortranuse file.use] ]
+   perl -w ./foo.pl  [ -fortran file.f95 [-fortran_int file.int] [-fortran_use file.use] ]
  
-                         [-htmlshort short.html -htmllong long.html] [-types types.foo] [-tidy] 
+                     [-html_short short.html -html_long long.html] [-types types.foo] 
  
-                         [-routine_calls file.rcf] [-used_routines file.usd]
+                     [-routine_calls file.rcf] [-used_routines file.usd]
+
+                     [-stack] [-timer] [-no_generic] [-no_unknown] [-no_system] [-tidy]
  
-                         [dir/]file.foo
+                     [dir/]file.foo
    
-    Where :
+   Where :
    
-      [dir/]file.foo        is the foo file to be preprocessed. The .foo extension
+   [dir/]file.foo           is the foo file to be preprocessed. The .foo extension
                             is required.  Also, "file" must be the lower case name
                             of any module or program defined in "file.foo". If
                             "dir/" is present, then the directory "dir" is used to
                             find any required inherited foo modules.
    
-      -fortran file.f95     is the generated fortran90+ file.
+   -fortran file.f95        is the generated fortran90+ file.
    
-      -fortranint file.int  is the generated fortran90+ generic interface file; if
-                            not supplied and -fortran supplied, defaults to
-                            "file.int" where "file" is the head part of argument
-                            "file.foo".  -fortran must be supplied.
+   -fortran_int file.int    is the generated fortran90+ generic interface file; if
+                            not supplied and -fortran supplied, defaults to "file.int" 
+                            where "file" is the head part of argument "file.foo". 
+                            Note that -fortran must be supplied.
    
-      -fortranuse file.use  is the generated fortran90+ USE file; if not supplied
+   -fortran_use file.use    is the generated fortran90+ USE file; if not supplied
                             and -fortran is supplied, defaults to "file.int" where
-                            "file" is the head part of argument "file.foo"
-                            -fortran must be supplied.
+                            "file" is the head part of argument "file.foo". Note
+                            that -fortran must be supplied.
    
-      -types types.foo      specifies the foo types file, containing all type
-                            definitions; if not supplied, defaults to
-                            "dir/types.foo" where "dir" is the directory head for
-                            the foo file.
+   -types types.foo         specifies the foo types file, containing all type
+                            definitions; if not supplied, defaults to "dir/types.foo" 
+                            where "dir" is the directory head for the foo file.
    
-      -htmllong.html        specifies the name of the long version of the HTML
+   -html_long long.html     specifies the name of the long version of the HTML
                             documentation to be produced.
    
-      -htmlshort.html       specifies the name of the short version of the HTML
-                            documentation to be produced.  Note that both
-                            -htmllong and -htmlshort must be given in order to
-                            produce HTML documentation.
+   -html_short short.html   specifies the name of the short version of the HTML
+                            documentation to be produced.  Note that both -html_long 
+                            and -htmlshort must be given in order to produce HTML 
+                            documentation.
 
-      -tidy                 specfies that a tidied up version of file.foo,
-                            called "file.tidy", will be produced.
+   -stack                   specifies that STACK, UNSTACK and CHECK macros will be 
+                            outputted in the generated fortran source. These macros 
+                            are usually defined in the "macros" file.  
 
-      -routine_calls file.rcf  specifies that the calls from each routine
-                            are to be outputted to file.rcf, for later use
-                            in compactification, by an associated script 
-                            compactify_calls.pl
+   -timer                   specifies that START_TIMER and STOP_TIMER macros are
+                            outputted in the generated fortran source.
 
-     -used_routines file.usd   specifies a .usd file which lists the routines 
-                            which are to be compiled. If the file does not exist, 
-                            then none of the routines are compiled.
+   -no_generic              specifies that no or fewer generic interfaces will be
+                            used, by appending the name of the module to the
+                            routine name, so that it becomes unique. This option
+                            will normally lead to routine names longer than 31
+                            characters which is not standard F95. However, the
+                            names should be less than 63 characters so it should
+                            be standard F03.
+
+   -no_unknown              specifies that the UNKNOWN macro *not* be expanded to 
+                            display a list of all allowed case options, which is 
+                            useful for avoiding calls to the SYSTEM module.
+
+   -no_system               specifies that the SYSTEM module *not* be used by
+                            default, in the outputted fortran source.
+
+                         
+   -tidy                    specfies that a tidied up version of file.foo,
+                            called "file.tidy", will be produced. The tidied
+                            file has the recommended 3 space indent, and ENSURE
+                            macros are placed before local variable declarations.
+
+   -routine_calls file.rcf  specifies that the calls from each routine are to be 
+                            outputted to file.rcf, for later use in compactification, 
+                            by an associated script compactify_calls.pl
+
+   -used_routines file.usd  specifies a .usd file which lists the routines which are 
+                            to be compiled. If the file does not exist, then none of 
+                            the routines are compiled.
 -----EOF
      exit 1;
 }
@@ -849,7 +915,7 @@ sub fortran_size {
 # (1) %{$tonto_type{$type_name}} stores type (and other) information for all
 #     components $var of the type $type_name, defined in the types.foo file.
 #     Info is stored in the hash reference $tonto_type{$type-name}{$var}.
-# (2) %{$module_type{$type_name}} is as abaove, but for type definitions
+# (2) %{$module_type{$type_name}} is as above, but for type definitions
 #     NOT appearing in the types.foo file.
 # (3) $global_var_info{$var} stores type (and other) information for any
 #     globally defined variables $var such as "self", "stdin", "tonto", etc. 
@@ -885,19 +951,19 @@ sub analyse_variable_declaration {
 
         while ($dec =~ /([a-zA-Z]\w*)/g) {         # Look for the declared variables, repeatedly
 
-	    if ($typ eq 'PTR')          { last; }
-	    if ($typ eq 'IN')           { last; }
-	    if ($typ eq 'OUT')          { last; }
-	    if ($typ eq 'INOUT')        { last; }
-	    if ($typ =~ m/^pointer/i)   { last; }
-	    if ($typ =~ m/^target/i)    { last; }
-	    if ($typ =~ m/^save$/i)     { last; }
-	    if ($typ =~ m/^allocatable$/i) { last; }
+            if ($typ eq 'PTR')          { last; }
+            if ($typ eq 'IN')           { last; }
+            if ($typ eq 'OUT')          { last; }
+            if ($typ eq 'INOUT')        { last; }
+            if ($typ =~ m/^pointer/i)   { last; }
+            if ($typ =~ m/^target/i)    { last; }
+            if ($typ =~ m/^save$/i)     { last; }
+            if ($typ =~ m/^allocatable$/i) { last; }
 
             $var = $1;
-	    if ($var eq 'DEFAULT_NULL') { last; }          
-	    if ($var eq 'DEFAULT')      { last; }
-	    if ($var eq 'NULL')         { last; }
+            if ($var eq 'DEFAULT_NULL') { last; }          
+            if ($var eq 'DEFAULT')      { last; }
+            if ($var eq 'NULL')         { last; }
 
             if ($var eq $function_result && 
                 defined $module_full_name &&
@@ -1422,8 +1488,18 @@ sub process_foo_line {
        ! $skip_fortran_out)  { print FORTRANFILE $fortran_out; }
 
    # Print the processed line!
-   if ($do_tidy && 
-       ! $skip_tidy_out)  { print TIDYFILE $tidy_out; }
+   if ($do_tidy && ! $skip_tidy_out)  { 
+      $tidy_out = &tidy_fix_comment_indent($tidy_out);
+      print TIDYFILE $tidy_out; 
+   }
+}
+
+################################################################################
+# Fix the comment indent in the foo files to two characters
+sub tidy_fix_comment_indent {
+   my $line = shift;
+   $line =~ s/^   ! (?:\S)/   !  /;
+   return $line;
 }
 
 ################################################################################
@@ -2145,19 +2221,19 @@ sub fortran_dump_interface {
       $cnt = $overload_count{$rout}-1;
       $pvt = $routine{$rout}{generic_access};
       if ($do_generic) {
-	       print INTFILE "   $pvt    ${rout}_";
+               print INTFILE "   $pvt    ${rout}_";
          if ($cnt==0) {
             $pub = $routine{$rout}{specific_access};
             if ($pub eq "public") {
                print INTFILE "   $pub    ${rout}";
             }
          } else {
-	    for (my $i = 0; $i <= $cnt; $i++) {
+            for (my $i = 0; $i <= $cnt; $i++) {
                $pub = $routine{$rout.'_'.$i}{specific_access};
                next if ($pub eq "private");
                print INTFILE "   $pub    ${rout}_$i";
             }
-	 }
+         }
                print INTFILE "   interface ${rout}_";
          if ($cnt==0) {
                print INTFILE "      module procedure ${rout}";
@@ -2165,29 +2241,29 @@ sub fortran_dump_interface {
             for (my $i = 0; $i <= $cnt; $i++) {
                print INTFILE "      module procedure ${rout}_$i";
             }
-	 }
-	       print INTFILE "   end interface";
+         }
+               print INTFILE "   end interface";
       } else { # -------- AVOID GENERIC INTERFACES
-	       print INTFILE "   $pvt    ${module_fort_name}_${rout}";
+               print INTFILE "   $pvt    ${module_fort_name}_${rout}";
          if ($cnt==0) {
                # Generic is same as specific for first name
          } else {
-	    for (my $i = 0; $i <= $cnt; $i++) {
+            for (my $i = 0; $i <= $cnt; $i++) {
                $pub = $routine{$rout.'_'.$i}{specific_access};
                next if ($pub eq "private");
-	       print INTFILE "   $pub    ${module_fort_name}_${rout}_$i";
-	    }
-	 }
+               print INTFILE "   $pub    ${module_fort_name}_${rout}_$i";
+            }
+         }
          if ($cnt==0) {
          } else {
-	       print INTFILE "   interface ${module_fort_name}_${rout}";
-	    for (my $i = 0; $i <= $cnt; $i++) {
-	       print INTFILE "      module procedure ${module_fort_name}_${rout}_$i";
-	    }
-	       print INTFILE "   end interface";
+               print INTFILE "   interface ${module_fort_name}_${rout}";
+            for (my $i = 0; $i <= $cnt; $i++) {
+               print INTFILE "      module procedure ${module_fort_name}_${rout}_$i";
+            }
+               print INTFILE "   end interface";
          }
       }
-	       print INTFILE "";
+               print INTFILE "";
   }
   close INTFILE;
 }
@@ -2209,7 +2285,9 @@ sub fortran_dump_use {
   if ($module_full_name ne 'TYPES')  {
     print USEFILE "   use TYPES_MODULE";
     if ($module_full_name ne 'SYSTEM')  {
+      if ($do_system eq 1) {
       print USEFILE "\n   use SYSTEM_MODULE";
+      }
     }
   }
 
@@ -2244,12 +2322,6 @@ sub fortran_dump_use {
             $ftime = 1;
          }
 
-# SYSTEM_MODULE is already used by default.
-#         if ($mod eq "PARALLEL" && $fpara==0 && $mod ne $module_full_name) {
-#            print USEFILE "   use SYSTEM_MODULE, only: tonto_parallel";
-#            $fpara = 1;
-#         }
-
          if ($mod ne "unknown" && $mod ne $module_full_name) {
             if ($do_generic) {
                if (defined $fort_fun and $fort_fun==1) {
@@ -2278,8 +2350,8 @@ sub fortran_dump_use {
 
 
 ################################################################################
-# Change the start of the routine by adding STACK macro and ENSURE statements.
-# Also add a comment if the routine is inherited for clarity.
+# Change the start of the routine by adding START_TIMER, STACK, and ENSURE
+# macros. Also add a comment if the routine is inherited for clarity.
 
 sub fortran_add_stack_macro {
 
@@ -2288,16 +2360,21 @@ sub fortran_add_stack_macro {
   my $pre_out = "";
 
   if ($routine{$name}{first_active_line}) {
-     if ( ! defined $routine{$name}{pure}) {
-        $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")\n";
+     if ($do_stack eq 1 && ! defined $routine{$name}{pure}) {
+        $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")";
      }
+     if ($do_timer eq 1) {
+        if ($pre_out ne '') { $pre_out .= "\n" }
         $pre_out .= "   START_TIMER(\"$module_full_name:${routine{$name}{real_name}}\")";
+     }
      if (defined $routine{$name}{fortran_ensure_statements}) {
+        if ($pre_out ne '') { $pre_out .= "\n" }
         $pre_out .= $routine{$name}{fortran_ensure_statements};
         $routine{$name}{fortran_ensure_statements} = undef;
      }
      if (defined $routine{$name}{being_inherited}) {
-        $pre_out .= "\n   ! The following code is inherited from " .  
+        if ($pre_out ne '') { $pre_out .= "\n" }
+        $pre_out .= "   ! The following code is inherited from " .  
                     $routine{$name}{parent_module};
      }
      if ($pre_out ne '') {
@@ -2309,7 +2386,7 @@ sub fortran_add_stack_macro {
 
 
 ################################################################################
-# Change the return statement by adding UNSTACK or CHECK macros.
+# Change the return statement by adding STOP_TIMER, UNSTACK or CHECK macros.
 
 sub fortran_process_return {
 
@@ -2318,15 +2395,39 @@ sub fortran_process_return {
   # found a "return" #######################
   if ($fortran_out =~ '.return') {
 
-    if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
-      if    (defined $routine{$name}{pure})  { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
-      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; UNSTACK; return; end if/o; }
-      else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; CHECK; return; end if/o; }
-    }
-    elsif ($fortran_out =~ '(?:^|;) *return *' ) {
-      if    (defined $routine{$name}{pure})  { $fortran_out =~ s/return/STOP_TIMER; return/o; }
-      elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; UNSTACK; return/o; }
-      else                                   { $fortran_out =~ s/return/STOP_TIMER; CHECK; return/o; }
+    if ($do_timer eq 1 && $do_stack eq 1) {
+      if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
+        if    (defined $routine{$name}{pure})  { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; UNSTACK; return; end if/o; }
+        else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; CHECK; return; end if/o; }
+      }
+      elsif ($fortran_out =~ '(?:^|;) *return *' ) {
+        if    (defined $routine{$name}{pure})  { $fortran_out =~ s/return/STOP_TIMER; return/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; UNSTACK; return/o; }
+        else                                   { $fortran_out =~ s/return/STOP_TIMER; CHECK; return/o; }
+      }
+    } elsif ($do_stack eq 1) {
+      if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
+        if    (defined $routine{$name}{pure})  {  }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; UNSTACK; return; end if/o; }
+        else                                   { $fortran_out =~ s/[)] *return */) then; CHECK; return; end if/o; }
+      }
+      elsif ($fortran_out =~ '(?:^|;) *return *' ) {
+        if    (defined $routine{$name}{pure})  {  }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/UNSTACK; return/o; }
+        else                                   { $fortran_out =~ s/return/CHECK; return/o; }
+      }
+    } elsif ($do_timer eq 1) {
+      if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
+        if    (defined $routine{$name}{pure})  { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
+        else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
+      }
+      elsif ($fortran_out =~ '(?:^|;) *return *' ) {
+        if    (defined $routine{$name}{pure})  { $fortran_out =~ s/return/STOP_TIMER; return/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; return/o; }
+        else                                   { $fortran_out =~ s/return/STOP_TIMER; return/o; }
+      }
     }
   }
 }
@@ -2640,7 +2741,6 @@ sub analyse_new_module_scope {
   @type_arg = &get_all_type_arguments(\@type_arg);
   $n_type_args = $#type_arg;
 
-  my $type_name = $module_name;
   if (! defined($tonto_type_info{$module_name}) &&
      $module_name ne 'TYPES' &&
      $virtual ne 'virtual module') {
@@ -2999,18 +3099,35 @@ sub fortran_do_new_end_scope {
      if ($routine{$current_rout_name}{template}) {
         $skip_fortran_out = 1; return;
      }
-     if    (defined $routine{$name}{pure})  { 
-        # $fortran_out =~ s/end */end $oldscopeunit/; 
-        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
-     }
-     elsif (defined $routine{$name}{leaky}) { 
-        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1UNSTACK\n$1end $oldscopeunit/; 
-     }
-     else                                     { 
-        $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1CHECK\n$1end $oldscopeunit/; 
+     if ($do_timer eq 1 && $do_stack eq 1) {
+        if    (defined $routine{$name}{pure})  { 
+           # $fortran_out =~ s/end */end $oldscopeunit/; 
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
+        }
+        elsif (defined $routine{$name}{leaky}) { 
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1UNSTACK\n$1end $oldscopeunit/; 
+        }
+        else                                     { 
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1CHECK\n$1end $oldscopeunit/; 
+        }
+     } elsif ($do_stack eq 1) {
+        if    (defined $routine{$name}{pure})  { 
+           $fortran_out =~ s/end */end $oldscopeunit/; 
+        }
+        elsif (defined $routine{$name}{leaky}) { 
+           $fortran_out =~ s/(\s*)end */$1UNSTACK\n$1end $oldscopeunit/; 
+        }
+        else                                     { 
+           $fortran_out =~ s/(\s*)end */$1CHECK\n$1end $oldscopeunit/; 
+        }
+     } elsif ($do_timer eq 1) {
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
+     } else {
+           $fortran_out =~ s/(\s*)end */$1end $oldscopeunit/; 
      }
      $pre_out = "";
-     if ( ! defined $routine{$name}{pure} &&
+     if ( $do_stack eq 1 &&
+          ! defined $routine{$name}{pure} &&
             defined $routine{$current_rout_name}{first_active_line} &&
                     $routine{$current_rout_name}{first_active_line} == 0) {
         $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")\n";
@@ -3045,7 +3162,7 @@ sub fortran_do_new_end_scope {
   elsif ($oldscopeunit eq 'parallel do') {
         $fortran_out =~ s/end\s*/end do/;
         $fortran_out =~ /^(\s*)/; 
-  print "mod = $module_full_name";
+# print "mod = $module_full_name";
         $fortran_out .= "\n" . $1 . "UNLOCK_PARALLEL_DO(\"" .
                         $module_full_name . ":" .
                         $routine{$current_rout_name}{real_name} . "\")";
@@ -3101,7 +3218,7 @@ sub fortran_do_new_parallel_do_scope {
       elsif (defined $2) {
          $fortran_out = "$1do $2 = PARALLEL_DO_START($3,1),$4,PARALLEL_DO_STRIDE(1)$6";
       }
-  print "mod = $module_full_name";
+# print "mod = $module_full_name";
       $fortran_out .= "\n" . $1 . "LOCK_PARALLEL_DO(\"" .
                       $module_full_name . ":" .
                       $routine{$current_rout_name}{real_name} ."\")";
@@ -3566,7 +3683,11 @@ sub fortran_store_ensure_statements {
                    "before local variable declarations:\n\n$input_line");
            }
            $fortran_out =~ s/^\s*/   /;
-           $routine{$current_rout_name}{fortran_ensure_statements} .= "\n" . $fortran_out;
+           if (defined $routine{$current_rout_name}{fortran_ensure_statements}) {
+             $routine{$current_rout_name}{fortran_ensure_statements} .= "\n" . $fortran_out;
+           } else {
+             $routine{$current_rout_name}{fortran_ensure_statements} .=        $fortran_out;
+           }
            $fortran_out = '';
            $skip_fortran_out = 1;
        }
@@ -3966,6 +4087,7 @@ sub fortran_do_module_scope {
    ($fortran_out,$comment) = &split_by_comment($fortran_out);
 #print "IN module scope ----";
 #print "-----> out = $fortran_out";
+#print "-----> com = $comment";
    &fortran_add_default_initialisation;
 #print "-----> out = $fortran_out";
    &fortran_add_include_files;
@@ -4000,6 +4122,8 @@ sub fortran_do_type_scope {
       &fortran_add_default_initialisation;
       &fortran_change_variable_declarations;
       &fortran_change_square_brackets;
+      # Remove private attributes in type declarations
+      $fortran_out =~ s/,\s*private\s*//;
    }
 
    $fortran_out .= $comment; 
@@ -4766,14 +4890,14 @@ sub has_field {
           &report_error("type \"$arg_type\" has not been defined in \"$typesfile\".");
         }
         # Add the type of variable $arg in case it isn't there because of a tail part
-	%{$local_var_info{$arg}} = %{$tonto_type_info{$arg_type}};
+        %{$local_var_info{$arg}} = %{$tonto_type_info{$arg_type}};
         if (! defined $tonto_type_info{$arg_element_type}) {
           &report_error("type \"$arg_element_type\" has not been defined in \"$typesfile\".");
         }
-	my $name_type = $tonto_type{$arg_element_type}{$name}{type_name};
-	my $name_private = $tonto_type{$arg_element_type}{$name}{type_is_private};
+        my $name_type = $tonto_type{$arg_element_type}{$name}{type_name};
+        my $name_private = $tonto_type{$arg_element_type}{$name}{type_is_private};
         if (defined $name_type && ! $name_private) { # Does the array element have $name as a field?
-	    $has_name_as_field = 1;
+            $has_name_as_field = 1;
             # Change $name_type if $arg is an array type
             if ($arg_type_head_name ne '') {
                $name_type = $arg_type_head_name . '{'. $name_type . '}';
@@ -4781,9 +4905,9 @@ sub has_field {
             if (! defined $tonto_type_info{$name_type}) {
               &report_error("type \"$name_type\" has not been defined in \"$typesfile\".");
             }
-	    %{$local_var_info{$dotvar}} = %{$tonto_type_info{$name_type}};
-	}
-	return ($has_name_as_field);
+            %{$local_var_info{$dotvar}} = %{$tonto_type_info{$name_type}};
+        }
+        return ($has_name_as_field);
     }
 
     #If not an array variable, check if NON-ARRAY variable
@@ -4794,20 +4918,20 @@ sub has_field {
         if (! defined $tonto_type_info{$arg_type}) {
           &report_error("type \"$arg_type\" has not been defined in \"$typesfile\".");
         }
-	my $name_type = $tonto_type{$arg_type}{$name}{type_name};
-	my $name_private;
+        my $name_type = $tonto_type{$arg_type}{$name}{type_name};
+        my $name_private;
         if ($arg_type eq $module_name) { 
-	   $name_private = 0;  # no private names in module of same type name
+           $name_private = 0;  # no private names in module of same type name
         } else {
-	   $name_private = $tonto_type{$arg_type}{$name}{type_is_private};
+           $name_private = $tonto_type{$arg_type}{$name}{type_is_private};
         }
-	if (defined $name_type && ! $name_private) { # Does $arg have $name as a field?
-	    $has_name_as_field = 1;
+        if (defined $name_type && ! $name_private) { # Does $arg have $name as a field?
+            $has_name_as_field = 1;
             if (! defined $tonto_type_info{$name_type}) {
               &report_error("type \"$name_type\" has not been defined in \"$typesfile\".");
             }
-	    %{$local_var_info{$dotvar}} = %{$tonto_type_info{$name_type}};
-	}
+            %{$local_var_info{$dotvar}} = %{$tonto_type_info{$name_type}};
+        }
         return ($has_name_as_field);
     }
 
@@ -4836,8 +4960,8 @@ sub is_declared_variable {
 
     # Now see if we know about its type info
     if (defined $local_var_info{$arg_head}{type_name}) {
-	$is_declared_var = 1;
-	$arg_type = $local_var_info{$arg_head}{type_name};
+        $is_declared_var = 1;
+        $arg_type = $local_var_info{$arg_head}{type_name};
     }
     return ($is_declared_var,$arg_type);
 }
@@ -4865,7 +4989,7 @@ sub is_declared_array_variable {
     my ($arg_head_type);
     if (defined $local_var_info{$arg_head}{type_name}  
            &&   $local_var_info{$arg_head}{is_array_type}) {
-	$is_array_var = 1;
+        $is_array_var = 1;
         $arg_head_type    = $local_var_info{$arg_head}{type_name};
         $arg_element_type = $local_var_info{$arg_head}{type_arg}[1];
         $arg_type_head_name = &array_var_type_head_name($arg_tail);
