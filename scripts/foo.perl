@@ -124,6 +124,8 @@ $global_type{'tonto'}  = 'SYSTEM';
 $global_type{'stdin'}  = 'TEXTFILE';
 $global_type{'stdout'} = 'TEXTFILE';
 
+%local_type = %global_type;
+
 $tonto_type{'type X'}{'field Y of X'} = 'type of the field Y of X';
 
 ## -----------------------------------------------------------------------------
