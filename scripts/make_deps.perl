@@ -112,6 +112,7 @@ LINE: while (<FOOFILE>) {
   chop;
   $inp = $_;  # Get the line
   @arg = split(" +",$_);
+  last LINE if /^contains$/;
   if ($inp =~ "^ *module +")  { $unitname = lc($arg[2]); $is_module = 1; }
   elsif ($inp =~ "^ *program +") { $unitname = lc($arg[2]); $is_program= 1; }
   elsif ($inp =~ "^ *[Uu][Ss][Ee] +") {
