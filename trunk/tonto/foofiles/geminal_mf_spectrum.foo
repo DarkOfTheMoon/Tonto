@@ -114,8 +114,11 @@ contains
      if (present(use_hf_default)) hf_default = use_hf_default
      .n_geminals = n_geminals
      .n_bf = n_bf
-     .n_bas = n_bf*n_bf-n_geminals+1 ! avoid the ground state basis functions
-                                     ! of the other contractions
+     if (hf_default) then
+       .n_bas = n_bf*n_bf-n_geminals+1 ! avoid the ground state basis functions
+     else                              ! of the other contractions
+       .n_bas = n_bf*n_bf
+     end
      .bra.create(n_geminals) ! create bra and ket arrays
      .ket.create(n_geminals)
      .special_ket.create(n_geminals)
@@ -135,22 +138,22 @@ contains
           .special_ket(i).element = ZERO
         end
      end
+     j = 1
+     k = 1
      do i = 1,.n_bas     ! create coeficient matrices
-        j = 1
-        k = 1
         .contraction_wfs(i).element.create(n_bf,n_bf)
         .contraction_wfs(i).element = ZERO
         .contraction_energies(i)= ZERO
         if (hf_default) then
           .contraction_wfs(i)[j,k] = ONE
-        end
-        if ( k == n_bf) then
-          j = j + 1
-          k = 1
-        else
-          k = k + 1
-          if (k == j AND j <= n_geminals) then
+          if ( k == n_bf) then
+            j = j + 1
+            k = 1
+          else
             k = k + 1
+            if (k == j AND j <= n_geminals) then
+              k = k + 1
+            end
           end
         end
       end
@@ -171,16 +174,6 @@ contains
            !.bra(3)[3,3] = ZERO ! to be removed, used for testing
            !.bra(5)[6,6] = ONE ! to be removed, used for testing
    end
-
-!
-!   set(bra,ket,special_ket) 
-!   ! Create a new object from the "bra" and "ket" states.
-!     bra,ket :: VEC{MAT_{REAL}}, target
-!     special_ket :: VEC{VEC_{INT}}, target
-!     .bra => bra
-!     .ket => ket
-!     .special_ket => special_ket
-!   end
 
 !  ************
 !  I/O Routines
@@ -336,7 +329,7 @@ contains
 !  ***************
 
    do_overlap
-   ! Evaluate the overlap integral
+   ! Evaluate the overlap integrals
       res :: MAT{REAL}(.n_bas,.n_bas)
       res = .overlap
       stdout.text("The overlap matrix is ")
@@ -344,25 +337,27 @@ contains
    end
 
    overlap result (res)
-   ! Evaluate the overlap integral
+   ! Evaluate the overlap integrals
       res :: MAT{REAL}(.n_bas,.n_bas)
    ENSURE(.bra.dim==.ket.dim,"Bra and ket have different sizes!")
       i :: INT
+      row_ind :: INT
+      col_ind :: INT
       reorder :: VEC{INT}*
-      !indices   indices = 0
-      !indices   ind = 0
+      row_ind = 0
+      col_ind = 0
       reorder.create(.n_geminals)
       reorder = [ (i, i=1,.n_geminals) ]
-      res = .overlap_for(reorder)
+      res = .overlap_for(reorder,row_ind,col_ind)
       reorder.destroy
    end
 
-   overlap_for(order) result (res) ::: recursive
-   ! Evaluate the overlap integral
+   overlap_for(order,row_ind,col_ind) result (res) ::: recursive
+   ! Evaluate the overlap integrals
+      row_ind :: INT
+      col_ind :: INT
       order :: VEC{INT}
       res :: MAT{REAL}(.n_bas,.n_bas)
-  ! not relevant anymore since this not changing and it has already been tested
-  ! ENSURE(.bra.dim==.ket.dim,"self bra and ket have different sizes!")
       ii,jj,i,j,k,dim, bi1,bi2,bj1,bj2 :: INT
       fac,this,this1,this2 :: REAL
       reorder :: VEC{INT}*
@@ -372,42 +367,238 @@ contains
       res = ZERO
       
       if (dim==0) then
-         res = ONE
+         res(row_ind,col_ind) = ONE
+         res(col_ind,row_ind) = ONE
          return
       end
-          !debug        stdout.text("Entering routine ....")
-          !debug        stdout.text("special_ket:")
-          !debug        stdout.put(.special_ket)
-      do ii = dim,1,-1
+      if (dim==1) then
+         ii=1
+         i = order(ii)
+        !debug   write(*,*) "i =",i
+        if (i==1 AND col_ind==0 ) then
+          do  col_ind=1,.n_bas
+          do  row_ind=1,col_ind
+        ! The simple case 1
+             this = sum(.contraction_wfs(row_ind)[:,:]*.contraction_wfs(col_ind)[:,:])
+             if (NOT this.is_zero) then
+               reorder.create(0)
+              !debug stdout.show("i =",i)
+              !debug stdout.show("dim =",dim)
+              !debug stdout.show("this =",this)
+               res = res + .overlap_for(reorder,row_ind,col_ind) * this ! <<<<<<<<<<<<<<<<<<<<<<<
+               reorder.destroy
+             end
+           end
+           end
+        else
+          do  row_ind=1,col_ind
+            if (.special_ket(i)[1]>0) then             
+              bi1 = .special_ket(i)[1]                 
+              bi2 = .special_ket(i)[2]                
+              this = .contraction_wfs(row_ind)[bi1,bi2]
+            else
+              this = sum(.contraction_wfs(row_ind)[:,:]*.ket(i)[:,:])
+            end
+            if (NOT this.is_zero) then
+              reorder.create(0)
+            ! reorder.create(dim-1)
+            ! reorder(1:ii-1)   = [ (order(j), j=1,ii-1) ]
+            ! reorder(ii:dim-1) = [ (order(j), j=ii+1,dim) ]
+            !debug  stdout.show("i =",i)
+            !debug  stdout.show("dim =",dim)
+            !debug  if (.special_ket(i)[1]>0) then   
+            !debug    stdout.show("bi1 =",bi1) 
+            !debug    stdout.show("bi2 =",bi2) 
+            !debug  end                              
+            !debug  stdout.show("this =",this)
+              res = res + .overlap_for(reorder,row_ind,col_ind) * this ! <<<<<<<<<<<<<<<<<<<<<<<
+              reorder.destroy
+            end
+          end
+        end
+        ! no Case 2 when dim =1
+      end
+      ! this loop does something only if dim > 1
+      do ii = dim,2,-1
          i = order(ii)
       !debug   write(*,*) "i =",i
-         ! The simple case 1
-         if (.special_ket(i)[1]>0) then
-            bi1 = .special_ket(i)[1]
-            bi2 = .special_ket(i)[2]
-            this = .bra(dim)[bi1,bi2]
+         if (i==1 AND col_ind==0) then
+           do  col_ind=1,row_ind
+             this = sum(.bra(dim)[:,:]*.contraction_wfs(col_ind)[:,:])
+             if (NOT this.is_zero) then
+               reorder.create(dim-1)
+               reorder(1:ii-1)   = [ (order(j), j=1,ii-1) ]
+               reorder(ii:dim-1) = [ (order(j), j=ii+1,dim) ]
+               !debug  stdout.show("i =",i)
+               !debug  stdout.show("dim =",dim)
+          !debug if (.special_ket(i)[1]>0) then
+               !debug  stdout.show("bi1 =",bi1)
+               !debug  stdout.show("bi2 =",bi2)
+          !debug end
+               !debug  stdout.show("this =",this)
+               res = res + .overlap_for(reorder,row_ind,col_ind) * this ! <<<<<<<<<<<<<<<<<<<<<<<
+               reorder.destroy
+             end
+             do jj = dim,ii+1,-1
+               j = order(jj)
+               if (.special_ket(j)[1]>0) then
+                 ! stdout.text("Case 2, only j special")
+                 bj1 = .special_ket(j)[1]
+                 bj2 = .special_ket(j)[2]
+                 do bi1 = 1,.n_bf
+                 do bi2 = 1,.n_bf
+                   fac = .contraction_wfs(col_ind)[bi1,bi2]
+                   if (NOT fac.is_zero) then
+                   ! two cases
+                     this1 = fac * .bra(dim)[bi1,bj2]
+                     this2 = fac * .bra(dim)[bj1,bi2]
+                     if (NOT this1.is_zero OR NOT this2.is_zero) then
+                       reorder.create(dim-1)
+                       reorder(1:ii-1) = [ (order(k), k=1,ii-1) ]
+                       reorder(ii:jj-2) = [ (order(k), k=ii+1,jj-1) ]
+                       reorder(jj-1:dim-2) = [ (order(k), k=jj+1,dim) ]
+                       reorder(dim-1) = j ! This is not used, put to have same dim as in case 1
+                       if (NOT this1.is_zero) then
+          !debug           stdout.text("reorder:")
+          !debug           stdout.put(reorder)
+                  !     .special_ket(j)[1] = bj1 
+                        .special_ket(j)[2] = bi2 ! j=reorder(dim-1)
+                  !debug  stdout.show("i =",i)
+                  !debug  stdout.show("j =",j)
+                  !debug  stdout.show("dim =",dim)
+                  !debug  stdout.show("bi1 =",bi1)
+                  !debug  stdout.show("bj2 =",bj2)
+                  !debug  stdout.show("this1 =",this1)
+         !debug   write(*,*) "again 4, dim =",dim
+         !debug            stdout.text("AFter assignment ...")
+         !debug            stdout.show("i =",i)
+         !debug            stdout.show("j =",j)
+         !debug            stdout.show("bj1 =",.special_ket(j)[1])
+         !debug            stdout.show("bj2 =",.special_ket(j)[2])
+         !debug            stdout.text("reorder:")
+         !debug            stdout.put(reorder)
+         !debug   write(*,*) "A. recursing here, dim =",dim
+                        res = res - .overlap_for(reorder,row_ind,col_ind) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
+         !debug   write(*,*) "returned from recursion, dim =",dim
+                       end  
+                       if (NOT this2.is_zero) then
+                        .special_ket(j)[1] = bi1 ! j=reorder(dim-1)
+                  !     .special_ket(j)[2] = bj2 
+                  !debug  stdout.show("i =",i)
+                  !debug  stdout.show("j =",j)
+                  !debug  stdout.show("dim =",dim)
+                  !debug  stdout.show("bj1 =",bj1)
+                  !debug  stdout.show("bi2 =",bi2)
+                  !debug  stdout.show("this2 =",this2)
+         !debug   write(*,*) "B. recursing here, dim =",dim
+                        res = res - .overlap_for(reorder,row_ind,col_ind) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
+         !debug   write(*,*) "returned from recursion, dim =",dim
+                       end
+                       .special_ket(j)[1] = 0 ! j=reorder(dim-1)
+                       .special_ket(j)[2] = 0 ! j=reorder(dim-1)
+                       reorder.destroy
+                     end
+                   end
+                 end
+                 end
+                 else 
+                 !  stdout.text("Case 2, NONE SPECIAL")
+                 do bi1 = 1,.n_bf
+                 do bi2 = 1,.n_bf
+                 do bj1 = 1,.n_bf
+                 do bj2 = 1,.n_bf
+                   fac = .contraction_wfs(col_ind)[bi1,bi2]*.ket(j)[bj1,bj2]
+                   if (NOT fac.is_zero) then
+                  !  two cases
+                     this1 = fac * .bra(dim)[bi1,bj2]
+                     this2 = fac * .bra(dim)[bj1,bi2]
+                     if (NOT this1.is_zero OR NOT this2.is_zero) then
+                       reorder.create(dim-1)
+                       reorder(1:ii-1) = [ (order(k), k=1,ii-1) ]
+                       reorder(ii:jj-2) = [ (order(k), k=ii+1,jj-1) ]
+                       reorder(jj-1:dim-2) = [ (order(k), k=jj+1,dim) ]
+                       reorder(dim-1) = j ! This is not used, put to have same dim as in case 1
+                 !debug    stdout.show("i =",i)
+                 !debug    stdout.show("j =",j)
+                 !debug    stdout.show("bi1 =",bi1)
+                 !debug    stdout.show("bi2 =",bi2)
+                 !debug    stdout.show("bj1 =",bj1)
+                 !debug    stdout.show("bj2 =",bj2)
+                 !debug    stdout.text("reorder:")
+                 !debug    stdout.put(reorder)
+                 !debug    stdout.text("Before set ....")
+                 !debug    stdout.text("special_ket:")
+                 !debug    stdout.put(.special_ket)
+
+                       if (NOT this1.is_zero) then
+                        .special_ket(j)[1] = bj1 ! j=reorder(dim-1)
+                        .special_ket(j)[2] = bi2 ! j=reorder(dim-1)
+                   !debug stdout.show("i =",i)
+                   !debug stdout.show("j =",j)
+                   !debug stdout.show("dim =",dim)
+                   !debug stdout.show("bi1 =",bi1)
+                   !debug stdout.show("bj2 =",bj2)
+                   !debug stdout.show("this1 =",this1)
+                  !debug   stdout.text("After set ....")
+                  !debug   stdout.text("special_ket:")
+                  !debug   stdout.put(.special_ket)
+        !debug    write(*,*) "A. recursing here, dim =",dim
+                        res = res - .overlap_for(reorder,row_ind,col_ind) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
+        !debug    write(*,*) "returned from recursion, dim =",dim
+                       end
+                       if (NOT this2.is_zero) then
+                        .special_ket(j)[1] = bi1 ! j=reorder(dim-1)
+                        .special_ket(j)[2] = bj2 ! j=reorder(dim-1)
+                   !debug stdout.show("i =",i)
+                   !debug stdout.show("j =",j)
+                   !debug stdout.show("dim =",dim)
+                   !debug stdout.show("bj1 =",bj1)
+                   !debug stdout.show("bi2 =",bi2)
+                   !debug stdout.show("this2 =",this2)
+         !debug   write(*,*) "B. recursing here, dim =",dim
+                        res = res - .overlap_for(reorder,row_ind,col_ind) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
+         !debug   write(*,*) "returned from recursion, dim =",dim
+                       end
+                       .special_ket(j)[1] = 0 ! j=reorder(dim-1)
+                       .special_ket(j)[2] = 0 ! j=reorder(dim-1)
+                       reorder.destroy
+                     end
+                   end 
+                 end
+                 end
+                 end
+                 end
+               end
+             end
+           end
          else
-            this = sum(.bra(dim)[:,:]*.ket(i)[:,:])
-         end
-         if (NOT this.is_zero) then
-     !debug write(*,*) "again, dim =",dim
-             reorder.create(dim-1)
-             reorder(1:ii-1)   = [ (order(j), j=1,ii-1) ]
-             reorder(ii:dim-1) = [ (order(j), j=ii+1,dim) ]
-                     stdout.show("i =",i)
-                     stdout.show("dim =",dim)
-         if (.special_ket(i)[1]>0) then
-                     stdout.show("bi1 =",bi1)
-                     stdout.show("bi2 =",bi2)
-         end
-                     stdout.show("this =",this)
-             res = res + .overlap_for(reorder) * this ! <<<<<<<<<<<<<<<<<<<<<<<
-             reorder.destroy
-         end
-         ! Case 2
-         do jj = dim,ii+1,-1
-            j = order(jj)
-            if (.special_ket(i)[1]>0 AND .special_ket(j)[1]>0) then
+           ! The simple case 1
+           if (.special_ket(i)[1]>0) then
+              bi1 = .special_ket(i)[1]
+              bi2 = .special_ket(i)[2]
+              this = .bra(dim)[bi1,bi2]
+           else
+              this = sum(.bra(dim)[:,:]*.ket(i)[:,:])
+           end
+           if (NOT this.is_zero) then
+       !debug write(*,*) "again, dim =",dim
+               reorder.create(dim-1)
+               reorder(1:ii-1)   = [ (order(j), j=1,ii-1) ]
+               reorder(ii:dim-1) = [ (order(j), j=ii+1,dim) ]
+         !debug  stdout.show("i =",i)
+         !debug  stdout.show("dim =",dim)
+         !debug  if (.special_ket(i)[1]>0) then
+         !debug     stdout.show("bi1 =",bi1)
+         !debug     stdout.show("bi2 =",bi2)
+         !debug  end
+         !debug  stdout.show("this =",this)
+               res = res + .overlap_for(reorder,row_ind,col_ind) * this ! <<<<<<<<<<<<<<<<<<<<<<<
+               reorder.destroy
+           end
+           ! Case 2
+           do jj = dim,ii+1,-1
+             j = order(jj)
+             if (.special_ket(i)[1]>0 AND .special_ket(j)[1]>0) then
               !       stdout.text("Case 2, i special, j special")
                   bi1 = .special_ket(i)[1]
                   bi2 = .special_ket(i)[2]
@@ -424,12 +615,12 @@ contains
                     if (NOT this1.is_zero) then
                       .special_ket(i)[1] = bj1 ! i=reorder(dim-1)
                   !   .special_ket(i)[2] = bi2 
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bi1 =",bi1)
-                     stdout.show("bj2 =",bj2)
-                     stdout.show("this1 =",this1)
+                !debug stdout.show("i =",i)
+                !debug stdout.show("j =",j)
+                !debug stdout.show("dim =",dim)
+                !debug stdout.show("bi1 =",bi1)
+                !debug stdout.show("bj2 =",bj2)
+                !debug stdout.show("this1 =",this1)
         !debug write(*,*) "again 4, dim =",dim
              !debug     stdout.text("AFter assignment ...")
              !debug     stdout.show("i =",i)
@@ -441,27 +632,27 @@ contains
              !debug     stdout.text("special_ket:")
              !debug     stdout.put(.special_ket)
        !debug  write(*,*) "A. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
        !debug  write(*,*) "returned from recursion, dim =",dim
                     end 
                     if (NOT this2.is_zero) then
                   !   .special_ket(i)[1] = bi1
                       .special_ket(i)[2] = bj2 !  i=reorder(dim-1)
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bj1 =",bj1)
-                     stdout.show("bi2 =",bi2)
-                     stdout.show("this2 =",this2)
+               !debug  stdout.show("i =",i)
+               !debug  stdout.show("j =",j)
+               !debug  stdout.show("dim =",dim)
+               !debug  stdout.show("bj1 =",bj1)
+               !debug  stdout.show("bi2 =",bi2)
+               !debug  stdout.show("this2 =",this2)
         !debug write(*,*) "B. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
         !debug write(*,*) "returned from recursion, dim =",dim
                     end
                     .special_ket(i)[1] = 0 ! i=reorder(dim-1)
                     .special_ket(i)[2] = 0 ! i=reorder(dim-1)
                     reorder.destroy
                   end
-            else if (.special_ket(i)[1]==0 AND .special_ket(j)[1]>0) then
+             else if (.special_ket(i)[1]==0 AND .special_ket(j)[1]>0) then
                   ! stdout.text("Case 2, only j special")
                    bj1 = .special_ket(j)[1]
                    bj2 = .special_ket(j)[2]
@@ -485,12 +676,12 @@ contains
           !debug           stdout.put(reorder)
                   !   .special_ket(j)[1] = bj1 
                       .special_ket(j)[2] = bi2 ! j=reorder(dim-1)
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bi1 =",bi1)
-                     stdout.show("bj2 =",bj2)
-                     stdout.show("this1 =",this1)
+               !debug  stdout.show("i =",i)
+               !debug  stdout.show("j =",j)
+               !debug  stdout.show("dim =",dim)
+               !debug  stdout.show("bi1 =",bi1)
+               !debug  stdout.show("bj2 =",bj2)
+               !debug  stdout.show("this1 =",this1)
          !debug   write(*,*) "again 4, dim =",dim
          !debug            stdout.text("AFter assignment ...")
          !debug            stdout.show("i =",i)
@@ -500,20 +691,20 @@ contains
          !debug            stdout.text("reorder:")
          !debug            stdout.put(reorder)
          !debug   write(*,*) "A. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
          !debug   write(*,*) "returned from recursion, dim =",dim
                     end  
                     if (NOT this2.is_zero) then
                      .special_ket(j)[1] = bi1 ! j=reorder(dim-1)
                   !  .special_ket(j)[2] = bj2 
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bj1 =",bj1)
-                     stdout.show("bi2 =",bi2)
-                     stdout.show("this2 =",this2)
+               !debug  stdout.show("i =",i)
+               !debug  stdout.show("j =",j)
+               !debug  stdout.show("dim =",dim)
+               !debug  stdout.show("bj1 =",bj1)
+               !debug  stdout.show("bi2 =",bi2)
+               !debug  stdout.show("this2 =",this2)
          !debug   write(*,*) "B. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
          !debug   write(*,*) "returned from recursion, dim =",dim
                     end
                   .special_ket(j)[1] = 0 ! j=reorder(dim-1)
@@ -523,15 +714,15 @@ contains
                  end
                end
                end
-            else if (.special_ket(i)[1]==0 AND .special_ket(j)[1]==0) then
+             else if (.special_ket(i)[1]==0 AND .special_ket(j)[1]==0) then
                  !  stdout.text("Case 2, NONE SPECIAL")
                do bi1 = 1,.n_bf
                do bi2 = 1,.n_bf
                do bj1 = 1,.n_bf
                do bj2 = 1,.n_bf
-                  ! two cases?
                   fac = .ket(i)[bi1,bi2]*.ket(j)[bj1,bj2]
                   if (NOT fac.is_zero) then
+                  ! two cases
                     this1 = fac * .bra(dim)[bi1,bj2]
                     this2 = fac * .bra(dim)[bj1,bi2]
                     if (NOT this1.is_zero OR NOT this2.is_zero) then
@@ -540,7 +731,7 @@ contains
                       reorder(1:ii-1) = [ (order(k), k=1,ii-1) ]
                       reorder(ii:jj-2) = [ (order(k), k=ii+1,jj-1) ]
                       reorder(jj-1:dim-2) = [ (order(k), k=jj+1,dim) ]
-                      reorder(dim-1) = i ! This is not used, put to have same dim as in case 1
+                      reorder(dim-1) = j ! This is not used, put to have same dim as in case 1
                  !debug    stdout.show("i =",i)
                  !debug    stdout.show("j =",j)
                  !debug    stdout.show("bi1 =",bi1)
@@ -554,37 +745,37 @@ contains
                  !debug    stdout.put(.special_ket)
 
                       if (NOT this1.is_zero) then
-                        .special_ket(i)[1] = bj1 ! i=reorder(dim-1)
-                        .special_ket(i)[2] = bi2 ! i=reorder(dim-1)
+                        .special_ket(j)[1] = bj1 ! j=reorder(dim-1)
+                        .special_ket(j)[2] = bi2 ! j=reorder(dim-1)
 
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bi1 =",bi1)
-                     stdout.show("bj2 =",bj2)
-                     stdout.show("this1 =",this1)
+                !debug stdout.show("i =",i)
+                !debug stdout.show("j =",j)
+                !debug stdout.show("dim =",dim)
+                !debug stdout.show("bi1 =",bi1)
+                !debug stdout.show("bj2 =",bj2)
+                !debug stdout.show("this1 =",this1)
                   !debug   stdout.text("After set ....")
                   !debug   stdout.text("special_ket:")
                   !debug   stdout.put(.special_ket)
         !debug    write(*,*) "A. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this1 ! <<<<<<<<<<<<<<<<<<<<<<<
         !debug    write(*,*) "returned from recursion, dim =",dim
                       end
                       if (NOT this2.is_zero) then
-                        .special_ket(i)[1] = bi1 ! i=reorder(dim-1)
-                        .special_ket(i)[2] = bj2 ! i=reorder(dim-1)
-                     stdout.show("i =",i)
-                     stdout.show("j =",j)
-                     stdout.show("dim =",dim)
-                     stdout.show("bj1 =",bj1)
-                     stdout.show("bi2 =",bi2)
-                     stdout.show("this2 =",this2)
+                        .special_ket(j)[1] = bi1 ! j=reorder(dim-1)
+                        .special_ket(j)[2] = bj2 ! j=reorder(dim-1)
+                !debug stdout.show("i =",i)
+                !debug stdout.show("j =",j)
+                !debug stdout.show("dim =",dim)
+                !debug stdout.show("bj1 =",bj1)
+                !debug stdout.show("bi2 =",bi2)
+                !debug stdout.show("this2 =",this2)
          !debug   write(*,*) "B. recursing here, dim =",dim
-                  res = res - .overlap_for(reorder) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
+                  res = res - .overlap_for(reorder,row_ind,col_ind) * this2 ! <<<<<<<<<<<<<<<<<<<<<<<
          !debug   write(*,*) "returned from recursion, dim =",dim
                       end
-                      .special_ket(i)[1] = 0 ! i=reorder(dim-1)
-                      .special_ket(i)[2] = 0 ! i=reorder(dim-1)
+                      .special_ket(j)[1] = 0 ! j=reorder(dim-1)
+                      .special_ket(j)[2] = 0 ! j=reorder(dim-1)
                       reorder.destroy
                     end
                   end 
@@ -592,7 +783,8 @@ contains
                end
                end
                end
-            end
+             end
+         end
          end
       end
    end
