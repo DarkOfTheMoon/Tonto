@@ -1241,7 +1241,7 @@ sub analyse_foo_line {
 
                                                    # Store inherited stub
    if (&in_routine_scope) {
-      if (  $routine{$current_rout_name}{inherited}
+      if ( defined $current_rout_name && $routine{$current_rout_name}{inherited}
        && ! $routine{$current_rout_name}{being_inherited}) { 
          $inherit_string .= $input_inh . "\n";
       }
@@ -1395,7 +1395,8 @@ sub is_new_routine_scope {
 # Return TRUE if the scope is WITHIN a routine interface
 sub in_routine_scope {
    if (defined $scopeunit && (
-       $scopeunit eq 'subroutine' || $scopeunit eq 'function'))
+       $scopeunit eq 'subroutine' || $scopeunit eq 'function' || $scopeunit eq
+       'program'))
         { return 1; }
    else { return undef; }
 }
