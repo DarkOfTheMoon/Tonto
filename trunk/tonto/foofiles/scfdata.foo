@@ -49,6 +49,9 @@ module SCFDATA
 !   DBL :: convergence
 !   ! A number which measures the convergnece of the SCF
 !
+!   DBL :: diis_convergence
+!   ! A limit below which the DIIS is deemed converged
+!
 !   INT :: iteration
 !   ! The interation count for the SCF procedure
 !
@@ -106,6 +109,9 @@ module SCFDATA
 !   DBL :: level_shift
 !   ! Value to level shift the virtual orbitals
 !
+!   INT :: level_shift_finish
+!   ! Iteration when level shifting is turned off
+!
 !   BIN :: output
 !   ! True if output is wanted
 !
@@ -147,6 +153,9 @@ module SCFDATA
 !
 !   DBL :: eri_limit
 !   ! Cutoff for the two electron integrals
+!
+!   BIN :: using_variable_cutoff
+!   ! Using a sliding ERI cutoff for the two electron integrals
 !
 !   VEC(3) :: quantization_axis DEFAULT(NULL)
 !   ! Quantization axis for GCHF, if using initial MO's as a guess
@@ -204,13 +213,13 @@ contains
 
    delete_diis_archives
    ! Delete the DIIS archives on disk
-     if (.using_diis) .diis.delete_archives
+     .diis.delete_archives
    end
 
    cleanup_diis
    ! Delete the DIIS archives on disk, and restore the DIIS object so it can be
    ! reused.  Does not go back to the default DIIS parameters.
-     if (.using_diis) .diis.cleanup
+     .diis.cleanup
    end
 
 !  ************
@@ -227,12 +236,11 @@ contains
     .kinetic_energy     = ZERO
     .old_energy         = ZERO
     .difference         = ZERO
-    .convergence        = 0.000001d0
+    .convergence        = 0.000100d0
+    .diis_convergence   = 0.010000d0
     .iteration          = 0
     .min_iterations     = 0
     .max_iterations     = 100
-    .damp_finish        = DIIS_START
-    .damp_factor        = 0.5d0
     .direct             = FALSE
     .lambda             = 0
     .lambda_max         = 0
@@ -244,8 +252,13 @@ contains
     .weighted_r_factor  = ZERO
     .direct             = FALSE
     .using_diis         = TRUE
+    .diis.set_default
     .using_damping      = TRUE
+    .damp_finish        = DIIS_START
+    .damp_factor        = 0.5d0
     .using_level_shift  = TRUE
+    .level_shift        = 0.3d0
+    .level_shift_finish = DIIS_START
     .output             = TRUE
     .nddo               = FALSE
     .nudo               = FALSE
@@ -259,9 +272,8 @@ contains
     .using_1e_zora_term = FALSE
     .sl_1e_factor       = ONE
     .sl_2e_factor       = ONE
-    .level_shift        = 0.3d0
-    .diis.set_default
-    .eri_limit          = ERI_CUTOFF
+    .eri_limit          = SCFDATA_ERI_LIMIT
+    .using_variable_cutoff = TRUE
     .quantization_axis = (/ ZERO, ZERO, ONE /)
   end
  
@@ -282,10 +294,10 @@ contains
     .weighted_r_factor = weighted_r_factor
   end
 
-  reset(energy,kinetic_energy)
+  reset(nuclear_energy,energy,kinetic_energy)
   ! Reset SCF energy and iteration data , but don't change 
   ! nuclear_energy, convergence, direct, or max_it options
-     DBL, IN, optional :: energy,kinetic_energy
+     DBL, IN, optional :: nuclear_energy,energy,kinetic_energy
     .energy             = ZERO
     .kinetic_energy     = ZERO
     .old_energy         = ZERO
@@ -295,7 +307,8 @@ contains
     .gof                = ZERO
     .r_factor           = ZERO
     .weighted_r_factor  = ZERO
-    .set(energy=energy,kinetic_energy=kinetic_energy)
+    .set(nuclear_energy,energy,kinetic_energy)
+    if (present(energy)) .difference = energy
   end
 
   update_lambda
@@ -326,6 +339,12 @@ contains
     .old_energy = .energy
     .energy = energy
     .difference = .energy - .old_energy
+  end
+ 
+  set_diis_error(err)
+  ! Set the DIIS error
+    DBL, IN :: err
+    .diis.error_length = err
   end
 
   spinorbital_kind(scf_kind) result(res)
@@ -459,34 +478,38 @@ contains
          in.read(word)
          word.to_lower_case
          select case (word)
-            case("end");             exit read_loop
-            case("kind");            in.read(.kind) 
-            case("scf_kind");        in.read(.kind)
-            case("scf_type");        in.read(.kind)
-            case("guess");           in.read(.initial_density)
-            case("initial_guess");   in.read(.initial_density)
-            case("initial_density"); in.read(.initial_density)
-            case("initial_mos");     in.read(.initial_mos)
-            case("min_it");          in.read(.min_iterations)
-            case("min_iterations");  in.read(.min_iterations)
-            case("max_it");          in.read(.max_iterations)
-            case("max_iterations");  in.read(.max_iterations)
-            case("convergence");     in.read(.convergence)
-            case("direct");          in.read(.direct)
-            case("diis");            in.read(.using_diis)
-            case("use_diis");        in.read(.using_diis)
-            case("diis_keep");       .diis.set_keep( in.next_int)
-            case("diis_start");      .diis.set_start( in.next_int)
-            case("use_damping");     in.read(.using_damping)
-            case("damp_finish");     in.read(.damp_finish)
-            case("damp_factor");     in.read(.damp_factor)
-            case("initial_lambda");  in.read(.lambda)
-            case("lambda_min");      in.read(.lambda)
-            case("lambda_max");      in.read(.lambda_max)
-            case("lambda_step");     in.read(.lambda_step)
+            case("end");                   exit read_loop
+            case("kind");                  in.read(.kind) 
+            case("scf_kind");              in.read(.kind)
+            case("scf_type");              in.read(.kind)
+            case("guess");                 in.read(.initial_density)
+            case("initial_guess");         in.read(.initial_density)
+            case("initial_density");       in.read(.initial_density)
+            case("initial_mos");           in.read(.initial_mos)
+            case("min_it");                in.read(.min_iterations)
+            case("min_iterations");        in.read(.min_iterations)
+            case("max_it");                in.read(.max_iterations)
+            case("max_iterations");        in.read(.max_iterations)
+            case("convergence");           in.read(.convergence)
+            case("converge");              in.read(.convergence)
+            case("direct");                in.read(.direct)
+            case("use_diis");              in.read(.using_diis)
+            case("diis");                  in.read(.using_diis)
+            case("diis_convergence");      in.read(.diis_convergence)
+            case("grad_convergence");      in.read(.diis_convergence)
+            case("diis_keep");             .diis.set_keep( in.next_int)
+            case("diis_start");            .diis.set_start( in.next_int)
+            case("use_damping");           in.read(.using_damping)
+            case("damp_finish");           in.read(.damp_finish)
+            case("damp_factor");           in.read(.damp_factor)
+            case("initial_lambda");        in.read(.lambda)
+            case("lambda_min");            in.read(.lambda)
+            case("lambda_max");            in.read(.lambda_max)
+            case("lambda_step");           in.read(.lambda_step)
             case("use_level_shift");       in.read(.using_level_shift)
             case("use_level_shifting");    in.read(.using_level_shift)
             case("level_shift");           in.read(.level_shift)
+            case("level_shift_finish");    in.read(.level_shift_finish)
             case("output");                in.read(.output)
             case("nddo");                  in.read(.nddo)
             case("nudo");                  in.read(.nudo)
@@ -503,6 +526,9 @@ contains
             case("2e_s."//"l_factor");     in.read(.sl_2e_factor)
             case("s."//"l_2e_factor");     in.read(.sl_2e_factor)
             case("eri_cutoff");            in.read(.eri_limit)
+            case("eri_limit");             in.read(.eri_limit)
+            case("use_variable_cutoff");   in.read(.using_variable_cutoff)
+            case("use_auto_cutoff");       in.read(.using_variable_cutoff)
             case("quantization_axis");     in.read(.quantization_axis)
             case default;            DIE("unknown keyword, " // word.trim)
          end 
@@ -524,25 +550,34 @@ contains
       res = (.converged OR .exceeded_max_it) AND .exceeded_min_it
    end
 
+   scf_not_done result(res)
+   ! Return TRUE if the scf procedure is *not*done
+      BIN :: res
+      res = NOT .scf_done
+   end
+
    converged result(res)
    ! Return TRUE if the SCFDATA appears to be converged
-      BIN :: a,b,c
       BIN :: res
-      a = abs(.difference) < .convergence
-      b = abs(.diis_error) < sqrt(.convergence)
-      if (.diis_used) then
-        res = b AND (.iteration > 1)
-      else
-        res = a AND (.iteration > 1)
-      end
+      res = .diff_converged AND .diis_converged AND (.iteration>1)
+   end
+
+   diff_converged result(res)
+   ! Return TRUE if the energy difference has converged
+      BIN :: res
+      res = abs(.difference) < .convergence 
+   end
+
+   diis_converged result(res)
+   ! Return TRUE if the gradient/DIIS error has converged
+      BIN :: res
+      res = abs(.diis_error) < .diis_convergence
    end
 
    diis_error result(res)
    ! Return a numerical measure of the diis error
       DBL :: res
-      if (.diis_used) then; res = .diis%error_length
-      else;                 res = ZERO
-      end
+      res = .diis.error_length
    end
 
    exceeded_max_it result(res)
@@ -564,14 +599,14 @@ contains
    end
 
    eri_cutoff result(res)
+   ! Return a value to eliminate small integrals in direct SCF calculations
      DBL :: res
-     res = .eri_limit
-     select case (.iteration)
-       case (0);  res = res * TOL(5)
-       case (1);  res = res * TOL(4)
-       case (2);  res = res * TOL(3)
-       case (3);  res = res * TOL(2)
-       case (4);  res = res * TOL(1)
+     if (.iteration<1) then
+        res = SCFDATA_INITIAL_ERI_LIMIT
+     else if (.using_variable_cutoff) then
+        res = max(.eri_limit, 10**(log10(.diis_error)-5) )
+     else
+        res = .eri_limit
      end
    end
 
@@ -581,10 +616,12 @@ contains
 
    diis_used result(res)
    ! Return TRUE if DIIS extrapolation has *really* been used this iteration
-   ! (The first time doesn't really count)
+   ! (The first time doesn't really count, see apply_diis below for that case) 
       BIN :: res
-      if (NOT .using_diis) then; res = FALSE
-      else;                      res = (.iteration >  .diis%start)
+      if (NOT .using_diis) then
+         res = FALSE
+      else                   
+         res = (.iteration > .diis.start) AND .diis.keep > 1
       end
    end
 
@@ -600,7 +637,7 @@ contains
    ! iteration
       BIN :: res
       if (NOT .using_diis) then; res = FALSE
-      else;                      res = (.iteration >= .diis%start)
+      else;                      res = (.iteration >= .diis.start) AND .diis.keep > 1
       end
    end
 
@@ -613,15 +650,14 @@ contains
    apply_damping result(res)
    ! Return TRUE if density matrix damping is to be applied this iteration
       BIN :: res
-      res = .using_damping AND .iteration <= .damp_finish
+      res = .using_damping AND .iteration < .damp_finish
    end
 
    apply_level_shifting result(res)
    ! Return TRUE if level shifting must be applied this iteration
       BIN :: res
       res = .level_shift.is_not_zero &
-            AND .using_level_shift &
-            AND .diis_not_used
+            AND .using_level_shift AND .iteration < .level_shift_finish
    end
 
   fitting result(res)
@@ -637,55 +673,6 @@ contains
 !  Output routines
 !  ***************
 
-  put_summary
-  ! Prints out a summary of what is stored in the scfdata object.
-    stdout.show("SCF kind                 = ", .kind)
-    stdout.show("Initial density          = ", .initial_density)
-    stdout.show("Initial MO's             = ", .initial_mos)
-    stdout.show("Nuclear Energy           = ", .nuclear_energy)
-    stdout.show("SCF Energy               = ", .energy)
-    stdout.show("Kinetic Energy           = ", .kinetic_energy)
-    stdout.show("Convergence              = ", .convergence)
-    stdout.show("Minimum iterations       = ", .min_iterations,dbl_width=TRUE)
-    stdout.show("Maximum iterations       = ", .max_iterations,dbl_width=TRUE)
-    stdout.show("Direct                   = ", .direct,dbl_width=TRUE)
-    if (.nddo) &
-    stdout.show("NDDO                     = ", .nddo,dbl_width=TRUE)
-    if (.using_level_shift) then
-    stdout.show("Level shift              = ", .level_shift)
-    else
-    stdout.show("Using level shift        = ", .using_level_shift,dbl_width=TRUE)
-    end
-    if (.using_damping) then
-    stdout.show("Damping factor           = ", .damp_factor)
-    stdout.show("Damping quits at         = ", .damp_finish,dbl_width=TRUE)
-    else
-    stdout.show("Using density damping    = ", .using_damping,dbl_width=TRUE)
-    end
-    if (.using_diis) then;                  .diis.put(stdout)
-    else
-    stdout.show("Using DIIS               = ", .using_diis,dbl_width=TRUE)
-    end
-    if (.spinorbital_kind=="general_complex") then
-      stdout.show("Using B:L term           = ", .using_bl_term)
-      stdout.show("Using B:S term           = ", .using_bs_term)
-      stdout.show("Using B:S T term         = ", .using_bs_t_term)
-      stdout.show("Using A:A term           = ", .using_aa_term)
-      stdout.show("Using 1e S:L term        = ", .using_1e_sl_term)
-      stdout.show("Using 1e S:(rxA) term    = ", .using_1e_srxa_term)
-      stdout.show("Using 2e S:L term        = ", .using_2e_sl_term)
-      stdout.show("Factor for 1e S:L term   = ", .sl_1e_factor)
-      stdout.show("Factor for 2e S:L term   = ", .sl_2e_factor)
-    end
-    if (.fitting) then
-      stdout.show("Lambda fitting parameter = ", .lambda)
-      stdout.show("Lambda max               = ", .lambda_max)
-      stdout.show("Lambda step              = ", .lambda_step)
-      .put_crystal
-    end
-    stdout.flush
-  end
-
   put_banner
   ! Prints out the nuclear energy and initial guess energy.
     if (NOT .output) return
@@ -697,13 +684,91 @@ contains
     .put_summary
   end
 
+  put_summary
+  ! Prints out a summary of what is stored in the scfdata object.
+    VEC(3) :: q
+    BIN :: dbl_width
+    dbl_width = TRUE
+    stdout.show("SCF kind                  = ", .kind)
+    stdout.show("Direct                    = ", .direct,dbl_width)
+    stdout.show("Using variable cutoff     = ", .using_variable_cutoff,dbl_width)
+    stdout.set_dbl_style("e")
+    stdout.show("Integral cutoff           = ", .eri_limit)
+    stdout.set_dbl_style("f")
+    if (.nddo) &
+    stdout.show("NDDO                      = ", .nddo,dbl_width)
+    stdout.show("ZORA (1 electron) terms   = ", .using_1e_zora_term,dbl_width)
+    stdout.flush
+    stdout.text("Initial guess options:")
+    stdout.flush
+    stdout.show("Initial density           = ", .initial_density)
+    stdout.show("Initial MO's              = ", .initial_mos)
+    stdout.flush
+    stdout.text("Initial guess energies:")
+    stdout.flush
+    stdout.show("Nuclear Energy            = ", .nuclear_energy)
+    stdout.show("SCF Energy                = ", .energy)
+    stdout.show("Kinetic Energy            = ", .kinetic_energy)
+    stdout.flush
+    stdout.text("SCF termination criteria:")
+    stdout.flush
+    stdout.show("Convergence               = ", .convergence)
+    stdout.show("Gradient/DIIS convergence = ", .diis_convergence)
+    stdout.show("Minimum iterations        = ", .min_iterations,dbl_width)
+    stdout.show("Maximum iterations        = ", .max_iterations,dbl_width)
+    stdout.flush
+    stdout.text("Convergence acceleration options:")
+    stdout.flush
+    stdout.show("Using level shift         = ", .using_level_shift,dbl_width)
+    if (.using_level_shift) then
+    stdout.show("Level shift               = ", .level_shift)
+    stdout.show("Level shift  quits at     = ", .level_shift_finish,dbl_width)
+    end
+    stdout.show("Using density damping     = ", .using_damping,dbl_width)
+    if (.using_damping) then
+    stdout.show("Damping factor            = ", .damp_factor)
+    stdout.show("Damping quits at          = ", .damp_finish,dbl_width)
+    end
+    stdout.show("Using DIIS                = ", .using_diis,dbl_width)
+    if (.using_diis) then
+    stdout.show("DIIS archive root name    = ", .diis.archive.root_name)
+    stdout.show("DIIS no. to keep          = ", .diis.keep,dbl_width)
+    stdout.show("DIIS start iteration      = ", .diis.start,dbl_width)
+    end
+    if (.spinorbital_kind=="general_complex") then
+      stdout.flush
+      stdout.text("Magnetic/Relativistic terms:")
+      stdout.flush
+      q = .quantization_axis
+      stdout.show("Quantization axis         = ", q(1),q(2),q(3))
+      stdout.show("ZORA (1 electron) terms   = ", .using_1e_zora_term)
+      stdout.show("Using B:L term            = ", .using_bl_term)
+      stdout.show("Using B:S term            = ", .using_bs_term)
+      stdout.show("Using B:S T term          = ", .using_bs_t_term)
+      stdout.show("Using A:A term            = ", .using_aa_term)
+      stdout.show("Using 1e S:L term         = ", .using_1e_sl_term)
+      stdout.show("Using 1e S:(rxA) term     = ", .using_1e_srxa_term)
+      stdout.show("Using 2e S:L term         = ", .using_2e_sl_term)
+      stdout.show("Factor for 1e S:L term    = ", .sl_1e_factor)
+      stdout.show("Factor for 2e S:L term    = ", .sl_2e_factor)
+    end
+    if (.fitting) then
+      stdout.flush
+      stdout.text("Experimental wavefunction parameters:")
+      stdout.show("Lambda fitting parameter  = ", .lambda)
+      stdout.show("Lambda max                = ", .lambda_max)
+      stdout.show("Lambda step               = ", .lambda_step)
+      .put_crystal
+    end
+    stdout.flush
+  end
+
   put_table_head
   ! Prints out the table head for an SCF calculation
     INT :: fields
     if (NOT .output) return
-    fields = 2
+    fields = 3
     if (.fitting)     fields = fields + 2
-    if (.using_diis)  fields = fields + 1
     stdout.dash(dbl_fields=fields,int_fields=1)
     stdout.put("Iter",int_width=TRUE)
     if (.fitting) then
@@ -712,36 +777,78 @@ contains
     end
     stdout.put("Energy")
     stdout.put("Difference")
-    if (.using_diis) stdout.put("DIIS Error")
+    stdout.put("Gradient/DIIS")
     stdout.flush
     stdout.dash(dbl_fields=fields,int_fields=1)
   end
 
   put_results
-  ! Print out the results for the current iteration
-  ! This routine must be compatible with put_banner.
+  ! Print out the results for the current iteration. This routine must be 
+  ! compatible with put_banner. This routine must be called at iteration 0.
     INT :: fields
+    BIN :: diis_converged,diff_converged,damping_on,damping_off
+    BIN :: level_on,level_off,diis_on,diis_up
+    STR :: info
     if (NOT .output) return
-    if (.iteration == 1 AND .lambda_iteration < 1) .put_table_head
+    if (.iteration == 0) then
+       if (.lambda_iteration < 1) .put_table_head
+       diff_converged = FALSE
+       diis_converged = FALSE
+       damping_on = FALSE
+       damping_off = FALSE
+       level_on = FALSE
+       level_off = FALSE
+       diis_on = FALSE
+       diis_up = FALSE
+    end
     stdout.put(.iteration)
-    fields = 2
+    fields = 3
     if (.fitting) then
-      fields = fields + 2
-      stdout.put(.lambda)
-      stdout.put(.chi2)
+       fields = fields + 2
+       stdout.put(.lambda)
+       stdout.put(.chi2)
     end
     stdout.put(.energy)
     stdout.put(.difference)
-    if (.using_diis) then
-      fields = fields + 1
-      if (.diis_used) then
-        stdout.put(.diis_error)
-      else
-        stdout.put("-")
-      end
-    end
-    stdout.flush
-    if (.scf_done) then
+    stdout.put(.diis_error)
+    if (.scf_not_done) then
+       if (NOT diff_converged AND .diff_converged) then
+          stdout.put_text(" *Difference has converged")
+          diff_converged = TRUE
+       else if (NOT diis_converged AND .diis_converged) then
+          stdout.put_text(" *Gradient has converged")
+          diis_converged = TRUE
+       else 
+          info = " "
+          if ((.using_damping AND NOT damping_on AND .apply_damping)) then
+             info = trim(info)//" *Damping on"
+             damping_on = TRUE
+          end
+          if ((.using_level_shift AND NOT level_on AND .apply_level_shifting)) then
+             info = trim(info)//" *Levelshift on"
+             level_on = TRUE
+          end
+          if ((.using_diis AND NOT diis_on AND .apply_diis)) then
+             info = trim(info)//" *DIIS on"
+             diis_on = TRUE
+          end
+          if ((.using_damping AND NOT damping_off AND NOT .apply_damping)) then
+             info = trim(info)//" *Damping off"
+             damping_off = TRUE
+          end
+          if ((.using_level_shift AND NOT level_off AND NOT .apply_level_shifting)) then
+             info = trim(info)//" *Levelshift off"
+             level_off = TRUE
+          end
+          if ((.using_diis AND NOT diis_up AND .apply_diis AND .diis.n_vec==.diis.keep)) then
+             info = trim(info)//" *DIIS subspace saturated"
+             diis_up = TRUE
+          end
+          stdout.put_text(info)
+       end
+       stdout.flush
+    else
+       stdout.flush
        stdout.dash(dbl_fields=fields,int_fields=1)
        if (.converged) then; stdout.text("* * * SCF has converged * * *",flush=1)
        else;                 stdout.text("* * * SCF has not converged * * *",flush=1)
