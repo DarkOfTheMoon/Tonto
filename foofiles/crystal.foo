@@ -195,6 +195,7 @@ contains
       .kind                   = CRYSTAL_DATA_KIND
       .thermal_smearing_model = CRYSTAL_THERMAL_SMEARING_MODEL
       .partition_model        = CRYSTAL_PARTITION_MODEL
+      .prune_asymmetric_unit  = FALSE
       .reduced_group_info_made= FALSE
    end
 
@@ -251,6 +252,7 @@ contains
         case ("optimize_scale=            "); .read_optimise_scale
         case ("optimize_scale_factor=     "); .read_optimise_scale
         case ("partition_model=           "); .read_partition_model
+        case ("prune_asymmetric_unit=     "); .read_prune_asymmetric_unit
         case ("repetition_factors=        "); .read_repetition_factors
         case ("reflection_data=           "); .read_reflection_data
         case ("spacegroup=                "); .read_spacegroup
@@ -374,6 +376,17 @@ contains
       end
    end
 
+   read_prune_asymmetric_unit ::: private
+   ! Read whether to prune the asymmetric unit or not. Sometimes the asymmetric
+   ! unit may not be asymmetric i.e. it may have symmetry-equivalent atoms
+   ! repeated. This could be because of an input or CIF file error, or it could
+   ! be genuinely correct because the repeated atom corresponds to a disordered
+   ! position. For Hirshfeld surface plots, which can cope with disorder, you
+   ! probably do not want to remove or prune the asymmetric atom list, but for
+   ! crystal calculations you must do so.
+      stdin.read(.prune_asymmetric_unit)
+   end
+
    read_CIF ::: leaky
    ! Read information from a Crystallographic Information File object, with
    ! the "name" taken from stdin.
@@ -384,7 +397,7 @@ contains
       cif.create(name)
       cif.open
       cif.find_crystal_data_block(found)
-      ENSURE(found,"no crsytal data block found") 
+      ENSURE(found,"no crystal data block found") 
       .read_CIF(cif)
       cif.destroy
    end
@@ -1360,20 +1373,18 @@ contains
 !  Reduced group, Unique operators, Z number
 !  *****************************************
 
-   make_reduced_group_data(atom,prune_asymmetric_unit) ::: leaky
+   make_reduced_group_data(atom) ::: leaky
    ! The reduced group are those unique seitz operators which are needed to
    ! generate the complete ".fragment_cell_geometry" from the atom fragment
    ! positions in "atom".  Some of the spacegroup symmetry operations may only
    ! lead to fragment geometries which are inversions of, or translations of,
    ! other operations in the reduced group.  This information is also worked out
    ! here, and it can be used to save work in structure factor calculations.
-   ! If "prune_asymmetric_unit") is present then any non-unique atoms in the
-   ! ".asymmetric_unit_geometry" are removed. NOTE: ths is probably not what you
-   ! want for strcuture factor calcs, where the fragment geometry becomes the
-   ! asymmetric unit, but it IS what you want when processing CIF files with
-   ! possibly overcomplete asymmetric units.
+   ! NOTE: if ".prune_asymmetric_unit" is TRUE then any non-unique atoms in the
+   ! ".asymmetric_unit_geometry" are removed. NOTE: this is probably not what
+   ! you want for Hirshfeld surface calcs, but it may be what you want when
+   ! processing CIF files with possibly overcomplete asymmetric units.
       atom :: VEC{ATOM}, IN
-      prune_asymmetric_unit :: BIN, optional, IN
       if (.reduced_group_info_made) .destroy_fragment_data
       .n_fragment_atoms = size(atom)
       .fragment_geometry.create(3,.n_fragment_atoms)
@@ -1387,7 +1398,8 @@ contains
       .make_unique_fragment_atoms  ! See if we have an asymmetric fragment
       .make_fragment_cell_geometry ! These are to get full unit cell geoms
       if (.asymmetric_unit_geometry.destroyed) .make_asymmetric_geometry 
-      .make_unit_cell_geometry(prune_asymmetric_unit)
+      .make_unit_cell_geometry(.prune_asymmetric_unit)
+      .make_unit_cell_frag_cell_map 
       .make_repetition_factors     ! Rep. factors for SF calculations
       .Z = .z_factor(atom)
       .reduced_group_info_made = TRUE
@@ -1640,13 +1652,13 @@ contains
       n,a,s :: INT
       found :: BIN
       nullify(.fragment_cell_geometry)
-      geometry.create(3,.n_fragment_atoms) ! added this
-      geometry = .fragment_geometry ! added this
-      .put_to_unit_cell(geometry) ! added this
+      geometry.create(3,.n_fragment_atoms) 
+      geometry = .fragment_geometry 
+      .put_to_unit_cell(geometry) 
       n = 0
-      do a = 1,.n_fragment_atoms
-         do s = 1,.spacegroup.n_seitz
-            pa = geometry(:,a) ! added this
+      do s = 1,.spacegroup.n_seitz  ! NOTE: Loop over symops first
+         do a = 1,.n_fragment_atoms ! then loop over fragment atoms
+            pa = geometry(:,a) 
             .transform_position(pa,s,to_unit_cell=TRUE)
             if (.fragment_cell_geometry.destroyed) then
               found = FALSE
@@ -1679,14 +1691,14 @@ contains
    ! Get the all the atom positions in the unit cell, ".unit_cell_geometry" from
    ! the ".asymmetric_unit_geometry", if it is created. Also checks if the
    ! ".asymmetric_unit_geometry" is really an asymmetric unit! If
-   ! "prune_asymmetric_unit" is present and true, and non-asymmetric unit atoms
+   ! "prune_asymmetric_unit" is present and true, any non-asymmetric unit atoms
    ! are eliminated.
       prune_asymmetric_unit :: BIN, optional
    ENSURE(.asymmetric_unit_geometry.created,"no asymmetric unit geometry") 
       prune :: BIN
       pa :: VEC{REAL}(3)
       n,a,m,s,col :: INT
-      found,non_unique :: BIN
+      found,unique :: BIN
       tol :: REAL
       prune = FALSE
       if (present(prune_asymmetric_unit)) prune = prune_asymmetric_unit
@@ -1698,19 +1710,25 @@ contains
          do s = 1,.spacegroup.n_seitz
             pa = .asymmetric_unit_geometry(:,a)
             .transform_position(pa,s,to_unit_cell=TRUE)
-            non_unique = .asymmetric_unit_geometry.has_column(pa,tol,col)
-            non_unique = non_unique AND col/=a
-            if (non_unique) then
+            unique = NOT .asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
+            col = col + a
+            if (NOT unique) then
                WARN("asymmetric unit atoms "//a.to_str.trim//" and "//col.to_str.trim//" are the same!")
-               WARN("this may indicate a disordered aysmmetric unit")
+               WARN("this may indicate a disordered asymmetric unit")
                if (prune) then
-                  m = max(a,col)
-                  WARN("pruning atom "//m.to_str.trim//" from asymmetric unit atom list")
-                  .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
-                  .asymmetric_unit_geometry(:,m:.n_asymmetric_unit_atoms) = .asymmetric_unit_geometry(:,m+1:)
-                  .asymmetric_unit_geometry.shrink_columns(.n_asymmetric_unit_atoms)
-                  exit
-               end 
+                  do 
+                     m = max(a,col) ! "col" will always be bigger, otherwise there may be problems
+                     WARN("pruning atom "//m.to_str.trim//" from asymmetric unit atom list")
+                     DIE_IF(col<a,"non-unique atom "//col.to_str.trim//" comes earlier in the list!")
+                     .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
+                     .asymmetric_unit_geometry(:,m:.n_asymmetric_unit_atoms) = .asymmetric_unit_geometry(:,m+1:)
+                     .asymmetric_unit_geometry.shrink_columns(.n_asymmetric_unit_atoms)
+                     unique = NOT .asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
+                     col = col + a
+                     if (unique) exit
+                  end
+                  WARN("There are now "//.n_asymmetric_unit_atoms.to_str.trim//" in the asymmeytric unit")
+               end
             end
             if (.unit_cell_geometry.destroyed) then
               found = FALSE
@@ -1738,6 +1756,103 @@ contains
       end
       .n_unit_cell_atoms = n
       ENSURE(.unit_cell_geometry.created,"could not make unit_cell_geometry")
+   end
+
+!   make_unit_cell_geometry(prune_asymmetric_unit) ::: leaky, private
+!   ! Get the all the atom positions in the unit cell, ".unit_cell_geometry" from
+!   ! the ".asymmetric_unit_geometry", if it is created. Also checks if the
+!   ! ".asymmetric_unit_geometry" is really an asymmetric unit! If
+!   ! "prune_asymmetric_unit" is present and true, any non-asymmetric unit atoms
+!   ! are eliminated.
+!      prune_asymmetric_unit :: BIN, optional
+!   ENSURE(.asymmetric_unit_geometry.created,"no asymmetric unit geometry") 
+!      prune :: BIN
+!      pa :: VEC{REAL}(3)
+!      n,a,m,s,col :: INT
+!      found,non_unique :: BIN
+!      tol :: REAL
+!      prune = FALSE
+!      if (present(prune_asymmetric_unit)) prune = prune_asymmetric_unit
+!      nullify(.unit_cell_geometry)
+!      tol = TOL(3)/maxval(.unitcell.length)
+!      n = 0
+!      a = 1
+!      do ! a = 1,.n_asymmetric_unit_atoms
+!         do s = 1,.spacegroup.n_seitz
+!            pa = .asymmetric_unit_geometry(:,a)
+!            .transform_position(pa,s,to_unit_cell=TRUE)
+!            non_unique = .asymmetric_unit_geometry.has_column(pa,tol,col)
+!            non_unique = non_unique AND col/=a
+!            if (non_unique) then
+!               WARN("asymmetric unit atoms "//a.to_str.trim//" and "//col.to_str.trim//" are the same!")
+!               WARN("this may indicate a disordered asymmetric unit")
+!               if (prune) then
+!                  m = max(a,col) ! I think "col" will always be bigger, otherwise there may be problems
+!                  WARN("pruning atom "//m.to_str.trim//" from asymmetric unit atom list")
+!                  DIE_IF(col<a,"non-unique atom "//col.to_str.trim//" comes earlier in the list!")
+!                  .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
+!                  .asymmetric_unit_geometry(:,m:.n_asymmetric_unit_atoms) = .asymmetric_unit_geometry(:,m+1:)
+!                  .asymmetric_unit_geometry.shrink_columns(.n_asymmetric_unit_atoms)
+!                  exit
+!               end 
+!            end
+!            if (.unit_cell_geometry.destroyed) then
+!              found = FALSE
+!            else
+!              found = .unit_cell_geometry.has_column(pa,TOL(3))
+!            end
+!            if (NOT found) then
+!               n = n + 1
+!               if (n==1) then
+!                 .atom_for_unit_cell_atom.create(1)
+!                 .symop_for_unit_cell_atom.create(1)
+!                 .unit_cell_geometry.create(3,1)
+!               else
+!                 .atom_for_unit_cell_atom.expand(n)
+!                 .symop_for_unit_cell_atom.expand(n)
+!                 .unit_cell_geometry.expand(3,n)
+!               end
+!               .atom_for_unit_cell_atom(n) = a
+!               .symop_for_unit_cell_atom(n) = s
+!               .unit_cell_geometry(:,n) = pa
+!            end
+!         end
+!         a = a + 1
+!         if (a>.n_asymmetric_unit_atoms) exit
+!      end
+!      .n_unit_cell_atoms = n
+!      ENSURE(.unit_cell_geometry.created,"could not make unit_cell_geometry")
+!   end
+
+   make_unit_cell_frag_cell_map ::: leaky, private
+   ! Make an array which maps the unit cell geometry positions into the fragment
+   ! cell geometry positions. This only works when the fragment cell geometry is
+   ! the same as the unit cell geometry. It is used for crystal cluster
+   ! calculations based on molecular fragments.
+   ENSURE(.unit_cell_geometry.created,"no unit cell geometry") 
+   ENSURE(.fragment_cell_geometry.created,"no fragment cell geometry") 
+      pu,pf :: VEC{REAL}(3)
+      u,f :: INT
+      found :: BIN
+      tol :: REAL
+      if (.n_unit_cell_atoms/=.n_fragment_cell_atoms) return
+      tol = TOL(3)/maxval(.unitcell.length)
+      .unit_cell_frag_cell_map.create(.n_unit_cell_atoms)
+      do u = 1,.n_unit_cell_atoms
+         pu = .unit_cell_geometry(:,u)
+         found = FALSE
+         do f = 1,.n_fragment_cell_atoms
+            pf = .fragment_cell_geometry(:,f)
+            found = pu.same_as(pf,tol)
+            if (NOT found) cycle
+            .unit_cell_frag_cell_map(u) = f
+            exit 
+         end
+         if (NOT found) then
+            WARN("unit cell atom "//u.to_str.trim//" was not found in the fragment cell")
+            .unit_cell_frag_cell_map.destroy
+         end
+      end
    end
 
    make_repetition_factors ::: leaky, private
