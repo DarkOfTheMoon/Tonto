@@ -3191,9 +3191,9 @@ contains
   ! thermal parameters.
   ! Size of res is [n_atom * 6]
     CMAT, PTR :: sf_deriv,sf_deriv_eq,sf_2nd_deriv,sf_2nd_deriv_eq
-    CVEC, PTR :: sf,sf_eq
+    CVEC, PTR :: sf_eq
     MAT, PTR :: k_pts
-    VEC, PTR :: ext
+    VEC, PTR :: ext,Fm
     BIN :: complex
     VEC :: d1,d2
     CDBL :: tmp1,tmp2
@@ -3208,7 +3208,6 @@ contains
     k_pts.create(n_unique,3)
     .crystal.make_unique_k_pts(k_pts)
 
-    sf.create(n_refl)                        ! Fc
     sf_deriv.create(n_refl, .n_atom * 6)     ! d_Fc/d_U
     sf_2nd_deriv.create(n_refl, .n_atom * 6) ! d2_Fc/d_U2
 
@@ -3222,29 +3221,24 @@ contains
     end
     .crystal.sum_unique_sf_deriv_U(sf_2nd_deriv,sf_2nd_deriv_eq)
     .crystal.sum_unique_sf_deriv_U(sf_deriv,sf_deriv_eq)
-    .crystal.sum_unique_sf(sf,sf_eq)
+    .crystal.sum_unique_sf(.crystal.F_calc,sf_eq)
     sf_eq.destroy
     sf_deriv_eq.destroy
     sf_2nd_deriv_eq.destroy
-
-    if (.crystal.spacegroup.centrosymmetric) then
-      .crystal.F_calc = sf
-    else
-      .crystal.F_calc = sqrt(sf*conjg(sf))
-    end
 
     ext.create( .crystal.n_refl )
     ext = .crystal.extinction_correction
 
     ! Sum over the structure factors
+    Fm.create(n_refl)
+    Fm = .crystal.F_mag
     d1(:) = ZERO
     d2(:) = ZERO
     do k = 1, n_refl
       g = ext(k)
       s = .crystal.sigma(k)
-      Fc = .crystal.F_calc(k)
-      Fexp = sign(.crystal.F_exp(k),Fc)
-      .crystal.F_calc(k) = Fc
+      Fc = Fm(k)
+      Fexp = .crystal.F_exp(k)
       gs = g*g / (s*s)
       tmp1 = g * (Fexp - g * Fc) / (s*s)
       do j=1, .n_atom*6
@@ -3254,11 +3248,12 @@ contains
         d1(j) = d1(j) + real(sf_deriv(k,j)) * tmp1
       end
     end
+    Fm.destroy
 
     ext.destroy
     sf_2nd_deriv.destroy
     sf_deriv.destroy
-    sf.destroy
+    Fm.destroy
     k_pts.destroy
 
     d2 = d2 * (-TWO / max(n_refl-1,1))
@@ -3293,14 +3288,14 @@ contains
 
     F_c.create( .crystal.n_refl )
     ext.create( .crystal.n_refl )
-    F_c = .crystal.scaled_Fc
+    F_c = .crystal.F_mag
     ext = .crystal.extinction_correction
 
     ! Sum over the structure factors
     res = ZERO
     do k = 1, .crystal.n_refl
-      temp = ( sign(.crystal.F_exp(k),F_c(k)) - F_c(k)) &
-             / ( .crystal.sigma(k) * .crystal.sigma(k) )
+      temp = (.crystal.F_exp(k) - ext(k) * F_c(k)) &
+             / (.crystal.sigma(k) * .crystal.sigma(k))
       res = res + ext(k) * real(sf_deriv(k,:)) * temp
     end
 
@@ -3314,7 +3309,7 @@ contains
 
    make_structure_factors [leaky]
    ! Make the structure factors for this molecule.
-      CVEC, PTR :: sf,sf_eq
+      CVEC, PTR :: sf_eq
       MAT, PTR :: k_pts
       ARCHIVE :: archive
       BIN :: complex
@@ -3333,12 +3328,7 @@ contains
         .make_ft(sf_eq,.density_matrix.restricted,k_pts) 
       end
 !  .add_dispersion_correction(sf_eq,k_pts)
-      sf.create( .crystal.n_refl)
-      .crystal.sum_unique_sf(sf,sf_eq)
-      if (.crystal.spacegroup.centrosymmetric) then; .crystal.F_calc = sf
-      else;                                 .crystal.F_calc = sqrt(sf*conjg(sf))
-      end
-      sf.destroy
+      .crystal.sum_unique_sf(.crystal.F_calc,sf_eq)
       sf_eq.destroy
       k_pts.destroy
       archive.set(.name,"structure_factors")
@@ -3361,7 +3351,7 @@ contains
 
    make_sz_structure_factors [leaky]
    ! Make the structure factors for this molecule.
-      CVEC, PTR :: sf,sf_eq
+      CVEC, PTR :: sf_eq
       MAT, PTR :: k_pts
       ARCHIVE :: archive
       BIN :: complex
@@ -3378,10 +3368,7 @@ contains
       else 
         .make_ft(sf_eq,.density_matrix.restricted,k_pts) 
       end
-      sf.create( .crystal.n_refl)
-      .crystal.sum_unique_sf(sf,sf_eq)
-      .crystal.F_calc = sqrt(sf*conjg(sf))
-      sf.destroy
+      .crystal.sum_unique_sf(.crystal.F_calc,sf_eq)
       sf_eq.destroy
       k_pts.destroy
       archive.set(.name,"sz_structure_factors")
@@ -3666,7 +3653,7 @@ contains
       CMAT, target :: ints
       DBL :: lambda
       ARCHIVE :: spin_archive,nabla_archive,r_archive
-      VEC, PTR :: F_calc,F_exp,sigma
+      VEC, PTR :: Fc,F_exp,sigma
       CMAT, PTR :: ints_aa,ints_bb,ints_ba
       CMAT4, PTR :: nabla,r
       CMAT5, PTR :: spin
@@ -3687,7 +3674,8 @@ contains
       ci = (ZERO,ONE)
       n_bf   =  .n_bf
       n_refl =  .crystal.n_refl
-      F_calc => .crystal.F_calc
+      Fc.create(n_refl)
+      Fc = .crystal.F_mag
       F_exp  => .crystal.F_exp
       sigma  => .crystal.sigma
       ints = ZERO
@@ -3700,7 +3688,7 @@ contains
          ints_bb => ints(n_bf+fa:n_bf+la,n_bf+fb:n_bf+lb)
          ints_ba => ints(n_bf+fa:n_bf+la,     fb:     lb)
          do i = 1,n_refl
-            fac = TWO*lambda*(F_calc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
+            fac = TWO*lambda*(Fc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
             ints_ba = ints_ba +    fac*spin(i,:,:,3,1)
             ints_ba = ints_ba - ci*fac*spin(i,:,:,3,2)
             ints_aa = ints_aa -    fac*spin(i,:,:,1,1)
@@ -3712,7 +3700,7 @@ contains
          nabla.create(n_refl,shell.a.n_comp,shell.b.n_comp,3)
          nabla_archive.file.read(nabla)
          do i = 1,n_refl
-            fac = TWO*lambda*(F_calc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
+            fac = TWO*lambda*(Fc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
             ints_aa = ints_aa + fac*nabla(i,:,:,3)
             ints_bb = ints_bb + fac*nabla(i,:,:,3)
          end
@@ -3720,7 +3708,7 @@ contains
          r.create(n_refl,shell.a.n_comp,shell.b.n_comp,3)
          r_archive.file.read(r)
          do i = 1,n_refl
-            fac = TWO*lambda*(F_calc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
+            fac = TWO*lambda*(Fc(i) - F_exp(i))/(sigma(i)*sigma(i)*n_refl) 
             ints_aa = ints_aa + fac*r(i,:,:,3)
             ints_bb = ints_bb + fac*r(i,:,:,3)
          end
@@ -3732,6 +3720,7 @@ contains
       r_archive.close
       nabla_archive.close
       spin_archive.close
+      Fc.destroy
    end
 
 !  ****************
@@ -6963,7 +6952,6 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
-    .crystal.scale_Fc
     .crystal.put_reflection_data
     .scfdata.diis.delete_archives
     if (.optimise_thermals) .put_atom_thermal_tensors
@@ -6974,23 +6962,25 @@ contains
     DBL, IN :: lambda
     ARCHIVE :: archive
     CMAT3, PTR :: ft_ints
-    VEC, PTR :: Fc,Fexp,sig,fac_times_alpha,alpha
-    DBL :: sn,fac
+    CVEC, PTR :: Fc,fac_times_alpha
+    VEC, PTR :: Fm,Fexp,sig,alpha
+    DBL :: fac
     INT :: q,a,b,fa,la,fb,lb,n,i,j,n_refl
 
+    n_refl = .crystal.n_refl
     Fc => .crystal.F_calc
+    Fm.create(n_refl)
+    Fm = .crystal.F_mag
     Fexp => .crystal.F_exp
     sig => .crystal.sigma
-    n_refl = .crystal.n_refl
-    fac = TWO*lambda/n_refl
+    fac = lambda/max(n_refl - .crystal.n_param,1)
 
     fac_times_alpha.create(n_refl)
 
     alpha.create(n_refl)
     alpha = .crystal.extinction_correction
     do n=1,n_refl
-      sn = abs(Fc(n))/Fc(n)
-      fac_times_alpha(n)=fac*alpha(n)*(alpha(n)*Fc(n)-sn*Fexp(n))/(sig(n)*sig(n))
+      fac_times_alpha(n)=fac*alpha(n)*(alpha(n)*Fm(n)-Fexp(n))/(sig(n)*sig(n)*Fm(n))
     end
     alpha.destroy
 
@@ -7002,15 +6992,17 @@ contains
       archive.file.read(ft_ints)
       do i = fa,la
         do j = fb,min(lb,i)
-          constraint(i,j) = sum(fac_times_alpha(:) * ft_ints(:,i,j))
+          constraint(i,j) = sum(fac_times_alpha(:) * (&
+             ft_ints(:,i,j) * conjg(Fc) + conjg(ft_ints(:,i,j)) * Fc))
         end
       end
       ft_ints.destroy
     end
     constraint.make_symmetric
-
     archive.close
+
     fac_times_alpha.destroy
+    Fm.destroy
   end
 
 ! ****************
@@ -7565,7 +7557,7 @@ contains
      n_refl = .crystal.n_refl
      k.create(n_refl,3); .crystal.make_k_pts(k)
      F.create(n_refl)
-     F = sign(.crystal.F_exp,.crystal.F_calc) - .crystal.F_calc
+     F = .crystal.F_exp - .crystal.F_mag
      phase.create(n_refl)
      do n = 1,n_pts
         phase.to_product(k,pts(n:n,:),transpose_b=TRUE)
