@@ -1,0 +1,1033 @@
+!---------------------------------------------------------------------------
+!
+! VEC{INTRINSIC}: Generic vector operations ...
+!
+! Copyright (C) Dylan Jayatilaka, 1997
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!---------------------------------------------------------------------------
+
+virtual module VEC{INTRINSIC}
+
+   implicit none
+
+contains
+
+! *****************
+! Memory allocation
+! *****************
+
+   create(dim) ::: leaky
+   ! Create space for object
+      self :: PTR
+      dim :: INT, IN
+   ENSURE(dim>=0, "dimension of array not 1 or greater")
+      nullify(self)
+      allocate(self(dim))
+      ADD_MEMORY(dim*ELEMENT_TYPE_SIZE)
+   end
+
+   create(lb,ub) ::: leaky
+   ! Create the vector with lower bound "lb", upper bound "ub"
+      self :: PTR
+      lb,ub :: INT, IN
+      nullify(self)
+      allocate(self(lb:ub))
+      ADD_MEMORY((ub-lb+1)*ELEMENT_TYPE_SIZE)
+   end
+
+   create(bounds) ::: leaky
+   ! Create the vector with "bounds"
+      self :: PTR
+      bounds :: VEC{INT}(2), IN
+      .create(bounds(1),bounds(2))
+   end
+
+   destroy ::: leaky
+   ! Destroy space for object
+      self :: PTR
+      if (.destroyed) return
+      DELETE_MEMORY(.dim*ELEMENT_TYPE_SIZE)
+      deallocate(self)
+   end
+
+   create_copy(v) ::: leaky
+   ! Create a copy of vector "v".
+      self :: PTR
+      v :: VEC{INTRINSIC}, IN
+      .create(v.dim)
+      self = v
+   end
+
+   copy(v)
+   ! Copy vector "v".
+      v :: VEC{INTRINSIC}, IN
+   ENSURE(.dim==v.dim,"vec size does not match")
+      self = v
+   end
+
+   created result(res) ::: inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+      result = associated(self)
+   end
+
+   destroyed result(res) ::: inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+      result = NOT associated(self)
+   end
+
+! ******************
+! Size-of operations 
+! ******************
+
+   size result (res) ::: inlined_by_foo
+   ! Return the size of the array
+      res :: INT
+      res = .dim
+   end
+
+   dim result (res) ::: inlined_by_foo
+   ! Return the size of the 1st dimension
+      res :: INT
+      res = size(self,1)
+   end
+
+! ***********************
+! Shrinking and expansion
+! ***********************
+
+   shrink(dim) ::: leaky
+   ! Shrink self to dimension dim.  Contents are retained.
+     self :: PTR
+     dim :: INT, IN
+   ENSURE(.created,"no self array")
+   ENSURE(dim<=.dim,"dim too large")
+     old :: VEC{INTRINSIC}(len=len(self(1)))*
+     n :: INT
+     if (dim==.dim) return
+     old => self
+     nullify(self)
+     self.create(dim)
+     do n=1,dim
+       self(n) = old(n)
+     end
+     old.destroy
+   end
+
+   expand(dim) ::: leaky
+   ! Expand self to dimension dim. New slots are left undefined.
+     self :: PTR
+     dim :: INT, IN
+     old :: VEC{INTRINSIC}(len=len(self(1)))*
+     old_dim :: INT
+     if (.destroyed) then
+        .create(dim)
+     else
+        ENSURE(dim>=.dim, "dim not large enough")
+        old => self
+        old_dim = old.dim
+        nullify(self)
+        self.create(dim)
+        self(1:old_dim) = old
+        old.destroy
+     end
+   end
+
+   append(v) ::: leaky
+   ! Expands self and appends the contents of vector "v".
+     self :: PTR
+     v :: VEC{INTRINSIC}, IN
+     dim :: INT
+     if (.destroyed) then; dim = 0
+     else;                 dim = .dim
+     end
+     .expand(dim+v.dim)
+     self(dim+1:) = v
+   end
+
+   append(value) ::: leaky
+   ! Expands self by 1, and appends the single scalar "value" onto the end.
+     self :: PTR
+     value :: INTRINSIC, IN
+     dim :: INT
+     if (.destroyed) then; dim = 0
+     else;                 dim = .dim
+     end
+     .expand(dim+1)
+     self(dim+1) = value
+   end
+
+   append_only_if_unique(value) ::: leaky
+   ! Expands self by 1, and appends the single scalar "value" onto the end, but
+   ! only if the "value" is unique
+     self :: PTR
+     value :: INTRINSIC, IN
+     if (any(self==value)) return
+     .append(value)
+   end
+
+   prepend(v) ::: leaky
+   ! Prepend the vector "v" to "self". "self" is expanded.
+     self :: PTR
+     v :: VEC{INTRINSIC}, IN
+     dim,dimv :: INT
+     dim  = .dim
+     dimv = v.dim
+     .expand(dim+dimv)
+     self(dimv+1:    ) = self(1:dim)
+     self(     1:dimv) = v
+   end
+
+   prepend(value) ::: leaky
+   ! Prepend an single "value" to "self". "self" is expanded.
+     self :: PTR
+     value :: INTRINSIC, IN
+     dim :: INT
+     dim = .dim
+     .expand(dim+1)
+     self(2:) = self(1:dim)
+     self(1 ) = value
+   end
+
+   join(v) result (res) ::: leaky
+   ! Yield a vector which is the concatenation of "self" and "v"
+     v :: VEC{INTRINSIC}, IN
+     res :: VEC{INTRINSIC}(len=len(self(1)))*
+     dim, dim_v :: INT
+     dim   = self.dim
+     dim_v = v.dim
+     res.create(dim+dim_v)
+     res(    1:dim      ) = self
+     res(dim+1:dim+dim_v) = v
+   end
+
+   join(v1,v2) result (res) ::: leaky
+   ! Yield a vector which is the concatenation of "self" and "v1" and "v2"
+     v1,v2 :: VEC{INTRINSIC}, IN
+     res :: VEC{INTRINSIC}(len=len(self(1)))*
+     dim, dim_v1, dim_v2 :: INT
+     dim    = self.dim
+     dim_v1 = v1.dim
+     dim_v2 = v2.dim
+     res.create(dim+dim_v1+dim_v2)
+     res(           1:dim              ) = self
+     res(dim+       1:dim+dim_v1       ) = v1
+     res(dim+dim_v1+1:dim+dim_v1+dim_v2) = v2
+   end
+
+! ****************
+! Sorting routines
+! ****************
+
+   reverse_order ::: pure
+   ! Reverse the order of the elements of self
+     self :: INOUT
+     n,dim :: INT
+     dim = .dim
+     do n = 1,dim/2
+       .swap_elements(n,dim-n+1)
+     end
+   end
+
+   swap_elements(e1,e2) ::: pure
+   ! Swap elements "e1" and "e2" in "self".
+      self :: INOUT
+      e1,e2 :: INT, IN
+   ENSURE(e1<=.dim AND e2<=.dim,"element exceeds dimesion")
+   ENSURE(e1>0 AND e2>0,"indices must be positive")
+      val :: INTRINSIC
+      val = self(e1)
+      self(e1) = self(e2)
+      self(e2) = val
+   end
+
+! ********************
+! Comparison functions
+! ********************
+
+   equals(v) result(res)
+   ! Return true if "self" is the same as "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      res = .same_as(v)
+   end
+
+   equals(v,eps) result(res)
+   ! Return true if "self" is the same as "v", within range "eps" if supplied
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+      res = .same_as(v,eps)
+   end
+
+   same_as(v) result(res)
+   ! Return true if "self" is the same as "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: BIN
+      if (.dim/=v.dim) then; res = FALSE
+      else;                  res = all(self==v)
+      end
+   end
+
+   same_as(v,eps) result(res)
+   ! Return true if "self" is the same as "v", within range "eps" if supplied
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      eps :: REAL, optional, IN
+      res :: BIN
+      tol :: REAL
+      if (.dim/=v.dim) then
+         res = FALSE
+      else
+         tol = REAL_EPSILON
+         if (present(eps)) tol = eps
+         res = .distance_to(v)<tol
+      end
+   end
+
+   are_all_equal(eps) result(res)
+   ! Return TRUE if "self" contains all the same elements, to within precision
+   ! "eps", if supplied.
+      self :: IN
+      eps :: REAL, optional, IN
+      res :: BIN
+      i :: INT
+      res = TRUE
+      do i = 2,.dim
+         if (self(1).equals(self(i),eps)) cycle
+         res = FALSE
+         exit
+      end
+   end
+
+   is_zero(eps) result(res) ::: pure
+   ! Return true if the vector is zero (within "eps", if supplied)
+      self :: IN
+      eps :: REAL, IN, optional
+      res :: BIN
+      tmp :: REAL
+      tmp = .norm
+      res = tmp.is_zero(eps)
+   end
+
+! ********************
+! Numerical operations
+! ********************
+
+   set_to(v) ::: pure
+   ! Set the vector to "v". See also the "copy" routine.
+      self :: INOUT
+      v :: V_TYPE, IN
+      self = v
+   end
+
+   plus(v,mask) ::: pure
+   ! Add vector "v" to "self"
+      self :: INOUT
+      mask :: VEC{BIN}, IN, optional
+      v :: V_TYPE, IN
+   ENSURE(.dim==v.dim,"wrong size, v")
+      i :: INT
+      if (NOT present(mask)) then
+         self = self + v
+      else
+         do i = 1,.dim
+            if (mask(i)) self(i) = self(i) + v(i)
+         end
+      end
+   end
+
+   minus(v,mask) ::: pure
+   ! Subtract vector "v" from "self"
+      self :: INOUT
+      v :: V_TYPE, IN
+      mask :: VEC{BIN}, IN, optional
+       i :: INT
+      if (NOT present(mask)) then
+         self = self - v
+      else
+         do i = 1,.dim
+            if (mask(i)) self(i) = self(i) - v(i)
+         end
+      end
+   end
+
+   to_scaled_vec(v,fac) ::: pure
+   ! Set the vector to "v" scaled by "fac"
+      self :: INOUT
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE, IN
+      self = fac*v
+   end
+
+   plus_scaled_vec(v,fac) ::: pure
+   ! Add a vector "v" scaled by "fac" to "self"
+      self :: INOUT
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE, IN
+      self = self + fac*v
+   end
+
+   dot(v) result (res) ::: pure
+   ! Return the dot product with "v"
+      self :: IN
+      v :: V_TYPE, IN
+      res :: RES_TYPE
+      res = dot_product(self,v)
+   end
+
+   cross(v) result(res) ::: pure
+   ! Return the cross product of "self" and "v".
+      self :: IN
+      v :: VEC{INTRINSIC}, IN
+      res :: VEC{INTRINSIC}(3)
+   ENSURE(.dim==3,"self must have dimension 3")
+      res(1) = self(2)*v(3) - v(2)*self(3)
+      res(2) = self(3)*v(1) - v(3)*self(1)
+      res(3) = self(1)*v(2) - v(1)*self(2)
+   end
+
+   to_cross_product_of(u,v) ::: pure
+   ! Set the vector to the cross product of "u" and "v".
+      self :: INOUT
+      u,v :: VEC{INTRINSIC}, IN
+   ENSURE(.dim==3,"self must have dimension 3")
+      self(1) = u(2)*v(3) - v(2)*u(3)
+      self(2) = u(3)*v(1) - v(3)*u(1)
+      self(3) = u(1)*v(2) - v(1)*u(2)
+   end
+
+   to_product_of(a,v,transpose_a)
+   ! Set "self" to the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      a :: A_TYPE, IN
+      v :: V_TYPE, IN
+      transpose_a :: BIN, optional
+      i,j :: INT
+      trans_a :: BIN
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+      if (trans_a) then
+        ENSURE(a.dim2==.dim,"array dimensions do not agree")
+        ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = sum(a(:,i) * v)
+        end
+      else
+        ENSURE(a.dim1==.dim,"array dimensions do not agree")
+        ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = sum(a(i,:) * v)
+        end
+      end
+   end
+
+   to_product_of(a,v,dagger_a,transpose_a)
+   ! Set "self" to the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      a :: MAT{CPX}, IN
+      v :: V_TYPE, IN
+      dagger_a,transpose_a :: BIN, optional
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+      opt,i,j :: INT
+      dagg_a,trans_a :: BIN
+      dagg_a = FALSE; trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+      select case (opt)
+         case (0)
+            ENSURE(a.dim1==.dim,"array dimensions do not agree")
+            ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = sum(a(i,:) * v)
+            end
+         case (1)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = sum(conjg(a(:,i)) * v)
+            end
+         case (2)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = sum(a(:,i) * v)
+            end
+      end
+   end
+
+   plus_product_of(a,v,transpose_a)
+   ! Add to "self" the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the marix needs to be transposed.
+      a :: A_TYPE, IN
+      v :: V_TYPE, IN
+      transpose_a :: BIN, optional
+      i :: INT
+      trans_a :: BIN
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+      if (trans_a) then
+        ENSURE(a.dim2==.dim,"array dimensions do not agree")
+        ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) + sum(a(:,i) * v)
+        end
+      else
+        ENSURE(a.dim1==.dim,"array dimensions do not agree")
+        ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) + sum(a(i,:) * v)
+        end
+      end
+   end
+
+   plus_product_of(a,v,dagger_a,transpose_a)
+   ! Add to "self" the product of the matrix "a" and vector "v". If present,
+   ! "transpose_a" can be set to TRUE if the matrix needs to be transposed.
+      a :: MAT{CPX}, IN
+      v :: V_TYPE, IN
+      dagger_a,transpose_a :: BIN, optional
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+      opt,i,j :: INT
+      dagg_a,trans_a :: BIN
+      dagg_a = FALSE; trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+      select case (opt)
+         case (0)
+            ENSURE(a.dim1==.dim,"array dimensions do not agree")
+            ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + sum(a(i,:) * v)
+            end
+         case (1)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + sum(conjg(a(:,i)) * v)
+            end
+         case (2)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + sum(a(:,i) * v)
+            end
+      end
+   end
+
+   minus_product_of(a,v,transpose_a)
+   ! Subtract from "self" the product of the matrix "a" and vector "v". If
+   ! present, "transpose_a" can be set to TRUE if the marix needs to be
+   ! transposed.
+      a :: A_TYPE, IN
+      v :: V_TYPE, IN
+      transpose_a :: BIN, optional
+      i :: INT
+      trans_a :: BIN
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+      if (trans_a) then
+        ENSURE(a.dim2==.dim,"array dimensions do not agree")
+        ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) - sum(a(:,i) * v)
+        end
+      else
+        ENSURE(a.dim1==.dim,"array dimensions do not agree")
+        ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) - sum(a(i,:) * v)
+        end
+      end
+   end
+
+   minus_product_of(a,v,dagger_a,transpose_a)
+   ! Subtract from "self" the product of the matrix "a" and vector "v". If
+   ! present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      a :: MAT{CPX}, IN
+      v :: V_TYPE, IN
+      dagger_a,transpose_a :: BIN, optional
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+      opt,i,j :: INT
+      dagg_a,trans_a :: BIN
+      dagg_a = FALSE; trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+      select case (opt)
+         case (0)
+            ENSURE(a.dim1==.dim,"array dimensions do not agree")
+            ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) - sum(a(i,:) * v)
+            end
+         case (1)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) - sum(conjg(a(:,i)) * v)
+            end
+         case (2)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) - sum(a(:,i) * v)
+            end
+      end
+   end
+
+   to_scaled_product_of(a,v,fac,transpose_a)
+   ! Set "self" to the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      a :: A_TYPE, IN
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE
+      transpose_a :: BIN, optional
+      i :: INT
+      trans_a :: BIN
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+      if (trans_a) then
+        ENSURE(a.dim2==.dim,"array dimensions do not agree")
+        ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = fac * sum(a(:,i) * v)
+        end
+      else
+        ENSURE(a.dim1==.dim,"array dimensions do not agree")
+        ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = fac * sum(a(i,:) * v)
+        end
+      end
+   end
+
+   to_scaled_product_of(a,v,fac,dagger_a,transpose_a)
+   ! Set "self" to the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      a :: MAT{CPX}, IN
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE
+      dagger_a,transpose_a :: BIN, optional
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+      opt,i,j :: INT
+      dagg_a,trans_a :: BIN
+      dagg_a = FALSE; trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+      select case (opt)
+         case (0)
+            ENSURE(a.dim1==.dim,"array dimensions do not agree")
+            ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = fac * sum(a(i,:) * v)
+            end
+         case (1)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = fac * sum(conjg(a(:,i)) * v)
+            end
+         case (2)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = fac * sum(a(:,i) * v)
+            end
+      end
+   end
+
+   plus_scaled_product_of(a,v,fac,transpose_a)
+   ! Add to self "self" the product of the matrix "a" and vector "v" scaled by
+   ! "fac".  If present, "transpose_a" can be set to TRUE if the matrix needs to
+   ! be transposed.
+      a :: A_TYPE, IN
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE
+      transpose_a :: BIN, optional
+      i :: INT
+      trans_a :: BIN
+      trans_a = FALSE
+      if (present(transpose_a)) trans_a = transpose_a
+      if (trans_a) then
+        ENSURE(a.dim2==.dim,"array dimensions do not agree")
+        ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) + fac * sum(a(:,i) * v)
+        end
+      else
+        ENSURE(a.dim1==.dim,"array dimensions do not agree")
+        ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+        do i = 1,.dim
+          self(i) = self(i) + fac * sum(a(i,:) * v)
+        end
+      end
+   end
+
+   plus_scaled_product_of(a,v,fac,dagger_a,transpose_a)
+   ! Add to "self" the product of the matrix "a" and vector "v" scaled by "fac".
+   ! If present, "transpose_a" can be set to TRUE if the matrix needs to be
+   ! transposed.
+      a :: MAT{CPX}, IN
+      v :: V_TYPE, IN
+      fac :: FAC_TYPE
+      dagger_a,transpose_a :: BIN, optional
+   ENSURE(NOT (present(dagger_a) AND present(transpose_a)),"cant dagger and transpose")
+      opt,i,j :: INT
+      dagg_a,trans_a :: BIN
+      dagg_a = FALSE; trans_a = FALSE
+      if (present(dagger_a))    dagg_a = dagger_a
+      if (present(transpose_a)) trans_a = transpose_a
+      opt = 0
+      if (dagg_a)  opt = 1
+      if (trans_a) opt = 2
+      select case (opt)
+         case (0)
+            ENSURE(a.dim1==.dim,"array dimensions do not agree")
+            ENSURE(a.dim2==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + fac * sum(a(i,:) * v)
+            end
+         case (1)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + fac * sum(conjg(a(:,i)) * v)
+            end
+         case (2)
+            ENSURE(a.dim2==.dim,"array dimensions do not agree")
+            ENSURE(a.dim1==v.dim,"array dimensions do not agree")
+            do i = 1,.dim
+               self(i) = self(i) + fac * sum(a(:,i) * v)
+            end
+      end
+   end
+
+   rotate_by(a)
+   ! Rotate self by matrix "a", treating self as a column vector
+     self :: INOUT
+     a :: MAT{INTRINSIC}, IN
+   ENSURE(size(a,1)==size(a,2),"matrix must be square")
+   ENSURE(size(a,2)==.dim,"matrix and vector dimensions inconsistent")
+     self = matmul(a,self)
+   end
+
+   translate_by(v)
+   ! Translate self by vector "v".
+     self :: INOUT
+     v :: VEC{INTRINSIC}, IN
+   ENSURE(.dim==v.dim,"vectors not of same dimension")
+     self = self + v
+   end
+
+   outer_product_with(v) result(res)
+   ! Returns the outer product of "self" with vector "v".
+     self :: IN
+     v :: VEC{INTRINSIC}, IN
+     res :: MAT{INTRINSIC}(.dim,v.dim)
+     res = spread(self,2,v.dim) * spread(v,1,.dim)
+   end
+
+   norm result (res) ::: pure
+   ! Return the norm of the vector
+      self :: IN
+      res :: REAL
+      res = sqrt(real(dot_product(self,self),kind=REAL_KIND))
+   end
+
+   normalise
+   ! Normalise the vector
+      self :: INOUT
+      self = self/.norm
+   end
+
+   distance_to(a) result(res)
+   ! Return the distance to "a" if supplied
+      a :: VEC{INTRINSIC}, IN
+      res :: REAL
+   ENSURE(.dim==a.dim,"incompatible dimensions")
+      temp :: VEC{INTRINSIC}(.dim)
+      temp = self - a
+      res = temp.norm
+   end
+
+   mean result (res) ::: pure
+   ! Return the mean of the vector
+     self :: IN
+     res :: INTRINSIC
+     res = real(sum(self),kind=REAL_KIND)/.dim
+   end
+
+! ******************
+! Min/max operations
+! ******************
+
+   chop_large_values(val) ::: pure
+   ! Set all values in the self whose absolute value is larger than "val" to
+   ! "val" times the sign of the original value.
+      self :: INOUT
+      val :: INTRINSIC, IN
+      dim,i :: INT
+      bb,ba,sign :: INTRINSIC
+      dim = .dim
+      do i = 1,dim
+         bb = self(i)
+         if (bb==ZERO) cycle
+         ba = abs(bb)
+         sign = bb/ba
+         self(i) = sign*min(val,ba)
+     end
+   end
+
+   zero_small_values(eps) ::: pure
+   ! Zero elements of the vector which are less than "tol" in magnitude
+      self :: INOUT
+      eps :: REAL, optional, IN
+      tol :: REAL
+      tol = REAL_EPSILON
+      if (present(eps)) tol = eps
+      where (abs(self)<tol)
+        self = ZERO
+      end
+   end
+
+   largest_value result (res) ::: pure
+   ! Return the maximum absolute value in the vector
+      self :: IN
+      res :: REAL
+      val :: REAL
+      i :: INT
+      res = abs(self(1))
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val > res) res = val
+      end
+   end
+
+   smallest_value result (res) ::: pure
+   ! Return minimum absolute value in the vector
+      self :: IN
+      res :: REAL
+      val :: REAL
+      i :: INT
+      res = abs(self(1))
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val < res) res = val
+      end
+   end
+
+   no_of_elements_larger_than(tol) result(res) ::: pure
+   ! Return the number of elements larger than "tol".
+      self :: IN
+      tol :: INTRINSIC, IN
+      res :: INT
+      res = count(self>tol)
+   end
+
+! ****************
+! Range operations
+! ****************
+
+   all_in_range(range) result(res) ::: pure
+   ! Return TRUE if all values of self are within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      res :: BIN
+      res = all(range(1) <= self AND self <= range(2))
+   end
+
+   in_range(range) result(res) ::: pure
+   ! Return element i as TRUE if self(i) is within the specified "range".
+      self :: IN
+      range :: VEC{INTRINSIC}(2), IN
+      res :: VEC{BIN}(.dim)
+      res = (range(1) <= self AND self <= range(2))
+   end
+
+   range result(res) ::: pure
+   ! Return the range (smallest and largest value) of self.
+      self :: IN
+      res :: VEC{INTRINSIC}(2)
+      res(1) = minval(self)
+      res(2) = maxval(self)
+   end
+
+! **************************
+! Index returning operations
+! **************************
+
+   index_of_maximum result (ind) ::: pure
+   ! Return the index of the maximum in the vector
+      self :: IN
+      ind :: INT
+      ind = maxval(maxloc(self))
+   end
+
+   index_of_minimum result (ind) ::: pure
+   ! Return the index of the minimum in the vector
+      self :: IN
+      ind :: INT
+      ind = minval(minloc(self))
+   end
+
+   index_of_largest_value result (ind) ::: pure
+   ! Return the index "ind" of the largest absolute value in the vector
+      self :: IN
+      ind :: INT
+      i :: INT
+      maxv,val :: REAL
+      maxv = abs(self(1))
+      ind = 1
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val > maxv) then
+          maxv = val
+          ind = i
+        end
+      end
+   end
+
+   index_of_smallest_value result (ind) ::: pure
+   ! Return the index "ind" of the smallest value in the vector
+      self :: IN
+      ind :: INT
+      i :: INT
+      minv,val :: REAL
+      minv = abs(self(1))
+      ind = 1
+      do i = 2,.dim
+        val = abs(self(i))
+        if (val < minv) then
+          minv = val
+          ind = i
+        end
+      end
+   end
+
+   index_of_first_nonzero_value result(res) ::: pure
+   ! Returns the index of the first nonzero component of self.
+     self :: IN
+     res :: INT
+     i :: INT
+     res = 0
+     do i = 1,.dim
+        if (self(i).same_as(0)) cycle
+        res = i
+        exit
+     end
+   end
+
+   index_of_first_zero_value result(res) ::: pure
+   ! Returns the index of the first zero component of self.
+     self :: IN
+     res :: INT
+     i :: INT
+     res = 0
+     do i = 1,.dim
+        if (NOT self(i).same_as(0)) cycle
+        res = i
+        exit
+     end
+   end
+
+   index_of_value(val) result(res) ::: pure
+   ! Returns the first index in "self" which has the value "val", or 0 if "val"
+   ! is not present in the array.
+     self :: IN
+     val :: INT, IN
+     res :: INT
+     i :: INT
+     res = 0
+     do i = 1,.dim
+        if (NOT self(i).same_as(val)) cycle
+        res = i
+        exit
+     end
+   end
+
+! ***********************
+! Spin-orbital operations
+! ***********************
+
+   alpha result(res)
+   ! return the alpha sector of the vector
+      self :: target
+      res :: VEC{INTRINSIC}*
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+      n :: INT
+      n = .dim/2
+      res => self(1:n)
+   end
+
+   beta result(res)
+   ! return the beta sector of the vector
+      self :: target
+      res :: VEC{INTRINSIC}*
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+      n :: INT
+      n = .dim/2
+      res => self(n+1:2*n)
+   end
+
+   alpha_set_to(X)
+   ! Set the alpha sector of the vector
+      X :: VEC{INTRINSIC}
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+      n :: INT
+      n = .dim/2
+      self(1:n) = X
+   end
+
+   beta_set_to(X)
+   ! Set the beta sector of the vector
+      X :: VEC{INTRINSIC}
+   ENSURE(.dim.is_even,"self is not even-dimensioned")
+   ENSURE(X.dim==.dim/2,"wrong size, X")
+      n :: INT
+      n = .dim/2
+      self(n+1:2*n) = X
+   end
+
+! **********
+! Misc stuff
+! **********
+
+end

@@ -2,7 +2,7 @@
 !
 !  FILE : Unformatted sequential advancing I/O, for fast mass data storage
 !
-!  NOTE: If ascii files are required consider using INPUT or OUTPUT.
+!  NOTE: If ascii files are required consider using TEXTFILE.
 !
 !  A file is referred to only by a STR name. Unit numbers are not required.
 !  Creation of a file object does not lead to creation of the actual file
@@ -51,46 +51,46 @@ module FILE
 
    interface get
       read_str, read_real, read_cpx, read_int, read_bin,
-      read_ivec, read_vec, read_cvec,
-      read_mat, read_mat3, read_mat4, read_imat,
-      read_cmat, read_cmat3, read_cmat4, read_cmat5
+      read_intvec, read_realvec, read_cpxvec,
+      read_realmat, read_realmat3, read_realmat4, read_intmat,
+      read_cpxmat, read_cpxmat3, read_cpxmat4, read_cpxmat5
    end
 
    interface read
       read_str, read_real, read_cpx, read_int, read_bin,
-      read_ivec, read_vec, read_cvec,
-      read_mat, read_mat3, read_mat4, read_imat,
-      read_cmat, read_cmat3, read_cmat4, read_cmat5
+      read_intvec, read_realvec, read_cpxvec,
+      read_realmat, read_realmat3, read_realmat4, read_intmat,
+      read_cpxmat, read_cpxmat3, read_cpxmat4, read_cpxmat5
    end
 
    interface write
       write_int, write_real, write_cpx, write_str, write_bin,
-      write_vec, write_ivec, write_cvec,
-      write_mat, write_mat3, write_mat4, write_imat,
-      write_cmat, write_cmat3, write_cmat4, write_cmat5
+      write_vec, write_intvec, write_cpxvec,
+      write_mat, write_mat3, write_mat4, write_intmat,
+      write_cpxmat, write_cpxmat3, write_cpxmat4, write_cpxmat5
    end
 
    interface put
       write_int, write_real, write_cpx, write_str, write_bin,
-      write_vec, write_ivec, write_cvec,
-      write_mat, write_mat3, write_mat4, write_imat,
-      write_cmat, write_cmat3, write_cmat4, write_cmat5
+      write_vec, write_intvec, write_cpxvec,
+      write_mat, write_mat3, write_mat4, write_intmat,
+      write_cpxmat, write_cpxmat3, write_cpxmat4, write_cpxmat5
    end
 
   interface write_buffered
     write_buffered_real, write_buffered_int, write_buffered_cpx
-    write_buffered_vec, write_buffered_ivec, write_buffered_cvec
-    write_buffered_mat, write_buffered_imat, write_buffered_cmat
-    write_buffered_mat3, write_buffered_cmat3, write_buffered_mat4
-    write_buffered_cmat4, write_buffered_cmat5
+    write_buffered_vec, write_buffered_intvec, write_buffered_cpxvec
+    write_buffered_mat, write_buffered_intmat, write_buffered_cpxmat
+    write_buffered_mat3, write_buffered_cpxmat3, write_buffered_mat4
+    write_buffered_cpxmat4, write_buffered_cpxmat5
   end
 
   interface read_buffered
     read_buffered_real, read_buffered_int, read_buffered_cpx
-    read_buffered_vec, read_buffered_ivec, read_buffered_cvec
-    read_buffered_mat, read_buffered_imat, read_buffered_cmat
-    read_buffered_mat3, read_buffered_cmat3, read_buffered_mat4
-    read_buffered_cmat4, read_buffered_cmat5
+    read_buffered_vec, read_buffered_intvec, read_buffered_cpxvec
+    read_buffered_mat, read_buffered_intmat, read_buffered_cpxmat
+    read_buffered_mat3, read_buffered_cpxmat3, read_buffered_mat4
+    read_buffered_cpxmat4, read_buffered_cpxmat5
   end
 
 contains
@@ -103,11 +103,11 @@ contains
    ! Create a file-label object. Does not open the file.  Sets the filename if
    ! present.
       self :: PTR
+      name :: STR, optional
       unit :: UNITNUMBER
-      name :: STR(*), optional
       nullify(self)
       allocate(self)
-      ADD_MEMORY(FILE_SIZE)
+      ADD_MEMORY(SELF_TYPE_SIZE)
       .nullify_ptr_part
       .set_defaults
       if (present(name)) then
@@ -124,7 +124,7 @@ contains
       if (.is_open AND .unit_used) .close
       unit.free(.unit)
       .destroy_ptr_part
-      DELETE_MEMORY(FILE_SIZE)
+      DELETE_MEMORY(SELF_TYPE_SIZE)
       deallocate(self)
    end
 
@@ -180,9 +180,9 @@ contains
    ! or "write-only"
    ! If present, "buffered" indicated whether the file is to be buffered, and
    ! the "type" of the buffer must also be specified as "real" or "int"
-     for :: STR(*), optional
+     for :: STR, optional
      buffered :: BIN,    optional
-     type :: STR(*), optional
+     type :: STR, optional
      if (present(for)) then
         select case (for)
            case("readwrite ","read-write") ;              .action = "readwrite"
@@ -193,13 +193,16 @@ contains
      end
      .file_status = "new"
      if (.exists) .file_status = "old"
-     open( unit   = .unit,         &
+     if (tonto_parallel.do_io) then
+       open( unit   = .unit,       &
            file   = .name,         &
            status = .file_status,  &
            access = "sequential",  &
            form   = "unformatted", & ! <---------
            action = .action,       &
            iostat = .io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
      ENSURE(.io_status==0,"error opening "//trim(.file_status)//" file "//.name)
      if (present(buffered)) .buffered = buffered
      if (.buffered) then
@@ -223,26 +226,32 @@ contains
 
    close ::: leaky
    ! Close the file
-      WARN_IF(NOT .is_open,"file is not open")
-      if (.action=="write") then
-        if (.real_buffer_pos > 1) .flush_real_buffer
-        if (.int_buffer_pos > 1) .flush_int_buffer
-        if (.cpx_buffer_pos > 1) .flush_cpx_buffer
-      end
-      .destroy_ptr_part
-      close(unit=.unit)
+     WARN_IF(NOT .is_open,"file is not open")
+     if (.action=="write") then
+       if (.real_buffer_pos > 1) .flush_real_buffer
+       if (.int_buffer_pos > 1) .flush_int_buffer
+       if (.cpx_buffer_pos > 1) .flush_cpx_buffer
+     end
+     .destroy_ptr_part
+     if (tonto_parallel.do_io) then
+       close(unit=.unit,iostat=.io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
    end
 
    close_and_delete ::: leaky
    ! Close the file and delete it from the file system
-      WARN_IF(NOT .is_open,"file is not open")
-      if (.action=="write") then
-        if (.real_buffer_pos > 1) .flush_real_buffer
-        if (.int_buffer_pos > 1) .flush_int_buffer
-        if (.cpx_buffer_pos > 1) .flush_cpx_buffer
-      end
-      .destroy_ptr_part
-      close(unit=.unit,status="delete")
+     WARN_IF(NOT .is_open,"file is not open")
+     if (.action=="write") then
+       if (.real_buffer_pos > 1) .flush_real_buffer
+       if (.int_buffer_pos > 1) .flush_int_buffer
+       if (.cpx_buffer_pos > 1) .flush_cpx_buffer
+     end
+     .destroy_ptr_part
+     if (tonto_parallel.do_io) then
+      close(unit=.unit,status="delete",iostat=.io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
    end
 
    delete
@@ -257,8 +266,12 @@ contains
 
    read_str(value)
    ! Read a default str from the file into variable "value"
-     value :: STR(*)
-     read(unit=.unit,iostat=.io_status) value
+     value :: STR
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status) value
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     tonto_parallel.broadcast(value,0)
      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
      .record = .record + 1
    end
@@ -269,7 +282,11 @@ contains
      if (.buffered) then
        .read_buffered_int(value)
      else
-       read(unit=.unit,iostat=.io_status) value
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) value
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(value,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
@@ -281,19 +298,27 @@ contains
      if (.buffered) then
        .read_buffered_real(value)
      else
-       read(unit=.unit,iostat=.io_status) value
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) value
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(value,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
    read_cpx(value)
-   ! Read a complex real from the file into variable "value"
+   ! Read a complex REAL from the file into variable "value"
      value :: CPX
      if (.buffered) then
        .read_buffered_cpx(value)
      else
-       read(unit=.unit,iostat=.io_status) value
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) value
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(value,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
@@ -302,138 +327,186 @@ contains
    read_bin(value)
    ! Read a logical from the file into variable "value"
      value :: BIN
-     read(unit=.unit,iostat=.io_status) value
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status) value
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     tonto_parallel.broadcast(value,0)
      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
      .record = .record + 1
    end
 
-   read_vec(vec)
+   read_realvec(vec)
    ! Read a vector from the file into variable "vec"
-     vec :: REALVEC
+     vec :: VEC{REAL}
      if (.buffered) then
        .read_buffered_vec(vec)
      else
-       read(unit=.unit,iostat=.io_status) vec
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) vec
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(vec,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_ivec(vec)
+   read_intvec(vec)
    ! Read a vector from the file into variable "vec"
-     vec :: INTVEC
+     vec :: VEC{INT}
      if (.buffered) then
-       .read_buffered_ivec(vec)
+       .read_buffered_intvec(vec)
      else
-       read(unit=.unit,iostat=.io_status) vec
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) vec
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(vec,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_cvec(vec)
+   read_cpxvec(vec)
    ! Read a vector from the file into variable "vec"
-     vec :: CPXVEC
+     vec :: VEC{CPX}
      if (.buffered) then
-       .read_buffered_cvec(vec)
+       .read_buffered_cpxvec(vec)
      else
-       read(unit=.unit,iostat=.io_status) vec
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) vec
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(vec,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_mat(mat)
+   read_realmat(mat)
    ! Read a matrix from the file into variable "mat"
-     mat :: REALMAT
+     mat :: MAT{REAL}
      if (.buffered) then
        .read_buffered_mat(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_imat(mat)
+   read_intmat(mat)
    ! Read an integer matrix from the file into variable "mat"
-     mat :: INTMAT
+     mat :: MAT{INT}
      if (.buffered) then
-       .read_buffered_imat(mat)
+       .read_buffered_intmat(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_cmat(mat)
+   read_cpxmat(mat)
    ! Read a complex matrix from the file into variable "mat"
-     mat :: CPXMAT
+     mat :: MAT{CPX}
      if (.buffered) then
-       .read_buffered_cmat(mat)
+       .read_buffered_cpxmat(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_mat3(mat)
+   read_realmat3(mat)
    ! Read a matrix from the file into variable "mat"
-     mat :: REALMAT3
+     mat :: MAT3{REAL}
      if (.buffered) then
        .read_buffered_mat3(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_cmat3(mat)
+   read_cpxmat3(mat)
    ! Read a complex matrix from the file into variable "mat"
-     mat :: CPXMAT3
+     mat :: MAT3{CPX}
      if (.buffered) then
-       .read_buffered_cmat3(mat)
+       .read_buffered_cpxmat3(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_mat4(mat)
+   read_realmat4(mat)
    ! Read a matrix from the file into variable "mat"
-     mat :: REALMAT4
+     mat :: MAT4{REAL}
      if (.buffered) then
        .read_buffered_mat4(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_cmat4(mat)
+   read_cpxmat4(mat)
    ! Read a complex matrix from the file into variable "mat"
-     mat :: CPXMAT4
+     mat :: MAT4{CPX}
      if (.buffered) then
-       .read_buffered_cmat4(mat)
+       .read_buffered_cpxmat4(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
    end
 
-   read_cmat5(mat)
+   read_cpxmat5(mat)
    ! Read a complex matrix from the file into variable "mat"
-     mat :: CPXMAT5
+     mat :: MAT5{CPX}
      if (.buffered) then
-       .read_buffered_cmat5(mat)
+       .read_buffered_cpxmat5(mat)
      else
-       read(unit=.unit,iostat=.io_status) mat
+       if (tonto_parallel.do_io) then
+         read(unit=.unit,iostat=.io_status) mat
+       end
+       tonto_parallel.broadcast(.io_status,0)
+       tonto_parallel.broadcast(mat,0)
        ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
        .record = .record + 1
      end
@@ -449,21 +522,27 @@ contains
       if (.buffered) then
          .write_buffered_int(value)
       else
-         write(unit=.unit,iostat=.io_status) value
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) value
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
    write_real(value)
-   ! Write a real to the file as a record
+   ! Write a REAL to the file as a record
       value :: REAL
       if (.buffered) then
          .write_buffered_real(value)
       else
-         write(unit=.unit,iostat=.io_status) value
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) value
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
@@ -473,18 +552,24 @@ contains
       if (.buffered) then
          .write_buffered_cpx(value)
       else
-         write(unit=.unit,iostat=.io_status) value
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) value
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
    write_str(value)
    ! Write a str to the file as a record
-      value :: STR(*)
+      value :: STR
       str1 :: STR(len(value))
       str1 = value
-      write(unit=.unit,iostat=.io_status) str1
+      if (tonto_parallel.do_io) then
+        write(unit=.unit,iostat=.io_status) str1
+      end
+      tonto_parallel.broadcast(.io_status,0)
       ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
       .record = .record + 1
    end
@@ -492,54 +577,69 @@ contains
    write_bin(value)
    ! Write a bin to the file as a record
       value :: BIN
-      write(unit=.unit,iostat=.io_status) value
+      if (tonto_parallel.do_io) then
+        write(unit=.unit,iostat=.io_status) value
+      end
+      tonto_parallel.broadcast(.io_status,0)
       ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
       .record = .record + 1
    end
 
    write_vec(vec)
    ! Write a vector to the file as a single record
-      vec :: REALVEC
+      vec :: VEC{REAL}
       if (.buffered) then
          .write_buffered_vec(vec)
       else
-         write(unit=.unit,iostat=.io_status) vec
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) vec
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
-   write_ivec(vec)
+   write_intvec(vec)
    ! Write a vector to the file as a single record
-      vec :: INTVEC, IN
+      vec :: VEC{INT}, IN
       if (.buffered) then
-         .write_buffered_ivec(vec)
+         .write_buffered_intvec(vec)
       else
-         write(unit=.unit,iostat=.io_status) vec
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) vec
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
-   write_cvec(vec)
+   write_cpxvec(vec)
    ! Write a vector to the file as a single record
-      vec :: CPXVEC
+      vec :: VEC{CPX}
       if (.buffered) then
-         .write_buffered_cvec(vec)
+         .write_buffered_cpxvec(vec)
       else
-         write(unit=.unit,iostat=.io_status) vec
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) vec
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
-   write_imat(mat)
+   write_intmat(mat)
    ! Write a matrix to the file as a single record
-      mat :: INTMAT
+      mat :: MAT{INT}
       if (.buffered) then
-         .write_buffered_imat(mat)
+         .write_buffered_intmat(mat)
       else
-        write(unit=.unit,iostat=.io_status) mat
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
         .record = .record + 1
       end
@@ -547,11 +647,14 @@ contains
 
    write_mat(mat)
    ! Write a matrix to the file as a single record
-      mat :: REALMAT
+      mat :: MAT{REAL}
       if (.buffered) then
          .write_buffered_mat(mat)
       else
-        write(unit=.unit,iostat=.io_status) mat
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
         .record = .record + 1
       end
@@ -559,73 +662,91 @@ contains
 
    write_mat3(mat)
    ! Write a matrix to the file as a single record
-      mat :: REALMAT3
+      mat :: MAT3{REAL}
       if (.buffered) then
          .write_buffered_mat3(mat)
       else
-         write(unit=.unit,iostat=.io_status) mat
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
-      end
-   end
-
-   write_mat4(mat)
-   ! Write a matrix to the file as a single record
-      mat :: REALMAT4
-      if (.buffered) then
-         .write_buffered_mat4(mat)
-      else
-         write(unit=.unit,iostat=.io_status) mat
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
-      end
-   end
-
-   write_cmat(mat)
-   ! Write a complex matrix to the file as a single record
-      mat :: CPXMAT
-      if (.buffered) then
-         .write_buffered_cmat(mat)
-      else
-        write(unit=.unit,iostat=.io_status) mat
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
         .record = .record + 1
       end
    end
 
-   write_cmat3(mat)
+   write_mat4(mat)
+   ! Write a matrix to the file as a single record
+      mat :: MAT4{REAL}
+      if (.buffered) then
+        .write_buffered_mat4(mat)
+      else
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
+      end
+   end
+
+   write_cpxmat(mat)
+   ! Write a complex matrix to the file as a single record
+      mat :: MAT{CPX}
+      if (.buffered) then
+         .write_buffered_cpxmat(mat)
+      else
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
+      end
+   end
+
+   write_cpxmat3(mat)
    ! Write a complex 3d matrix to the file as a single record
-      mat :: CPXMAT3
+      mat :: MAT3{CPX}
       if (.buffered) then
-         .write_buffered_cmat3(mat)
+         .write_buffered_cpxmat3(mat)
       else
-         write(unit=.unit,iostat=.io_status) mat
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
-   write_cmat4(mat)
+   write_cpxmat4(mat)
    ! Write a complex 4d matrix to the file as a single record
-      mat :: CPXMAT4
+      mat :: MAT4{CPX}
       if (.buffered) then
-         .write_buffered_cmat4(mat)
+         .write_buffered_cpxmat4(mat)
       else
-         write(unit=.unit,iostat=.io_status) mat
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
-   write_cmat5(mat)
+   write_cpxmat5(mat)
    ! Write a complex 5d matrix to the file as a single record
-      mat :: CPXMAT5
+      mat :: MAT5{CPX}
       if (.buffered) then
-         .write_buffered_cmat5(mat)
+         .write_buffered_cpxmat5(mat)
       else
-         write(unit=.unit,iostat=.io_status) mat
-         ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          write(unit=.unit,iostat=.io_status) mat
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+        .record = .record + 1
       end
    end
 
@@ -635,33 +756,45 @@ contains
 
    rewind
    ! Rewind the file
-      rewind(unit=.unit,iostat=.io_status)
-      ENSURE(.io_status==0,"rewind error, error="// trim(.io_status.to_str))
-      .record = 1
+     if (tonto_parallel.do_io) then
+       rewind(unit=.unit,iostat=.io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     ENSURE(.io_status==0,"rewind error, error="// trim(.io_status.to_str))
+     .record = 1
    end
 
    backspace
    ! Backspace the file one record of the file. Backspacing before record 1 has
    ! no effect.
-      backspace(unit=.unit,iostat=.io_status)
-      ENSURE(.io_status==0,"backspace error, error="// trim(.io_status.to_str))
-      .record = max(1,.record-1)
+     if (tonto_parallel.do_io) then
+       backspace(unit=.unit,iostat=.io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     ENSURE(.io_status==0,"backspace error, error="// trim(.io_status.to_str))
+     .record = max(1,.record-1)
    end
 
    skip
    ! Skip over the next record of the file. An error is generated if at the end
    ! of the file
-      read(unit=.unit,iostat=.io_status)
-      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
-      .record = .record + 1
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status)
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
+     .record = .record + 1
    end
 
    move_to_end
    ! Move to the end of the file, say for adding more data
       do
-         read(unit=.unit,iostat=.io_status)
-         if (.io_status/=0) exit
-         .record = .record + 1
+        if (tonto_parallel.do_io) then
+          read(unit=.unit,iostat=.io_status)
+        end
+        tonto_parallel.broadcast(.io_status,0)
+        if (.io_status/=0) exit
+        .record = .record + 1
       end
    end
 
@@ -674,7 +807,7 @@ contains
    move_to_record(rec)
    ! Move to a particular record position in the file
       rec :: INT
-      ENSURE(rec>=1,"can't move to non-positive record")
+   ENSURE(rec>=1,"can't move to non-positive record")
       if (rec<.position) then
          do
             .backspace
@@ -696,25 +829,36 @@ contains
    ! Returns true if the file exists on the file system.  If present, "name" is
    ! used, otherwise .name is used.
       res :: BIN
-      name :: STR(*), IN, optional
+      name :: STR, IN, optional
       if (present(name)) then
-        inquire(file=name,exist=res)
+        if (tonto_parallel.do_io) then
+          inquire(file=name,exist=res)
+        end
       else
-        inquire(file=.name,exist=res)
+        if (tonto_parallel.do_io) then
+          inquire(file=.name,exist=res)
+        end
       end
+      tonto_parallel.broadcast(res,0)
    end
 
    is_open result(res)
    ! Returns true if the file has been opened
       res :: BIN
       ! inquire(unit=.unit,opened=res)
-      inquire(file=.name,opened=res)
+      if (tonto_parallel.do_io) then
+        inquire(file=.name,opened=res)
+      end
+      tonto_parallel.broadcast(res,0)
    end
 
    unit_used result(res)
    ! Returns true if the file unit is in use
       res :: BIN
-      inquire(unit=.unit,opened=res)
+      if (tonto_parallel.do_io) then
+        inquire(unit=.unit,opened=res)
+      end
+      tonto_parallel.broadcast(res,0)
    end
 
 !   created result(res)
@@ -741,7 +885,10 @@ contains
    ! Return whether the file is opened for reading.
      res :: BIN
      reading :: STR(5)
-     inquire(unit=.unit,read=reading)
+     if (tonto_parallel.do_io) then
+       inquire(unit=.unit,read=reading)
+     end
+     tonto_parallel.broadcast(reading,0)
      if (trim(reading) == "YES") then
        res = TRUE
      else
@@ -750,7 +897,7 @@ contains
    end
 
 !   is_real_buffered result(res)
-!   ! Returns true if the file is using REAL buffering
+!   ! Returns true if the file is using real buffering
 !      res :: BIN
 !      res = associated(.real_buffer)
 !   end
@@ -768,7 +915,10 @@ contains
    flush_real_buffer
    ! Writes the real_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-     write(unit=.unit,iostat=.io_status) .real_buffer
+     if (tonto_parallel.do_io) then
+       write(unit=.unit,iostat=.io_status) .real_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .real_buffer_pos = 1
@@ -777,7 +927,10 @@ contains
    flush_int_buffer
    ! Writes the int_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-     write(unit=.unit,iostat=.io_status) .int_buffer
+     if (tonto_parallel.do_io) then
+       write(unit=.unit,iostat=.io_status) .int_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .int_buffer_pos = 1
@@ -786,7 +939,10 @@ contains
    flush_cpx_buffer
    ! Writes the cpx_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-     write(unit=.unit,iostat=.io_status) .cpx_buffer
+     if (tonto_parallel.do_io) then
+       write(unit=.unit,iostat=.io_status) .cpx_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .cpx_buffer_pos = 1
@@ -795,7 +951,11 @@ contains
    get_real_buffer
    ! Reads the real_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-     read(unit=.unit,iostat=.io_status) .real_buffer
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status) .real_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     tonto_parallel.broadcast(.real_buffer,0)
      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .real_buffer_pos = 1
@@ -804,8 +964,12 @@ contains
    get_int_buffer
    ! Reads the int_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-     ENSURE( .int_buffer.created, "buffer not created")
-     read(unit=.unit,iostat=.io_status) .int_buffer
+   ENSURE( .int_buffer.created, "buffer not created")
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status) .int_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     tonto_parallel.broadcast(.int_buffer,0)
      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .int_buffer_pos = 1
@@ -814,8 +978,12 @@ contains
    get_cpx_buffer
    ! Reads the cpx_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-     ENSURE( .cpx_buffer.created, "buffer not created")
-     read(unit=.unit,iostat=.io_status) .cpx_buffer
+   ENSURE( .cpx_buffer.created, "buffer not created")
+     if (tonto_parallel.do_io) then
+       read(unit=.unit,iostat=.io_status) .cpx_buffer
+     end
+     tonto_parallel.broadcast(.io_status,0)
+     tonto_parallel.broadcast(.cpx_buffer,0)
      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
      .record = .record + 1
      .cpx_buffer_pos = 1
@@ -824,7 +992,7 @@ contains
    write_buffered_real(the_real)
    ! Writes "the_real" to the buffer, and writes buffer to disk when full.
      the_real :: REAL, IN
-     ENSURE( .real_buffer.created, "buffer not created")
+   ENSURE( .real_buffer.created, "buffer not created")
      .real_buffer( .real_buffer_pos ) = the_real
      .real_buffer_pos = .real_buffer_pos + 1
      if ( .real_buffer_pos > FILE_BUFFER_LENGTH) .flush_real_buffer
@@ -857,7 +1025,7 @@ contains
    write_buffered_cpx(the_cpx)
    ! Writes "the_cpx" to the buffer, and writes buffer to disk when full.
      the_cpx :: CPX, IN
-     ENSURE( .cpx_buffer.created, "buffer not created")
+   ENSURE( .cpx_buffer.created, "buffer not created")
      .cpx_buffer( .cpx_buffer_pos ) = the_cpx
      .cpx_buffer_pos = .cpx_buffer_pos + 1
      if ( .cpx_buffer_pos > FILE_BUFFER_LENGTH) .flush_cpx_buffer
@@ -873,7 +1041,7 @@ contains
 
    write_buffered_vec(the_vec)
    ! Writes the vector to the buffer, and writes buffer to disk when full.
-     the_vec :: REALVEC, IN
+     the_vec :: VEC{REAL}, IN
      vec_length,vec_pos,buffer_top,vec_top,put_length :: INT
      vec_length = size(the_vec)
      vec_pos=1
@@ -891,7 +1059,7 @@ contains
 
    read_buffered_vec(the_vec)
    ! Reads the vector from the buffer, and reads buffer from disk when empty.
-     the_vec :: REALVEC, OUT
+     the_vec :: VEC{REAL}, OUT
      vec_length,vec_pos,buffer_top,vec_top,get_length :: INT
      vec_length = size(the_vec)
      vec_pos=1
@@ -907,81 +1075,81 @@ contains
      end
    end
 
-   write_buffered_ivec(the_ivec)
-   ! Writes the ivector to the buffer, and writes buffer to disk when full.
-     the_ivec :: INTVEC, IN
-     ivec_length,ivec_pos,buffer_top,ivec_top,put_length :: INT
-     ivec_length = size(the_ivec)
-     ivec_pos=1
+   write_buffered_intvec(the_intvec)
+   ! Writes the intvector to the buffer, and writes buffer to disk when full.
+     the_intvec :: VEC{INT}, IN
+     intvec_length,intvec_pos,buffer_top,intvec_top,put_length :: INT
+     intvec_length = size(the_intvec)
+     intvec_pos=1
      do
-       put_length=min(FILE_BUFFER_LENGTH - .int_buffer_pos + 1,ivec_length-ivec_pos+1)
+       put_length=min(FILE_BUFFER_LENGTH - .int_buffer_pos + 1,intvec_length-intvec_pos+1)
        buffer_top = .int_buffer_pos + put_length - 1
-       ivec_top = ivec_pos + put_length - 1
-       .int_buffer( .int_buffer_pos:buffer_top) = the_ivec(ivec_pos:ivec_top)
+       intvec_top = intvec_pos + put_length - 1
+       .int_buffer( .int_buffer_pos:buffer_top) = the_intvec(intvec_pos:intvec_top)
        .int_buffer_pos = buffer_top + 1
-       ivec_pos = ivec_top + 1
+       intvec_pos = intvec_top + 1
        if ( .int_buffer_pos > FILE_BUFFER_LENGTH) .flush_int_buffer
-       if (ivec_pos > ivec_length) exit
+       if (intvec_pos > intvec_length) exit
      end
    end
 
-   read_buffered_ivec(the_ivec)
-   ! Reads the ivector from the buffer, and reads buffer from disk when empty.
-     the_ivec :: INTVEC, OUT
-     ivec_length,ivec_pos,buffer_top,ivec_top,get_length :: INT
-     ivec_length = size(the_ivec)
-     ivec_pos=1
+   read_buffered_intvec(the_intvec)
+   ! Reads the intvector from the buffer, and reads buffer from disk when empty.
+     the_intvec :: VEC{INT}, OUT
+     intvec_length,intvec_pos,buffer_top,intvec_top,get_length :: INT
+     intvec_length = size(the_intvec)
+     intvec_pos=1
      do
        if ( .int_buffer_pos > FILE_BUFFER_LENGTH) .get_int_buffer
-       get_length=min(FILE_BUFFER_LENGTH - .int_buffer_pos + 1,ivec_length-ivec_pos+1)
+       get_length=min(FILE_BUFFER_LENGTH - .int_buffer_pos + 1,intvec_length-intvec_pos+1)
        buffer_top = .int_buffer_pos + get_length - 1
-       ivec_top = ivec_pos + get_length - 1
-       the_ivec(ivec_pos:ivec_top) = .int_buffer( .int_buffer_pos:buffer_top)
+       intvec_top = intvec_pos + get_length - 1
+       the_intvec(intvec_pos:intvec_top) = .int_buffer( .int_buffer_pos:buffer_top)
        .int_buffer_pos = buffer_top + 1
-       ivec_pos = ivec_top + 1
-       if (ivec_pos > ivec_length) exit
+       intvec_pos = intvec_top + 1
+       if (intvec_pos > intvec_length) exit
      end
    end
 
-   write_buffered_cvec(the_cvec)
+   write_buffered_cpxvec(the_cpxvec)
    ! Writes the cvector to the buffer, and writes buffer to disk when full.
-     the_cvec :: CPXVEC, IN
-     cvec_length,cvec_pos,buffer_top,cvec_top,put_length :: INT
-     cvec_length = size(the_cvec)
-     cvec_pos=1
+     the_cpxvec :: VEC{CPX}, IN
+     cpxvec_length,cpxvec_pos,buffer_top,cpxvec_top,put_length :: INT
+     cpxvec_length = size(the_cpxvec)
+     cpxvec_pos=1
      do
-       put_length=min(FILE_BUFFER_LENGTH - .cpx_buffer_pos + 1,cvec_length-cvec_pos+1)
+       put_length=min(FILE_BUFFER_LENGTH - .cpx_buffer_pos + 1,cpxvec_length-cpxvec_pos+1)
        buffer_top = .cpx_buffer_pos + put_length - 1
-       cvec_top = cvec_pos + put_length - 1
-       .cpx_buffer( .cpx_buffer_pos:buffer_top) = the_cvec(cvec_pos:cvec_top)
+       cpxvec_top = cpxvec_pos + put_length - 1
+       .cpx_buffer( .cpx_buffer_pos:buffer_top) = the_cpxvec(cpxvec_pos:cpxvec_top)
        .cpx_buffer_pos = buffer_top + 1
-       cvec_pos = cvec_top + 1
+       cpxvec_pos = cpxvec_top + 1
        if ( .cpx_buffer_pos > FILE_BUFFER_LENGTH) .flush_cpx_buffer
-       if (cvec_pos > cvec_length) exit
+       if (cpxvec_pos > cpxvec_length) exit
      end
    end
 
-   read_buffered_cvec(the_cvec)
+   read_buffered_cpxvec(the_cpxvec)
    ! Reads the cvector from the buffer, and reads buffer from disk when empty.
-     the_cvec :: CPXVEC, OUT
-     cvec_length,cvec_pos,buffer_top,cvec_top,get_length :: INT
-     cvec_length = size(the_cvec)
-     cvec_pos=1
+     the_cpxvec :: VEC{CPX}, OUT
+     cpxvec_length,cpxvec_pos,buffer_top,cpxvec_top,get_length :: INT
+     cpxvec_length = size(the_cpxvec)
+     cpxvec_pos=1
      do
        if ( .cpx_buffer_pos > FILE_BUFFER_LENGTH) .get_cpx_buffer
-       get_length=min(FILE_BUFFER_LENGTH - .cpx_buffer_pos + 1,cvec_length-cvec_pos+1)
+       get_length=min(FILE_BUFFER_LENGTH - .cpx_buffer_pos + 1,cpxvec_length-cpxvec_pos+1)
        buffer_top = .cpx_buffer_pos + get_length - 1
-       cvec_top = cvec_pos + get_length - 1
-       the_cvec(cvec_pos:cvec_top) = .cpx_buffer( .cpx_buffer_pos:buffer_top)
+       cpxvec_top = cpxvec_pos + get_length - 1
+       the_cpxvec(cpxvec_pos:cpxvec_top) = .cpx_buffer( .cpx_buffer_pos:buffer_top)
        .cpx_buffer_pos = buffer_top + 1
-       cvec_pos = cvec_top + 1
-       if (cvec_pos > cvec_length) exit
+       cpxvec_pos = cpxvec_top + 1
+       if (cpxvec_pos > cpxvec_length) exit
      end
    end
 
    write_buffered_mat(mat)
    ! Writes the mat to the buffer, and writes buffer to disk when full.
-     mat :: REALMAT, IN
+     mat :: MAT{REAL}, IN
      b,bsize :: INT
      bsize=size(mat,2)
      do b=1,bsize
@@ -991,7 +1159,7 @@ contains
 
    read_buffered_mat(mat)
    ! Reads the mat from the buffer.
-     mat :: REALMAT, OUT
+     mat :: MAT{REAL}, OUT
      b,bsize :: INT
      bsize=size(mat,2)
      do b=1,bsize
@@ -999,9 +1167,9 @@ contains
      end
    end
 
-   write_buffered_imat(mat)
-   ! Writes the imat to the buffer, and writes buffer to disk when full.
-     mat :: INTMAT, IN
+   write_buffered_intmat(mat)
+   ! Writes the intmat to the buffer, and writes buffer to disk when full.
+     mat :: MAT{INT}, IN
      a,b,asize,bsize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      do a=1,asize
@@ -1011,9 +1179,9 @@ contains
      end
    end
 
-   read_buffered_imat(mat)
-   ! Reads the imat from the buffer.
-     mat :: INTMAT, OUT
+   read_buffered_intmat(mat)
+   ! Reads the intmat from the buffer.
+     mat :: MAT{INT}, OUT
      a,b,asize,bsize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      do a=1,asize
@@ -1023,29 +1191,29 @@ contains
      end
    end
 
-   write_buffered_cmat(mat)
-   ! Writes the cmat to the buffer, and writes buffer to disk when full.
-     mat :: CPXMAT, IN
+   write_buffered_cpxmat(mat)
+   ! Writes the cpxmat to the buffer, and writes buffer to disk when full.
+     mat :: MAT{CPX}, IN
      b,bsize :: INT
      bsize=size(mat,2)
      do b=1,bsize
-       .write_buffered_cvec(mat(:,b))
+       .write_buffered_cpxvec(mat(:,b))
      end
    end
 
-   read_buffered_cmat(mat)
-   ! Reads the cmat from the buffer.
-     mat :: CPXMAT, OUT
+   read_buffered_cpxmat(mat)
+   ! Reads the cpxmat from the buffer.
+     mat :: MAT{CPX}, OUT
      b,bsize :: INT
      bsize=size(mat,2)
      do b=1,bsize
-       .read_buffered_cvec(mat(:,b))
+       .read_buffered_cpxvec(mat(:,b))
      end
    end
 
    write_buffered_mat3(mat)
    ! Writes the mat3 to the buffer, and writes buffer to disk when full.
-     mat :: REALMAT3, IN
+     mat :: MAT3{REAL}, IN
      b,c,bsize,csize :: INT
      bsize=size(mat,2);     csize=size(mat,3)
      do c=1,csize
@@ -1057,7 +1225,7 @@ contains
 
    read_buffered_mat3(mat)
    ! Reads the mat3 from the buffer.
-     mat :: REALMAT3, OUT
+     mat :: MAT3{REAL}, OUT
      b,c,bsize,csize :: INT
      bsize=size(mat,2);     csize=size(mat,3)
      do c=1,csize
@@ -1067,33 +1235,33 @@ contains
      end
    end
 
-   write_buffered_cmat3(mat)
-   ! Writes the cmat3 to the buffer, and writes buffer to disk when full.
-     mat :: CPXMAT3, IN
+   write_buffered_cpxmat3(mat)
+   ! Writes the cpxmat3 to the buffer, and writes buffer to disk when full.
+     mat :: MAT3{CPX}, IN
      b,c,bsize,csize :: INT
      bsize=size(mat,2);    csize=size(mat,3)
      do c=1,csize
        do b=1,bsize
-         .write_buffered_cvec(mat(:,b,c))
+         .write_buffered_cpxvec(mat(:,b,c))
        end
      end
    end
 
-   read_buffered_cmat3(mat)
-   ! Reads the cmat3 from the buffer.
-     mat :: CPXMAT3, OUT
+   read_buffered_cpxmat3(mat)
+   ! Reads the cpxmat3 from the buffer.
+     mat :: MAT3{CPX}, OUT
      b,c,bsize,csize :: INT
      bsize=size(mat,2);     csize=size(mat,3)
      do c=1,csize
        do b=1,bsize
-         .read_buffered_cvec(mat(:,b,c))
+         .read_buffered_cpxvec(mat(:,b,c))
        end
      end
    end
 
    write_buffered_mat4(mat)
    ! Writes the mat4 to the buffer, and writes buffer to disk when full.
-     mat :: REALMAT4, IN
+     mat :: MAT4{REAL}, IN
      b,c,d,bsize,csize,dsize :: INT
      bsize=size(mat,2);     csize=size(mat,3);    dsize=size(mat,4)
      do d=1,dsize
@@ -1107,7 +1275,7 @@ contains
 
    read_buffered_mat4(mat)
    ! Reads the mat4 from the buffer.
-     mat :: REALMAT4, OUT
+     mat :: MAT4{REAL}, OUT
      b,c,d,bsize,csize,dsize :: INT
      bsize=size(mat,2);     csize=size(mat,3);    dsize=size(mat,4)
      do d=1,dsize
@@ -1119,9 +1287,9 @@ contains
      end
    end
 
-   write_buffered_cmat4(mat)
+   write_buffered_cpxmat4(mat)
    ! Writes the mat4 to the buffer, and writes buffer to disk when full.
-     mat :: CPXMAT4, IN
+     mat :: MAT4{CPX}, IN
      a,b,c,d,asize,bsize,csize,dsize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      csize=size(mat,3);    dsize=size(mat,4)
@@ -1136,9 +1304,9 @@ contains
      end
    end
 
-   read_buffered_cmat4(mat)
+   read_buffered_cpxmat4(mat)
    ! Reads the mat4 from the buffer.
-     mat :: CPXMAT4, OUT
+     mat :: MAT4{CPX}, OUT
      a,b,c,d,asize,bsize,csize,dsize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      csize=size(mat,3);    dsize=size(mat,4)
@@ -1153,9 +1321,9 @@ contains
      end
    end
 
-   write_buffered_cmat5(mat)
+   write_buffered_cpxmat5(mat)
    ! Writes the mat5 to the buffer, and writes buffer to disk when full.
-     mat :: CPXMAT5, IN
+     mat :: MAT5{CPX}, IN
      a,b,c,d,e,asize,bsize,csize,dsize,esize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      csize=size(mat,3);    dsize=size(mat,4)
@@ -1173,9 +1341,9 @@ contains
      end
    end
 
-   read_buffered_cmat5(mat)
+   read_buffered_cpxmat5(mat)
    ! Reads the mat5 from the buffer.
-     mat :: CPXMAT5, OUT
+     mat :: MAT5{CPX}, OUT
      a,b,c,d,e,asize,bsize,csize,dsize,esize :: INT
      asize=size(mat,1);    bsize=size(mat,2)
      csize=size(mat,3);    dsize=size(mat,4)
