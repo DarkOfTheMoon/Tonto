@@ -188,14 +188,6 @@ module MOL
 !
 !   BIN :: optimise_thermals
 !   ! Whether to optimise the thermal parameters
-!
-!   TEXTFILE, PTR :: in DEFAULT_NULL
-!   ! Input file for this molecule
-!
-!   TEXTFILE, PTR :: out DEFAULT_NULL
-!   ! Output file for the molecule
-!
-!   end
 
 contains
 
@@ -8395,6 +8387,31 @@ contains
       end
    end
 
+   prepare_roby_atom(a) [leaky]
+   ! prepares the atom "a" for roby population
+   ! analysis
+     INT :: a,n_no
+     MOL, PTR :: mol
+     mol.create
+     .make_molecule_from_atom(a,mol)
+     mol.scfdata.output = FALSE
+     mol.scf
+     mol.make_ao_density_matrix
+     mol.pointgroup.create("oh")
+     mol.symmetrise(mol.density_matrix)
+     mol.make_natural_orbitals
+     .atom(a).natural_orbitals => mol.natural_orbitals
+     .atom(a).occupation       => mol.occupation
+     mol.atom.nullify_ptr_part     ! do not destroy these
+     nullify(mol.natural_orbitals) ! do not destroy this
+     nullify(mol.occupation)       ! do not destroy this
+     nullify(mol.basis)            ! do not destroy this
+     mol.destroy
+     n_no = .atom(a).occupation.restricted.no_of_elements_larger_than(0.05d0)
+     stdout.show("n_no=",n_no)
+     .atom(a).put_natural_orbitals
+   end
+
    make_ANO_data [leaky]
    ! Prepare the restricted atomic natural orbital (ANO) data 
       INT :: k,u,n_no, j
@@ -8413,10 +8430,12 @@ contains
         mol.make_natural_orbitals
         .atom(u).natural_orbitals => mol.natural_orbitals
         .atom(u).occupation       => mol.occupation
+        .atom(u).energy = mol.scfdata.energy
         do j = u+1,.n_atom
            if (.atom_kind(j)/=k) cycle
            .atom(j).natural_orbitals => .atom(u).natural_orbitals
            .atom(j).occupation       => .atom(u).occupation
+           .atom(j).energy = .atom(u).energy
         end
         mol.atom.nullify_ptr_part     ! do not destroy these
         nullify(mol.natural_orbitals) ! do not destroy this
@@ -8449,10 +8468,12 @@ contains
          mol.make_natural_orbitals
          .atom(u).natural_orbitals => mol.natural_orbitals
          .atom(u).occupation       => mol.occupation
+         .atom(u).energy = mol.scfdata.energy
          do a = u+1,.n_atom
             if (.atom_kind(a)/=k) cycle
             .atom(a).natural_orbitals => .atom(u).natural_orbitals
             .atom(a).occupation       => .atom(u).occupation
+            .atom(a).energy= .atom(u).energy
          end
          mol.atom.nullify_ptr_part     ! do not destroy these
          nullify(mol.natural_orbitals) ! do not destroy this
@@ -8467,34 +8488,51 @@ contains
 !----------------------------------------------------------!
 ! Roby population analysis - general analysis procedure    !
 !----------------------------------------------------------!
+ 
+   atomic_roby_population [leaky]
+   ! Do a Roby population analysis for the atoms in a molecule specified
+   ! on the input deck by roby_atom
+     IVEC, PTR :: roby_atom
+     INT :: a, n_roby_atom
+     .read_roby_atom(roby_atom)
+     n_roby_atom = size(roby_atom)
+     do a=1,n_roby_atom
+       .prepare_roby_atom(roby_atom(a))
+       .atom(1).pos = .atom(2).pos
+       stdout.put("Roby Population is: ")
+       stdout.put( .roby_population( (/ roby_atom(a) /) ))
+       stdout.flush
+     end
+   end 
+
    roby_population_analysis [leaky]
    ! Do a Roby population analysis of a molecule
-   VEC, PTR :: n1
-   MAT, PTR :: n2
-   INT :: n_atom, i, j
-   MAT, PTR :: index, cov
-      .prepare_roby_atoms
-      n_atom = .n_atom
-      n1.create(n_atom)           ! Roby populations
-      n2.create(n_atom,n_atom)    ! Roby pair populations
-      index.create(n_atom,n_atom) ! Bond indices between pairs of atoms
-      cov.create(n_atom,n_atom)   ! Covalency of each two atom bond
-      do i = 1,n_atom
-         n1(i) = .roby_population((/i/)) 
-      end
-      do i = 2,n_atom
-      do j = 1,i-1
-         n2(i,j) = .roby_population((/i,j/)) 
-         if (.mult /= 1) then 
-           .unrestricted_roby_gould_index((/i,j/), index(i,j), cov(i,j))
-         else
-           .roby_gould_bond_index((/i,j/), index(i,j), cov(i,j)) 
-         end
-      end
-      end
-      .put_roby_populations( n1, n2, index, cov)
-      n1.destroy; n2.destroy
-      cov.destroy; index.destroy
+     VEC, PTR :: n1
+     MAT, PTR :: n2
+     INT :: n_atom, i, j
+     MAT, PTR :: index, cov
+     .prepare_roby_atoms
+     n_atom = .n_atom
+     n1.create(n_atom)           ! Roby populations
+     n2.create(n_atom,n_atom)    ! Roby pair populations
+     index.create(n_atom,n_atom) ! Bond indices between pairs of atoms
+     cov.create(n_atom,n_atom)   ! Covalency of each two atom bond
+     do i = 1,n_atom
+       n1(i) = .roby_population((/i/)) 
+     end
+     do i = 2,n_atom
+     do j = 1,i-1
+       n2(i,j) = .roby_population((/i,j/)) 
+       if (.mult /= 1) then 
+         .unrestricted_roby_gould_index((/i,j/), index(i,j), cov(i,j))
+       else
+         .roby_gould_bond_index((/i,j/), index(i,j), cov(i,j)) 
+       end
+     end
+     end
+     .put_roby_populations( n1, n2, index, cov)
+     n1.destroy; n2.destroy
+     cov.destroy; index.destroy
    end
 
    put_roby_populations(n1, n2, index, covalency)
@@ -8623,32 +8661,65 @@ contains
    get_roby_shared_energy(roby_atom, en_groups) result(se)
    ! returns the shared energy of the atoms given in "roby_atom"
    ! as well as the energy of all sub-groups of atoms "en_groups"
-   IVEC :: roby_atom
-   VEC :: en_groups
-   DBL :: se, energy_subgroup 
-   INT :: m,k, n_k, n_roby_atom, i
-   IMAT, PTR :: comb_mat
-      n_roby_atom = size(roby_atom)
-      se = 0
-      do k = 1,n_roby_atom
-         n_k = n_roby_atom.choose(k)
-         comb_mat.create(k,n_k)
-         comb_mat = roby_atom.get_combination_matrix_from(k)
-         en_groups(k) = 0
-         do m = 1,n_k
-            energy_subgroup = .roby_energy(comb_mat(:,m))
-            stdout.put("Sub-Group Atoms" )
-            do i = 1, k
-               stdout.text( "   Atom: " // trim( comb_mat(k,m).to_str))
-            end
-            stdout.put("Sub-Group Energy")
-            stdout.put(energy_subgroup)
-            en_groups(k) = en_groups(k) + energy_subgroup
-         end      
-         comb_mat.destroy
-         se = se - ((-1)**k)*en_groups(k)
-      end
-      se = se + .atom(roby_atom).nuclear_energy
+     IVEC :: roby_atom
+     VEC :: en_groups
+     DBL :: se, energy_subgroup 
+     INT :: m,k, n_k, n_roby_atom, i
+     IMAT, PTR :: comb_mat
+     n_roby_atom = size(roby_atom)
+     se = 0
+     do k = 1,n_roby_atom
+       n_k = n_roby_atom.choose(k)
+       comb_mat.create(k,n_k)
+       comb_mat = roby_atom.get_combination_matrix_from(k)
+       en_groups(k) = 0
+       do m = 1,n_k
+         energy_subgroup = .roby_energy(comb_mat(:,m))
+         stdout.put("Sub-Group Atoms" )
+         do i = 1, k
+            stdout.text( "   Atom: " // trim( comb_mat(k,m).to_str))
+         end
+         stdout.put("Sub-Group Energy")
+         stdout.put(energy_subgroup)
+         en_groups(k) = en_groups(k) + energy_subgroup
+       end      
+       comb_mat.destroy
+       se = se - ((-1)**k)*en_groups(k)
+     end
+   end
+
+   get_roby_ionic_energy(roby_atom, roby_atom2) result(ionic_energy)
+   ! returns the shared energy of the atoms given in "roby_atom"
+   ! as well as the energy of all sub-groups of atoms "en_groups"
+   IVEC :: roby_atom, roby_atom2
+   DBL :: ionic_energy, energy_group1, energy_group2 
+   DBL :: ground1, ground2
+       energy_group1 = .roby_energy(roby_atom)  
+       energy_group2 = .roby_energy(roby_atom2) 
+       ground1 = .atom(roby_atom(1))%energy
+       ground2 = .atom(roby_atom(2))%energy
+       stdout.dash(dbl_fields=2)
+       stdout.flush
+       stdout.put("Sub-Group 1 Energy")
+       stdout.put(energy_group1)
+       stdout.flush
+       stdout.put("Sub-Group 2 Energy")
+       stdout.put(energy_group2)
+       stdout.flush
+       stdout.dash(dbl_fields=2)
+       stdout.flush
+       stdout.dash(dbl_fields=2)
+       stdout.flush
+       stdout.put("Sub-Group 1 Ground State Energy")
+       stdout.put(ground1)
+       stdout.flush
+       stdout.put("Sub-Group 2 Ground State Energy")
+       stdout.put(ground2)
+       stdout.flush
+       stdout.dash(dbl_fields=2)
+       stdout.flush
+       ionic_energy = energy_group1 - energy_group2 
+       ionic_energy = ionic_energy - ground1 + ground2
    end
 
    put_roby_shared_energy
@@ -8688,14 +8759,28 @@ contains
          stdout.flush
       end
       stdout.dash(int_fields=1,dbl_fields=1)
-      stdout.put("Nuclear Energy")
-      stdout.flush
-      stdout.dash(int_fields=1,dbl_fields=1)
-      stdout.put( .atom(roby_atom).nuclear_energy )
-      stdout.flush
-      stdout.dash(int_fields=1,dbl_fields=1)
       en_groups.destroy
       energy.destroy
+      roby_atom.destroy
+   end
+
+   put_roby_ionic_energy
+   ! Evaluate and put the Roby ionic energy for a group of atoms
+      INT :: n_roby_atom
+      IVEC, PTR :: roby_atom
+      .read_roby_atom(roby_atom)
+      n_roby_atom = size(roby_atom)
+      ENSURE(n_roby_atom == 2, "current routine only for two atoms")
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
+      stdout.text("Roby diatomic ionic energy analysis:")
+      stdout.flush
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
+      stdout.show("Ionic Energy =", .get_roby_ionic_energy( roby_atom(1:1), roby_atom(2:2)))
+      stdout.flush
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
       roby_atom.destroy
    end
 
@@ -8713,7 +8798,7 @@ contains
       D.restricted = P ! P is projected density
       .density_matrix => D
       .make_fock_matrix
-      energy = .scf_electronic_energy(D)
+      energy = .scf_electronic_energy(D) + .atom(roby_atom).nuclear_energy
       .density_matrix => D_save
       D.destroy
       P.destroy
