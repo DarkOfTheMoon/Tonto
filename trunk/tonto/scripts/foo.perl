@@ -20,6 +20,8 @@ $foofile = $ARGV[0];   # This is the .foo file to work on
 $f90file = $ARGV[1];   # This is the .f90 file produced
 $intfile = $ARGV[2];   # This is the .int file produced
 
+$typfile = 'foofiles/types.foo'; # Should be an argument?
+
 open(FOOFILE,$foofile) or die "$FOOFILE does not exist,";
 
 system("rm -f $f90file");
@@ -63,66 +65,25 @@ open(F90FILE,">".$f90file);
 ## -----------------------------------------------------------------------------
 
 %subst = (          # Substitutions .................
-    ' STR '           => ' STR(STR_SIZE) ',
-    ' BSTR '          => ' STR(BSTR_SIZE) ',
-    ' TRI '           => ' TRI(:) ',
-    ' VEC '           => ' VEC(:) ',
-    ' VECVEC '        => ' VECVEC(:) ',
-    ' IVEC '          => ' IVEC(:) ',
-    ' IVECVEC '       => ' IVECVEC(:) ',
-    ' CVEC '          => ' CVEC(:) ',
-    ' MATVEC '        => ' MATVEC(:) ',
-    ' MAT3VEC '       => ' MAT3VEC(:) ',
-    ' MAT4VEC '       => ' MAT4VEC(:) ',
-    ' STRVEC '        => ' STRVEC(:) ',
-    ' BINVEC '        => ' BINVEC(:) ',
-    ' FILEVEC '       => ' FILEVEC(:) ',
-    ' SHELLVEC '      => ' SHELLVEC(:) ',
-    ' BASISVEC '      => ' BASISVEC(:) ',
-    ' ATOMVEC '       => ' ATOMVEC(:) ',
-    ' REFLECTIONVEC ' => ' REFLECTIONVEC(:) ',
-    ' IRREPVEC '      => ' IRREPVEC(:) ',
-    ' MAT '           => ' MAT(:,:) ',
-    ' MAT3 '          => ' MAT3(:,:,:) ',
-    ' MAT4 '          => ' MAT4(:,:,:,:) ',
-    ' MAT5 '          => ' MAT5(:,:,:,:,:) ',
-    ' IMAT '          => ' IMAT(:,:) ',
-    ' IMAT3 '         => ' IMAT3(:,:,:) ',
-    ' IMAT4 '         => ' IMAT4(:,:,:,:) ',
-    ' CMAT '          => ' CMAT(:,:) ',
-    ' CMAT3 '         => ' CMAT3(:,:,:) ',
-    ' CMAT4 '         => ' CMAT4(:,:,:,:) ',
-    ' CMAT5 '         => ' CMAT5(:,:,:,:,:) ',
-    ' STR,'           => ' STR(STR_SIZE),',
-    ' BSTR,'          => ' STR(BSTR_SIZE),',
-    ' TRI,'           => ' TRI(:),',
-    ' VEC,'           => ' VEC(:),',
-    ' VECVEC,'        => ' VECVEC(:),',
-    ' IVEC,'          => ' IVEC(:),',
-    ' IVECVEC,'       => ' IVECVEC(:),',
-    ' CVEC,'          => ' CVEC(:),',
-    ' MATVEC,'        => ' MATVEC(:),',
-    ' MAT3VEC,'       => ' MAT3VEC(:),',
-    ' MAT4VEC,'       => ' MAT4VEC(:),',
-    ' STRVEC,'        => ' STRVEC(:),',
-    ' BINVEC,'        => ' BINVEC(:),',
-    ' FILEVEC,'       => ' FILEVEC(:),',
-    ' SHELLVEC,'      => ' SHELLVEC(:),',
-    ' BASISVEC,'      => ' BASISVEC(:),',
-    ' ATOMVEC,'       => ' ATOMVEC(:),',
-    ' REFLECTIONVEC,' => ' REFLECTIONVEC(:),',
-    ' IRREPVEC,'      => ' IRREPVEC(:),',
-    ' MAT,'           => ' MAT(:,:),',
-    ' MAT3,'          => ' MAT3(:,:,:),',
-    ' MAT4,'          => ' MAT4(:,:,:,:),',
-    ' MAT5,'          => ' MAT5(:,:,:,:,:),',
-    ' IMAT,'          => ' IMAT(:,:),',
-    ' IMAT3,'         => ' IMAT3(:,:,:),',
-    ' IMAT4,'         => ' IMAT4(:,:,:,:),',
-    ' CMAT,'          => ' CMAT(:,:),',
-    ' CMAT3,'         => ' CMAT3(:,:,:),',
-    ' CMAT4,'         => ' CMAT4(:,:,:,:),',
-    ' CMAT5,'         => ' CMAT5(:,:,:,:,:),',
+    ' STR '     => ' STR(STR_SIZE) ',
+    ' BSTR '    => ' STR(BSTR_SIZE) ',
+    ' STR,'     => ' STR(STR_SIZE),',
+    ' BSTR,'    => ' STR(BSTR_SIZE),',
+    'VEC '      => 'VEC(:) ',
+    'MAT '      => 'MAT(:,:) ',
+    'MAT3 '     => 'MAT3(:,:,:) ',
+    'MAT4 '     => 'MAT4(:,:,:,:) ',
+    'MAT5 '     => 'MAT5(:,:,:,:,:) ',
+    'VEC,'      => 'VEC(:),',
+    'MAT,'      => 'MAT(:,:),',
+    'MAT3,'     => 'MAT3(:,:,:),',
+    'MAT4,'     => 'MAT4(:,:,:,:),',
+    'MAT5,'     => 'MAT5(:,:,:,:,:),',
+    'VEC\*'     => 'VEC(:), PTR',
+    'MAT\*'     => 'MAT(:,:), PTR',
+    'MAT3\*'    => 'MAT3(:,:,:), PTR',
+    'MAT4\*'    => 'MAT4(:,:,:,:), PTR',
+    'MAT5\*'    => 'MAT5(:,:,:,:,:), PTR',
 );
 
 ## -----------------------------------------------------------------------------
@@ -132,6 +93,7 @@ open(F90FILE,">".$f90file);
 $scopeunit = "";
 $newscopeunitfound = 0;
 $ns = 0;                # Scoping unit depth
+$scope{$ns} = "name of the scoping unit";
 
 %scopeunits = (         # Patterns which match the start of a block
    'program'          =>  '^ *program *[a-zA-Z]',
@@ -164,10 +126,16 @@ $global_type{'stdout'} = 'TEXTFILE';
 $tonto_type{'type X'}{'field Y of X'} = 'type of the field Y of X';
 
 ## -----------------------------------------------------------------------------
+## Argument lists of subroutines
+## -----------------------------------------------------------------------------
+
+$arglist{"argument name"} = "argument index";
+
+## -----------------------------------------------------------------------------
 ## Analyse the types.foo file
 ## -----------------------------------------------------------------------------
 
-open(TYPES,'foofiles/types.foo');
+open(TYPES,$typfile);
 
 # Search for a type line
 
@@ -207,6 +175,7 @@ LINE: while (<FOOFILE>) {
 
 	####### Look for a new scoping unit ####################################
 
+
         foreach $key (keys %scopeunits) {
             $pattern = $scopeunits{$key};
 	    if ($inp =~ $pattern) {
@@ -244,6 +213,15 @@ LINE: while (<FOOFILE>) {
 		$inp =~ s/^[ ]*interface ([a-z]\w*)/   public $1_; interface $1_/;
 		$name = $1;
 	    }
+                                                       # Type def ##############
+
+            if ($scopeunit eq 'type' && $scope{$ns - 1} eq 'module') {
+
+               $type_name = $inp;
+               $type_name =~ s/.*type +//s;         # Get the type name
+               $type_name =~ s/_type\b.*//s;
+               $type_name = uc($type_name);
+            }
                                                        # end found #############
 	    elsif ($scopeunit eq 'empty-end' ) {
 
@@ -305,9 +283,11 @@ LINE: while (<FOOFILE>) {
 
 	elsif ($scopeunit eq 'program' || $scopeunit eq 'module') {
 
-	    # Analyse any variable declaration lines
+	    # Analyse any module variable declaration lines
 
-	    if ($inp =~ '[A-Z][A-Z0-9]*[^:]*::[ ]*' ) { &analyse_types($inp,\%global_type); }
+	    if ($inp =~ '[A-Z][A-Z0-9]*[^:]*::[ ]*' ) { 
+               &analyse_types($inp,\%global_type); 
+            }
 	}
 
 	###################################### Within a module interface #######
@@ -366,6 +346,7 @@ LINE: while (<FOOFILE>) {
 	    # Expecting a subroutine/function line 
 
 	    &analyse_rout_name($inp);
+	    &store_arglist($args_only);    # arguments
 
 	    if ($is_private) {                              # Use head name
                 $routine_pvt{$name} = "private";
@@ -401,14 +382,19 @@ LINE: while (<FOOFILE>) {
 
             %local_type = %global_type
 	}
-	########################################################################
+
+	############################################### Within a type def ######
 
 	elsif ($scope{$ns} eq 'type') {
-	    # Within a type declaration ###################
-	    # if (match(inp,"[A-Z][A-Z0-9]*[^:]*::[ ]*")) {
-	    #                              # Analyse the type declaration line
-	    #    analyse_tonto_derived_type(inp,module_name) 
-	    # }
+
+	    # Analyse a module type declaration body
+
+            if ($inp =~ '::' ) { 
+               $tonto_type{$type_name}{"--exists--"} = 1;      # Create hash 
+               &analyse_types($inp,$tonto_type{$type_name});
+               delete $tonto_type{$type_name}{"--exists--"};   # Delete token
+            }
+
 	}
 
 	################################# lines that contain a dot. ############
@@ -441,14 +427,9 @@ LINE: while (<FOOFILE>) {
             $fixedpost = $4;
             if ($fixedpost !~ s/^[(]/,/ )    { $fixedpost = ')' . $fixedpost; }
             $call = 'call ';
-          # $debug=0;
-          # if ($inp =~ /self\(aa\)/) { $debug = 1;}
             if ($first =~ '^[(=+-/*<>,:\w]') { $call = ''; }
 	    if (&has_field($arg, $rout))     { $inp = "${pre}${arg}%${rout}${post}"; }
 	    else                             { $inp = "${pre}${call}${rout}_(${arg}${fixedpost}"; }
-          # if ($debug==1) {
-          # print "arg=$arg, arg_type=$arg_type, rout=$rout, line=$inp";
-          # }
 	}
 	########################################################################
 	}
@@ -463,6 +444,8 @@ LINE: while (<FOOFILE>) {
 	    $pure == 0) {
 	    $first_active_line = 1;
             $inp =~ s/^ */   STACK(\"$module_name:$real_routine_name\") /;
+            undef %arglist;
+            $arglist{"argument name"} = "argument index";
 	}
 	if ($inp =~ /[)] *return *(!|$)/ ) {
 	    # found an "return" #######################
@@ -484,7 +467,27 @@ LINE: while (<FOOFILE>) {
 	    $inp =~ s/$pattern/$subst{$pattern}/;
         }
 
-        $inp =~ s{\[}{(/}g;
+        $inp =~ s/OPMAT[(]:,:[)]/OPMAT/;    # Remove OPMAT conversion ... this
+        $inp =~ s/OPVEC[(]:[)]/OPVEC/;      # should be changed!
+
+        if ($inp =~ '::') {
+           $inp =~ s/\* *::/, PTR ::/;      # Add remaining PTR conversion
+           $inp =~ s/\*, /, PTR,/;          # 
+        }
+
+                                            # Add NULL() statements for local PTR's
+    ##  if ($scope{$ns} eq 'subroutine' || $scope{$ns} eq 'function' ||
+    ##      $scope{$ns} eq 'module'     || $scope{$ns} eq 'program') {
+    ##     if ($inp =~ /, PTR/ && $inp =~ '::' && &contains_arg($inp) == 0 ) 
+    ##        { &add_nullify_stmt }
+    ##  }
+                                            # Add DEFAULT_NULL statements for type defs
+        if ($scope{$ns} eq 'type') {
+           if ($inp =~ /, PTR/ && $inp =~ '::' ) 
+              { $inp = $inp . " DEFAULT_NULL" }
+        }
+
+        $inp =~ s{\[}{(/}g;              # brackets [ ] are array constructors
         $inp =~ s{]}{/)}g;
     }
 
@@ -560,6 +563,8 @@ sub analyse_rout_name {
     $pre  = $PREMATCH;                    # preceding string for the routine
     $name = $1;                           # routine name
     $args = $POSTMATCH;
+    $args_only = $POSTMATCH;
+    $args_only =~ s/ *$//;
     if ($args =~ /^[^ (]* *[(]/) {        # this routine has arguments ....
 	$args = '(' . $POSTMATCH;         # routine arguments, including ( character + rest of line
 	$self = "(self,$POSTMATCH";       # insert self as first argument
@@ -580,6 +585,52 @@ sub analyse_rout_name {
 	$ns = $ns + 1;
         $scopeunit = 'subroutine';
 	$scope{$ns} = 'subroutine';
+    }
+}
+
+sub store_arglist {
+    local($args) = @_;
+
+    $narg = 0;
+    while ($args =~ /(\w+)/g) {
+       $narg++;
+       $arglist{$1} = $narg;
+    }
+}
+
+sub contains_arg {
+    local($name) = @_;
+    $has = 0;
+    foreach $arg (keys %arglist) { 
+       if ($name =~ /[:, ]${arg}(,| *$)/) {
+          $has = 1; 
+          last;
+       }
+    }
+    ($has);
+}
+
+sub add_nullify_stmt {
+
+    if ($inp =~ /::[ ]*/) {
+
+        $dec = $POSTMATCH;
+
+        # Look for the declared variables, repeatedly
+
+        while ($dec =~ /([a-zA-Z]\w*)/g) {
+
+           $var = $1;
+           if (&contains_arg($var) == 0) { 
+              $inp =~ s/$var/$var=>NULL()/;
+           }
+           else {
+              print 'FOO error: A routine argument and local variables have been declared';
+              print "           on the same line $linenum of $foofile";
+              $ExitValue = 1;
+              last LINE;
+           }
+        }
     }
 }
 
@@ -693,7 +744,6 @@ sub analyse_types {
 	    if ($var eq 'NULL') { last; }
 	    if ($var eq 'self') { last; }
 	    $type_of->{$var} = $typ;    # Add variable to the type table
-#           print "var=",$var,"type=",$typ;
         }
     }
 }
