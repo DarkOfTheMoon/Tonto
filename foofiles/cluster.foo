@@ -196,6 +196,7 @@ contains
      .generation_method   = CLUSTER_GENERATION_METHOD
      .start_with_fragment = FALSE
      .radius              = CLUSTER_RADIUS
+     .atom_density_cutoff = CLUSTER_ATOM_DENSITY_CUTOFF
      .defragment          = CLUSTER_DEFRAGMENT
      .info_made           = FALSE
      .asymmetric_cell_atom.create_copy(asymmetric_cell_atom)
@@ -230,10 +231,11 @@ contains
       .generation_method = method
       .generation_method.to_lower_case
       select case (.generation_method)
-         case("within_radius         "); .start_with_fragment = TRUE
-         case("unit_cell             ")
+         case("for_hirshfeld_surface "); .start_with_fragment = TRUE
          case("fragment              "); .start_with_fragment = TRUE
+         case("unit_cell             ")
          case("unit_cell_and_fragment"); .start_with_fragment = TRUE
+         case("within_radius         "); .start_with_fragment = TRUE
          case default;   UNKNOWN(.generation_method)
       end
    end
@@ -256,6 +258,7 @@ contains
       select case (word)
          case ("}                     ")  ! exit case
          case ("add_criteria=         "); .read_generation_method
+         case ("atom_density_cutoff=  "); .read_atom_density_cutoff
          case ("defragment=           "); .read_defragment
          case ("fragment_geometry=    "); .read_fragment_geometry
          case ("crystal_fragment=     "); .read_crystal_fragment
@@ -285,10 +288,11 @@ contains
       stdin.read(.generation_method)
       .generation_method.to_lower_case
       select case (.generation_method)
-         case("within_radius         "); .start_with_fragment = TRUE
-         case("unit_cell             ")
+         case("for_hirshfeld_surface "); .start_with_fragment = TRUE
          case("fragment              "); .start_with_fragment = TRUE
+         case("unit_cell             ")
          case("unit_cell_and_fragment"); .start_with_fragment = TRUE
+         case("within_radius         "); .start_with_fragment = TRUE
          case default;   UNKNOWN(.generation_method)
       end
    end
@@ -301,8 +305,20 @@ contains
    end
 
    read_radius
-   ! Read the radius of the cluster
+   ! Read the radius of the cluster. Usually, all atoms with this distance of
+   ! any atom in the fragment_geometry will appear in the cluster.
       stdin.read(.radius)
+   end
+
+   read_atom_density_cutoff
+   ! This number is used to define a cluster radius (see above). The radius is
+   ! defined from it, as the *largest* distance from any atom in the
+   ! asymmetric_cell_atom list where the atomic electron density becomes smaller
+   ! than this number. It requires that slater or coppens bases are defined for
+   ! the asymmetric_cell_atom's, and it requires that the generation method be
+   ! set to "for_hirshfeld_surface". It is primarily used for clusters generated
+   ! from a fragment, which will correctly produce the Hirshfeld surface.
+      stdin.read(.atom_density_cutoff)
    end
 
 !  read_partition_factors ::: leaky
@@ -354,11 +370,42 @@ contains
    ENSURE(.fragment_geometry.created,"no fragment geometry")
       if (.info_made) return
       .do_fragment_symop = .crystal.has_complete_fragment
+      if (.generation_method=="for_hirshfeld_surface") .make_radius
       .make_symop_list_and_geometry
       .find_fragment_atoms
       .make_fragment_parents_for_atom 
       .make_fragment_child_for_atom 
       .info_made = TRUE
+   end
+
+   make_radius
+   ! This routine makes an appropriate value for the cluster .radius in the
+   ! case where the .generation_method is "for_hirshfeld_surface". The radius is
+   ! made so that the accuracy of any atomic term neglected is smaller than
+   ! .atom_density_cutoff. The radius is defined to the nearesr 0.02 bohr (or
+   ! whatever is set as the default for the interpolator table spacing). Likewise,
+   ! we can't cope with atom density cutoffs where the distances are larger than
+   ! 30 bohr (or whatever is set as the default interpolator table length). To
+   ! do this properly we'd have to solve numerical equations for exactly where
+   ! the atom density equals the desired cutoff; that seems like too much
+   ! effort.
+   ENSURE(.generation_method=="for_hirshfeld_surface","generation_method is not 'for_hirshfeld_surface'")
+   ENSURE(.asymmetric_cell_atom.created,"no asymmetric cell atoms")
+   ENSURE(.asymmetric_cell_atom.has_all_slater_bases OR .asymmetric_cell_atom.has_all_coppens_bases,"no slater or coppens bases")
+   ENSURE(.atom_density_cutoff>ZERO,"atom density cutoff must be positve")
+     interpolator :: INTERPOLATOR*
+     interpolator.create
+     interpolator.set_table_eps(.atom_density_cutoff)
+     if (.asymmetric_cell_atom.has_all_slater_bases) then
+        .asymmetric_cell_atom.make_slater_interpolators(interpolator)
+        .radius = .asymmetric_cell_atom.max_interpolator_table_length
+        .asymmetric_cell_atom.destroy_slater_interpolators
+     else if (.asymmetric_cell_atom.has_all_coppens_bases) then
+        .asymmetric_cell_atom.make_coppens_interpolators(interpolator)
+        .radius = .asymmetric_cell_atom.max_interpolator_table_length
+        .asymmetric_cell_atom.destroy_coppens_interpolators
+     end
+     interpolator.destroy
    end
 
    make_symop_list_and_geometry ::: leaky, private
@@ -377,8 +424,10 @@ contains
      atom_added :: VEC{BIN}*
      pos :: VEC{REAL}(3)
      n_cells,n_cell_atoms,n_fragment_atoms,n_trial_atoms,i,n,c,u,a :: INT
+     tol :: REAL
      n_cell_atoms = .crystal.unit_cell_geometry.dim2
      n_fragment_atoms = .crystal.fragment_cell_geometry.dim2
+     tol = TOL(2)/maxval(.crystal.unitcell.length)
      ! The fragment is shifted by "offset" to the origin
      if (any(.fragment_offset/=0)) then
      .fragment_geometry = .fragment_geometry &
@@ -399,7 +448,7 @@ contains
      if (.start_with_fragment) then
        do n = 1,.n_fragment_atoms
          pos = .fragment_geometry(:,n)
-         i = big_cluster.column_index(pos)
+         i = big_cluster.column_index(pos,tol)
          ENSURE(i>0,"position of fragment atom not found in big_cluster")
          c = (i-1)/n_cell_atoms + 1            ! cell "c"
          u = i - (c-1)*n_cell_atoms            ! unit cell atom "u"
@@ -524,10 +573,11 @@ contains
      fragment_width = .crystal.cartesian_fragment_width
    ! fragment_length = sqrt(dot_product(fragment_width,fragment_width))
      select case (.generation_method)   
-       case("within_radius         "); max_dist = .radius + fragment_width
-       case("unit_cell             "); max_dist = ZERO
+       case("for_hirshfeld_surface "); max_dist = .radius + fragment_width
        case("fragment              "); max_dist = fragment_width
+       case("unit_cell             "); max_dist = ZERO
        case("unit_cell_and_fragment"); max_dist = fragment_width
+       case("within_radius         "); max_dist = .radius + fragment_width
        case default;                   UNKNOWN(.generation_method)       
      end
    end
@@ -697,31 +747,31 @@ contains
    ! .closest_fragment_atom_to_atom.shrink(.n_atoms)
    end
 
-   is_new_xyz_atom(pos,xyz) result (res)
-   ! Return TRUE only if "pos" (in crystal coordinates) is to be added to
-   ! .geometry.  IMPORTANT NOTE: "xyz" is "pos" in *cartesian* coordiantes!!!
-   ! This is to save some computation.
-     pos,xyz :: VEC{REAL}(3), IN
-     res :: BIN
-     res = FALSE
-     if (NOT .geometry(:,1:.n_atoms).has_column(pos)) then
-       select case (.generation_method)
-         ! Add only those atoms proximate to the fragment
-         case("within_radius         ")
-                 res = .minimum_distance2_to_xyz(xyz)<=.radius*.radius
-         ! Add only those atoms in the first unit cell
-         case("unit_cell             ")
-                 res = .is_in_unit_cell(pos)
-         ! Add only those atoms in the initial fragment
-         case("fragment              ")
-                 res = .minimum_distance2_to_xyz(xyz)<= TOL(10)
-         ! Add only those atoms in the first unit cell or initial fragment
-         case("unit_cell_and_fragment")
-                 res = .minimum_distance2_to_xyz(xyz)<= TOL(10) OR .is_in_unit_cell(pos)
-         case default;    UNKNOWN(.generation_method)
-       end
-     end
-   end
+!   is_new_xyz_atom(pos,xyz) result (res)
+!   ! Return TRUE only if "pos" (in crystal coordinates) is to be added to
+!   ! .geometry.  IMPORTANT NOTE: "xyz" is "pos" in *cartesian* coordiantes!!!
+!   ! This is to save some computation.
+!     pos,xyz :: VEC{REAL}(3), IN
+!     res :: BIN
+!     res = FALSE
+!     if (NOT .geometry(:,1:.n_atoms).has_column(pos)) then
+!       select case (.generation_method)
+!         ! Add only those atoms proximate to the fragment
+!         case("within_radius         ")
+!                 res = .minimum_distance2_to_xyz(xyz)<=.radius*.radius
+!         ! Add only those atoms in the first unit cell
+!         case("unit_cell             ")
+!                 res = .is_in_unit_cell(pos)
+!         ! Add only those atoms in the initial fragment
+!         case("fragment              ")
+!                 res = .minimum_distance2_to_xyz(xyz)<= TOL(10)
+!         ! Add only those atoms in the first unit cell or initial fragment
+!         case("unit_cell_and_fragment")
+!                 res = .minimum_distance2_to_xyz(xyz)<= TOL(10) OR .is_in_unit_cell(pos)
+!         case default;    UNKNOWN(.generation_method)
+!       end
+!     end
+!   end
 
    is_new_atom(pos) result (res)
    ! Return TRUE only if "pos" position (in crystal coordinates) is to be added
@@ -734,15 +784,17 @@ contains
          ! Add only those atoms proximate to the fragment
          case("within_radius         ")
                  res = .minimum_distance_to(pos)<=.radius
+         case("for_hirshfeld_surface ")
+                 res = .minimum_distance_to(pos)<=.radius
          ! Add only those atoms in the first unit cell
          case("unit_cell             ")
                  res = .is_in_unit_cell(pos)
          ! Add only those atoms in the initial fragment
          case("fragment              ")
-                 res = .minimum_distance_to(pos)<= TOL(10)
+                 res = .minimum_distance_to(pos)<= TOL(6)
          ! Add only those atoms in the first unit cell or initial fragment
          case("unit_cell_and_fragment")
-                 res = .minimum_distance_to(pos)<= TOL(10) OR .is_in_unit_cell(pos)
+                 res = .minimum_distance_to(pos)<= TOL(6) OR .is_in_unit_cell(pos)
          case default;    UNKNOWN(.generation_method)
        end
      end
@@ -762,8 +814,9 @@ contains
      symop :: VEC{INT}(4)
      a,f,q,p,n,n_col :: INT
      disordered,added :: BIN
-     occ :: REAL
-     if (.geometry(:,1:.n_atoms).has_column(pos,eps=TOL(2))) return
+     tol,occ :: REAL
+     tol = TOL(2)/maxval(.crystal.unitcell.length)
+     if (.geometry(:,1:.n_atoms).has_column(pos,eps=tol)) return
      ! Check asymmetric cell atom for unit cell atom "u" is OK and warn if disordered
      a = .crystal.asym_atom_for_unit_cell_atom(u) 
      occ = .asymmetric_cell_atom(a).site_occupancy
@@ -910,8 +963,9 @@ contains
    ! Return TRUE only if the atom with position "pos" is in the first unit cell.
      pos :: VEC{REAL}(3)
      res :: BIN
-     error :: REAL, parameter = TOL(8)
-     res = all(pos(:)>=-error AND pos(:)<ONE-error)
+     tol :: REAL
+     tol = TOL(4)/maxval(.crystal.unitcell.length)
+     res = all(pos(:)>=-tol AND pos(:)<ONE-tol)
    end
 
    is_near_origin(pos) result (res) ::: private
@@ -935,7 +989,7 @@ contains
      i,j :: INT
      found :: BIN
      tol :: REAL
-     tol = TOL(3)/maxval(.crystal.unitcell.length)
+     tol = TOL(2)/maxval(.crystal.unitcell.length)
      .is_fragment_atom.create(.n_atoms)
      .is_fragment_atom = FALSE
      do j = 1,.n_fragment_atoms ! loop over fragment atoms

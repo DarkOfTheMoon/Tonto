@@ -143,6 +143,14 @@ contains
       end
    end
 
+   set_labels(labels)
+   ! Set the "labels" ONLY for the atoms; use the above routine to set the
+   ! atomic numbers as well.
+      labels :: VEC{STR}
+      ENSURE(labels.dim==.dim,"wrong length for labels")
+      self(:).label = labels
+   end
+
    set_coppensbasis_labels(labels)
    ! Set the .coppensbasis "labels".
       labels :: VEC{STR}
@@ -358,15 +366,16 @@ contains
       self :: PTR
       cif :: CIF
       fs,fc,fo,fu,fl,fail :: BIN
-      IDs,labels :: VEC{STR}*
+      IDs,labels,symbols :: VEC{STR}*
       i,j,ind :: INT
       pos,U :: MAT{REAL}*
-      ! Read the site labelss FIRST because these seem to correlate with
+      ! Read the site labels FIRST because these seem to correlate with
       ! the anisotropic U's.
-      cif.read_looped_item("_atom_site_label",labels,fs)
-      if (NOT fs) &
-      cif.read_looped_item("_atom_site_type_symbol",labels,fs)
-      ENSURE(fs,"no atom site label information in CIF file")
+      nullify(symbols)
+      nullify(labels)
+      cif.read_looped_item("_atom_site_type_symbol",symbols,fs)
+      cif.read_looped_item("_atom_site_label",labels,fl)
+      ENSURE(fs OR fl,"no atom site label information in CIF file")
       ! Read the site coordinates, and possibly occupancies
       cif.find_looped_item("_atom_site_occupancy",fo)
       if (fo) then
@@ -387,7 +396,12 @@ contains
       ! Assign the CIF info to the atom list
       .destroy
       .create(labels.dim)
-      .set_labels_and_atomic_numbers(labels)
+      if (symbols.created) then
+         .set_labels_and_atomic_numbers(symbols) ! For Z's
+         if (labels.created) .set_labels(labels) ! For U's
+      else if (labels.created) then
+         .set_labels_and_atomic_numbers(labels)  ! This may not work
+      end
       self(:).pos(1) = pos(1,:)
       self(:).pos(2) = pos(2,:)
       self(:).pos(3) = pos(3,:)
@@ -396,6 +410,7 @@ contains
       pos.destroy
       IDs.destroy
       labels.destroy
+      symbols.destroy
       ! Now read U tensor if it is there ...
       IDs.create(6)
       IDs = ["_atom_site_aniso_U_11", &
@@ -3707,6 +3722,30 @@ contains
       atom_kind.destroy
    end
 
+   make_slater_d_interpolators(interpolator) ::: leaky
+   ! Make a unique set of slaterbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ! NOTE: This requires careful destroying.
+   ! NOTE: any existing interpolators are destroyed first
+      interpolator :: INTERPOLATOR*, optional
+      unique_atom,atom_kind :: VEC{INT}*
+      n_kind,k,u,j :: INT
+      .make_unique_atom_list(unique_atom,atom_kind,n_kind)
+      do k = 1,n_kind   ! Get interpolators only for unique atoms
+        u = unique_atom(k)
+        self(u).slaterbasis.make_d_interpolators(interpolator)
+      ! self(u).slaterbasis.interpolator.put
+        do j = u+1,.dim ! ... pointer assign the rest
+           if (atom_kind(j)/=k) cycle
+           self(j).slaterbasis.interpolator => self(u).slaterbasis.interpolator
+           self(j).slaterbasis.d_interpolator => self(u).slaterbasis.d_interpolator
+           self(j).slaterbasis.d2_interpolator => self(u).slaterbasis.d2_interpolator
+        end
+      end
+      unique_atom.destroy
+      atom_kind.destroy
+   end
+
    destroy_slater_interpolators ::: leaky
    ! Destroy the slater interpolators for each atom. NOTE: This assumes that
    ! they were created only by the routine "make_slater_interpolators".
@@ -3717,9 +3756,13 @@ contains
       do k = 1,n_kind   ! Destroy interpolators only for unique atoms
         u = unique_atom(k)
         self(u).slaterbasis.interpolator.destroy
+        self(u).slaterbasis.d_interpolator.destroy
+        self(u).slaterbasis.d2_interpolator.destroy
         do j = u+1,.dim ! ... nullify the rest
            if (atom_kind(j)/=k) cycle
            nullify(self(j).slaterbasis.interpolator)
+           nullify(self(j).slaterbasis.d_interpolator)
+           nullify(self(j).slaterbasis.d2_interpolator)
         end
       end
       unique_atom.destroy

@@ -5443,7 +5443,7 @@ contains
      k_pts :: MAT{REAL}*
      ft :: VEC{CPX}*
      ft.create(.crystal.n_refl)
-     ft= .crystal.F_pred
+     ft= .crystal.data.F_pred
      k_pts.create(.crystal.n_refl,3)
      .crystal.make_k_pts(k_pts)
      .add_dispersion_correction(ft,k_pts)
@@ -5494,14 +5494,14 @@ contains
 
    make_structure_factors
    ! Make the structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
       sf_eq,Fc :: VEC{CPX}*
       k_pts :: MAT{REAL}*
       orb_kind :: STR
       complx :: BIN
       .crystal.assign_xray
-   ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
-   ENSURE(.density_matrix.created, "no density matrix")
       Fc.create(.crystal.n_refl)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
       .crystal.make_unique_SF_k_pts(k_pts)
@@ -9778,6 +9778,7 @@ contains
       initial_mos :: STR
       initial_mos = .scfdata.initial_mos
       select case (initial_mos)
+         case("existing            ") ; ENSURE(.molecular_orbitals.created(.scfdata.molecular_orbital_kind),"no molecular orbitals")
          case("restricted          ") ; .read_old_MOs_guess
          case("unrestricted        ") ; .read_old_MOs_guess
          case("general             ") ; .read_old_MOs_guess
@@ -14981,6 +14982,45 @@ contains
      grid.destroy
    end
 
+   make_promolecule_density_grid(density,d_density,d2_density,pt)
+   ! Work out the promolecule electron "density" , its 1st derivative
+   ! "d_density", and 2nd derivative "d2_density" for the supplied points "pt".
+   ! The density is calculated from the slater basis if available; otherwise
+   ! from the coppens basis; otherwise from the atomic natural orbitals and the
+   ! atomic gaussian basis set.
+     self :: IN
+     density :: VEC{REAL}, OUT
+     d_density :: MAT{REAL}, OUT
+     d2_density :: MAT3{REAL}, OUT
+     pt :: MAT{REAL}, IN
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.atom.has_all_density_data,"no atomic orbitals")
+   ENSURE(density.dim==d_density.dim2,"inconsistent density grids")
+   ENSURE(density.dim==d2_density.dim3,"inconsistent density grids")
+   ENSURE(d_density.dim1==3,"wrong dim1 for d_density grid")
+   ENSURE(d2_density.dim1==3,"wrong dim1 for d2_density grid")
+   ENSURE(d2_density.dim2==3,"wrong dim2 for d2_density grid")
+     grid :: VEC{REAL}*
+     d_grid :: MAT{REAL}*
+     d2_grid :: MAT3{REAL}*
+     a :: INT
+     grid.create(density.dim)
+     d_grid.create(3,density.dim)
+     d2_grid.create(3,3,density.dim)
+     density = ZERO
+     d_density = ZERO
+     d2_density = ZERO
+     do a = 1,.n_atom
+        .atom(a).make_density_grid(grid,d_grid,d2_grid,pt) ! this incorporates a skip step
+        density = density + grid
+        d_density = d_density + d_grid
+        d2_density = d2_density + d2_grid
+     end
+     d2_grid.destroy
+     d_grid.destroy
+     grid.destroy
+   end
+
    make_div_jp_density_grid
    ! Work out the divergence of the paramagnetic current density on ".grid"
    ! using ".natural orbitals".  A Gnuplot ascii file is generated.
@@ -15063,6 +15103,31 @@ contains
      end
    end
 
+   zero_flux_surface_plot ::: leaky
+   ! Do one of the many kinds of isosurface plot calculations
+   ENSURE(.isosurface.created,"no isosurface")
+     self :: target
+     saved_self => self ! Note this !
+     .set_d_interpolator_info(.isosurface)
+     select case (.isosurface.iso_kind)
+      ! case("delta_density      "); .isosurface.cubify(delta_density_grid)
+      ! case("elf                "); .isosurface.cubify(MOLECULE:ELF_grid)
+      ! case("electric_potential "); .isosurface.cubify(MOLECULE:electric_potential_grid)
+      ! case("electron_density   "); .isosurface.cubify(MOLECULE:electron_density_grid)
+      ! case("fermi_mobility     "); .isosurface.cubify(MOLECULE:fermi_mobility_grid)
+      ! case("laplacian_density  "); .isosurface.cubify(MOLECULE:laplacian_density_grid)
+      ! case("orbital            "); .isosurface.cubify(MOLECULE:orbital_grid)
+      ! case("orbital_density    "); .isosurface.cubify(MOLECULE:orbital_density_grid)
+        case("promolecule_density"); .isosurface.zero_flux_cubify(MOLECULE:promolecule_d_density_grid)
+      ! case("spin_density       "); .isosurface.cubify(MOLECULE:spin_density_grid)
+      ! case("stockholder_density"); .isosurface.cubify(MOLECULE:stockholder_density_grid)
+      ! case("true_fermi_mobility"); .isosurface.cubify(MOLECULE:true_fermi_mobility_grid)
+      ! case("tsirelson_elf      "); .isosurface.cubify(MOLECULE:Tsirelson_ELF_grid)
+      ! case("grad_rho_on_rho    "); .isosurface.cubify(MOLECULE:grad_rho_on_rho_grid)
+      ! case default;                UNKNOWN(.isosurface.iso_kind)
+     end
+   end
+
    plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
    ! isosurface---useful for mapping properties on a surface.
@@ -15121,6 +15186,35 @@ contains
      .saved.isosurface => saved_isosurface
    end
 
+   saved_zero_flux_surface_plot ::: leaky
+   ! Do one of the many kinds of isosurface plot calculations
+   ENSURE(.isosurface.created,"no isosurface")
+   ENSURE(.saved.created,"no saved molecule")
+     saved_isosurface :: ISOSURFACE*
+     saved_self => .saved ! Note this !
+     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
+     .saved.isosurface => .isosurface      ! ... or this
+     .set_d_interpolator_info(.isosurface)
+     select case (.isosurface.iso_kind)
+      ! case("delta_density      "); .isosurface.cubify(delta_density_grid)
+      ! case("elf                "); .isosurface.cubify(MOLECULE:ELF_grid)
+      ! case("electric_potential "); .isosurface.cubify(MOLECULE:electric_potential_grid)
+      ! case("electron_density   "); .isosurface.cubify(MOLECULE:electron_density_grid)
+      ! case("fermi_mobility     "); .isosurface.cubify(MOLECULE:fermi_mobility_grid)
+      ! case("laplacian_density  "); .isosurface.cubify(MOLECULE:laplacian_density_grid)
+      ! case("orbital            "); .isosurface.cubify(MOLECULE:orbital_grid)
+      ! case("orbital_density    "); .isosurface.cubify(MOLECULE:orbital_density_grid)
+        case("promolecule_density"); .isosurface.zero_flux_cubify(MOLECULE:promolecule_d_density_grid)
+      ! case("spin_density       "); .isosurface.cubify(MOLECULE:spin_density_grid)
+      ! case("stockholder_density"); .isosurface.cubify(MOLECULE:stockholder_density_grid)
+      ! case("true_fermi_mobility"); .isosurface.cubify(MOLECULE:true_fermi_mobility_grid)
+      ! case("tsirelson_elf      "); .isosurface.cubify(MOLECULE:Tsirelson_ELF_grid)
+      ! case("grad_rho_on_rho    "); .isosurface.cubify(MOLECULE:grad_rho_on_rho_grid)
+      ! case default;                UNKNOWN(.isosurface.iso_kind)
+     end
+     .saved.isosurface => saved_isosurface
+   end
+
    saved_plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
    ! isosurface---useful for mapping properties on a surface---but using the
@@ -15168,6 +15262,25 @@ contains
       else ! always make default interpolators for stockholder or promolecule isosurfaces
          if (.slaterbasis.created)  .atom.make_slater_interpolators
          if (.coppensbasis.created) .atom.make_coppens_interpolators
+      end
+   end
+
+   set_d_interpolator_info(isosurface) ::: leaky
+   ! Set the interpolator info for all the atoms if the isosurface kind is such
+   ! that interpolation tables could be beneficial. This should be called just
+   ! prior to doing the plot to take advantage of speed-ups.
+      isosurface :: ISOSURFACE
+   ENSURE(.atom.created,"no atoms")
+      plot_kind :: STR
+      plot_kind = isosurface.iso_kind
+      if (plot_kind/="promolecule_density") return
+      ! If we get here, the interpolator information will be used
+      if (isosurface.interpolator.created) then ! use interpolator as the default
+         if (.slaterbasis.created)  .atom.make_slater_d_interpolators(isosurface.interpolator)
+       ! if (.coppensbasis.created) .atom.make_coppens_interpolators(isosurface.interpolator)
+      else ! always make default interpolators for stockholder or promolecule isosurfaces
+         if (.slaterbasis.created)  .atom.make_slater_d_interpolators
+       ! if (.coppensbasis.created) .atom.make_coppens_interpolators
       end
    end
 
@@ -15339,6 +15452,17 @@ contains
       pt :: MAT{REAL}, IN
       self :: MOLECULE*; self => saved_self
       .make_promolecule_density_grid(g,pt)
+   end
+
+   promolecule_d_density_grid(g,dg,d2g,pt) ::: selfless
+   ! Work out the promolecule density grid "g", its derivative "dg", and second
+   ! derivative "d2g" for a series of points "pt".
+      g   :: VEC{REAL}, OUT
+      dg  :: MAT{REAL}, OUT
+      d2g :: MAT3{REAL}, OUT
+      pt  :: MAT{REAL}, IN
+      self :: MOLECULE*; self => saved_self
+      .make_promolecule_density_grid(g,dg,d2g,pt)
    end
 
 ! ****************************
