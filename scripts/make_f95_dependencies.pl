@@ -21,10 +21,10 @@
 #
 # The script can handle multiple modules in the source file, in which case they
 # are all targets in the single "make" dependency rule.  The list of these
-# modules is saved as a variable, called $(x.mods), where x is the
+# modules is saved as a variable, called $(x.module_list), where x is the
 # directory/suffix stripped part of the source file.  The beauty of this is that
-# in GNU make, $($(*F).mods) gives you all the targets, and $^ gives you all the
-# prerequisites!
+# in GNU make, $($(@F).module_list) gives you all the targets, and $^ gives you
+# all the prerequisites!
 #
 # The script also has the ability to not output for certain modules appearing in
 # "use" statements.  This is probably a good idea if you use modules supplied by
@@ -214,15 +214,15 @@ if (defined $prog) {
 open(OUTFILE,">" . $depsfile) or die "Cannot open $depsfile for writing.\n";
 
 if (defined @modlist) {
-    # This defines the macro $(base.prog_ext.mods) as the list of modules
-    # produced.  Also, macros like $(modname.$mod_ext.mods) are also produced
-    # which contain the same information.
+    # This defines the macro $(base.prog_ext.module_list) as the list of modules
+    # produced.  Also, macros like $(modname.$mod_ext.module_list) are also
+    # produced which contain the same information.
     print OUTFILE "#Variables containing complete list of generated modules:\n";
-    $word = "$base.$prog_ext.mods :=";
+    $word = "$base.$prog_ext.module_list :=";
     &PrintWords($word, @modlist);
       print OUTFILE "\n";
     foreach $module (@moddefs) {
-      $name = $module . ".mods";
+      $name = $module . ".module_list";
       $word = "$name :=";
       &PrintWords($word, @modlist);
       print OUTFILE "\n";
@@ -233,7 +233,7 @@ if (defined @modlist) {
     # and object filename.
     print OUTFILE "#Associate an object file with the generated modules:\n";
     foreach $module (@moddefs) {
-        $name = $module . ".$prog_ext";
+        $name = $module . ".associated_object";
         print OUTFILE "$name := \$(objdir)\/$base.$prog_ext\n";
     }
     print OUTFILE "\n";
@@ -252,7 +252,7 @@ if (defined @incs || defined @modules) {
 
 print OUTFILE "#Dependencies of all files produced:\n";
 if (defined @modlist) {
-  $word = "$fullfile \$($base.$prog_ext.mods) :";
+  $word = "$fullfile \$($base.$prog_ext.module_list) :";
   &PrintWords($word, $filename, @dependencies, &uniq(@incs));
 } else {
   $word = "$fullfile :";

@@ -1,9 +1,9 @@
 # Compare two .mod files which are given on the command line.
 #
-# Note that if a compiler is specified on the command line that the script does
-# not know about, then it is not an error.  In such a case the script is like
-# "cmp -s".  This is to allow portability to untested systems without freeking
-# out the end-user.
+# Note that if a platform (i.e. a compiler and operting system) is specified on
+# the command line that the script does not know about, then it is not an error.
+# In such a case the script is like "cmp -s".  This is to allow portability to
+# untested systems without freeking out the end-user.
 #
 #*******************************************************************************
 # (c) Daniel Grimwood, University of Western Australia, 2000-2002
@@ -13,13 +13,16 @@
 #*******************************************************************************
 
 #*******************************************************************************
-# Set up the hash array of compilers known, and the subroutine to call for each
-# compiler.
+# Set up the hash array of platform known, and the subroutine to call for each
+# platform. 
+#
+# In most cases the module file format will probably only depend on the
+# compiler, but we allow it to depend on the OS just in case.
 #
 # When writing the routines, remember that "-" is reserved, so change it to "_".
 # Don't forget to write the routine at the bottom of the script.
-my (%compiler_array);
-%compiler_array = (
+my (%platform_array);
+%platform_array = (
   "ABSOFT-f95-on-LINUX"    =>  ABSOFT_f95_on_LINUX,
   "COMPAQ-f90-on-OSF1"     =>  COMPAQ_f90_on_OSF1,
   "COMPAQ-f95-on-OSF1"     =>  COMPAQ_f95_on_OSF1,
@@ -49,9 +52,9 @@ $file2 = $ARGV[$n_arg-1];
 while (@ARGS) {
   $arg=shift @ARGS;
   for ($arg) {
-    /^-compiler/ && do {
+    /^-platform/ && do {
       $fc=shift @ARGS;
-      defined $fc || do {print STDERR "Error : no compiler specified\n"; $argerr=1};
+      defined $fc || do {print STDERR "Error : no platform specified\n"; $argerr=1};
       last;
     };
     print STDERR ("Error : unexpected argument $arg\n");
@@ -62,14 +65,14 @@ while (@ARGS) {
 if ($argerr==1) {
   warn(
     "\nUsage :\n",
-    "\t perl -w compare_module_file.perl [-compiler something] \\\n",
+    "\t perl -w compare_module_file.perl [-platform platform_id] \\\n",
     "\t\t filename1 filename2 \n",
     "\n",
     "Where :\n",
     "\tfilename1 and filename2 are the two files to compare.\n",
-    "\t\"-compiler something\" specifies the name of the compiler.\n");
-   print STDERR "\nThe following list of compilers are recognised by -compiler :\n";
-   foreach $word (keys %compiler_array) { print STDERR "\t$word\n"; }
+    "\t\"-platform platform_id\" specifies the name of the platform.\n");
+   print STDERR "\nThe following list of platforms are recognised by -platform :\n";
+   foreach $word (keys %platform_array) { print STDERR "\t$word\n"; }
    print STDERR "\n";
    exit 1;
 }
@@ -96,7 +99,7 @@ open(FILE2,$file2) or die "Cannot open $file2\n";
 # comparison.
 @skip_array = ();
 if (defined $fc) {
-  $routine = $compiler_array{$fc};
+  $routine = $platform_array{$fc};
   defined ($routine) && &$routine; # call the corresponding subroutine to $fc
 }
 $result = &do_compare();  # do the actual comparison
@@ -122,7 +125,7 @@ sub do_compare {
 }
 
 #*******************************************************************************
-# User defined subroutines for each compiler...
+# User defined subroutines for each platform...
 
 sub COMPAQ_f90_on_OSF1 {
   push @skip_array,(25,26,27,45,46,47);
