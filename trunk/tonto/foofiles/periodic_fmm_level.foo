@@ -49,6 +49,7 @@ contains
 
    nullify_ptr_part
    ! Nullify the pointer parts of the type.
+      nullify(.crystal)
       nullify(.charges)
       nullify(.positions)
       nullify(.subbox_centres)
@@ -57,6 +58,7 @@ contains
  
    destroy_ptr_part
    ! Destroy the pointer parts of the type.
+      nullify(.crystal) ! never destroy this
       .charges.destroy
       .positions.destroy
       .subbox_centres.destroy
@@ -81,9 +83,13 @@ contains
      .scale_factor            = ONE
      .crystallite_side_length = mol.scfdata.crystallite_side_length
      .divisions               = mol.scfdata.unitcell_axis_divisions
-     .subbox_radius_0         = .longest_subbox_body_diagonal
+     .subbox_radius_0         = .enclosing_subbox_radius
      .unitcell_charge         = TWO*sum(mol.saved.atom.atomic_number)*mol.crystal.Z
      .l_max                   = 0
+ ! .crystal.unitcell.direct_matrix = &
+ ! .crystal.unitcell.direct_matrix/.crystal.unitcell.direct_matrix(1,1)*NINE
+ ! .crystal.unitcell.inverse_matrix = &
+ ! .crystal.unitcell.inverse_matrix/.crystal.unitcell.inverse_matrix(1,1)/NINE
    end
  
    set_number_of_divisions(n_div)
@@ -152,8 +158,8 @@ contains
      res = maxval(.crystal.unitcell.length)
    end
  
-   longest_subbox_body_diagonal result (res)
-   ! Return the longest subbox body diagonal. This is used to determine the
+   enclosing_subbox_radius result (res)
+   ! Return HALF the longest subbox body diagonal. This is used to determine the
    ! radius of an enclosing sphere for calculating the maximum order "L" of
    ! multipoles to use in a multipole expansion.
      self :: IN
@@ -162,14 +168,14 @@ contains
    ENSURE(.crystal.unitcell.info_made,"no crystal unitcell info")
      i :: INT
      c :: MAT{REAL}(3,4)
-     sub_lengths,centre,diag :: VEC{REAL}(3)
+     half_sub_lengths,centre,diag :: VEC{REAL}(3)
      ! Half the length of a subbox along each lattice direction.
-     sub_lengths = .scale_factor/(TWO*.divisions)
+     half_sub_lengths = .scale_factor/(TWO*.divisions)
      ! The four inversion-unique corners of the (first) subbox
-     c(:,1) = [ 1, 1, 1]*sub_lengths
-     c(:,2) = [-1, 1, 1]*sub_lengths
-     c(:,3) = [ 1,-1, 1]*sub_lengths
-     c(:,4) = [ 1, 1,-1]*sub_lengths
+     c(:,1) = [ 1, 1, 1]*half_sub_lengths
+     c(:,2) = [-1, 1, 1]*half_sub_lengths
+     c(:,3) = [ 1,-1, 1]*half_sub_lengths
+     c(:,4) = [ 1, 1,-1]*half_sub_lengths
      .crystal.unitcell.change_from_fractional(c)
      ! The centre of the (first) subbox
      centre = [ZERO,ZERO,ZERO]
@@ -187,13 +193,15 @@ contains
      res :: REAL
    ENSURE(.crystal.created,"no crystal info")
    ENSURE(.crystal.unitcell.info_made,"no crystal unitcell info")
+   ENSURE(.subbox_centres.created,"no subbox_centres info")
      x,diff,ucentre,hcentre :: VEC{REAL}(3)
      hlim,ulim :: MAT{INT}(2,3)
-     dist :: REAL
+     dist, new :: REAL
      u1,u2,u3,h1,h2,h3 :: INT
      ! "dist" is just an upper bound on res**2. This initial value is not really
      ! important as long as it's big enough.
      x = .scale_factor
+    ! stdout.show("scal=",.scale_factor)
      .crystal.unitcell.change_from_fractional(x)
      dist = (maxval(x))**2
      ! The range of unit cell subboxes (we will skip those not on the outer skin).
@@ -224,11 +232,61 @@ contains
     ! stdout.show("hc1 =",hcentre-.box_centre)
     ! stdout.show("hc2 =",hcentre)
              diff    = hcentre - ucentre
+    ! stdout.show("diff=",diff)
+    ! new = dot_product(diff,diff)
+    ! if (new<dist) then
+    ! stdout.show("u   =",[u1,u2,u3])
+    ! stdout.show("h   =",[h1,h2,h3])
+    ! stdout.show("new =",new)
+    ! stdout.show("uc1 =",ucentre-.box_centre)
+    ! stdout.show("hc1 =",hcentre-.box_centre)
+    ! stdout.show("diff=",diff)
+    ! end
              dist    = min(dist,dot_product(diff,diff))
     ! stdout.show("d   =",sqrt(dist))
          end
          end
          end
+     end
+     end
+     end
+     res = sqrt(dist)
+   end
+ 
+   shortest_distance_to_uc_from(h) result (res)
+   ! Return the shortest distance from the centre of a subbox with indices "h" at the current
+   ! level to a subbox of the unit cell.
+     self :: IN
+     h :: VEC{INT}(3)
+     res :: REAL
+   ENSURE(.crystal.created,"no crystal info")
+   ENSURE(.crystal.unitcell.info_made,"no crystal unitcell info")
+     x,diff,ucentre,hcentre :: VEC{REAL}(3)
+     hlim,ulim :: MAT{INT}(2,3)
+     dist :: REAL
+     u1,u2,u3 :: INT
+     ! "dist" is just an upper bound on res**2. This initial value is not really
+     ! important as long as it's big enough.
+     x = .scale_factor
+     .crystal.unitcell.change_from_fractional(x)
+     dist = (maxval(x))**2
+     ! The range of unit cell subboxes (we will skip those not on the outer skin).
+     ulim(1,:) = [1,1,1]         ! min
+     ulim(2,:) = .divisions      ! max
+     ! What range of subboxes is next to the *central* cell at THIS level?
+     hlim(1,:) = nint(THIRD*.divisions)         ! min
+     hlim(2,:) = nint(TWO*THIRD*.divisions) + 1 ! max
+     ! Loop over the subboxes on the outside of the unit cell at level 0.
+     do u1 = ulim(1,1),ulim(2,1)
+     do u2 = ulim(1,2),ulim(2,2)
+     do u3 = ulim(1,3),ulim(2,3)
+         if (all([u1,u1]/=ulim(:,1)) AND all([u2,u2]/=ulim(:,2)) AND all([u3,u3]/=ulim(:,3))) cycle
+         ! Get the centre of the (outer skin) unit cell subbox
+         ucentre = .subbox_centres(u1,u2,u3)[:] - .box_centre
+         ucentre = ucentre/.scale_factor + .box_centre
+         hcentre = .subbox_centres(h(1),h(2),h(3))[:]
+         diff    = hcentre - ucentre
+         dist    = min(dist,dot_product(diff,diff))
      end
      end
      end
@@ -241,7 +299,7 @@ contains
  
    multipole_l_max result (res)
    ! Return the order "res" of the multipoles required at this level, in order
-   ! that the multipole expansion of the interparticle distance is accurate to
+   ! that the multipole expansion of the electrostatic potential is accurate to
    ! ".accuracy". See eqn (9.13.29) in the book by Helgaker et al.
    ! NOTE: subbox_radius_0 must be set and the level must be greater than 1.
      self :: IN
@@ -249,8 +307,30 @@ contains
    ENSURE(.level_number>1,"level must be two or more")
    ENSURE(.unitcell_charge>ZERO,"must have positive unit cell charge")
      R_QP,del_r12,top :: REAL
-     del_r12 = .subbox_radius_0 + .longest_subbox_body_diagonal
+     del_r12 = .subbox_radius_0 + .enclosing_subbox_radius
      R_QP = .shortest_distance_to_unitcell
+     DIE_IF(del_r12>=R_QP,"enclosing spheres for a unit cell subbox and a subbox at level "//.level_number.to_str.trim//" overlap")
+   ! res = ceiling( (log(.accuracy)+TWO*log(R_QP-del_r12))/(log(del_r12)-log(R_QP)) - 1)
+     top = log(.accuracy)+log(R_QP-del_r12)-log(.unitcell_charge)-(3*.level_number-6)*log(THREE)
+     res = ceiling( top/(log(del_r12)-log(R_QP)) - 1)
+     res = max(res,0)
+   end
+ 
+   multipole_l_max(h) result (res)
+   ! Return the order "res" of the multipoles required for the subbox with
+   ! indices "h", in order that the multipole expansion of the electrostatic
+   ! potential is accurate to ".accuracy". See eqn (9.13.29) in the book by
+   ! Helgaker et al. Useful for reducing the number of multipoles used to
+   ! evaluate the potential at a given level.
+   ! NOTE: subbox_radius_0 must be set and the level must be greater than 1.
+     self :: IN
+     h :: VEC{INT}(3)
+     res :: INT
+   ENSURE(.level_number>1,"level must be two or more")
+   ENSURE(.unitcell_charge>ZERO,"must have positive unit cell charge")
+     R_QP,del_r12,top :: REAL
+     del_r12 = .subbox_radius_0 + .enclosing_subbox_radius
+     R_QP = .shortest_distance_to_uc_from(h)
      DIE_IF(del_r12>=R_QP,"enclosing spheres for a unit cell subbox and a subbox at level "//.level_number.to_str.trim//" overlap")
    ! res = ceiling( (log(.accuracy)+TWO*log(R_QP-del_r12))/(log(del_r12)-log(R_QP)) - 1)
      top = log(.accuracy)+log(R_QP-del_r12)-log(.unitcell_charge)-(3*.level_number-6)*log(THREE)
@@ -286,6 +366,25 @@ contains
 !  *******************
 !  Defining each level 
 !  *******************
+ 
+   set_l_max(previous_level) ::: leaky
+   ! Make the ".l_max", ".subbox_centres", ".level_number" and other basic
+   ! information for the current level from the "previous_level" (which is
+   ! smaller than the current level). 
+   ! NOTE: This does not make the multipoles.
+     previous_level :: PERIODIC_FMM_LEVEL
+     ! Copy over previous information
+     self = previous_level
+     ! Change level number, and scale
+     .level_number = .level_number + 1
+     .scale_factor = THREE**.level_number
+     ! Make new subbox centres 
+     .make_subbox_centres
+     ! Nullify charges and posititions after level 1
+     ! Also set how many multipoles are required after this level.
+     .l_max = 0
+     if (.level_number>1) .l_max = .multipole_l_max
+   end
  
    set_level(previous_level) ::: leaky
    ! Make the current level from the "previous_level" (which is smaller than the
@@ -327,6 +426,8 @@ contains
      do h2 = 1,.divisions(2)
      do h3 = 1,.divisions(3)
         centre = [h1-HALF,h2-HALF,h3-HALF]*sub_lengths + origin
+    ! stdout.show("h   =",[h1,h2,h3])
+    ! stdout.show("cen =",centre-box_centre)
         .crystal.unitcell.change_from_fractional(centre)
         .subbox_centres(h1,h2,h3)[:] = centre
      end
@@ -338,8 +439,8 @@ contains
    ! Make a list of point charges that accurately represents the total charge of
    ! the initial level (i.e. unit cell) from a given set of fragment "charges"
    ! and fragment "positions".  Includes contributions from electrons and nuclei.
-     charges :: VEC{REAL}, target
-     positions :: MAT{REAL}, target
+     charges :: VEC{REAL}
+     positions :: MAT{REAL}
    ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
    ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
    ENSURE(.crystal.created,"no crystal data")
@@ -392,128 +493,80 @@ contains
 
    make_initial_subbox_multipoles(l_max) ::: leaky
    ! Assign the initial subbox multipoles up to order "l_max" from a given set
-   ! of ".charges" and ".positions".
+   ! of ".charges" and ".positions". NOTE: this should be applied to level two
+   ! in the first instance (level 1 is the buffer zone).
       l_max :: INT
+   ENSURE(.level_number==2,"Must be at the second level")
    ENSURE(.charges.created,"no charges")
    ENSURE(.positions.created,"no positions for the charges")
    ENSURE(.positions.dim1==3,"wrong 1st dimension, positions")
    ENSURE(.charges.dim==.positions.dim2,"inconsistent charges and positions")
-     h1,h2,h3,n,dim :: INT
-     ind :: MAT3{VEC_{INT}}*
+     dim :: INT
      positions :: MAT{REAL}*
-     subbox_multipoles,charges :: VEC{REAL}*
-
-     .make_subbox_centres
-     .sort_positions_into_subboxes(ind)
-
-   .subbox_multipoles.create(ind.shape)
-   .subbox_multipoles(1,1,1).element.create(16)
-   n = .charges.dim
-   positions.create(n,3)
-   positions = transpose(.positions)
-   positions = positions - spread(.box_centre,dim=1,ncopies=n)
-   VEC{REAL}:make_R_mu_multipoles(.subbox_multipoles(1,1,1).element,.charges,positions,3)
-   stdout.text("WHOLE OF FIRST CELL MULTIPOLES")
-   stdout.text("charges=")
-   stdout.put(charges)
-   stdout.text("-x/2 positions=")
-   stdout.put(-HALF*positions(:,1),"column")
-   stdout.text("-y/2 positions=")
-   stdout.put(-HALF*positions(:,2),"column")
-   stdout.text("z    positions=")
-   stdout.put(positions(:,3),"column")
-   stdout.show("check dipole x (c) =",sum(-HALF*positions(:,1)*.charges))
-   stdout.show("check dipole y (s) =",sum(-HALF*positions(:,2)*.charges))
-   stdout.show("check dipole y (s) =",sum(      positions(:,3)*.charges))
-   positions.destroy
-   .put_subbox_multipoles
-   .subbox_multipoles.destroy
-
+     subbox_multipoles :: VEC{REAL}*
      ! Create space the subboxes for the multipole -- leaky here
-     .subbox_multipoles.create(ind.shape)
-
-     ! Assign the multipoles to each of the subboxes at this (zero) level
-     do h1 = 1,ind.dim1
-     do h2 = 1,ind.dim2
-     do h3 = 1,ind.dim3
-        n = ind(h1,h2,h3).element.dim
-        if (n==0) cycle
-        dim = (l_max+1)*(l_max+1)
-        .subbox_multipoles(h1,h2,h3).element.create(dim)
-        subbox_multipoles => .subbox_multipoles(h1,h2,h3).element
-        charges.create_copy(.charges(ind(h1,h2,h3)[:]))
-        positions.create(n,3)
-        positions = transpose(.positions(:,ind(h1,h2,h3)[:]))
-        ! Make position relative to the centre of the subbox
-        positions = positions - spread(.subbox_centres(h1,h2,h3)[:],dim=1,ncopies=n)
-        VEC{REAL}:make_R_mu_multipoles(subbox_multipoles,charges,positions,l_max)
-        positions.destroy
-        charges.destroy
-     end
-     end
-     end
-     ind.destroy
+     .subbox_multipoles.create(.divisions)         ! LEAKY
+     dim = (l_max+1)*(l_max+1)
+     .subbox_multipoles(1,1,1).element.create(dim) ! LEAKY
+     subbox_multipoles => .subbox_multipoles(1,1,1).element
+     ! Make position relative to the centre of the subbox
+     positions.create_copy(transpose(.positions))
+     positions = positions - spread(.subbox_centres(1,1,1)[:],dim=1,ncopies=positions.dim1)
+     VEC{REAL}:make_R_mu_multipoles(subbox_multipoles,.charges,positions,l_max)
+     positions.destroy
+     .make_subbox_multipoles(self,do_first_subbox=FALSE)
    end
  
-   make_subbox_multipoles(previous_level) ::: leaky
+   make_subbox_multipoles(previous_level,do_first_subbox) ::: leaky
    ! Make the current level subbox multipoles from the subbox multipoles of the
-   ! "previous_level" (which is smaller than the current level). 
+   ! "previous_level" (which is smaller than the current level). If present and
+   ! FALSE, "do_first_subbox" will skip the evaluation of multipoles for the
+   ! first box, which is useful in the initial set up.
      previous_level :: PERIODIC_FMM_LEVEL
+     do_first_subbox :: BIN, optional
    ENSURE(.subbox_centres.created,"no subbox_centre info")
    ENSURE(all(mod(.divisions,3)==[0,0,0]),"box divisions must be a multiple of 3")
    ENSURE(previous_level.subbox_centres.created,"no previous level subbox_centre info")
    ENSURE(previous_level.subbox_multipoles.created,"no previous_level subbox multipoles")
-     n,f,l :: VEC{INT}(3)
      h1,h2,h3, dim :: INT
      fac :: REAL
      W :: MAT{REAL}*
-     first_subbox,in_first_3rd :: BIN
-     ! The number of divisions in a single box of the large level.
-     n = .divisions/3
-     ! Make the current subbox multipoles
+     do_first,first_subbox :: BIN
+     do_first = TRUE
+     if (present(do_first_subbox)) do_first = do_first_subbox
+     if (do_first) then
+        ENSURE(.level_number>2,"level number must be greater than 2")
+        ENSURE(.subbox_multipoles.destroyed,"subbox multipoles already exist")
+        .subbox_multipoles.create(.divisions)
+     else
+        ENSURE(.level_number==2,"level number must be 2")
+        ENSURE(.subbox_multipoles.created,"no subbox multipoles")
+        ENSURE(.subbox_multipoles(1,1,1).element.created,"no 1,1,1 subbox multipoles")
+     end
+     ! Check if the number of multipoles on the previous level is OK
      fac = previous_level.subbox_multipoles_dim
      fac = sqrt(fac)
      ENSURE(fac.is_int(TOL(3)),"length for subbox multipoles must be a square number")
-     .l_max = nint(fac) - 1
+  !  .l_max = max(.l_max,nint(fac)-1)
   !  .l_max = 3
+     ! Loop and make the multipoles for subbox (1,1,1) All other subboxes are
+     ! equivalent to (1,1,1) after level 2, so we pointer copy all subboxes to
+     ! the first one.
      dim = (.l_max+1)*(.l_max+1)
-     W.create(dim,dim)
-     .subbox_multipoles.create(.divisions)
      do h1 = 1,.divisions(1)
      do h2 = 1,.divisions(2)
      do h3 = 1,.divisions(3)
         first_subbox = h1==1 AND h2==1 AND h3==1
-        ! This tells if we are in the first subbox.
-        in_first_3rd = h1<=n(1) AND h2<=n(2) AND h3<=n(3)
-        ! This tells whether we are in the first 1/3 of the level.  This region
-        ! contains the same number of subboxes (at this level) as the central
-        ! cell, which is the cell at the previous level where we are copying
-        ! multipoles from.
-        if (.level_number<2) then
-           if (in_first_3rd) then
-              ! Which portion of the previous level does this region correspond to?
-              f = 3*[h1-1,h2-1,h3-1] + 1 ! first
-              l = f + 2                  ! last
-              .make_subbox_multipoles([h1,h2,h3],previous_level,f,l,W) ! LEAKY
-           else
-              ! Pointer copy the multipoles from the first 1/3 box *ON THIS* level
-              ! to box (h1,h2,h3).
-              f = mod([h1-1,h2-1,h3-1],n) + 1 ! in first 1/3
-              .subbox_multipoles(h1,h2,h3).element => .subbox_multipoles(f(1),f(2),f(3)).element
-           end
-        else ! .level_number >=2
-           if (first_subbox) then
-              .make_subbox_multipoles([h1,h2,h3],previous_level,[1,1,1],[3,3,3],W) ! LEAKY
-           else
-              ! All boxes are equivalent after level 1. Pointer copy the
-              ! multipoles from this box to the first box.
-              .subbox_multipoles(h1,h2,h3).element => .subbox_multipoles(1,1,1).element
-           end
+        if (NOT first_subbox) then
+           .subbox_multipoles(h1,h2,h3).element => .subbox_multipoles(1,1,1).element
+        else if (do_first) then
+           W.create(dim,dim)
+           .make_subbox_multipoles([h1,h2,h3],previous_level,[1,1,1],[3,3,3],W) ! LEAKY
+           W.destroy
         end
      end
      end
      end
-     W.destroy
    end
  
    make_subbox_multipoles(h,previous_level,f,l,W,delete) ::: leaky
@@ -560,7 +613,7 @@ contains
          if (previous_level.subbox_multipoles(u1,u2,u3).element.destroyed) cycle
          old_multipoles => previous_level.subbox_multipoles(u1,u2,u3).element(1:dim)
          P = previous_level.subbox_centres(u1,u2,u3)[:]
-         W.make_W_translation_matrix(P-PP,.l_max)
+         W.to_multipole_W_translation_mx(P-PP,.l_max)
        ! debug = TRUE
        ! if (debug) then
        !   stdout.show("shifting u =",[u1,u2,u3])
@@ -588,6 +641,132 @@ contains
       end
       end
    end
+
+!   make_initial_subbox_multipoles(l_max) ::: leaky
+!   ! Assign the initial subbox multipoles up to order "l_max" from a given set
+!   ! of ".charges" and ".positions".
+!      l_max :: INT
+!   ENSURE(.charges.created,"no charges")
+!   ENSURE(.positions.created,"no positions for the charges")
+!   ENSURE(.positions.dim1==3,"wrong 1st dimension, positions")
+!   ENSURE(.charges.dim==.positions.dim2,"inconsistent charges and positions")
+!     h1,h2,h3,n,dim :: INT
+!     ind :: MAT3{VEC_{INT}}*
+!     positions :: MAT{REAL}*
+!     subbox_multipoles,charges :: VEC{REAL}*
+!
+!     .make_subbox_centres
+!     .sort_positions_into_subboxes(ind)
+!
+!!  .subbox_multipoles.create(ind.shape)
+!!  .subbox_multipoles(1,1,1).element.create(16)
+!!  n = .charges.dim
+!!  positions.create(n,3)
+!!  positions = transpose(.positions)
+!!  positions = positions - spread(.box_centre,dim=1,ncopies=n)
+!!  VEC{REAL}:make_R_mu_multipoles(.subbox_multipoles(1,1,1).element,.charges,positions,3)
+!!  stdout.text("WHOLE OF FIRST CELL MULTIPOLES")
+!!  stdout.text("charges=")
+!!  stdout.put(charges)
+!!  stdout.text("-x/2 positions=")
+!!  stdout.put(-HALF*positions(:,1),"column")
+!!  stdout.text("-y/2 positions=")
+!!  stdout.put(-HALF*positions(:,2),"column")
+!!  stdout.text("z    positions=")
+!!  stdout.put(positions(:,3),"column")
+!!  stdout.show("check dipole x (c) =",sum(-HALF*positions(:,1)*.charges))
+!!  stdout.show("check dipole y (s) =",sum(-HALF*positions(:,2)*.charges))
+!!  stdout.show("check dipole y (s) =",sum(      positions(:,3)*.charges))
+!!  positions.destroy
+!!  .put_subbox_multipoles
+!!  .subbox_multipoles.destroy
+!
+!     ! Create space the subboxes for the multipole -- leaky here
+!     .subbox_multipoles.create(ind.shape)
+!
+!     ! Assign the multipoles to each of the subboxes at this (zero) level
+!     do h1 = 1,ind.dim1
+!     do h2 = 1,ind.dim2
+!     do h3 = 1,ind.dim3
+!        n = ind(h1,h2,h3).element.dim
+!        if (n==0) cycle
+!        dim = (l_max+1)*(l_max+1)
+!        .subbox_multipoles(h1,h2,h3).element.create(dim)
+!        subbox_multipoles => .subbox_multipoles(h1,h2,h3).element
+!        charges.create_copy(.charges(ind(h1,h2,h3)[:]))
+!        positions.create(n,3)
+!        positions = transpose(.positions(:,ind(h1,h2,h3)[:]))
+!        ! Make position relative to the centre of the subbox
+!        positions = positions - spread(.subbox_centres(h1,h2,h3)[:],dim=1,ncopies=n)
+!        VEC{REAL}:make_R_mu_multipoles(subbox_multipoles,charges,positions,l_max)
+!        positions.destroy
+!        charges.destroy
+!     end
+!     end
+!     end
+!     ind.destroy
+!   end
+ 
+!   make_subbox_multipoles(previous_level) ::: leaky
+!   ! Make the current level subbox multipoles from the subbox multipoles of the
+!   ! "previous_level" (which is smaller than the current level). 
+!     previous_level :: PERIODIC_FMM_LEVEL
+!   ENSURE(.subbox_centres.created,"no subbox_centre info")
+!   ENSURE(all(mod(.divisions,3)==[0,0,0]),"box divisions must be a multiple of 3")
+!   ENSURE(previous_level.subbox_centres.created,"no previous level subbox_centre info")
+!   ENSURE(previous_level.subbox_multipoles.created,"no previous_level subbox multipoles")
+!     n,f,l :: VEC{INT}(3)
+!     h1,h2,h3, dim :: INT
+!     fac :: REAL
+!     W :: MAT{REAL}*
+!     first_subbox,in_first_3rd :: BIN
+!     ! The number of divisions in a single box of the large level.
+!     n = .divisions/3
+!     ! Make the current subbox multipoles
+!     fac = previous_level.subbox_multipoles_dim
+!     fac = sqrt(fac)
+!     ENSURE(fac.is_int(TOL(3)),"length for subbox multipoles must be a square number")
+!     .l_max = nint(fac) - 1
+!  !  .l_max = 3
+!     dim = (.l_max+1)*(.l_max+1)
+!     W.create(dim,dim)
+!     .subbox_multipoles.create(.divisions)
+!     do h1 = 1,.divisions(1)
+!     do h2 = 1,.divisions(2)
+!     do h3 = 1,.divisions(3)
+!        first_subbox = h1==1 AND h2==1 AND h3==1
+!        ! This tells if we are in the first subbox.
+!        in_first_3rd = h1<=n(1) AND h2<=n(2) AND h3<=n(3)
+!        ! This tells whether we are in the first 1/3 of the level.  This region
+!        ! contains the same number of subboxes (at this level) as the central
+!        ! cell, which is the cell at the previous level where we are copying
+!        ! multipoles from.
+!        if (.level_number<2) then
+!           if (in_first_3rd) then
+!              ! Which portion of the previous level does this region correspond to?
+!              f = 3*[h1-1,h2-1,h3-1] + 1 ! first
+!              l = f + 2                  ! last
+!              .make_subbox_multipoles([h1,h2,h3],previous_level,f,l,W) ! LEAKY
+!           else
+!              ! Pointer copy the multipoles from the first 1/3 box *ON THIS* level
+!              ! to box (h1,h2,h3).
+!              f = mod([h1-1,h2-1,h3-1],n) + 1 ! in first 1/3
+!              .subbox_multipoles(h1,h2,h3).element => .subbox_multipoles(f(1),f(2),f(3)).element
+!           end
+!        else ! .level_number >=2
+!           if (first_subbox) then
+!              .make_subbox_multipoles([h1,h2,h3],previous_level,[1,1,1],[3,3,3],W) ! LEAKY
+!           else
+!              ! All boxes are equivalent after level 1. Pointer copy the
+!              ! multipoles from this box to the first box.
+!              .subbox_multipoles(h1,h2,h3).element => .subbox_multipoles(1,1,1).element
+!           end
+!        end
+!     end
+!     end
+!     end
+!     W.destroy
+!   end
  
    destroy_subbox_multipoles ::: leaky
    ! Destroy the current level subbox multipoles from the subbox multipoles of the
@@ -631,15 +810,81 @@ contains
      end
    end
  
-   make_potential(values,points,adjust_surface_dipoles) ::: leaky
-   ! Make the the "values" of the potential at "points" from the set of subbox
+   add_potential_to(values,points,adjust_surface_dipoles) 
+   ! Add to "values" the electric potential at "points" in the unit cell, coming
+   ! from the set of subbox multipoles at this level. If present TRUE,
+   ! "adjust_surface_dipoles" causes most of the dipoles on the surface of this
+   ! level to be reversed, to simulate the neutralisation of the surface charge,
+   ! in order to get a potential close to the Ewald potential.  Add the "values"
+   ! of the potential at "points" from the set of subbox multipoles at this
+   ! level. If present TRUE, "adjust_surface_dipoles" causes most of the dipoles
+   ! on the surface of this level to be reversed, to simulate the neutralisation
+   ! of the surface charge, in order to get a potential close to the Ewald
+   ! potential.
+   ! NOTE: values is *incremented*, so you must set it to zero beforehand!
+     values :: VEC{REAL}
+     points :: MAT{REAL}
+     adjust_surface_dipoles :: BIN, optional
+     if (.level_number<=1) then; .add_point_charge_potential_to(values,points)
+     else;                       .add_multipole_potential_to(values,points)
+     end
+   end
+ 
+   add_point_charge_potential_to(values,points)
+   ! Add the "values" of the potential at "points" from the set of point
+   ! ".charges" with given ".positions". 
+   ! NOTE: values is *incremented*, so you must set it to zero beforehand!
+     values :: VEC{REAL}
+     points :: MAT{REAL}
+   ENSURE(.level_number<=1,"charges only used for level 0 and 1")
+   ENSURE(values.dim==points.dim2,"inconsistent values and points arrays")
+   ENSURE(points.dim1==3,"wrong 1st dim, points")
+   ENSURE(.charges.created,"no charges")
+   ENSURE(.positions.created,"no positions")
+   ENSURE(.charges.dim==.positions.dim2,"inconsistent charges and positions arrays")
+   ENSURE(.positions.dim1==3,"wrong 1st dim, positions")
+     h1,h2,h3,n,i :: INT
+     q,qx,qy,qz,px,py,pz,rx,ry,rz,R :: REAL
+     ! values = ZERO
+     ! Loop over subboxes
+     do h1 = 1,.divisions(1)
+     do h2 = 1,.divisions(2)
+     do h3 = 1,.divisions(3)
+        ! Loop over charges in each subbox
+        do n = 1,.charges.dim
+           q  = .charges(n)
+           qx = .positions(1,n)
+           qy = .positions(2,n)
+           qz = .positions(3,n)
+           ! Loop over values and positions in unit cell.
+           do i = 1,values.dim
+              px = points(1,i)
+              py = points(2,i)
+              pz = points(3,i)
+              rx = qx - px
+              ry = qy - py
+              rz = qz - pz
+              R = sqrt(rx*rx+ry*ry+rz*rz)
+              if (abs(R)<TOL(10)) cycle
+              values(i) = values(i) + q/R
+           end
+        end
+     end
+     end
+     end
+   end
+ 
+   add_multipole_potential_to(values,points,adjust_surface_dipoles) 
+   ! Add the "values" of the potential at "points" from the set of subbox
    ! multipoles at this level. If present TRUE, "adjust_surface_dipoles" causes
    ! most of the dipoles on the surface of this level to be reversed, to
    ! simulate the neutralisation of the surface charge, in order to get a
    ! potential close to the Ewald potential.
+   ! NOTE: values is *incremented*, so you must set it to zero beforehand!
      values :: VEC{REAL}
      points :: MAT{REAL}
      adjust_surface_dipoles :: BIN, optional
+   ENSURE(.level_number>=2,"no multipoles for levels 0 and 1")
    ENSURE(values.dim==points.dim2,"inconsistent values and points arrays")
    ENSURE(points.dim1==3,"wrong 1st dim, points")
    ENSURE(.subbox_centres.created,"no subbox_centre info")
@@ -647,36 +892,85 @@ contains
      adjust_dipoles :: BIN
      h1,h2,h3,n,dim1,dim2,j_max :: INT
      fac :: REAL
-     Q,P :: VEC{REAL}(3)
-     T :: MAT{REAL}*
+     lim :: MAT{INT}(2,3)
+     box_centre,shift,Q,P :: VEC{REAL}(3)
+     T_Q :: VEC{REAL}*
+     R_P,pt,T :: MAT{REAL}*
+     ! Adjust surface dipoles?
      adjust_dipoles = FALSE
      if (present(adjust_surface_dipoles)) adjust_dipoles = adjust_surface_dipoles
-     values = ZERO
+     ! Change points into fractionals, then shift them so the box centre is the
+     ! centre of the unit cell, then change the positions into the unit cell,
+     ! and transform the positions back into cartesians
+     pt.create_copy(transpose(points))
+     .crystal.unitcell.change_into_fractional(pt)
+     box_centre = .box_centre
+     .crystal.unitcell.change_into_fractional(box_centre)
+     shift = [HALF,HALF,HALF] - box_centre
+     pt = pt + spread(shift,dim=1,ncopies=pt.dim1)
+     .crystal.put_to_unit_cell(pt)
+     pt = pt - spread(shift,dim=1,ncopies=pt.dim1)
+     .crystal.unitcell.change_from_fractional(pt) ! put back to cartesians
+     ! Now work out the local moments matrix, R(n,lm)
+     dim1  = (.l_max+1)*(.l_max+1)
+     R_P.create(values.dim,dim1)
+     R_P.to_R_mu_multipole_mx(pt,.l_max)
+     pt.destroy
+   stdout.text("R_P:")
+   stdout.put(R_P)
+     ! Loop over subboxes and calculate the potential from the multipoles
+   stdout.show("l_max =",.l_max)
+     ! What range of subboxes is next to the *central* cell at THIS level?
+     lim(1,:) = nint(THIRD*.divisions) + 1  ! min
+     lim(2,:) = nint(TWO*THIRD*.divisions)  ! max
      do h1 = 1,.divisions(1)
      do h2 = 1,.divisions(2)
      do h3 = 1,.divisions(3)
         if (.subbox_multipoles(h1,h2,h3).element.destroyed) cycle
-        dim1  = .l_max*.l_max
+        if (h1.is_in_range(lim(:,1)) AND h2.is_in_range(lim(:,2)) AND h3.is_in_range(lim(:,3))) cycle
         dim2  = .subbox_multipoles(h1,h2,h3).element.dim
-        j_max = nint(sqrt(float(dim2)))
+        j_max = .multipole_l_max([h1,h2,h3]) 
+    if (j_max==.l_max) then
+ !  stdout.text("LESS THAN!")
+    stdout.text("EQUAL!")
+    stdout.show("h =",[h1,h2,h3])
+    stdout.show("j_max =",j_max)
+    stdout.text("R_Q:")
+    stdout.put(.subbox_multipoles(h1,h2,h3)[1:dim2],"column")
+    end
+        ENSURE(j_max<=.l_max,"l_max wrongly set for level="//.level_number.to_str.trim)
+        ENSURE(j_max<nint(sqrt(float(dim2))),"not enough multipoles for level="//.level_number.to_str.trim)
+        dim2 = (j_max+1)*(j_max+1)
         Q = .subbox_centres(h1,h2,h3)[:]
-        if (adjust_dipoles) then
+        T_Q.create(dim2)
+        T.create(dim2,dim2)
+        if (NOT adjust_dipoles) then
+           do n = 1,points.dim2
+              P = points(:,n)
+              T.to_multipole_T_interaction_mx(Q-P,j_max,j_max)
+    if (j_max==.l_max) then
+    stdout.text("T:")
+    stdout.put(T)
+    end
+              T_Q.to_product_of(T,.subbox_multipoles(h1,h2,h3)[1:dim2])
+           end
+        else
            fac = .edge_factor(h1,h2,h3)
-           .subbox_multipoles(h1,h2,h3)[:] = fac*.subbox_multipoles(h1,h2,h3)[:]
+           do n = 1,points.dim2
+              P = points(:,n)
+              T.to_multipole_T_interaction_mx(Q-P,j_max,j_max)
+              T_Q.to_scaled_product_of(T,.subbox_multipoles(h1,h2,h3)[1:dim2],fac)
+           end
         end
-        T.create(dim1,dim2)
-        do n = 1,points.dim2
-           P = points(:,n)
-           T.make_T_interaction_matrix(Q-P,.l_max,j_max)
-           values.plus_product_of(T,.subbox_multipoles(h1,h2,h3)[:])
-        end
+   stdout.text("T_Q:")
+   stdout.put(T_Q,"column")
         T.destroy
-        if (adjust_dipoles) then
-           .subbox_multipoles(h1,h2,h3)[:] = (ONE/fac)*.subbox_multipoles(h1,h2,h3)[:]
-        end
+        values.plus_product_of(R_P(:,1:dim2),T_Q)
+        T_Q.destroy
      end
      end
      end
+     R_P.destroy
    end
  
    edge_factor(h1,h2,h3) result(fac)
@@ -893,7 +1187,7 @@ contains
 
    put
    ! Output information
-      long,short,del_r12,ratio :: REAL
+      encl,short,del_r12,ratio :: REAL
       stdout.flush
       stdout.text("PERIODIC_FMM_LEVEL:")
       stdout.flush
@@ -907,14 +1201,14 @@ contains
       stdout.show("L_max                          =",.l_max)
       stdout.show("subbox_radius_0                =",.subbox_radius_0)
       if (.level_number>=2) then
-      long    = .longest_subbox_body_diagonal
+      encl    = .enclosing_subbox_radius
       short   = .shortest_distance_to_unitcell
-      del_r12 = .subbox_radius_0 + long
+      del_r12 = .subbox_radius_0 + encl
       ratio   = del_r12/short
-      stdout.show("longest subbox body diagonal   =",long)
+      stdout.show("subbox enclosing radius        =",encl)
       stdout.show("shortest distance to unit cell =",short)
       stdout.show("Sum of subbox radii, del_r12   =",del_r12)
-      stdout.show("Ratio of subbox radii on short =",ratio)
+      stdout.show("Subbox radii sum/shortest dist =",ratio)
       end
       .put_charges_and_positions
       .put_subbox_multipoles
@@ -924,6 +1218,7 @@ contains
    ! Output charge nd position information
       i :: INT
       if (NOT .charges.created OR NOT .positions.created) return
+      if (.level_number/=1) return
       stdout.flush
       stdout.text("Unit cell charges and positions:")
       stdout.flush
@@ -959,7 +1254,7 @@ contains
       if (NOT .subbox_multipoles.created) return
       ENSURE(.subbox_centres.created,"subbox centre not created!")
 
-    ! del_r12 = .subbox_radius_0 + .longest_subbox_body_diagonal
+    ! del_r12 = .subbox_radius_0 + .enclosing_subbox_radius
     ! R_QP = .shortest_distance_to_unitcell
     ! ratio = del_r12/R_QP
     ! dim = (.l_max+1)*(.l_max+1)
