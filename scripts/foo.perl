@@ -42,6 +42,7 @@ open(F90FILE,">".$f90file);
     'MATVEC'        => 'MAT_',
     'MAT3VEC'       => 'MAT3_',
     'SHELLVEC'      => 'SHELL',
+    'SHELLPAIRVEC'  => 'SHELLPAIR',
     'BASISVEC'      => 'BASIS',
     'ATOMVEC'       => 'ATOM',
     'REFLECTIONVEC' => 'REFLECTION',
