@@ -40,14 +40,10 @@ installdir := ${exec_prefix}/bin
 
 FC := f95
 
-FFLAGS    := -align dcommons -cpp -std -fp_reorder -module ./new_modules \
-             -I. -I./f90 -I./interfaces -I./modules -I./objects \
-             -error_limit 10
-FPROF     := -p -g3 -gen_feedback
-FDEBUG    := -g -ladebug -check bounds -check format -check overflow \
-             -warn argument_checking -warn declarations -warn unused \
-             -warn truncated_source
-FFAST     := -g0 -O5 -arch host
+FFLAGS    := -Cpp -I. -Am -I./modules -M./new_modules -I./interfaces \
+             -I./objects -I./f90 -f w -static-flib
+FDEBUG    := -g -H aesu
+FFAST     := -O -Komitfp -Kloop -Kauto -Kpreex -Keval -x-
 F90SUFFIX := f90
 
 #------------------------------------------------------------------------------
@@ -157,8 +153,6 @@ docsclean :
 	@if (-d ./documentation/f90files)  rm -f ./documentation/f90files/*; exit 0
 	@if (-d ./documentation/foofiles)  echo "rm -f documentation/foofiles/*"
 	@if (-d ./documentation/foofiles)  rm -f ./documentation/foofiles/*; exit 0
-	@if (-d ./documentation/scripts)   echo "rm -f documentation/scripts/*"
-	@if (-d ./documentation/scripts)   rm -f ./documentation/scripts/*; exit 0
 
 distclean : clean docsclean
 	@if (-e ./sysinfo)       rm -f ./sysinfo
@@ -183,7 +177,6 @@ configure : configure.in
 documentation : $(htmlfiles) make_navbar macros Makefile \
            make_deps.perl update_module_file macros \
            foo.perl foo2html.perl
-	@if (! -d ./documentation/scripts)   mkdir ./documentation/scripts
 	@if (! -d ./documentation/htmlfiles) mkdir ./documentation/htmlfiles
 	@if (! -d ./documentation/f90files)  mkdir ./documentation/f90files
 	@if (! -d ./documentation/foofiles)  mkdir ./documentation/foofiles
@@ -268,7 +261,7 @@ types.$(F90SUFFIX) : types.foo foo.perl
 
 %.x : %.$(F90SUFFIX) macros Makefile
 	make $($(*F))
-	f95 $(FFLAGS) $(F90)   -o $@ $(addprefix objects/, $(notdir $(filter %.o, $^))) f90/$(<F) -lcxml 
+	f95 $(FFLAGS) $(F90)   -o $@ $(addprefix objects/, $(notdir $(filter %.o, $^))) f90/$(<F) -lblas -llapack 
 	@if (-e $(*F).o) mv -f $(*F).o objects
 
 
