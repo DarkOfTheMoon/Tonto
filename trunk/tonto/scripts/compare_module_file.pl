@@ -34,6 +34,7 @@ my (%compiler_array);
   "IBM-xlf-on-AIX"         =>  IBM_xlf_on_AIX,
   "IBM-xlf90-on-AIX"       =>  IBM_xlf90_on_AIX,
   "INTEL-ifc-on-LINUX"     =>  INTEL_ifc_on_LINUX,
+  "INTEL-ifort-on-LINUX"   =>  INTEL_ifort_on_LINUX,
   "LAHEY-lf95-on-LINUX"    =>  LAHEY_lf95_on_LINUX,
   "MIPSPRO-f90-on-IRIX64"  =>  MIPSPRO_f90_on_IRIX64,
   "WORKSHOP-f90-on-SUNOS"  =>  WORKSHOP_f90_on_SUNOS,
@@ -177,43 +178,25 @@ sub IBM_xlf90_on_AIX {
 }
 
 sub INTEL_ifc_on_LINUX {
-
-  my $version = " ";
-  my $found;
-
-  # Check whether this is version 7.1 of the compiler.
+  # version 7.1.  For version 08.00.00 if their module file format, ignore the
+  # last record of the file, where the record separator is chr(0).
+  my $lastreclength = 0;
   open(FILE1,$file1) or die "Cannot open $file1\n";
   binmode(FILE1);
   local $/ = chr(0);
-  $found = 0;
   while (<FILE1>) {
-    if (m'FORTRAN Module File, version 08.00.00') {
-      $found = 1;
-      last;
-    }
+    $lastreclength = length($_);
   }
-  if ($found) {$version = "7.1";}
   close(FILE1);
-
-  if ($version eq "7.1") {
-  # version 7.1.  For version 08.00.00 if their module file format, ignore the
-  # last record of the file, where the record separator is chr(0).
-    my $lastreclength = 0;
-    open(FILE1,$file1) or die "Cannot open $file1\n";
-    binmode(FILE1);
-    local $/ = chr(0);
-    while (<FILE1>) {
-      $lastreclength = length($_);
-    }
-    close(FILE1);
-    for ($j=0; $j<$lastreclength; $j++) {
-      push @skip_array,$size1-$j;
-    }
-  } else {
-     push @skip_array,(45,46,47,48);
+  for ($j=0; $j<$lastreclength; $j++) {
+    push @skip_array,$size1-$j;
   }
-
   return 0;
+}
+
+sub INTEL_ifort_on_LINUX {
+  # version 8.0.
+  push @skip_array,(45,46,47,48);
 }
 
 sub LAHEY_lf95_on_LINUX {
