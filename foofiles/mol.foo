@@ -882,8 +882,8 @@ contains
         case ("gchf","general_complex_hartree_fock")
           CD = (1-mix)*CD + mix*D_old.general_complex
       end
+      D_old.destroy
     end
-    D_old.destroy
     archive.write(.density_matrix)
   end
 
@@ -5789,28 +5789,55 @@ contains
   
         I.create(fa,la,fb,lb,fc,lc,fd,ld)
         shell4.get_ERI(I)
-        do d = fd,ld
-          do c = fc,lc
-            P_dc = P(d,c)
-            Jcd = ZERO
-            do b = fb,lb
-              P_db = P(d,b)
-              P_cb = P(c,b)
-              Kbc = ZERO
-              Kbd = ZERO
-              do a = fa,la
-                I_abcd = factor * I(a,b,c,d)
-                J(a,b) = J(a,b) + I_abcd*P_dc
-                Jcd    = Jcd    + I_abcd*P(b,a)
-                K(a,c) = K(a,c) + I_abcd*P_db
-                K(a,d) = K(a,d) + I_abcd*P_cb
-                Kbc    = Kbc    + I_abcd*P(d,a)
-                Kbd    = Kbd    + I_abcd*P(c,a)
+        if (factor < 0.9) then ! apply coincidence factor
+          do d = fd,ld
+            do c = fc,lc
+              P_dc = P(d,c)
+              Jcd = ZERO
+              do b = fb,lb
+                P_db = P(d,b)
+                P_cb = P(c,b)
+                Kbc = ZERO
+                Kbd = ZERO
+                do a = fa,la
+                  I_abcd = factor * I(a,b,c,d)
+                  J(a,b) = J(a,b) + I_abcd*P_dc
+                  Jcd    = Jcd    + I_abcd*P(b,a)
+                  K(a,c) = K(a,c) + I_abcd*P_db
+                  K(a,d) = K(a,d) + I_abcd*P_cb
+                  Kbc    = Kbc    + I_abcd*P(d,a)
+                  Kbd    = Kbd    + I_abcd*P(c,a)
+                end
+                K(b,c) = K(b,c) + Kbc
+                K(b,d) = K(b,d) + Kbd
               end
-              K(b,c) = K(b,c) + Kbc
-              K(b,d) = K(b,d) + Kbd
+              J(c,d) = J(c,d) + Jcd
             end
-            J(c,d) = J(c,d) + Jcd
+          end
+        else ! don't apply coincidence factor
+          do d = fd,ld
+            do c = fc,lc
+              P_dc = P(d,c)
+              Jcd = ZERO
+              do b = fb,lb
+                P_db = P(d,b)
+                P_cb = P(c,b)
+                Kbc = ZERO
+                Kbd = ZERO
+                do a = fa,la
+                  I_abcd = I(a,b,c,d)
+                  J(a,b) = J(a,b) + I_abcd*P_dc
+                  Jcd    = Jcd    + I_abcd*P(b,a)
+                  K(a,c) = K(a,c) + I_abcd*P_db
+                  K(a,d) = K(a,d) + I_abcd*P_cb
+                  Kbc    = Kbc    + I_abcd*P(d,a)
+                  Kbd    = Kbd    + I_abcd*P(c,a)
+                end
+                K(b,c) = K(b,c) + Kbc
+                K(b,d) = K(b,d) + Kbd
+              end
+              J(c,d) = J(c,d) + Jcd
+            end
           end
         end
         I.destroy
@@ -6471,7 +6498,7 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT* :: dP,dF,old_P,old_F,error
+    OPMAT* :: dP,dF,old_P,old_F,error,constraint
 
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
@@ -6482,6 +6509,7 @@ contains
     dP.create(.n_bf); old_P.create_copy(.density_matrix)
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
     .make_scf_error(error) 
+    constraint.create(.n_bf,"restricted")
 
     .make_structure_factors
 
@@ -6494,9 +6522,13 @@ contains
       .scfdata.put_results                     ! Zeroth iteration (important!)
       .scfdata.diis.cleanup
       do
-        .add_constraint
+        .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+        .add_constraint(constraint)
         .make_scf_error(error) 
         .extrapolate_scf(error)
+        constraint.compress
+        .scfdata.diis.save_constraint(constraint.triangle)
+        constraint.uncompress
         .update_molecular_orbitals
         .make_scf_density_matrix
         .save_scf_results
@@ -6523,6 +6555,7 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
+    constraint.destroy
     error.destroy
     .scfdata.cleanup_diis
     .fock_matrix.destroy("all")
@@ -6534,11 +6567,11 @@ contains
     .crystal.put_reflection_data
   end
 
-  add_constraint
+  add_constraint(constraint)
   ! Make the constraint matrix for wavefunction fitting and add it to the fock
   ! matrix.
     MAT* :: MO,temp,S
-    MAT* :: constraint
+    OPMAT :: constraint
     STR :: kind
     kind = .scfdata.spinorbital_kind
     if (kind == "restricted") then
@@ -6547,17 +6580,14 @@ contains
     else
       DIE("can only do restricted calculations.")
     end
-    constraint.create( .n_bf, .n_bf)
-    .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
     ! Add the constraint in the MO basis 
-    constraint.change_basis(MO)          ! Zero out the occ-occ and vir-vir
-    constraint(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
-    constraint(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
+    constraint.restricted.change_basis(MO)          ! Zero out the occ-occ and vir-vir
+    constraint.restricted(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
+    constraint.restricted(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
     .fock_matrix.restricted.change_basis(MO)
     .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
     .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
-    .fock_matrix.restricted.plus(constraint)
-    constraint.destroy
+    .fock_matrix.plus(constraint)
     ! Change .fock_matrix back to the AO basis 
     temp.create( .n_bf, .n_bf)
     S.create( .n_bf, .n_bf)
@@ -6570,9 +6600,9 @@ contains
 
   make_constraint(constraint,lambda)
   ! Make the constraint matrix for wavefunction fitting.
-    MAT :: constraint
+    OPMAT :: constraint
     DBL, IN :: lambda
-    MAT* :: k_pts
+    MAT* :: k_pts,const
     CMAT3* :: ft_ab_eq,ft_ab
     CVEC* :: Fc,fac_times_alpha
     VEC* :: Fm,Fexp,Fsig,alpha
@@ -6604,10 +6634,11 @@ contains
     k_pts.create(n_unique,3)
     .crystal.make_unique_k_pts(k_pts)
     cutoff = TOL(10) / .n_shell_pairs
+    const => constraint.restricted
     do q=1, .n_shell_pairs
       .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
       if (shell.skip_ft(cutoff)) then
-        constraint(fa:la,fb:lb) = ZERO
+        const(fa:la,fb:lb) = ZERO
         shell.destroy_ptr_part
         cycle
       end
@@ -6618,14 +6649,14 @@ contains
       ft_ab_eq.destroy
       do i = fa,la
         do j = fb,min(lb,i)
-          constraint(i,j) = sum(fac_times_alpha(:) * &
+          const(i,j) = sum(fac_times_alpha(:) * &
            real(ft_ab(:,i,j) * conjg(Fc(:))))
         end
       end
       ft_ab.destroy
       shell.destroy_ptr_part
     end
-    constraint.make_symmetric
+    const.make_symmetric
     k_pts.destroy
     Fc.destroy
     fac_times_alpha.destroy
