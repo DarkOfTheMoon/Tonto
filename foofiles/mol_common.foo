@@ -1,8 +1,9 @@
-! $Id$
 !-------------------------------------------------------------------------------
 !
 ! MOL: these routines required by several modules in mol.
 !
+! $Id$
+!-------------------------------------------------------------------------------
 module MOL_COMMON
 
    use TYPES
@@ -20,19 +21,21 @@ module MOL_COMMON
    use OUTPUT
    use ARCHIVE
 
-   use SCFDATA
    use SHELL
    use SHELL1
    use SHELL2
    use SHELL4
+   use BASIS
+   use BASISVEC
+   use ATOMVEC
+
+   use POINTGROUP
+   use XTAL
 
    use PLOTGRID
    use DFTGRID
-   use ATOMVEC
-   use BASIS
-   use BASISVEC
-   use POINTGROUP
-   use XTAL
+
+   use SCFDATA
 
    implicit none         
 
@@ -43,8 +46,10 @@ module MOL_COMMON
 !     STR             :: name                    ! Name of molecule
 !     INPUT, PTR      :: in                      ! Input file
 !     OUTPUT, PTR     :: out                     ! Output file
-!     VEC(3)          :: B_field                 ! Applied magnetic field in atomic units
 !     VEC(3)          :: E_field                 ! Applied electric field in atomic units
+!     VEC(3)          :: B_field                 ! Applied magnetic field in atomic units
+!     VEC(3)          :: gauge_origin            ! Global gauge origin for magnetic field
+!     VEC(3)          :: quantization_axis       ! Axis for quantizing any momenta, if reqd.
 !     XTAL, PTR       :: xtal                    ! Crystal symmetry of the enclosing crystal
 !     POINTGROUP, PTR :: pointgroup              ! Pointgroup symmetry of the molecule
 !     ATOMVEC, PTR    :: atom                    ! List of atoms
@@ -173,8 +178,10 @@ contains
 
    set_defaults
    ! Set up a default molecule
-      .B_field = ZERO
       .E_field = ZERO
+      .B_field = ZERO
+      .gauge_origin = ZERO
+      .quantization_axis = (/ ZERO, ZERO, ONE /)
       .charge = 0
       .partition_model = ""
       .mult = 1
@@ -203,6 +210,7 @@ contains
       .atom.resolve_basis_labels(.basis)
       .n_basis = .no_of_basis_sets
       .set_basis_info
+    ! .delete_scf_integrals
    end
 
    set_basis_info [leaky]
@@ -220,6 +228,19 @@ contains
       .occupation.create( .n_bf)
       .fock_matrix.create( .n_bf)
       .make_shell_info
+   end
+
+   delete_scf_integrals
+   ! Delete all integral files. This is required whenever the geometry is changed.
+      ARCHIVE :: archive
+      archive.set(.name,"overlap_matrix"); archive.delete
+      archive.set(.name,"kinetic_matrix"); archive.delete
+      archive.set(.name,"nuclear_matrix"); archive.delete
+      archive.set(.name,"core_matrix");    archive.delete
+      archive.set(.name,"fock_matrix");    archive.delete
+      archive.set(.name,"eri_integrals");  archive.delete
+      archive.set(.name,"eri_index");      archive.delete
+      archive.set(.name,"ft_ints");        archive.delete
    end
 
    assign_natural_orbitals
@@ -530,8 +551,8 @@ contains
    ! Size of cc_mat is [.n_prim,.n_bf].
       MAT, OUT :: cc_mat
       INT :: a, bf_count, prim_count
-      ENSURE(size(cc_mat,1)== .n_prim,"contraction matrix dimensions incorrect")
-      ENSURE(size(cc_mat,2)== .n_bf,"contraction matrix dimensions incorrect")
+      ENSURE(size(cc_mat,1)== .n_prim,"contraction matrix has incorrect shape")
+      ENSURE(size(cc_mat,2)== .n_bf,"contraction matrix has incorrect shape")
       bf_count = 1
       prim_count = 1
       cc_mat.zero
@@ -562,11 +583,12 @@ contains
 !  Density matrix methods
 !  **********************
 
-   make_scf_density_matrix(damp) [leaky]
+   make_scf_density_matrix(damp,scf_kind) [leaky]
    ! Make the density matrix from the molecular orbitals. If "damp" is present
    ! use it to damp the updated density matrix.
       BIN, optional :: damp
-      BIN :: use_damping
+      STR(*), optional :: scf_kind
+      BIN :: damping
       OPMAT, PTR :: D_old
       MAT, PTR :: MO,D,MOa,MOb,Da,Db
       CMAT, PTR :: CMO,CD,CMOa,CMOb,CDa,CDb
@@ -575,22 +597,23 @@ contains
       DBL :: mix
       ENSURE( .atom.basis_resolved, "no basis set")
       ENSURE( .molecular_orbitals.created, "no molecular orbitals")
-      if ( .scfdata.destroyed) then;                 use_damping = FALSE
-      else if ( .density_matrix.all_destroyed) then; use_damping = FALSE
+      if ( .scfdata.destroyed) then;                 damping = FALSE
+      else if ( .density_matrix.all_destroyed) then; damping = FALSE
       else
-         use_damping = .scfdata.apply_damping
-         if (present(damp)) use_damping = damp
+         damping = .scfdata.apply_damping
+         if (present(damp)) damping = damp
       end
       D_old.create(.n_bf)
-      if (use_damping) D_old.set_to(.density_matrix)
+      if (damping) D_old.set_to(.density_matrix)
       if ( .scfdata.destroyed) then; kind = .molecular_orbitals.spinorbital_kind
       else;                          kind = .scfdata.spinorbital_kind
       end
       .density_matrix.destroy(kind)
       .density_matrix.create(kind)
       archive.set(.name,"density_matrix",kind)
-      if ( .scfdata.destroyed) then; kind = .molecular_orbitals.guess_scf_kind
-      else;                          kind = .scfdata%kind
+      if (present(scf_kind)) then;        kind = scf_kind
+      else if ( .scfdata.destroyed) then; kind = .molecular_orbitals.guess_scf_kind
+      else;                               kind = .scfdata%kind
       end
       select case (kind)
           case ("rhf","restricted_hartree_fock", &
@@ -637,7 +660,7 @@ contains
             CD =>  .density_matrix%general_complex
             CD.to_product(CMO,CMO,dagger_b=TRUE)
       end
-      if (use_damping) then
+      if (damping) then
          mix = .scfdata%damp_factor
          select case (kind)
             case ("rhf","restricted_hartree_fock", &
@@ -865,23 +888,21 @@ contains
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.basis_resolved, "no basis set")
     S = ZERO
-    if (.scfdata%NDDO) then
-      do q=1,.n_shell_pairs
-        .get_shell_pair(q,shell,a,b,fa,la,fb,lb,atom_a,atom_b)
-        if (atom_a==atom_b) then
-          shell.make_overlap(S(fa:la,fb:lb))
-        else
-          S(fa:la,fb:lb) = ZERO
-        end
-        shell.destroy_ptr_part
-      end
-    else
+  ! if (.scfdata%NDDO) then
+  !   do q=1,.n_shell_pairs
+  !     .get_shell_pair(q,shell,a,b,fa,la,fb,lb,atom_a,atom_b)
+  !     if (atom_a==atom_b) then; shell.make_overlap(S(fa:la,fb:lb))
+  !     else;                     S(fa:la,fb:lb) = ZERO
+  !     end
+  !     shell.destroy_ptr_part
+  !   end
+  ! else
       do q=1,.n_shell_pairs
         .get_shell_pair(q,shell,fa,la,fb,lb)
         shell.make_overlap(S(fa:la,fb:lb))
         shell.destroy_ptr_part
       end
-    end
+  ! end
     S.make_symmetric
     archive.set(.name,"overlap_matrix")
     archive.write(S)
@@ -1112,10 +1133,9 @@ contains
   ! Make the restricted complex natural orbitals from the density matrix
     CMAT, PTR :: V,X
     MAT, PTR  :: S,O
-    OPMAT, PTR :: D
-
-    D => .density_matrix
-    ENSURE( D%restricted_complex.created, "no density matrix")
+    CMAT, PTR :: D
+    D => .density_matrix%restricted_complex
+    ENSURE( D.created, "no density matrix")
     .natural_orbitals.destroy("restricted_complex")
     .natural_orbitals.create("restricted_complex")
     .occupation.destroy("restricted")
@@ -1125,7 +1145,7 @@ contains
     S.create( .n_bf, .n_bf); .get_overlap_matrix(S)
     O.create( .n_bf, .n_bf); O.to_sqrt(S)
     V = O
-    X = .density_matrix%restricted_complex
+    X = D
     X.change_basis(V)
     X.solve_eigenproblem(.occupation%restricted,V)
     O.to_inverse_sqrt(S)
