@@ -4360,8 +4360,10 @@ contains
       .make_fock_matrix(dP,dF,core=FALSE)
       .fock_matrix.set_to(old_F)
       .fock_matrix.plus(dF)
-    lambda=1.0
-    if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F)
+      if (.scfdata.apply_camp_king) then 
+        lambda=1.0
+        .camp_king(lambda,old_MO,old_F)
+      end
       old_P.set_to(.density_matrix)
       .scfdata.update(.scf_energy,.kinetic_energy)
       .make_scf_error(error)
@@ -6641,7 +6643,7 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT* :: dP,dF,old_P,old_F,error,constraint,old_MO
+    OPMAT* :: dP,dF,old_P,old_F,error,constraint,old_MO,old_constraint
     DBL :: lambda
 
     ENSURE( .atom.created,  "no atom list")
@@ -6652,9 +6654,10 @@ contains
     .make_fock_matrix
     dP.create(.n_bf); old_P.create_copy(.density_matrix)
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
-    old_MO.create(.n_bf)
+    old_MO.create_copy(.molecular_orbitals)
     .make_scf_error(error) 
     constraint.create(.n_bf,"restricted")
+    old_constraint.create(.n_bf,"restricted")
 
     .make_structure_factors
 
@@ -6667,9 +6670,17 @@ contains
       .scfdata.put_results                     ! Zeroth iteration (important!)
       .scfdata.diis.cleanup
       do
-!        .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
         .make_constraint(constraint, .scfdata.lambda )
         .add_constraint(constraint)
+
+        ! this bit is work in progress, not finished.
+        if (.scfdata.apply_camp_king) then
+          lambda=0.0
+          .camp_king(lambda,old_MO,old_F)
+          lambda=1.0
+          .camp_king(lambda,old_MO,old_F)
+        end
+
         .make_scf_error(error) 
         .extrapolate_scf(error)
         old_MO.set_to(.molecular_orbitals)
@@ -6684,14 +6695,8 @@ contains
 
         .make_fock_matrix(dP,dF,core=FALSE)
         .fock_matrix.set_to(old_F)
+        .fock_matrix.minus(constraint)
         .fock_matrix.plus(dF)
-
-        lambda=0.9
-        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
-        lambda=1.0
-        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
-        lambda=1.1
-        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
 
         .make_structure_factors
         .scfdata.update(.scf_energy,.kinetic_energy)
@@ -8448,56 +8453,48 @@ contains
 !                        Camp-King routines
 !*******************************************************************************
 
-  camp_king(lambda,MO_old,F_old,constraint)
+  camp_king(lambda,MO_old,F_old)
   ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
   ! lambda should be between 0 and 1.
     DBL, INOUT :: lambda
     OPMAT, IN :: MO_old,F_old
-    OPMAT, INOUT, optional :: constraint
-    OPMAT* :: F_backup,MO_backup,P_backup
-    MAT* :: old_MO,new_MO,old_F,new_F,MO
+    OPMAT* :: F_backup,MO_backup,P_backup,constraint
+    MAT* :: old_MO,new_MO,old_F,MO
     MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl
     VEC* :: theta
     INT :: minpq,n,n_p,n_q,i,k,j
     DBL :: ded0,ded1,ded1a,E0,E1,E2
+    BIN :: tmp1,tmp2
+
+    n_p = .n_e/2
+    n_q = .n_bf - n_p
+    minpq = min(n_p,n_q)
+    old_MO => MO_old.restricted
+    old_F => F_old.restricted
+    new_MO => .molecular_orbitals.restricted
+
+    Q.create(.n_bf,.n_bf)
+    Q = old_MO                                  ! Q is an orthogonal basis.
+
+    Q1.create(.n_bf,.n_bf)                      ! Get inverse of Q, store in Q1.
+    S.create(.n_bf,.n_bf)
+    .get_overlap_matrix(S)
+    Q1.to_product(Q,S,transpose_a=TRUE)
+    S.destroy
+
+    Cj.create(.n_bf,.n_bf)                      ! Convert the MOs into Q basis.
+    Cj1.create(.n_bf,.n_bf)
+    Cj.to_product(Q1,old_MO)
+    Cj1.to_product(Q1,new_MO)
+    Q1.destroy
 
     F_backup.create_copy(.fock_matrix)
     MO_backup.create_copy(.molecular_orbitals)
     P_backup.create_copy(.density_matrix)
 
-    n_p = .n_e/2
-    n_q = .n_bf - n_p
-    minpq = min(n_p,n_q)
-
-    old_MO => MO_old.restricted
-    old_F => F_old.restricted
-    MO.create(.n_bf,.n_bf)
-    new_MO.create(.n_bf,.n_bf)
-    new_MO=.molecular_orbitals.restricted
-    new_F.create(.n_bf,.n_bf)
-    new_F=.fock_matrix.restricted
-
-    Q.create(.n_bf,.n_bf)
     V.create(.n_bf,.n_bf)
     W.create(.n_bf,.n_bf)
     theta.create(minpq)
-
-    ! to begin with, old_MO = Cbar^j, new_MO = Cbar^{j+1}, from
-    ! .update_molecular_orbitals with the choice Q = Cbar^j.
-    Q = old_MO                                  ! Set Q = old_MO = Cbar^j
-
-    Q1.create(.n_bf,.n_bf)
-    S.create(.n_bf,.n_bf)
-    .get_overlap_matrix(S)
-    Q1.to_product(Q,S,transpose_a=TRUE)         ! Q1 = Q^{-1} where Q^T S Q = I
-    S.destroy
-
-    Cj.create(.n_bf,.n_bf)
-    Cj1.create(.n_bf,.n_bf)
-    Cj.to_product(Q1,old_MO)                    ! C^j = I
-    Cj1.to_product(Q1,new_MO)                   ! C^{j+1} = Q^{-1} Cbar^{j+1}
-    Q1.destroy
-
     U.create(.n_bf,.n_bf)
     U.to_product(Cj,Cj1)                        ! eqn 8
     V=Cj1
@@ -8509,6 +8506,8 @@ contains
     CW.create(.n_bf,.n_bf)
     CV.to_product(Cj,V)                         ! eqn 11
     CW.to_product(Cj1,W)                        ! eqn 12
+    W.destroy
+    V.destroy
     Cj1.destroy
     Cj.destroy
 
@@ -8517,6 +8516,7 @@ contains
     Cl.create(.n_bf,.n_bf)
     Cl.to_product(CV,Uh)                        ! C(lambda) = C^j V Uh(lambda)
     Uh.destroy
+    MO.create(.n_bf,.n_bf)
     MO.to_product(Q,Cl)                         ! Cbar(lambda) = Q C(lambda)
 
     F.create(.n_bf,.n_bf)
@@ -8554,11 +8554,13 @@ contains
     ! get de/dl at input lambda, do this one in the AO basis.
     .molecular_orbitals.restricted = MO            ! which is in AO basis.
     .make_scf_density_matrix(damp=FALSE)
+    .make_structure_factors
     .make_fock_matrix
-    if (present(constraint)) then
-!      .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+    if (.scfdata.kind == "xray_rhf") then
+      constraint.create(.n_bf,"restricted")
       .make_constraint(constraint, .scfdata.lambda )
       .add_constraint(constraint)
+      constraint.destroy
     end
     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
     F.change_basis(Q)
@@ -8579,11 +8581,7 @@ contains
     CW.destroy
     CV.destroy
     theta.destroy
-    W.destroy
-    V.destroy
     Q.destroy
-    new_F.destroy
-    new_MO.destroy
     MO.destroy
     .fock_matrix.set_to(F_backup)
     .molecular_orbitals.set_to(MO_backup)
