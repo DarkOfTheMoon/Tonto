@@ -222,7 +222,7 @@ contains
     .crystal.optimise_extinction = FALSE
     .crystal.optimise_scale = FALSE
     .make_structure_factors
-    .minimise_BFGS(U,chi2_min,tol=TOL(4),gtol=ONE,step=TOL(2))
+    .minimise_BFGS(U,chi2_min,tol=TOL(4),step=TOL(2))
     U.destroy
 !  .atom.put_thermal_tensors
   end
@@ -306,9 +306,9 @@ contains
     k_pts.destroy
   end
 
-   minimise_BFGS(p,fret,tol,gtol,step) [private]
+   minimise_BFGS(p,fret,tol,step) [private]
       VEC, INOUT :: p
-      DBL :: fret,tol,gtol
+      DBL :: fret,tol
       DBL, optional :: step
       INT :: n,iter,i
       DBL :: fac,fad,fae,sumdg,sumxi,eps,stp
@@ -694,9 +694,9 @@ contains
         l = op_list(4,q)
         pos2 = pos1
         .crystal.transform_geometry(pos2,s)
-        stdout.put_text("! symop = " // s.to_str.trim)
+        stdout.put_text("! symop = " // trim(s.to_str))
         stdout.put_text(", h k l = ")
-        stdout.text(h.to_str.trim // " " // k.to_str.trim // " " // l.to_str.trim)
+        stdout.text(trim(h.to_str) // " " // trim(k.to_str) // " " // trim(l.to_str))
         do n = 1, .n_atom
           therm = therm1(:,:,n)
           therm.change_basis(.crystal.spacegroup.seitz(1:3,1:3,s))
@@ -724,6 +724,107 @@ contains
       pos1.destroy
     end
     op_list.destroy
+  end
+
+  create_cluster [leaky]
+  ! Outputs the a cluster of molecules around the centre of the molecule.
+  ! Optional input position must be in crystal coordinates.
+  ! Output atom positions are in crystal coordinates.
+    IMAT* :: op_list
+    VEC* :: dist_list
+    VEC(3) :: pos
+    STR :: word
+    MAT3* :: therm1
+    MAT(3,3) :: therm
+    MAT* :: pos1,pos2
+    VEC(3) :: position
+    INT :: s,h,k,l,n,q
+    DBL :: dist_max
+    MOL* :: mol
+
+    ENSURE(.crystal.created,            "no crystal data")
+    ENSURE(.atom.created,               "no atom data")
+    ENSURE(.atom.bases_are_all_labeled, "atoms must all have basis labes")
+
+    ! defaults
+    dist_max  = 5
+    position = (/ZERO,ZERO,ZERO/)
+
+    stdin.read(word)
+    if (word=="{") then
+      read_loop : do
+        stdin.read(word)
+        word.to_lower_case
+        select case (word)
+           case("}");                       exit read_loop
+           case("distance");                stdin.read(dist_max)
+           case("position");                stdin.read(position)
+           case("centre");                  stdin.read(position)
+           case default; DIE("unknown keyword : " // trim(word))
+        end
+      end do read_loop
+    else
+      stdin.move_to_previous_item
+    end
+    position.rotate_by(.crystal.direct_cell_matrix)
+
+    .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
+    dist_list.destroy
+
+    mol.create
+    .create_cluster_from_molecule(mol,op_list)
+    op_list.destroy
+    mol.put
+    mol.destroy
+
+  end
+
+  create_cluster_from_molecule(mol,symops) [leaky]
+  ! Make a cluster as a single molecule, make from one molecule and symmetry
+  ! operations.  WARNING: dont destroy basis of mol !
+    INT :: n_atoms,n_symops,n_unique,n,x,q,s,h,k,l
+    IMAT :: symops
+    MOL :: mol
+    MAT* :: old_pos,new_pos
+    MAT3* :: old_therm
+    MAT(3,3) :: new_therm
+    n_symops = size(symops)
+    n_unique = size(.atom)
+    n_atoms = n_symops * n_unique
+    mol.atom.create(n_atoms)
+    x=0
+
+    old_pos.create(3,.n_atom)
+    old_pos = .crystal.fragment_geometry
+    .crystal.move_to_unit_cell(old_pos)
+    new_pos.create(3,.n_atom)
+    old_therm.create(3,3,.n_atom)
+    do n = 1, .n_atom
+      old_therm(:,:,n) = .atom(n).thermal_tensor
+    end
+
+    do q=1,n_symops
+      s = symops(1,q)
+      DIE_IF(s==0, "no symmetry operations within distance specified")
+      h = symops(2,q)
+      k = symops(3,q)
+      l = symops(4,q)
+      new_pos = old_pos
+      .crystal.transform_geometry(new_pos,s)
+      do n=1,n_atoms
+        x=x+1
+        mol.atom(x).copy(.atom(n))
+        mol.atom(x).pos = new_pos(:,n) + (/h,k,l/)
+        new_therm = old_therm(:,:,n)
+        new_therm.change_basis(.crystal.spacegroup.seitz(1:3,1:3,s))
+        .atom(x).thermal_tensor = new_therm
+      end
+    end
+    mol.set_defaults
+    mol.name  =  trim(.name) // "_cluster"
+    mol.basis => .basis
+    mol.set_basis_info
+    mol.set_scf_defaults
   end
 
 end 
