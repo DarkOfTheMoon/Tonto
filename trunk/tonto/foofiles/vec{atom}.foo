@@ -1118,6 +1118,27 @@ contains
       stdout.unsave
    end
 
+   put_principal_axes
+   ! Put out the principal axis information
+      pm,pn :: VEC{REAL}(3)
+      pa :: MAT{REAL}(3,3)
+      reorder :: BIN
+      .make_principal_moments(pm,pa,reorder)
+      pn = pm/maxval(pm) ! normalised moments
+      stdout.flush
+      stdout.text("Principal moments and axes:")
+      stdout.flush
+      stdout.show("Centre of mass    =",.centre_of_mass)
+      stdout.show("Principal moments =",pm)
+      stdout.show("Spherical top?    =",.is_spherical_top(pn))
+      stdout.show("Symmetric top?    =",.is_symmetric_top(pn))
+      stdout.show("Prolate top?      =",.is_prolate_top(pn))
+      stdout.show("Oblate top?       =",.is_oblate_top(pn))
+      stdout.flush
+      stdout.text("Principal axes:")
+      stdout.put(pa)
+   end
+
    put_vrml(out)
    ! Put vrml version of the atomvec to the file in object "out".
      out :: TEXTFILE
@@ -1581,6 +1602,38 @@ contains
       .translate_by(-.centre_of_mass)
    end
 
+   change_to_principal_axes
+   ! Move the origin to the centre of mass and change the coordinates to be with
+   ! respect to the principal axes
+      pm :: VEC{REAL}(3)
+      pa :: MAT{REAL}(3,3)
+      .translate_by(-.centre_of_mass)
+      .make_principal_moments(pm,pa)
+      .change_coordinate_axes(pa)
+   end
+
+   change_to_principal_top_axes
+   ! Move the origin to the centre of mass and change the coordinates to be with
+   ! respect to the principal top axes i.e. in the case of symmetric tops the
+   ! last axis is the unique axes.
+      pm :: VEC{REAL}(3)
+      pa :: MAT{REAL}(3,3)
+      reorder :: BIN
+      .translate_by(-.centre_of_mass)
+      .make_principal_moments(pm,pa,reorder)
+      .change_coordinate_axes(pa)
+   end
+
+   change_coordinate_axes(axes)
+   ! Change the coordinates of the atoms to be with respect to the columns of
+   ! "axes", which must be an orthogonal matrix.
+      axes :: MAT{REAL}(3,3)
+      a :: INT
+      do a = 1,.n_atom
+         self(a).change_coordinate_axes(axes)
+      end
+   end
+
    reduced_mass result(mu)
    ! Return the centre of mass
       mu :: REAL
@@ -1612,56 +1665,144 @@ contains
       end
    end
 
-   make_principal_moments(pm,pa)
+   make_principal_moments(pm,pa,reorder)
    ! Make the principal moments "pm" and principal axes "pm" wrt the centre of
-   ! mass.  The principal axes are made to be right handed.
+   ! mass.  If "reorder" is present then the principal axes are made to be right
+   ! handed. Also:
    ! - For sperical tops, the local x,y,z axes are the pricipal axes
    ! - For symmetric tops, the C axis is unique
    ! - For asymmetric tops, the pricipal axes are aligned close to the local
-   ! x,y,z axes
+   !    x,y,z axes
       pm :: VEC{REAL}(3)
       pa :: MAT{REAL}(3,3)
-      it :: MAT{REAL}(3,3)
-      .make_inertia_tensor(it)
+      reorder :: BIN, optional
+      pn :: VEC{REAL}(3)
+      it,pa2 :: MAT{REAL}(3,3)
+      .make_inertia_tensor(it)                  ! Make the inertia tensor and axes
       it.solve_eigenproblem(pm,pa)
-      where (pm<TOL(6))
-        pm = ZERO                               ! Small moments set to zero
+      if (NOT present(reorder)) return
+      where (pm<TOL(6))                         ! Set small moments to zero
+         pm = ZERO
       end
-      if (.is_spherical_top(pm)) then           ! For spherical tops, principal
-            pa.to_unit_matrix                   ! axes are x,y,z
-      else if (.is_symmetric_top(pm)) then      ! For symmetric tops C axis is
-         if (abs(pm(1)-pm(3)) < TOL(6)) then    ! unique
+      if (abs(pa(1,2)) > abs(pa(1,1))) then     ! Make principal axes close to x,y,z
+         pa.swap_columns(1,2)
+         pm.swap_elements(1,2)
+      end
+      if (abs(pa(1,3)) > abs(pa(1,1))) then
+         pa.swap_columns(1,3)
+         pm.swap_elements(1,3)
+      end
+      if (abs(pa(2,3)) > abs(pa(2,2))) then
+         pa.swap_columns(2,3)
+         pm.swap_elements(2,3)
+      end
+    ! pn = pm
+      pn = pm/maxval(abs(pm))                   ! Use normalised moments for now
+      if (.is_spherical_top(pn)) then           ! Spherical top? ... axes are x,y,z
+            pa.to_unit_matrix         
+      else if (.is_symmetric_top(pn)) then      ! Symmetric top? ... C axis is unique
+         if (abs(pn(1)-pn(3)) < TOL(2)) then 
             pa.swap_columns(2,3)
             pm.swap_elements(2,3)
-         else if (abs(pm(2)-pm(3)) < TOL(6)) then
+         else if (abs(pn(2)-pn(3)) < TOL(2)) then
             pa.swap_columns(1,3)
             pm.swap_elements(1,3)
          end
-      else                                      ! For asymmetric tops, principal
-         if (abs(pa(1,2)) > abs(pa(1,1))) then  ! axes are close to x,y,z
-            pa.swap_columns(1,2)
-            pm.swap_elements(1,2)
-         end
-         if (abs(pa(1,3)) > abs(pa(1,1))) then
-            pa.swap_columns(1,3)
-            pm.swap_elements(1,3)
-         end
-         if (abs(pa(2,3)) > abs(pa(2,2))) then
-            pa.swap_columns(2,3)
-            pm.swap_elements(2,3)
-         end
       end
-      if (pa.determinant>ZERO) return ! Ensure principal axes are right handed
-      if (abs(pm(1)-pm(2)) < TOL(6)) then
+      if (pa(1,1)<ZERO AND pa(2,2)<ZERO) then   ! Make positive diagonals
+         pa(:,1) = -pa(:,1)
+         pa(:,2) = -pa(:,2)
+      end
+      if (pa.determinant>ZERO) return           ! Ensure axes are right handed
+      if (abs(pm(1)-pm(2)) < TOL(6)) then       ! Swap columns 1,2 if equal moments
          pm.swap_elements(1,2)
          pa.swap_columns(1,2)
-      else if (abs (pm(2)-pm(3)) < TOL(6)) then
+      else if (abs (pm(2)-pm(3)) < TOL(6)) then ! Swap columns 2,3 if equal moments
          pm.swap_elements(2,3)
          pa.swap_columns(2,3)
-      else
-         pa(1:3,3) = -pa(1:3,3)
+      else                                      ! Reverse all C axis
+         pa(:,3) = -pa(:,3)
       end
    end
+
+!   make_principal_moments(pm,pa,reorder)
+!   ! Make the principal moments "pm" and principal axes "pm" wrt the centre of
+!   ! mass.  If "reorder" is present then the principal axes are made to be right
+!   ! handed. Also:
+!   ! - For sperical tops, the local x,y,z axes are the pricipal axes
+!   ! - For symmetric tops, the C axis is unique
+!   ! - For asymmetric tops, the pricipal axes are aligned close to the local
+!   !    x,y,z axes
+!      pm :: VEC{REAL}(3)
+!      pa :: MAT{REAL}(3,3)
+!      reorder :: BIN, optional
+!      pn :: VEC{REAL}(3)
+!      it,pa2 :: MAT{REAL}(3,3)
+!      .make_inertia_tensor(it)
+!      it.solve_eigenproblem(pm,pa)
+!      if (NOT present(reorder)) return
+!   stdout.text("first pa:")
+!   stdout.put(pa)
+!   stdout.text("first pm:")
+!   stdout.put(pm)
+!      where (pm<TOL(6))
+!        pm = ZERO                               ! Small moments set to zero
+!      end
+!      pn = pm/maxval(abs(pm))                   ! Use normalised moments for now
+!      pn = pm
+!      if (.is_spherical_top(pn)) then           ! For spherical tops, principal
+!            pa.to_unit_matrix                   ! axes are x,y,z
+!      else if (.is_symmetric_top(pn)) then      ! For symmetric tops C axis is
+!         if (abs(pn(1)-pn(3)) < TOL(2)) then    ! unique
+!            pa.swap_columns(2,3)
+!            pm.swap_elements(2,3)
+!   stdout.text("23 pa:")
+!   stdout.put(pa)
+!         else if (abs(pn(2)-pn(3)) < TOL(2)) then
+!            pa.swap_columns(1,3)
+!            pm.swap_elements(1,3)
+!   stdout.text("13 pa:")
+!   stdout.put(pa)
+!         end
+!      else                                      ! For asymmetric tops, principal
+!         if (abs(pa(1,2)) > abs(pa(1,1))) then  ! axes are close to x,y,z
+!            pa.swap_columns(1,2)
+!            pm.swap_elements(1,2)
+!         end
+!         if (abs(pa(1,3)) > abs(pa(1,1))) then
+!            pa.swap_columns(1,3)
+!            pm.swap_elements(1,3)
+!         end
+!         if (abs(pa(2,3)) > abs(pa(2,2))) then
+!            pa.swap_columns(2,3)
+!            pm.swap_elements(2,3)
+!         end
+!      end
+!   stdout.text("norms:")
+!   stdout.put(pa.column_norms)
+!   stdout.text("LAST pa:")
+!   stdout.put(pa)
+!   stdout.text("LAST pm:")
+!   stdout.put(pm)
+!      if (pa.determinant>ZERO) return ! Ensure principal axes are right handed
+!   stdout.text("neg pa:")
+!   stdout.put(pa)
+!      if (abs(pm(1)-pm(2)) < TOL(6)) then
+!         pm.swap_elements(1,2)
+!         pa.swap_columns(1,2)
+!   stdout.text("12 pa:")
+!   stdout.put(pa)
+!      else if (abs (pm(2)-pm(3)) < TOL(6)) then
+!         pm.swap_elements(2,3)
+!         pa.swap_columns(2,3)
+!      else
+!         pa(1:3,3) = -pa(1:3,3)
+!   stdout.text("-3 pa:")
+!   stdout.put(pa)
+!      end
+!   stdout.text("last pa:")
+!   stdout.put(pa)
+!   end
 
    is_linear(pm) result(res) ::: private
    ! Return TRUE if the geometry is linear.
@@ -1720,7 +1861,7 @@ contains
       same = 0
       do i = 1,3
       do j = 1,i-1
-         if (abs(pm(i)-pm(j))<=TOL(6)) then
+         if (abs(pm(i)-pm(j))<=TOL(2)) then
             same = same + 1
          end
       end
@@ -1769,6 +1910,11 @@ contains
       end
       centre = centre/.n_atom
       if (present(axes)) centre = matmul(transpose(axes),centre)
+   end
+
+   move_origin_to_centre_of_atoms
+   ! Move the origin to the centre of atoms
+      .translate_by(-.centre_of_atoms)
    end
 
    bounding_cube_width result(width)

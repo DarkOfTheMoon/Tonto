@@ -316,6 +316,25 @@ contains
      end
    end
 
+   normalise_ft4(ft)
+   ! Multiplies the ft product at a series of k points, by the normalisation
+   ! factors for the two gaussian shells.
+     ft :: MAT4{CPX}, target
+     t,k,a,b,i :: INT
+     if (.a.l<=1 AND .b.l<=1) return
+     do t = 1,ft.dim4
+     do k = 1,ft.dim3
+        i = 0
+        do b = 1,.b.n_comp
+        do a = 1,.a.n_comp
+            i = i + 1
+            ft(a,b,k,t) = ft(a,b,k,t) * .normalising_factors(i)
+        end
+        end
+     end
+     end
+   end
+
    skip_ft(cutoff) result (res)
    ! Whether the ft for this shell pair is too small.
      self :: IN
@@ -399,14 +418,13 @@ contains
       k_pts :: MAT{REAL}, IN
        G :: GAUSSIAN2
       ft_ab :: MAT3{CPX}*
-      a,b,k_max,i,j,n_comp_a,n_comp_b :: INT
+      a,b,k_max,i,j :: INT
       ca,fac :: REAL
       res_ij :: VEC{CPX}*
-      n_comp_a = .a.n_comp; n_comp_b = .b.n_comp
       k_max  = size(k_pts,1)
       res = ZERO
       G.set(.a.l,.a.pos,ZERO,.b.l,.b.pos,ZERO)
-      ft_ab.create(k_max,n_comp_a,n_comp_b)
+      ft_ab.create(k_max,.a.n_comp,.b.n_comp)
       do a = 1, .a.n_cc
          G.set(ex_a=.a.ex(a))
          ca = .a.cc(a)
@@ -414,19 +432,684 @@ contains
             G.set(ex_b=.b.ex(b))
             G.make_ft(ft_ab,k_pts)
             fac = ca * .b.cc(b)
-            do j=1,n_comp_b
-              do i=1,n_comp_a
+            do j=1,.b.n_comp
+              do i=1,.a.n_comp
                 res_ij => res(:,i,j)
                 res_ij(:) = res_ij(:) + ft_ab(:,i,j) * fac
               end
             end
+    ! stdout.text("=== next shell ===")
+    !    stdout.show("k =",1)
+    !    stdout.show("k =",k_pts(1,:))
+    !    stdout.text("first")
+    !    stdout.put(ft_ab(1,:,:))
          end
       end
       ft_ab.destroy
       .normalise_ft(res)
    end
 
-   make_ft(res,k_pts,thermal,partition)
+   make_ft_fast(res,k_pts)
+   ! Calculates the Fourier transform for a product of two contracted
+   ! gaussian shells, evaluated at a series of k points k_pts
+   ! Dimensions of res are [k_max,.a.n_comp,.b.n_comp].
+   ! This version has the gaussian2 stuff inlined and special cases optimised,
+   ! it's pretty messy but much faster.
+      res :: MAT3{CPX}, target
+      k_pts :: MAT{REAL}, target
+      ft_x,ft_y,ft_z :: MAT3{CPX}*
+      G :: GAUSSIAN2
+      k_x,k_y,k_z,k_x2,k_y2,k_z2 :: VEC{REAL}*
+      e :: MAT3{REAL}*
+      res_ij,prefac,ft_xb,ft_yb,ft_zb :: VEC{CPX}*
+      la,lb :: MAT{INT}*
+      ft_xbx,ft_yby,ft_zbz :: MAT{CPX}*
+      ft_x01,ft_x10,ft_y01,ft_y10,ft_z01,ft_z10 :: VEC{CPX}*
+      pos :: VEC{REAL}(3)
+      ca,fac :: REAL
+      g1_exa,g1_exb,e00,ex_a,ex_b :: REAL
+      pifac,gamma,g1,g4,dot1,dot2,k1,k2,k3,P1,P2,P3,PI_on_gamma :: REAL
+      n_a,n_b,a,b,k,ax,ay,az,bx,by,bz,bxlast,bylast,bzlast :: INT
+      l_a,l_b,aa,bb,k_max :: INT
+      fac1 :: CPX
+      Ex000,Ey000,Ez000,Ex001,Ey001,Ez001,Ex101,Ey101,Ez101 :: REAL
+      Ex010,Ey010,Ez010,Ex110,Ey110,Ez110,Ex111,Ey111,Ez111 :: REAL
+      Ex211,Ey211,Ez211,Ex011,Ey011,Ez011 :: REAL
+      PA1,PA2,PA3,PB1,PB2,PB3,pp :: REAL
+
+      n_a = .a.n_comp
+      n_b = .b.n_comp
+      l_a = .a.l
+      l_b = .b.l
+      k_max  = size(k_pts,1)
+      res = ZERO
+      G.set(l_a,.a.pos,ZERO,l_b,.b.pos,ZERO)
+
+      select case (l_a)
+        case (0)
+          select case(l_b)
+            case (0)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              pos = .a.pos - .b.pos
+              pp = dot_product(pos,pos)
+              res_ij => res(:,1,1)
+              PA1 = .a.pos(1)
+              PA2 = .a.pos(2)
+              PA3 = .a.pos(3)
+              PB1 = .b.pos(1)
+              PB2 = .b.pos(2)
+              PB3 = .b.pos(3)
+              do a = 1, .a.n_cc
+                ca = .a.cc(a)
+                ex_a = .a.ex(a)
+                do b = 1, .b.n_cc
+                  ex_b = .b.ex(b)
+                  g1 = ONE/(ex_a+ex_b)
+                  g4 = -QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*ex_a
+                  g1_exb = g1*ex_b
+                  P1 = g1_exa*PA1 + g1_exb*PB1
+                  P2 = g1_exa*PA2 + g1_exb*PB2
+                  P3 = g1_exa*PA3 + g1_exb*PB3
+                  e00 = exp(-ex_a*ex_b*pp*g1)
+                  fac1= cmplx(pifac*e00,ZERO,kind=CPX_KIND) * ca * .b.cc(b)
+                  do k = 1, k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = g4 * (k1*k1+k2*k2+k3*k3)
+                    res_ij(k) = res_ij(k) + (fac1 * exp(cmplx(dot2,dot1,kind=CPX_KIND)))
+                  end
+                end
+              end
+            case (1)
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              PA1 = .a.pos(1)
+              PA2 = .a.pos(2)
+              PA3 = .a.pos(3)
+              PB1 = .b.pos(1)
+              PB2 = .b.pos(2)
+              PB3 = .b.pos(3)
+              e.create((/0,1/),(/0,0/),(/0,1/))
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*PA1 + g1_exb*PB1
+                  P2 = g1_exa*PA2 + g1_exb*PB2
+                  P3 = g1_exa*PA3 + g1_exb*PB3
+                  G.make_e_coeff(e,1)
+                  Ex000 = e(0,0,0)
+                  Ex001 = e(0,0,1)
+                  Ex101 = e(1,0,1)
+                  G.make_e_coeff(e,2)
+                  Ey000 = e(0,0,0)
+                  Ey001 = e(0,0,1)
+                  Ey101 = e(1,0,1)
+                  G.make_e_coeff(e,3)
+                  Ez000 = e(0,0,0)
+                  Ez001 = e(0,0,1)
+                  Ez101 = e(1,0,1)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  res_ij => res(:,1,1)
+                  res_ij(:) = res_ij(:) + cmplx(Ex001,Ex101*k_x,kind=CPX_KIND)*Ey000*Ez000*prefac(:)
+                  res_ij => res(:,1,2)
+                  res_ij(:) = res_ij(:) + Ex000*cmplx(Ey001,Ey101*k_y,kind=CPX_KIND)*Ez000*prefac(:)
+                  res_ij => res(:,1,3)
+                  res_ij(:) = res_ij(:) + Ex000*Ey000*cmplx(Ez001,Ez101*k_z,kind=CPX_KIND)*prefac(:)
+                end
+              end
+              e.destroy
+              prefac.destroy
+            case default
+              lb.create(3,n_b);   l_b.make_gaussian_xyz_powers(lb)
+              ft_x.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_y.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_z.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              prefac.create(k_max)
+              PA1 = .a.pos(1)
+              PA2 = .a.pos(2)
+              PA3 = .a.pos(3)
+              PB1 = .b.pos(1)
+              PB2 = .b.pos(2)
+              PB3 = .b.pos(3)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*PA1 + g1_exb*PB1
+                  P2 = g1_exa*PA2 + g1_exb*PB2
+                  P3 = g1_exa*PA3 + g1_exb*PB3
+                  G.make_ft_component(ft_x,1,k_x,k_max)
+                  G.make_ft_component(ft_y,2,k_y,k_max)
+                  G.make_ft_component(ft_z,3,k_z,k_max)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  do b=0,l_b ! incorporate prefac into ft_z
+                    ft_z(:,0,b) = ft_z(:,0,b) * prefac(:)
+                  end
+                  bxlast = lb(1,1)
+                  bylast = lb(2,1)
+                  bzlast = lb(3,1)
+                  ft_xb => ft_x(:,0,bxlast)
+                  ft_yb => ft_y(:,0,bylast)
+                  ft_zb => ft_z(:,0,bzlast)
+
+                  do b = 1,n_b
+                    bx = lb(1,b)
+                    by = lb(2,b)
+                    bz = lb(3,b)
+                    if (bxlast/=bx) then
+                      ft_xb => ft_x(:,0,bx)
+                      bxlast = bx
+                    end
+                    if (bylast/=by) then
+                      ft_yb=> ft_y(:,0,by)
+                      bylast = by
+                    end
+                    if (bzlast/=bz) then
+                      ft_zb=> ft_z(:,0,bz)
+                      bzlast = bz
+                    end
+                    res_ij => res(:,1,b)
+                    res_ij(:) = res_ij(:) + ft_xb(:)*ft_yb(:)*ft_zb(:)
+                  end
+                end
+              end
+              lb.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_y.destroy
+              ft_z.destroy
+              .normalise_ft(res)
+          end
+        case (1)
+          select case (l_b)
+            case (0)
+              prefac.create(k_max)
+              e.create((/0,1/),(/0,1/),(/0,0/))
+              PA1 = .a.pos(1)
+              PA2 = .a.pos(2)
+              PA3 = .a.pos(3)
+              PB1 = .b.pos(1)
+              PB2 = .b.pos(2)
+              PB3 = .b.pos(3)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*PA1 + g1_exb*PB1
+                  P2 = g1_exa*PA2 + g1_exb*PB2
+                  P3 = g1_exa*PA3 + g1_exb*PB3
+                  G.make_e_coeff(e,1)
+                  Ex000 = e(0,0,0)
+                  Ex010 = e(0,1,0)
+                  Ex110 = e(1,1,0)
+                  G.make_e_coeff(e,2)
+                  Ey000 = e(0,0,0)
+                  Ey010 = e(0,1,0)
+                  Ey110 = e(1,1,0)
+                  G.make_e_coeff(e,3)
+                  Ez000 = e(0,0,0)
+                  Ez010 = e(0,1,0)
+                  Ez110 = e(1,1,0)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  res_ij => res(:,1,1)
+                  res_ij(:) = res_ij(:) + cmplx(Ex010,Ex110*k_x(:),kind=CPX_KIND)*Ey000*Ez000*prefac(:)
+                  res_ij => res(:,2,1)
+                  res_ij(:) = res_ij(:) + Ex000*cmplx(Ey010,Ey110*k_y(:),kind=CPX_KIND)*Ez000*prefac(:)
+                  res_ij => res(:,3,1)
+                  res_ij(:) = res_ij(:) + Ex000*Ey000*cmplx(Ez010,Ez110*k_z(:),kind=CPX_KIND)*prefac(:)
+                end
+              end
+              e.destroy
+              prefac.destroy
+            case (1)
+              ft_x.create((/1,k_max/),(/0,1/),(/0,1/))
+              ft_y.create((/1,k_max/),(/0,1/),(/0,1/))
+              ft_z.create((/1,k_max/),(/0,1/),(/0,1/))
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              PA1 = .a.pos(1)
+              PA2 = .a.pos(2)
+              PA3 = .a.pos(3)
+              PB1 = .b.pos(1)
+              PB2 = .b.pos(2)
+              PB3 = .b.pos(3)
+              e.create((/0,2/),(/0,1/),(/0,1/))
+              ft_x01.create(k_max)
+              ft_x10.create(k_max)
+              ft_y01.create(k_max)
+              ft_y10.create(k_max)
+              ft_z01.create(k_max)
+              ft_z10.create(k_max)
+              k_x2.create(k_max)
+              k_y2.create(k_max)
+              k_z2.create(k_max)
+              k_x2=k_x*k_x
+              k_y2=k_y*k_y
+              k_z2=k_z*k_z
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*PA1 + g1_exb*PB1
+                  P2 = g1_exa*PA2 + g1_exb*PB2
+                  P3 = g1_exa*PA3 + g1_exb*PB3
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+
+                  G.make_e_coeff(e,1)
+                  Ex000 = e(0,0,0)
+                  Ex001 = e(0,0,1)
+                  Ex010 = e(0,1,0)
+                  Ex011 = e(0,1,1)
+                  Ex101 = e(1,0,1)
+                  Ex110 = e(1,1,0)
+                  Ex111 = e(1,1,1)
+                  Ex211 = e(2,1,1)
+                  G.make_e_coeff(e,2)
+                  Ey000 = e(0,0,0)
+                  Ey001 = e(0,0,1)
+                  Ey010 = e(0,1,0)
+                  Ey011 = e(0,1,1)
+                  Ey101 = e(1,0,1)
+                  Ey110 = e(1,1,0)
+                  Ey111 = e(1,1,1)
+                  Ey211 = e(2,1,1)
+                  G.make_e_coeff(e,3)
+                  Ez000 = e(0,0,0)
+                  Ez001 = e(0,0,1)
+                  Ez010 = e(0,1,0)
+                  Ez011 = e(0,1,1)
+                  Ez101 = e(1,0,1)
+                  Ez110 = e(1,1,0)
+                  Ez111 = e(1,1,1)
+                  Ez211 = e(2,1,1)
+
+                  ft_x01(:) = cmplx(Ex001,Ex101*k_x(:),kind=CPX_KIND)
+                  ft_x10(:) = cmplx(Ex010,Ex110*k_x(:),kind=CPX_KIND)
+                  ft_y01(:) = cmplx(Ey001,Ey101*k_y(:),kind=CPX_KIND)
+                  ft_y10(:) = cmplx(Ey010,Ey110*k_y(:),kind=CPX_KIND)
+                  ft_z01(:) = cmplx(Ez001,Ez101*k_z(:),kind=CPX_KIND)
+                  ft_z10(:) = cmplx(Ez010,Ez110*k_z(:),kind=CPX_KIND)
+
+                  res_ij => res(:,1,1)
+                  res_ij(:) = res_ij(:) + cmplx(Ex011-Ex211*k_x2(:),Ex111*k_x(:),kind=CPX_KIND)*Ey000*Ez000*prefac(:)
+                  res_ij => res(:,2,1)
+                  res_ij(:) = res_ij(:) + ft_x01(:)*ft_y10(:)*Ez000*prefac(:)
+                  res_ij => res(:,3,1)
+                  res_ij(:) = res_ij(:) + ft_x01(:)*Ey000*ft_z10(:)*prefac(:)
+                  res_ij => res(:,1,2)
+                  res_ij(:) = res_ij(:) + ft_x10(:)*ft_y01(:)*Ez000*prefac(:)
+                  res_ij => res(:,2,2)
+                  res_ij(:) = res_ij(:) + Ex000*cmplx(Ey011-Ey211*k_y2(:),Ey111*k_y(:),kind=CPX_KIND)*Ez000*prefac(:)
+                  res_ij => res(:,3,2)
+                  res_ij(:) = res_ij(:) + Ex000*ft_y01(:)*ft_z10(:)*prefac(:)
+                  res_ij => res(:,1,3)
+                  res_ij(:) = res_ij(:) + ft_x10(:)*Ey000*ft_z01(:)*prefac(:)
+                  res_ij => res(:,2,3)
+                  res_ij(:) = res_ij(:) + Ex000*ft_y10(:)*ft_z01(:)*prefac(:)
+                  res_ij => res(:,3,3)
+                  res_ij(:) = res_ij(:) + Ex000*Ey000*cmplx(Ez011-Ez211*k_z2(:),Ez111*k_z(:),kind=CPX_KIND)*prefac(:)
+                end
+              end
+              k_z2.destroy
+              k_y2.destroy
+              k_x2.destroy
+              ft_z10.destroy
+              ft_z01.destroy
+              ft_y10.destroy
+              ft_y01.destroy
+              ft_x10.destroy
+              ft_x01.destroy
+              e.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_z.destroy
+              ft_y.destroy
+            case default
+              ft_x.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_y.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_z.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              lb.create(3,n_b);   l_b.make_gaussian_xyz_powers(lb)
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*.a.pos(1) + g1_exb*.b.pos(1)
+                  P2 = g1_exa*.a.pos(2) + g1_exb*.b.pos(2)
+                  P3 = g1_exa*.a.pos(3) + g1_exb*.b.pos(3)
+                  G.make_ft_component(ft_x,1,k_x,k_max)
+                  G.make_ft_component(ft_y,2,k_y,k_max)
+                  G.make_ft_component(ft_z,3,k_z,k_max)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  do b=0,l_b
+                    ft_z(:,0,b) = ft_z(:,0,b) * prefac(:)
+                    ft_z(:,1,b) = ft_z(:,1,b) * prefac(:)
+                  end
+                  do b = 1,n_b
+                    bx = lb(1,b)
+                    by = lb(2,b)
+                    bz = lb(3,b)
+                    ft_xb => ft_x(:,0,bx)
+                    ft_yb => ft_y(:,0,by)
+                    ft_zb => ft_z(:,0,bz)
+                    res_ij => res(:,1,b)
+                    res_ij(:) = res_ij(:) + ft_x(:,1,bx)*ft_yb*ft_zb
+                    res_ij => res(:,2,b)
+                    res_ij(:) = res_ij(:) + ft_xb*ft_y(:,1,by)*ft_zb
+                    res_ij => res(:,3,b)
+                    res_ij(:) = res_ij(:) + ft_xb*ft_yb*ft_z(:,1,bz)
+                  end
+                end
+              end
+              lb.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_z.destroy
+              ft_y.destroy
+              .normalise_ft(res)
+          end
+        case default
+          select case (l_b)
+            case (0)
+              ft_x.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_y.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_z.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              la.create(3,n_a);   l_a.make_gaussian_xyz_powers(la)
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*.a.pos(1) + g1_exb*.b.pos(1)
+                  P2 = g1_exa*.a.pos(2) + g1_exb*.b.pos(2)
+                  P3 = g1_exa*.a.pos(3) + g1_exb*.b.pos(3)
+                  G.make_ft_component(ft_x,1,k_x,k_max)
+                  G.make_ft_component(ft_y,2,k_y,k_max)
+                  G.make_ft_component(ft_z,3,k_z,k_max)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  do a=0,l_a
+                    ft_z(:,a,0) = ft_z(:,a,0) * prefac(:)
+                  end
+                  do a = 1,n_a
+                    ax = la(1,a)
+                    ay = la(2,a)
+                    az = la(3,a)
+                    res_ij => res(:,a,1)
+                    res_ij(:) = res_ij(:) + ft_x(:,ax,0)*ft_y(:,ay,0)*ft_z(:,az,0)
+                  end
+                end
+              end
+              la.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_z.destroy
+              ft_y.destroy
+              .normalise_ft(res)
+            case (1)
+              ft_x.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_y.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_z.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              la.create(3,n_a);   l_a.make_gaussian_xyz_powers(la)
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*.a.pos(1) + g1_exb*.b.pos(1)
+                  P2 = g1_exa*.a.pos(2) + g1_exb*.b.pos(2)
+                  P3 = g1_exa*.a.pos(3) + g1_exb*.b.pos(3)
+                  G.make_ft_component(ft_x,1,k_x,k_max)
+                  G.make_ft_component(ft_y,2,k_y,k_max)
+                  G.make_ft_component(ft_z,3,k_z,k_max)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  do a=0,l_a ! incorporate prefac into ft_z
+                    ft_z(:,a,0) = ft_z(:,a,0) * prefac(:)
+                    ft_z(:,a,1) = ft_z(:,a,1) * prefac(:)
+                  end
+                  do a = 1,n_a
+                    ax = la(1,a)
+                    ay = la(2,a)
+                    az = la(3,a)
+                    res_ij => res(:,a,1)
+                    res_ij(:) = res_ij(:) + ft_x(:,ax,1)*ft_y(:,ay,0)*ft_z(:,az,0)
+                    res_ij => res(:,a,2)
+                    res_ij(:) = res_ij(:) + ft_x(:,ax,0)*ft_y(:,ay,1)*ft_z(:,az,0)
+                    res_ij => res(:,a,3)
+                    res_ij(:) = res_ij(:) + ft_x(:,ax,0)*ft_y(:,ay,0)*ft_z(:,az,1)
+                  end
+                end
+              end
+              la.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_z.destroy
+              ft_y.destroy
+              .normalise_ft(res)
+            case default
+              ft_x.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_y.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              ft_z.create((/1,k_max/),(/0,l_a/),(/0,l_b/))
+              prefac.create(k_max)
+              k_x => k_pts(:,1)
+              k_y => k_pts(:,2)
+              k_z => k_pts(:,3)
+              la.create(3,n_a);   l_a.make_gaussian_xyz_powers(la)
+              lb.create(3,n_b);   l_b.make_gaussian_xyz_powers(lb)
+             ! This is the general routine.  It includes reduced multiplication,
+             ! and use of pointers to minimise array finding.
+              do aa = 1, .a.n_cc
+                ca = .a.cc(aa)
+                ex_a=.a.ex(aa)
+                G.set(ex_a=ex_a)
+                do bb = 1, .b.n_cc
+                  ex_b=.b.ex(bb)
+                  G.set(ex_b=ex_b)
+                  gamma = G.a.ex+G.b.ex
+                  g1 = ONE/gamma
+                  g4 = QUARTER*g1
+                  PI_on_gamma = PI*g1
+                  pifac = sqrt(PI_on_gamma) * PI_on_gamma
+                  g1_exa = g1*G.a.ex
+                  g1_exb = g1*G.b.ex
+                  P1 = g1_exa*.a.pos(1) + g1_exb*.b.pos(1)
+                  P2 = g1_exa*.a.pos(2) + g1_exb*.b.pos(2)
+                  P3 = g1_exa*.a.pos(3) + g1_exb*.b.pos(3)
+                  G.make_ft_component(ft_x,1,k_x,k_max)
+                  G.make_ft_component(ft_y,2,k_y,k_max)
+                  G.make_ft_component(ft_z,3,k_z,k_max)
+                  fac = pifac * ca * .b.cc(bb)
+                  do k = 1,k_max
+                    k1 = k_x(k);    k2 = k_y(k);    k3 = k_z(k)
+                    dot1 = k1*P1+k2*P2+k3*P3
+                    dot2 = -g4 * (k1*k1+k2*k2+k3*k3)
+                    prefac(k) = fac*exp(cmplx(dot2,dot1,kind=CPX_KIND))
+                  end
+                  do b=0,l_b ! incorporate prefac into ft_z
+                    do a=0,l_a
+                      ft_z(:,a,b) = ft_z(:,a,b) * prefac(:)
+                    end
+                  end
+                  bxlast = lb(1,1)
+                  bylast = lb(2,1)
+                  bzlast = lb(3,1)
+                  ft_xbx => ft_x(:,:,bxlast)
+                  ft_yby => ft_y(:,:,bylast)
+                  ft_zbz => ft_z(:,:,bzlast)
+                  do b = 1,n_b
+                    bx = lb(1,b)
+                    by = lb(2,b)
+                    bz = lb(3,b)
+                    if (bxlast/=bx) then
+                      ft_xbx => ft_x(:,:,bx)
+                      bxlast = bx
+                    end
+                    if (bylast/=by) then
+                      ft_yby=> ft_y(:,:,by)
+                      bylast = by
+                    end
+                    if (bzlast/=bz) then
+                      ft_zbz=> ft_z(:,:,bz)
+                      bzlast = bz
+                    end
+                    do a = 1,n_a
+                      ax = la(1,a)
+                      ay = la(2,a)
+                      az = la(3,a)
+                      res_ij => res(:,a,b)
+                      res_ij(:) = res_ij(:) + ft_xbx(:,ax+1)*ft_yby(:,ay+1)*ft_zbz(:,az+1)
+                    end
+                  end
+                end
+              end
+              lb.destroy
+              la.destroy
+              prefac.destroy
+              ft_x.destroy
+              ft_z.destroy
+              ft_y.destroy
+              .normalise_ft(res)
+          end
+      end
+   end
+
+   make_ft_fast(res,k_pts,thermal,partition)
    ! Calculates the Fourier transform for a product of two contracted
    ! gaussian shells, evaluated at a series of k points k_pts
    ! Dimensions of res are [k_max,.a.n_comp,.b.n_comp].
@@ -1273,11 +1956,12 @@ contains
       k_pts :: MAT{REAL}*
       ft_ab :: MAT3{CPX}*
       wt,fac_wt :: VEC{REAL}*
-      k,n,t,p, a,b,i,j :: INT
+      k,n,n_pts,t,p, a,b,i,j :: INT
       k_val,k_val_st,th,ph,ct,st,cp,sp,ca,fac :: REAL
       theta,phi :: QUADRATURE*
       ! First set the quadrature objects
       n = 10
+      n_pts = 2*n*n
       theta.create 
       theta.set_kind("gauss_legendre")
       theta.set_limits([ZERO,PI])
@@ -1290,10 +1974,10 @@ contains
       phi.finalise
       ! Loop over each k_value one by one
       res = ZERO
-      wt.create(2*n*n)
-      fac_wt.create(2*n*n)
-      k_pts.create(2*n*n,3)
-      ft_ab.create(k_values.dim,.a.n_comp,.b.n_comp)
+      wt.create(n_pts)
+      fac_wt.create(n_pts)
+      k_pts.create(n_pts,3)
+      ft_ab.create(n_pts,.a.n_comp,.b.n_comp)
       G.set(.a.l,.a.pos,ZERO,.b.l,.b.pos,ZERO)
       do k = 1,k_values.dim
          k_val = k_values(k)
@@ -1314,6 +1998,13 @@ contains
          end
          end
          ! Now do the Fourier transform for this shell, and average it
+       ! .make_ft_fast(ft_ab,k_pts)
+       ! .make_ft(ft_ab,k_pts)
+       ! do b = 1,.b.n_comp
+       ! do a = 1,.a.n_comp
+       !    res(a,b,k) = res(a,b,k) + sum(ft_ab(:,a,b)*wt)
+       ! end
+       ! end
          do a = 1,.a.n_cc
             G.set(ex_a=.a.ex(a))
             ca = .a.cc(a)
@@ -1336,6 +2027,105 @@ contains
       wt.destroy
       phi.destroy; theta.destroy
       .normalise_ft2(res) 
+      fac = ONE/(FOUR*PI)
+      res = fac*res
+   end
+
+   make_z_circularly_averaged_ft(res,k_values,n_theta)
+   ! Calculates the z circularly averaged Fourier transform for a product of two
+   ! contracted gaussian shells, "res", evaluated at a series of "k_values" in
+   ! reciprocal space, and with "n_theta" equally spaced angles from the z axis,
+   ! from 0 -> 2*Pi. Size of "res" is [.a.n_comp,.b.n_comp,k_values.dim,n_theta].
+      res :: MAT4{CPX}, target
+      k_values :: VEC{REAL}, IN
+      n_theta :: INT, IN
+   ENSURE(res.dim1==.a.n_comp,"wrong 1st dimension for res")
+   ENSURE(res.dim2==.b.n_comp,"wrong 2nd dimension for res")
+   ENSURE(res.dim3==k_values.dim,"wrong 3rd dimension for res")
+   ENSURE(res.dim4==n_theta+1,"wrong 4th dimension for res")
+      G :: GAUSSIAN2
+      k_pts :: MAT{REAL}*
+      ft_ab :: MAT3{CPX}*
+      wt,fac_wt :: VEC{REAL}*
+      k,n,n_pts,t,p, a,b,i,j,f,l :: INT
+      k_val,k_val_st,th,ph,ct,st,cp,sp,ca,fac,angle :: REAL
+      phi :: QUADRATURE*
+      ! First set the quadrature objects
+      angle = (PI/(2*n_theta))
+      n = 10                  ! points per Pi for phi
+      n_pts = 2*n*(n_theta+1) ! 
+      phi.create 
+      phi.set_kind("gauss_legendre")
+      phi.set_limits([ZERO,2*PI])
+      phi.set_n_points(2*n)
+      phi.finalise
+      ! Loop over each k_value one by one
+      res = ZERO
+      wt.create(n_pts)
+      fac_wt.create(n_pts)
+      k_pts.create(n_pts,3)
+      ft_ab.create(n_pts,.a.n_comp,.b.n_comp)
+      G.set(.a.l,.a.pos,ZERO,.b.l,.b.pos,ZERO)
+      do k = 1,k_values.dim
+         k_val = k_values(k)
+         n = 0
+         ! For each k_value, define a shell of spherical k_pts
+         do t = 0,n_theta
+         do p = 1,phi.n_points
+            n = n + 1
+            th = t*angle
+            ph = phi.root(p)
+            ct = cos(th); st = sin(th)
+            cp = cos(ph); sp = sin(ph)
+            k_val_st = k_val*st
+            k_pts(n,1) = k_val_st*cp    ! the spherical shell
+            k_pts(n,2) = k_val_st*sp
+            k_pts(n,3) = k_val*ct
+         end
+         end
+         ! Now do the Fourier transform for this shell, and average it
+         .make_ft_fast(ft_ab,k_pts)
+         f = 1
+         l = phi.n_points
+         do t = 1,n_theta+1
+            do b = 1,.b.n_comp
+            do a = 1,.a.n_comp
+               res(a,b,k,t) = res(a,b,k,t) + sum(ft_ab(f:l,a,b)*phi.weight)
+            end
+            end
+            f = f + phi.n_points
+            l = l + phi.n_points
+         end
+       ! f = 1
+       ! l = phi.n_points
+       ! do t = 1,n_theta+1
+       !    do a = 1,.a.n_cc
+       !       G.set(ex_a=.a.ex(a))
+       !       ca = .a.cc(a)
+       !       do b = 1,.b.n_cc
+       !          G.set(ex_b=.b.ex(b))
+       !          G.make_ft(ft_ab,k_pts)
+       !          fac = ca*.b.cc(b)
+       !          fac_wt = fac*phi.weight
+       !          do j = 1,.b.n_comp
+       !          do i = 1,.a.n_comp
+       !              res(i,j,k,t) = res(i,j,k,t) + sum(ft_ab(f:l,i,j)*fac_wt)
+       !          end
+       !          end
+       !       end
+       !    end
+       !    f = f + phi.n_points
+       !    l = l + phi.n_points
+       ! end
+      end
+      ft_ab.destroy
+      k_pts.destroy
+      fac_wt.destroy
+      wt.destroy
+      phi.destroy
+      .normalise_ft4(res) 
+      fac = ONE/(TWO*PI)
+      res = fac*res
    end
 
 !  *********************************
