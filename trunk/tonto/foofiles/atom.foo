@@ -1,7 +1,8 @@
 !-------------------------------------------------------------------------------
-! ATOM: a QM atom with a basis set
 !
-! (c) Dylan Jayatilaka, november 1997
+! ATOM: a quantum mechanical atom, with a basis set
+!
+! (c) Dylan Jayatilaka, University of Western Asutralia, November 1997
 !
 ! $Id$
 !-------------------------------------------------------------------------------
@@ -12,8 +13,7 @@ module ATOM
    use STR
    use BUFFER
    use INT
-   use INPUT
-   use OUTPUT
+   use TEXTFILE
    use VEC
    use MAT
    use MAT3
@@ -221,11 +221,11 @@ contains
   copy(atom)
   ! Make self a copy of atom.
     ATOM :: atom
-    self%label = atom%label
-    self%atomic_number = atom%atomic_number
-    self%pos = atom%pos
-    self%thermal_tensor = atom%thermal_tensor
-    if (associated(atom%basis)) self%basis => atom%basis
+    self.label = atom.label
+    self.atomic_number = atom.atomic_number
+    self.pos = atom.pos
+    self.thermal_tensor = atom.thermal_tensor
+    if (associated(atom.basis)) self.basis => atom.basis
   end
 
    destroy 
@@ -280,9 +280,16 @@ contains
 !  *************
 
    read(in)
-   ! Read an ATOM (without basis set) from "in"
-   ! Atom symbol followed by three coordinates
-      INPUT :: in
+   ! Read an ATOM in standard order from "in'
+      TEXTFILE :: in
+      .read_label_and_pos(in)
+      .read_basis(in)
+   end
+
+   read_label_and_pos(in)
+   ! Read an ATOM label followed by three coordinates (without basis set), 
+   ! from "in"
+      TEXTFILE :: in
       INT :: lensym,z
       STR :: symbol
       in.read(.label)                ! Input atom label
@@ -309,98 +316,67 @@ contains
 
    read_basis(in)
    ! Read an ATOM basis set from "in"
-      INPUT :: in
+      TEXTFILE :: in
       if (NOT associated(.basis)) .basis.create 
       .basis.read(in)
    end
 
    read_basis_label(in) [leaky]
    ! Read only the ATOM basis set label from "in"
-      INPUT :: in
+      TEXTFILE :: in
       .basis.create 
       .basis.read_label(in)
    end
 
    read_basis_shellvec(in) [leaky]
    ! Read only the ATOM basis shell vector part from "in"
-      INPUT :: in
+      TEXTFILE :: in
       .basis.create 
       .basis.read_shellvec(in)
    end
 
-   read_thermal_tensor(in,unitcell,crystal)
-   ! Read thermal parameters from "in", assumed in cartesian basis system with
-   ! units (Angstrom)^-2. "unitcell" describes the crystal axis system.
-
-   ! Whether already in crystal axis system can be controlled by the keywords
-   ! "crystal" or "cartesian" at the end of the line, or call the routine with
-   ! crystal=TRUE or FALSE.  Input line has priority when both specified.
-   ! Default is crystal system.
-      INPUT :: in
-      UNITCELL :: unitcell
-      BIN, IN, optional :: crystal
+   read_thermal_tensor(in,crystal)
+   ! Read thermal parameters from "in", assumed in crystal axis system using
+   ! fractional coordinates. "crystal" contains the crystal axis information.
+   ! The thermal tensors are assumed to be in units (angstrom^2); the expansion
+   ! of the thermal smearing terperature factor term is:
+   !              TF = exp ( -2\pi^2 U_{ij} h_i h_j a^*_i a^*_j )
+   ! where (h) are the miller indices and (a^*) are the reciprocal lattice
+   ! constants in angstrom^{-2}.
+      TEXTFILE :: in
+      CRYSTAL :: crystal
       STR :: coords
-      BIN :: cryst
-      cryst = TRUE                  ! Default is crystal coordinates
-      in.read(.thermal_tensor(1,1)) ! Units must be angstrom^-2
-      in.read(.thermal_tensor(2,2)) 
-      in.read(.thermal_tensor(3,3)) 
+      in.read(.thermal_tensor(1,1)) ! Units must be angstrom^2
+      in.read(.thermal_tensor(2,2)) ! unless over-ridden in in.default_units
+      in.read(.thermal_tensor(3,3)) ! ... see below
       in.read(.thermal_tensor(1,2)) 
       in.read(.thermal_tensor(1,3)) 
       in.read(.thermal_tensor(2,3)) 
       .thermal_tensor(2,1) = .thermal_tensor(1,2)
       .thermal_tensor(3,1) = .thermal_tensor(1,3)
       .thermal_tensor(3,2) = .thermal_tensor(2,3)
-      ! assume in Angtrom^{-2} ... change to bohr^{-2}
-      .thermal_tensor = .thermal_tensor*(BOHR_PER_ANGSTROM)**2 
-
-      if ( in%buffer.not_exhausted ) then
-        in.read(coords)
-        coords.to_lower_case
-        select case (coords)
-          case ("cartesian"); cryst = FALSE
-          case ("crystal"); cryst = TRUE
-          case default; DIE("unknown coordinate system " // trim(coords))
-        end
-      else
-        if (present(crystal)) cryst = crystal
-      end
-
-      if (cryst) .thermal_tensor_to_cartesian(unitcell)
+      if (in.default_units==" ") &
+      .thermal_tensor.convert_from("angstrom^2")
+      .thermal_tensor_from_crystal(crystal)
    end
 
-   thermal_tensor_to_cartesian(unitcell)
-   ! Treat thermal parameters to get cartesian orientation
-      UNITCELL :: unitcell
-      MAT(3,3) :: rcm
-      VEC(3) :: len(3)
-      INT :: i
-      rcm = unitcell%reciprocal_cell_matrix
-      do i = 1,3
-         len(i) = sqrt(rcm(1,i)**2+rcm(2,i)**2+rcm(3,i)**2)
-      end
-      .thermal_tensor.change_basis(len)
-      .thermal_tensor.change_basis(transpose(unitcell%cell_matrix))
+   thermal_tensor_from_crystal(crystal)
+   ! Change thermal parameters in the crystal axis system to get them in
+   ! cartesian axis system
+      CRYSTAL :: crystal
+      .thermal_tensor.change_basis(crystal.direct_U_cell_matrix)
    end
 
-   thermal_tensor_to_crystal(unitcell)
-   ! Treat thermal parameters to get crystal orientation
-      UNITCELL :: unitcell
-      MAT(3,3) :: rcm
-      VEC(3) :: len(3)
-      INT :: i
-      rcm = unitcell%reciprocal_cell_matrix
-      do i = 1,3
-         len(i) = sqrt(rcm(1,i)**2+rcm(2,i)**2+rcm(3,i)**2)
-      end
-      len = ONE/len
-      .thermal_tensor.change_basis(rcm)
-      .thermal_tensor.change_basis(len)
+   thermal_tensor_to_crystal(crystal)
+   ! Change thermal parameters in the cartesian axis system to get them in
+   ! the crystal axis system
+      CRYSTAL :: crystal
+      .thermal_tensor.change_basis(crystal.reciprocal_U_cell_matrix)
    end
 
    put(out)
    ! Put out the atom information to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       out.text("Atom data\n")
       out.show("Label                  =",.label)
       out.show("Atom coordinates       =",.pos)
@@ -417,7 +393,7 @@ contains
   put_thermal_tensor(out)
   ! Output the thermal tensor.  Does not put a header or carriage return.
   ! Only outputs the 6 independent ones, not all 9.
-    OUTPUT :: out
+    TEXTFILE :: out
     out.put(.thermal_tensor(1,1))
     out.put(.thermal_tensor(2,2)) 
     out.put(.thermal_tensor(3,3)) 
@@ -428,7 +404,7 @@ contains
 
    put_natural_orbitals(out)
    ! Put out the current associated molecular orbitals to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       out.flush
       out.text("Natural orbital occupations:")
       out.put( .occupation, format="column")
@@ -446,24 +422,23 @@ contains
    ! label are not compared since the same kind of atom can have a different
    ! position and label.  To check if the basis set is the same, only the
    ! label is used.
-
       ATOM :: atom
       BIN :: res
       ENSURE( .basis.created,"no basis set to compare")
-      res = .atomic_number==atom%atomic_number AND &
-            .basis%label==atom%basis%label
+      res = .atomic_number==atom.atomic_number AND &
+            .basis.label==atom.basis.label
    end
 
    no_of_shells result(res) 
    ! Return the no of shells
       INT :: res
-      res = .basis%n_shell
+      res = .basis.n_shell
    end
 
    n_shell result(res) 
    ! Return the no of shells
       INT :: res
-      res = .basis%n_shell
+      res = .basis.n_shell
    end
 
    no_of_basis_functions result (res)
@@ -475,7 +450,7 @@ contains
    n_bf result (res)
    ! Return the no of basis functions
       INT :: res
-      res = .basis%n_bf
+      res = .basis.n_bf
    end
 
    no_of_primitives result (res)
@@ -487,7 +462,7 @@ contains
    n_prim result (res)
    ! Return the no of primitives for this atom
       INT :: res
-      res = .basis%n_prim
+      res = .basis.n_prim
    end
 
    no_of_occupied_NOs(kind,tol) result (res)
@@ -506,52 +481,52 @@ contains
       if (present(tol)) eps = tol 
       select case (itemkind)
          case ("restricted")
-            n_bf = .occupation%n_bf
+            n_bf = .occupation.n_bf
             res = n_bf
             do n = 1,n_bf
-               if (.occupation%restricted(n)<eps) then
+               if (.occupation.restricted(n)<eps) then
                   res = n-1
                   exit
                end
             end
          case ("unrestricted")
-            n_bf = .occupation%n_bf
+            n_bf = .occupation.n_bf
             res = 2*n_bf
             do n = 1,n_bf
-               if (.occupation%alpha(n)<eps) then
+               if (.occupation.alpha(n)<eps) then
                   res = n-1
                   exit
                end
             end
             do n = 1,n_bf
-               if (.occupation%beta(n)<eps) then
+               if (.occupation.beta(n)<eps) then
                   res = res + n-1
                   exit
                end
             end
          case ("alpha")
-            n_bf= .occupation%n_bf
+            n_bf= .occupation.n_bf
             res = 2*n_bf 
             do n = 1, n_bf
-               if (.occupation%alpha(n)<eps) then
+               if (.occupation.alpha(n)<eps) then
                   res = n-1
                   exit
                end
             end
          case ("beta")
-            n_bf= .occupation%n_bf
+            n_bf= .occupation.n_bf
             res = 2*n_bf 
             do n = 1, n_bf
-               if (.occupation%beta(n)<eps) then
+               if (.occupation.beta(n)<eps) then
                   res = n-1
                   exit
                end
             end
          case ("general")
-            n_bf = 2*.occupation%n_bf
+            n_bf = 2*.occupation.n_bf
             res = n_bf
             do n = 1,n_bf
-               if (.occupation%general(n)<eps) then
+               if (.occupation.general(n)<eps) then
                   res = n-1
                   exit
                end
