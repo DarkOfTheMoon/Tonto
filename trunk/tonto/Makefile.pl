@@ -108,8 +108,8 @@ if (defined $FC && $FC ne '') {
     ($FC,$FULLFC) = &check_for_programs($FC);
   }
 } else {
-  ($FC,$FULLFC) = &check_for_programs('mpif90','lf95','frtvpp','ifc','frt','xlf90',
-                            'pgf90','f95','f90','g95','g90');
+  ($FC,$FULLFC) = &check_for_programs('mpif90','lf95','frtvpp','ifort','ifc',
+             'frt','xlf90','pgf90','f95','f90','g95','g90');
 }
 &print_result($FULLFC);
 
