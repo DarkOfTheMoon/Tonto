@@ -35,6 +35,7 @@ module MOL_ROBY
 
    use MOL_COMMON
    use MOL_IO
+   use MOL_INTEGRALS
    use MOL_SCF
    use MOL_PLOT
    implicit none         
@@ -104,12 +105,13 @@ contains
    VEC, PTR :: n1, less
    MAT, PTR :: n2
    IVEC, PTR :: comb
-   INT :: i, j
+   INT :: i, j, orb_no
    MATVEC, PTR :: P
    MAT, PTR :: S, P2, index, cov
    DBL :: bi, c, d1, d2
    STR :: word
-      .prepare_roby_data(S)
+      .prepare_roby_data(S); .set_scf_defaults
+      .scfdata%direct = TRUE
       n1.create( .n_atom); less.create( .n_atom)
       less.zero
       n2.create( .n_atom, .n_atom); index.create( .n_atom, .n_atom)
@@ -143,10 +145,19 @@ contains
             case("end");        exit read_loop
             case("bond");       .read_atoms_to_bond(i, j)
                 .calc_index( i, j, P(i)%mat, P(j)%mat, S, d1,d2, bi,c)
-                .out.put("Atoms"// i.to_str // "and" // j.to_str ); .out.flush
+                .out.put("Atoms"// trim( i.to_str) // "and" // trim( j.to_str))
+                .out.flush
                 .out.put("Bond index:"); .out.put(bi); .out.flush
                 .out.put("%Covalency:"); .out.put(c); .out.flush
+            case("plot_theta"); 
+                .in.read( orb_no)
+                .plot_theta_orbitals( orb_no)
             case("shared");     .read_atoms_to_share( S)
+            case("energy");     
+               .make_fock_matrix;
+               .out.put( .scf_electronic_energy( .density_matrix))
+               .out.flush
+               .read_shared_energy_atoms( S)
          end
       end do read_loop
       S.destroy; n1.destroy; n2.destroy; P.destroy; less.destroy 
@@ -201,7 +212,7 @@ contains
       S_tilda.solve_eigenproblem(sval, tilda_ts)
       theta_c.to_product(SI, tilda_tc)
       theta_s.to_product(SI, tilda_ts)
-      .archive_orbitals( theta_c, theta_s, a, b)
+!      .archive_orbitals( theta_c, theta_s, a, b)
       SO.destroy; SO.create(n_ab, .n_bf); SA.create(n_a, .n_bf); SB.create(n_b, .n_bf)
       SO(   1:n_a , : ) = O( .first(a): .last(a), : )
       SO(n_a+1:n_ab, : ) = O( .first(b): .last(b), : )
@@ -261,10 +272,10 @@ contains
         s_m(i) = .calculate_theta_population( tmp(:), SO)
       end
       covalency.create( n_ab); ionicity.create( n_ab); l = 0; l2 = 0
-      .out.flush; .out.dash(dbl_fields = 1)
+      .out.flush; .out.dash(int_fields = 1, dbl_fields = 1)
       .out.put("Bond Index Data:"); .out.flush
       .out.put( .atom(a)%label.trim // " and " // .atom(b)%label.trim ); .out.flush
-      .out.dash(dbl_fields = 1)
+      .out.dash(int_fields = 1, dbl_fields = 1)
       .out.put("Orbital Angles:"); .out.flush
       .out.dash(dbl_fields = 1)
       do i = 1, n_ab
@@ -274,6 +285,7 @@ contains
            covalency(i) = (c_m(i) - c_m(c_pair(i)))/2
            l2 = l2 + c_b(i) + c_b(c_pair(i))
            l = l + c_a(i) + c_a(c_pair(i))
+           .out.put_int( i)
            .out.put_dbl( 180 * cval(i).arccos / PI); .out.flush
          end
       end
@@ -324,6 +336,12 @@ contains
       archive.write( tmp_mat2)
       tmp_mat1.destroy; tmp_mat2.destroy   
     end  
+
+   plot_theta_orbitals( orb_no)
+   INT :: orb_no
+      .grid.put( .out)
+      .make_orbital_density_grid( orb_no, make_NOs=TRUE)
+   end
 
    calculate_orbital_population( orbital, S, Sconv, P) result(pop)
    ! calculates roby population for a given orbital
@@ -415,7 +433,42 @@ contains
       comb_list.destroy
       population.destroy
    end
-   
+
+   read_shared_energy_atoms( S)
+   ! runs the shared_energy calculations
+   ! after reading in the atom list
+      DBL :: shared
+      IVEC, PTR :: sel
+      MAT, PTR :: S
+      STRVEC, PTR :: comb_list
+      VEC, PTR :: energy 
+      INT :: i, total_combs
+      sel.create( .in%buffer%n_items - 1)
+      do i = 1, .in%buffer%n_items
+         sel(i) = .in%buffer.get_item.to_int
+      end
+      do i = 1, size(sel)
+         total_combs = total_combs + size(sel).choose(i)   ! gets number of combinations
+      end
+      energy.create( total_combs)
+      comb_list.create( total_combs)
+      shared = .get_shared_energy( sel, energy, comb_list, S)
+      .out.dash(dbl_fields = 3)
+      .out.text("Shared Energy analysis")
+      .out.flush
+      .out.dash(dbl_fields = 3)
+      do i = 1, size( sel)
+         .out.put( trim( .atom(sel(i))%label), int_width=TRUE, flush=1)
+      end
+      .out.flush
+      .out.put(shared)
+      .out.flush
+      .out.dash(dbl_fields = 3)
+      sel.destroy
+      comb_list.destroy
+      energy.destroy
+   end
+
    get_shared_population( sel, p, c_l, S) result(sp)
    ! calculates the shared population of "atoms"
       IVEC, PTR :: sel
@@ -445,24 +498,65 @@ contains
       end
       comb_mat.destroy; pop.destroy
    end
-   
-   calc_population( comb, S, P) result(pop)
+
+   get_shared_energy( sel, e, c_l, S) result(se)
+   ! calculates the shared population of "atoms"
+      IVEC, PTR :: sel
+      IVEC, PTR :: comb
+      STRVEC :: c_l
+      IMAT, PTR :: comb_mat
+      MAT, PTR :: S, rho_W, P, overlap
+      DBL :: se, population
+      VEC, PTR :: energy, e
+      INT :: k, m, count, i, size_P
+      energy.create( size(sel))
+      se = 0
+      count = 0
+      do k = 1, size(sel)
+         energy(k) = 0
+         comb_mat => sel.get_combination_matrix_from(k)
+         comb.create(k)
+         do m = 1, nint( size(sel).choose(k))
+            count = count + 1
+            comb = comb_mat(:, m); size_P = 0
+            do i = 1, size( comb)
+               size_P = size_P + .atom(comb(i)).n_bf
+            end
+            P.create( size_P, size_P); overlap.create( size_P, .n_bf)
+            rho_W.create( .n_bf, .n_bf)
+            population = .calc_population( comb, S, P, rho_W, overlap)
+            e(count) = .calculate_subspace_energy( rho_W, P, overlap)
+            .out.put(e(count))        ! just for testing purposes
+            rho_W.destroy
+            c_l(count) = comb.to_str
+            energy(k) = energy(k) + e(count)
+            P.destroy; overlap.destroy
+         end      
+         comb.destroy
+         se = se - ((-1)**k)*energy(k)
+      end
+      comb_mat.destroy; energy.destroy
+   end
+
+   calc_population( comb, S, P, rho, overlap) result(pop)
    ! gives the total population of the subgrouping of atoms determined by permutation
       MAT, PTR, optional :: P   ! if the projection matrix is to be returned
+      MAT, PTR, optional :: rho ! if the subspace  density is to be returned
+      MAT, PTR, optional :: overlap ! if the portion of the overlap matrix is to be returned
       IVEC, PTR :: comb, sub_f, sub_l, bases, occs
       INT :: i, a, aa
       INT :: total_occs, total_bases
       INT :: basis_count, orb_count, bbasis_count
       DBL :: pop
-      MAT, PTR :: S, W, X, Y
+      MAT, PTR :: S, W, X, Y, Z, V, rhoW
       ! a bit of variable switching ...
       occs.create(size(comb)); bases.create(size(comb))
       sub_f.create(size(comb)); sub_l.create(size(comb))
       do a = 1, size(comb)
         sub_f(a) = .first( comb(a))
         sub_l(a) = .last( comb(a))
-        occs(a) = .atom(a)%occupations%restricted.no_of_elements_larger_than(0.05d0)
-        bases(a) = .atom(a).n_bf
+        occs(a) = .atom(comb(a))%occupations%restricted.no_of_elements_larger_than(0.05d0)
+        bases(a) = .atom(comb(a)).n_bf
       end
       total_occs = occs.sum_elements
       total_bases = bases.sum_elements
@@ -475,8 +569,7 @@ contains
          basis_count = basis_count + bases(a)
          orb_count = orb_count + occs(a)
       end      
-      ! make overlap matrix...Y
-      Y.create(total_bases, total_bases); Y = ZERO
+      Y.create(total_bases, total_bases)
       basis_count = 0
       do a = 1, size(comb)
          bbasis_count = 0
@@ -491,25 +584,75 @@ contains
       Y.change_basis(X,W); Y.destroy
       Y.create(total_occs, total_occs)
       Y.to_inverse_of(X); X.destroy
-      X.create(total_bases, total_bases)
-      Y.back_transform(X,W)
-      if (present(P)) P=X
-      Y.destroy
-      W.destroy
-      W.create(.n_bf, .n_bf)
-      Y.create(total_bases, .n_bf)
+      Z.create(total_bases, total_bases)
+      Y.back_transform(Z,W)
+      if (present(P)) P=Z
+      Y.destroy; W.destroy
+      W.create(.n_bf, .n_bf); Y.create(total_bases, .n_bf)
       basis_count = 0
       do a = 1, size(comb)
          Y(basis_count + 1:basis_count + bases(a) ,:) = S( sub_f(a):sub_l(a),:)
          basis_count = basis_count + bases(a)
       end
-      X.change_basis(W,Y)
-      X.destroy
+      Z.change_basis(W,Y)
       X.create(.n_bf, .n_bf)
       X.to_product(W, .density_matrix%restricted)
+      if (present(rho)) then
+         overlap = Y; Y.destroy
+         V.create( total_bases, total_bases)
+         .density_matrix%restricted.back_transform( V, overlap)
+         rhoW.create( total_bases, total_bases)
+         V.change_basis(rhoW, Z); V.destroy
+         basis_count = 0; bbasis_count = 0; rho.zero
+         do a = 1, size(comb)
+           do aa = 1, size(comb)
+             rho(sub_f(a):sub_l(a), sub_f(aa):sub_l(aa)) &
+             = rhoW(basis_count + 1: basis_count + bases(a), bbasis_count + 1 : bbasis_count + bases(aa))
+             bbasis_count = bbasis_count + bases(aa)
+           end
+           basis_count = basis_count + bases(a)
+        end
+        rho.zero_small_values(1.0d-5)
+        rhoW.destroy
+      end
       pop = X.trace
-      X.destroy; Y.destroy; W.destroy
+      X.destroy; W.destroy
       sub_f.destroy; sub_l.destroy; bases.destroy; occs.destroy
+   end
+
+   calculate_subspace_energy( rho, P, O) result(energy)
+   ! calculates the energy of the subspace defined by P_W
+   MAT, PTR :: rho, O, rho_save, F, H, I, P, R
+   ARCHIVE :: archive
+   DBL :: energy
+      rho_save.create( .n_bf, .n_bf)
+      rho_save = .density_matrix%restricted
+      .density_matrix%restricted = rho
+      H.create( .n_bf, .n_bf)
+      .get_kinetic_matrix(H)
+      F.create( .n_bf, .n_bf)
+      .get_nuclear_matrix(F)
+      H = H +F
+      P.change_basis(F,O)
+      R.create( .n_bf, .n_bf) 
+      H.change_basis(R,F)
+      F.destroy; H.destroy
+      archive.set(.name,"core_matrix")
+      archive.write(R)
+      .make_fock_matrix(core=FALSE)
+      I.create( .n_bf, .n_bf)
+      I = R + .fock_matrix%restricted + R
+      R.destroy
+!      R.create(.n_bf, .n_bf)
+!      P.change_basis(R, O)
+!      F.create( .n_bf, .n_bf)
+!      I.change_basis(F, R)
+      F.create( .n_bf, .n_bf); F = I ! For no projection of the Fock matrix...
+      I.to_product(rho_save, F)
+      energy = HALF * I.trace 
+      .density_matrix%restricted = rho_save
+      rho_save.destroy
+      I.destroy; R.destroy; F.destroy
    end
 
    put_roby_populations(n1, n2, less, index, covalency)
@@ -960,3 +1103,4 @@ contains
    end
 
 end 
+
