@@ -1,0 +1,716 @@
+!-------------------------------------------------------------------------------
+!
+! MOL: An object representation of a molecule.
+!
+! $Id$
+!-------------------------------------------------------------------------------
+module MOL_DANIEL
+
+   use TYPES
+   use SYSTEM
+   use DBL
+   use STR
+
+   use VEC
+   use MAT
+   use MAT3
+
+   use CVEC
+   use CMAT
+   use CMAT3
+   use OPVEC
+   use OPMAT
+
+   use TEXTFILE
+   use ARCHIVE
+   use CRYSTAL
+   use ATOMVEC
+
+   use SCFDATA
+   use MOL
+
+   implicit none         
+
+#  include "macros"
+#  include "mol_daniel.int"
+
+!   type mol_type
+!
+!   STR :: name
+!   ! Name of molecule
+!
+!   INT :: charge
+!   ! Electric charge of the molecule
+!
+!   INT :: mult
+!   ! Spin multiplicity of the molecule
+!
+!   VEC(3) :: E_field
+!   ! Applied electric field in atomic units
+!
+!   VEC(3) :: B_field
+!   ! Applied magnetic field in atomic units
+!
+!   VEC(3) :: gauge_origin
+!   ! Global gauge origin for magnetic field
+!
+!   ATOMVEC, PTR :: atom DEFAULT_NULL
+!   ! List of atoms in molecule
+!
+!   BASISVEC, PTR :: basis DEFAULT_NULL
+!   ! List of basis sets used
+!
+!   PLOTGRID, PTR :: grid DEFAULT_NULL
+!   ! Rectangular grid data, for plots
+!
+!   DFTGRID, PTR :: dftgrid DEFAULT_NULL
+!   ! DFT integration grid data
+!
+!   CRYSTAL, PTR :: crystal DEFAULT_NULL
+!   ! Crystal data for the enclosing crystal
+!
+!   POINTGROUP, PTR :: pointgroup DEFAULT_NULL
+!   ! Pointgroup symmetry of the molecule
+!
+!   INT :: n_e
+!   ! No of electrons
+!
+!   INT :: n_a
+!   ! No of alpha electrons
+!
+!   INT :: n_b
+!   ! No of beta electrons
+!
+!   INT :: n_atom
+!   ! No of atoms
+!
+!   INT :: n_atom_kind
+!   ! No of atoms of a different kind
+!
+!   INT :: n_basis
+!   ! No of basis sets
+!
+!   INT :: n_shell
+!   ! Total number of shells in the molecular basis set
+!
+!   INT :: n_shell_pairs
+!   ! Total number of shell pairs in the molecular basis set
+!
+!   INT :: n_bf
+!   ! Total number of basis functions in the molecular basis set
+!
+!   INT :: n_prim
+!   ! Total number of primitives in the molecular basis set
+!
+!   IVEC, PTR :: atom_for_shell DEFAULT_NULL
+!   ! Atom index for molecular shell index array
+!
+!   IVEC, PTR :: atom_shell_for_shell DEFAULT_NULL
+!   ! Atom shell index for molecular shell index array
+!
+!   IVEC, PTR :: first_shell_for_atom DEFAULT_NULL
+!   ! First molecule shell index for an atom
+!
+!   IVEC, PTR :: first_basis_fn_for_shell DEFAULT_NULL
+!   ! First basis function for a given shell
+!
+!   IVEC, PTR :: last_basis_fn_for_shell DEFAULT_NULL
+!   ! Last basis function for a given shell
+!
+!   IVEC, PTR :: atom_kind DEFAULT_NULL
+!   ! The unique kind of each atom in .atom
+!
+!   IVEC, PTR :: unique_atom DEFAULT_NULL
+!   ! List of the unique atoms (of different kind)
+!
+!   IVEC, PTR :: first_basis_fn_for_atom DEFAULT_NULL
+!   ! For the atom basis function limits
+!
+!   IVEC, PTR :: last_basis_fn_for_atom DEFAULT_NULL
+!   ! For the atom basis function limits
+!
+!   SCFDATA, PTR :: scfdata DEFAULT_NULL
+!   ! SCF data object
+!
+!   OPVEC, PTR :: orbital_energies DEFAULT_NULL
+!   ! The orbital energies
+!
+!   OPMAT, PTR :: molecular_orbitals DEFAULT_NULL
+!   ! The (real) molecular orbitals
+!
+!   OPMAT, PTR :: density_matrix DEFAULT_NULL
+!   ! The real density matrix
+!
+!   OPMAT, PTR :: natural_orbitals DEFAULT_NULL
+!   ! The natural orbitals
+!
+!   OPVEC, PTR :: occupation DEFAULT_NULL
+!   ! The associated occupation numbers
+!
+!   OPMAT, PTR :: fock_matrix DEFAULT_NULL
+!   ! The real fock matrix
+!
+!   MAT4VEC, PTR :: ab_ab_ERI DEFAULT_NULL
+!   ! The two electron integrals of the form ab|ab
+!
+!   BIN :: optimise_thermals
+!   ! Whether to optimise the thermal parameters
+!
+!   end
+
+contains
+
+!*******************************************************************************
+!                      Thermal parameter fitting
+!*******************************************************************************
+
+  force_thermal_symmetry
+  ! Impose crystal symmetry on the thermal tensors.
+    INOUT :: self
+    INT :: n,u,s,n_unique
+    MAT3, PTR :: unique_thermals,seitz
+    MAT(3,3) :: thermal,seitz_inv
+    IVEC, PTR :: n_equiv
+
+    n_unique = .crystal.n_unique_unit_cell_atoms
+    seitz => .crystal.spacegroup.seitz
+    unique_thermals.create(3,3,n_unique)
+    unique_thermals = ZERO
+    n_equiv.create(n_unique)
+    n_equiv = 0
+
+    ! change to crystal coordinates.
+    do n=1,.n_atom
+      u = .crystal.unique_atom_for(n)
+      s = .crystal.unique_atom_symop_for(n)
+      seitz_inv.to_inverse_of(seitz(1:3,1:3,s))
+      thermal = .atom(n).thermal_tensor
+      thermal.change_basis(.crystal.reciprocal_U_cell_matrix)
+      thermal.change_basis(seitz_inv)
+      unique_thermals(:,:,u) = unique_thermals(:,:,u) + thermal
+      n_equiv(u) = n_equiv(u) + 1
+    end
+
+    ! Average them.
+    do u=1,n_unique
+      unique_thermals(:,:,u) = unique_thermals(:,:,u) / n_equiv(u)
+    end
+
+    ! change back to cartesians.
+    do n=1,.n_atom
+      u = .crystal.unique_atom_for(n)
+      s = .crystal.unique_atom_symop_for(n)
+      thermal = unique_thermals(:,:,u)
+      thermal.change_basis(seitz(1:3,1:3,s))
+      thermal.change_basis(.crystal.direct_U_cell_matrix)
+      .atom(n).thermal_tensor = thermal
+    end
+
+    n_equiv.destroy
+    unique_thermals.destroy
+  end
+
+  fit_thermal_parameters [leaky]
+  ! Fit the thermal parameters to the calculated structure factors.
+  ! Uses a line search method.
+    INT :: dim
+    DBL :: chi2_min
+    VEC, PTR :: U   DEFAULT_NULL
+    ENSURE(.crystal.created, "no crystal")
+    ENSURE(.atom.created, "no atoms to fit")
+    dim = .n_atom * 6
+    U.create(dim)
+    .get_thermal_parameters(U)
+    .crystal.optimise_extinction = FALSE
+    .crystal.optimise_scale = FALSE
+    .make_structure_factors
+    .minimise_BFGS(U,chi2_min,tol=TOL(4),gtol=ONE,step=TOL(2))
+    U.destroy
+  .atom.put_thermal_tensors
+  end
+
+  get_thermal_parameters(U)
+  ! Set a new set of thermal parameters for all the atoms, assuming
+  ! "U" is a vector of the independent thermal parameters.
+     VEC :: U
+     INT :: n,base
+     ENSURE(size(U)==6*.n_atom, "wrong size, U")
+     do n = 1,.n_atom      ! get thermal parameters into array
+       base = (n-1) * 6
+       U(base+1) = .atom(n).thermal_tensor(1,1)
+       U(base+2) = .atom(n).thermal_tensor(1,2)
+       U(base+3) = .atom(n).thermal_tensor(1,3)
+       U(base+4) = .atom(n).thermal_tensor(2,2)
+       U(base+5) = .atom(n).thermal_tensor(2,3)
+       U(base+6) = .atom(n).thermal_tensor(3,3)
+     end
+  end
+
+  set_thermal_parameters(U)
+  ! Set a new set of thermal parameters for all the atoms, assuming
+  ! "U" is a vector of the independent thermal parameters.
+     VEC :: U
+     INT :: n,base
+     ENSURE(size(U)==6*.n_atom, "wrong size, U")
+     .force_thermal_symmetry
+     do n = 1,.n_atom      ! get thermal parameters into array
+       base = (n-1) * 6
+       .atom(n).thermal_tensor(1,1) = U(base+1)
+       .atom(n).thermal_tensor(1,2) = U(base+2)
+       .atom(n).thermal_tensor(1,3) = U(base+3)
+       .atom(n).thermal_tensor(2,2) = U(base+4)
+       .atom(n).thermal_tensor(2,3) = U(base+5)
+       .atom(n).thermal_tensor(3,3) = U(base+6)
+       .atom(n).thermal_tensor(2,1) = .atom(n).thermal_tensor(1,2)
+       .atom(n).thermal_tensor(3,1) = .atom(n).thermal_tensor(1,3)
+       .atom(n).thermal_tensor(3,2) = .atom(n).thermal_tensor(2,3)
+     end
+  end
+
+  chi2(U) result(res) [leaky]
+  ! Evaluate the gradient of the chi2 with respect to the thermal parameters.
+  ! Size of res is [n_atom * 6]
+    VEC :: U
+    DBL :: res
+    ENSURE(.crystal.created, "no crystal")
+    .set_thermal_parameters(U)
+    .make_structure_factors 
+    res = .crystal.chi2
+  stdout.show("new chi2 =",res)
+  end
+
+  d_chi2(U) result(res) [leaky]
+  ! Evaluate the gradient of the chi2 with respect to the thermal parameters.
+  ! Size of res is [n_atom * 6]
+    VEC :: U
+    VEC(size(U)) :: res
+    CMAT, PTR :: sf_deriv,sf_deriv_eq   DEFAULT_NULL
+    MAT, PTR :: k_pts   DEFAULT_NULL
+    BIN :: complex
+    ENSURE(.crystal.created, "no crystal")
+    ENSURE(.density_matrix.created, "no density matrix")
+    .set_thermal_parameters(U)
+    k_pts.create(.crystal.n_unique_k_pts,3)
+    .crystal.make_unique_k_pts(k_pts)
+    sf_deriv.create( .crystal.n_refl, .n_atom * 6) ! d_Fc/d_U
+    sf_deriv_eq.create(.n_atom * 6,.crystal.n_unique_k_pts)
+    complex = .density_matrix.spinorbital_kind.includes("complex")
+    if (complex) then
+      .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted_complex,k_pts) 
+    else 
+      .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted,k_pts) 
+    end
+    .crystal.sum_unique_sf_deriv_U(sf_deriv,sf_deriv_eq)
+    sf_deriv_eq.destroy
+    ! Do the derivative with respect to chi2
+    res = .crystal.d_chi2_dU(sf_deriv)
+    sf_deriv.destroy
+    k_pts.destroy
+  end
+
+   minimise_BFGS(p,fret,tol,gtol,step)
+      VEC, INOUT :: p
+      DBL :: fret,tol,gtol
+      DBL, optional :: step
+      INT :: n,iter,i
+      DBL :: fac,fad,fae,sumdg,sumxi,eps,stp
+      DBL :: a,x,b,fx,xmin,nrm
+      VEC, PTR :: g,dg,hdg,pnew,xi
+      MAT, PTR :: hessian
+      BIN :: fail
+      eps = tol/FOUR
+      stp = ONE
+      if (present(step)) stp = step
+      n = size(p)
+      g.create(n)
+      dg.create(n)
+      hdg.create(n)
+      pnew.create(n)
+      xi.create(n)
+      allocate(hessian(n,n))
+      fret = .chi2(p)
+      g = .d_chi2(p)
+      hessian = ZERO
+      do i = 1,n
+         hessian(i,i) = ONE
+      end
+      xi = -g
+      fail = TRUE
+      do iter = 1,500
+         pnew = p
+         nrm = xi.norm
+         xi = (stp/nrm) * xi ! This is new
+         .find_initial_bracket(pnew,xi,a,x,b,fx,fret)
+  write(*,*) nrm/n
+         if (nrm/n > TOL(2)) then
+           .minimise_brent(pnew,fx,xi,a,x,b,xmin,fret,TOL(1))
+         else
+           .minimise_brent(pnew,fx,xi,a,x,b,xmin,fret,TOL(2))
+         end
+         xi = pnew - p
+         p = pnew
+         dg = g
+         g = .d_chi2(p)
+         if (g.largest_value<gtol) then
+           fail = FALSE
+           exit
+         end
+         dg = g - dg
+         hdg.to_product(hessian,dg)
+         fac = sum(dg*xi)
+         sumdg = sum(dg*dg)
+         sumxi = sum(xi*xi)
+         if (fac*fac > eps*sumdg*sumxi) then
+            fac = ONE/fac
+            fae = sum(dg*hdg)
+            fad = ONE/fae
+            dg = fac*xi - fad*hdg
+            hessian = hessian + fac * xi.outer_product(xi)   &
+                              - fad * hdg.outer_product(hdg) & 
+                              + fae * dg.outer_product(dg)
+            xi.minus_product(hessian,g)
+         end
+      end
+      if (fail) stdout.text("Exceeded maximum number of iterations.")
+      deallocate(hessian)
+      xi.destroy
+      pnew.destroy
+      hdg.destroy
+      dg.destroy
+      g.destroy
+   end
+
+   find_initial_bracket(p,direction,a,b,c,fb,fa)
+   ! Must input fa = f(a) first.
+      VEC, IN :: p,direction
+      DBL :: a,b,c,fa,fb,fc
+      DBL :: gold = 1.618034
+      DBL :: glimit = 100
+      DBL :: tiny = 1.0d-20
+      DBL :: fu,q,r,u,ulim
+      INT :: iter
+      BIN :: fail
+      ENSURE(size(p)==size(direction),"incompatible vectors")
+ write(tonto.error_unit, '(a)') "start bracket"
+      fb = .chi2(p + direction)
+      a = ZERO
+      b = ONE
+      if (fb>fa) then
+        a.swap_with(b)
+        fa.swap_with(fb)
+      end
+      c  = b + gold*(b-a)
+      fc = .chi2(p + c*direction)
+      fail = TRUE
+      do iter = 1, 100
+         if (fb<fc) then
+           fail = FALSE
+           exit                  ! bracket found
+         end
+         r = (b-a)*(fb-fc)                ! get u by parabolic extrapolation
+         q = (b-c)*(fb-fa)
+         u = b - ((b-c)*q-(b-a)*r)/(TWO*sign(max(abs(q-r),tiny),q-r))
+         ulim = b + glimit*(c-b)
+         if ((b-u)*(u-c)>ZERO) then       ! Parabolic u lies between b and c
+            fu = .chi2(p + u*direction)
+            if (fu<fc) then               ! got a minimum between b and c
+               a = b; fa = fb
+               b = u; fb = fu
+               fail = FALSE
+               exit
+            else if (fu>fb) then          ! got a minimum between a and u
+               c = u; fc = fu
+               fail = FALSE
+               exit
+            end
+            u = c + gold*(c-b)            ! parabolic fit no use, so magnify 
+            fu = .chi2(p + u*direction)
+         else if ((c-u)*(u-ulim)>0) then     ! Fit is between c and
+            fu = .chi2(p + u*direction)      ! its allowed limit
+            if (fu<fc) then
+               b = c; fb = fc
+               c = u; fc = fu
+               u = c + gold*(c-b)
+               fu = .chi2(p + u*direction)
+            end 
+         else if ((u-ulim)*(ulim-c)>0) then
+            u = ulim
+            fu = .chi2(p + u*direction)
+         else
+            u = c + gold*(c-b)            ! magnify 
+            fu = .chi2(p + u*direction)
+         end
+         a = b; fa = fb
+         b = c; fb = fc
+         c = u; fc = fu
+      end
+ write(tonto.error_unit, '(a)') "end bracket"
+      WARN_IF(fail, "exceeded maximum iterations")
+      if (a>c) then
+         a.swap_with(c)
+         fa.swap_with(fc)
+      end
+   end
+
+  minimise_brent(p,fp,direction,a,b,c,xmin,f,tol)
+    VEC :: p,direction
+    DBL :: a,b,c,xmin,f,tol,fp
+    INT :: itmax = 100
+    DBL :: cgold = 0.3819660
+    DBL :: zeps = TOL(10)
+    DBL :: d,e,etemp,fu,fv,fw,fx,pp,qq,r,tol1,tol2,u,v,w,x,xm
+    INT :: iter
+    BIN :: fail
+    ENSURE(size(p)==size(direction),"incompatible vectors")
+ write(tonto.error_unit, '(a)') "start brent"
+    if (a>c) a.swap_with(c)
+    v = b
+    w = b
+    x = b
+    fx = fp
+    fv = fp
+    fw = fp
+    e = ZERO
+    d = ZERO
+    fail = TRUE
+    b = c
+    do iter = 1,itmax
+      xm = HALF*(a+b)
+      tol1 = tol*abs(x) + zeps
+      tol2 = TWO*tol1
+      if (abs(x-xm)<(tol2-HALF*(b-a))) then
+        fail = FALSE
+        exit
+      end
+      if (abs(e)>tol1) then
+        r = (x-w)*(fx-fv)
+        qq = (x-v)*(fx-fw)
+        pp = (x-v)*qq - (x-w)*r
+        qq = TWO*(qq-r)
+        if (qq>ZERO) pp = -pp
+        qq = abs(qq)
+        etemp = e
+        if (abs(pp)>=abs(HALF*qq*etemp) OR pp<=qq*(a-x) OR pp>=qq*(b-x)) then
+          if (x>xm) then;  e = a-x
+          else;            e = b-x
+          end
+          d = cgold*e
+        else
+          e = d
+          d = pp/qq
+          u = x + d
+          if ((u-a)<tol2 OR (b-u)<tol2) d = sign(tol1,xm-x)
+        end
+      else
+        if (x>=xm) then; e = a-x
+        else;            e = b-x
+        end
+        d = cgold*e
+      end
+      if (abs(d)>=tol1) then; u = x + d
+      else;                   u = x + sign(tol1,d)
+      end
+      fu = .chi2(p + u*direction)
+      if (fu<=fx) then
+        if (u>=x) then; a = x
+        else;           b = x
+        end
+        v = w; fv = fw
+        w = x; fw = fx
+        x = u; fx = fu
+      else
+        if (u<x) then; a = u
+        else;          b = u
+        end
+        if (fu<=fw OR w==x) then
+          v = w; fv = fw
+          w = u; fw = fu
+        else if (fu<=fv OR v==x OR v==w) then
+          v = u; fv = fu
+        end
+      end
+    end
+ write(tonto.error_unit, '(a)') "end brent"
+    DIE_IF(fail,"maximum iterations exceeded")
+    f = fx
+    xmin = x
+    p = p + x*direction
+  end
+
+!*******************************************************************************
+!                            Cluster stuff.
+!*******************************************************************************
+
+  put_cluster_operations
+  ! Outputs a list of the symmetry operations and translations of the molecules
+  ! which are within distance_max of the centre of the molecule.
+  ! Optional input position must be in crystal coordinates.
+    IMAT, PTR :: op_list   DEFAULT_NULL
+    VEC, PTR :: dist_list   DEFAULT_NULL
+    INT :: q
+    DBL :: dist_max
+    VEC(3) :: position
+    STR :: word
+
+    ! defaults
+    dist_max  = 5
+    position = (/ZERO,ZERO,ZERO/)
+
+    read_loop : do
+      stdin.read(word)
+      word.to_lower_case
+      select case (word)
+         case("end");                     exit read_loop
+         case("distance");                stdin.read(dist_max)
+         case("position");                stdin.read(position)
+         case("centre");                  stdin.read(position)
+      end
+    end do read_loop
+    position.rotate_by(.crystal.direct_cell_matrix)
+
+    .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
+
+    q=size(op_list,2)
+    if (op_list(1,1) == 0) q=0
+
+    stdout.flush
+    stdout.text("Cluster operations.")
+    stdout.show("No of molecules                = ", q)
+    stdout.show("Cutoff radius of cluster (au)  = ", dist_max)
+    if (q>0) then
+      stdout.put("symop",int_width=TRUE)
+      stdout.put("h",int_width=TRUE)
+      stdout.put("k",int_width=TRUE)
+      stdout.put("l",int_width=TRUE)
+      stdout.put("distance (au)")
+      stdout.flush
+      do q=1,size(dist_list)
+        if (op_list(1,q)==0) exit
+        stdout.put(op_list(1,q))
+        stdout.put(op_list(2,q))
+        stdout.put(op_list(3,q))
+        stdout.put(op_list(4,q))
+        stdout.put(dist_list(q))
+        stdout.flush
+      end
+    end
+    op_list.destroy
+    dist_list.destroy
+  end
+
+  put_cluster_input
+  ! Outputs the input data for a cluster of molecules around the centre of the
+  ! molecule.
+  ! Optional input position must be in crystal coordinates.
+  ! Output atom positions are in crystal coordinates.
+  ! Output of thermal tensors is optional.
+    IMAT, PTR :: op_list   DEFAULT_NULL
+    VEC, PTR :: dist_list   DEFAULT_NULL
+    VEC(3) :: pos
+    STR :: word
+    MAT3, PTR :: therm1   DEFAULT_NULL
+    MAT(3,3) :: therm
+    MAT, PTR :: pos1,pos2   DEFAULT_NULL
+    VEC(3) :: position
+    INT :: s,h,k,l,n,q
+    DBL :: dist_max
+    BIN :: put_thermal
+
+    ENSURE(.crystal.created,            "no crystal data")
+    ENSURE(.atom.created,               "no atom data")
+    ENSURE(.atom.bases_are_all_labeled, "atoms must all have basis labes")
+
+    ! defaults
+    dist_max  = 5
+    position = (/ZERO,ZERO,ZERO/)
+    put_thermal = FALSE
+
+    read_loop : do
+      stdin.read(word)
+      word.to_lower_case
+      select case (word)
+         case("end");                     exit read_loop
+         case("put_thermal_tensors");     stdin.read(put_thermal)
+         case("distance");                stdin.read(dist_max)
+         case("position");                stdin.read(position)
+         case("centre");                  stdin.read(position)
+         case default; DIE("unknown keyword : " // trim(word))
+      end
+    end do read_loop
+    position.rotate_by(.crystal.direct_cell_matrix)
+
+    .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
+    dist_list.destroy
+
+    q=size(op_list,2)
+    if (op_list(1,1) == 0) q=0
+
+    stdout.flush
+    stdout.text("Cluster input.")
+    stdout.show("No of molecules                = ", q)
+    stdout.show("Cutoff radius of cluster (au)  = ", dist_max)
+    if (put_thermal) then
+    stdout.show("Thermal tensor axis system     = ", "cartesian")
+    stdout.show("Thermal tensor units           = ", "bohr^2")
+    end
+
+    if (q>0) then
+      stdout.put_text("atoms")
+      stdout.flush
+      stdout.put_text('data_order label "axis_system crystal" pos basis_label')
+      if (put_thermal) &
+      stdout.put_text(' thermal_tensor ')
+      stdout.text(' end')
+      stdout.text("loop")
+
+      pos1.create(3,.n_atom)
+      pos2.create(3,.n_atom)
+      pos1 = .crystal.fragment_geometry
+      .crystal.move_to_unit_cell(pos1)
+
+      therm1.create(3,3,.n_atom)
+      do n = 1, .n_atom
+        therm1(:,:,n) = .atom(n).thermal_tensor
+      end
+
+      do q=1,size(dist_list)
+        s = op_list(1,q)
+        if (s==0) exit
+        h = op_list(2,q)
+        k = op_list(3,q)
+        l = op_list(4,q)
+        pos2 = pos1
+        .crystal.transform_geometry(pos2,s)
+        stdout.put_text("! symop = " // s.to_str.trim)
+        stdout.put_text(", h k l = ")
+        stdout.text(h.to_str.trim // " " // k.to_str.trim // " " // l.to_str.trim)
+        do n = 1, .n_atom
+          therm = therm1(:,:,n)
+          therm.change_basis(.crystal.spacegroup.seitz(1:3,1:3,s))
+          pos = pos2(:,n) + (/h,k,l/)
+          stdout.put_text(trim(.atom(n).label),int_width=TRUE)
+          stdout.put(pos(1))
+          stdout.put(pos(2))
+          stdout.put(pos(3))
+          stdout.put_text(" " // trim(.atom(n).basis.label))
+          if (put_thermal) then
+            stdout.put(therm(1,1))
+            stdout.put(therm(2,2))
+            stdout.put(therm(3,3))
+            stdout.put(therm(1,2))
+            stdout.put(therm(1,3))
+            stdout.put(therm(2,3))
+          end
+          stdout.flush
+        end
+      end
+      stdout.text("end end",flush=2)
+
+      therm1.destroy
+      pos2.destroy
+      pos1.destroy
+    end
+    op_list.destroy
+  end
+
+end 
