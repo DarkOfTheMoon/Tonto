@@ -1334,6 +1334,9 @@ sub process_foo_line {
      elsif (&in_routine_scope)              { &do_routine_scope; }
    }
 
+#print "scope has routine=", &scope_has_routine;
+#print "  @ scope = @scope";
+#print "new scope = $newscopeunit";
    # The following is if we are in a routine body in some scope ...
    if (&scope_has_routine)                { &do_routine_body; }
 
@@ -2679,14 +2682,15 @@ sub analyse_new_end_scope {
           my $inh;
                                       # Start looking for the interface
           while (<GETFILE>) {        
-             $inh = $inherit[$i];
-             $inh =~ s/\s*$//o;
-             $inh = &convert_inherited_type_arg_macros($inh);
+             chomp;
              $_  =~ s/\s*$//o;
              $_  =~ s/\s*:::.*//o;
              $_ = &convert_inherited_type_arg_macros($_);
+             $inh = $inherit[$i];
+             $inh =~ s/\s*$//o;
+             $inh =~ s/\s*:::.*//o;
+             $inh = &convert_inherited_type_arg_macros($inh);
              $filelinenum{$foohandle}++;
-             chomp;
              if    ($_ ne $inh)     { $i=0 }
              elsif ($i <  @inherit) { $i++ }
              if    ($i == @inherit) { $found = 1; last }
