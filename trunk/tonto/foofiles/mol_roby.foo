@@ -1,8 +1,8 @@
+! $Id$
 !-------------------------------------------------------------------------------
 !
 ! MOL: roby population analysis routines.
 !
-! $Id$
 !-------------------------------------------------------------------------------
 module MOL_ROBY
 
@@ -106,13 +106,12 @@ contains
    VEC, PTR :: n1, less
    MAT, PTR :: n2
    IVEC, PTR :: comb
-   INT :: i, j, orb_no
+   INT :: i, j, o_no
    MATVEC, PTR :: P
    MAT, PTR :: S, P2, index, cov
    DBL :: bi, c, d1, d2
    STR :: word
       .prepare_roby_data(S); .set_scf_defaults
-      .scfdata%direct = TRUE
       n1.create( .n_atom); less.create( .n_atom)
       less.zero
       n2.create( .n_atom, .n_atom); index.create( .n_atom, .n_atom)
@@ -150,14 +149,16 @@ contains
                 .out.flush
                 .out.put("Bond index:"); .out.put(bi); .out.flush
                 .out.put("%Covalency:"); .out.put(c); .out.flush
-            case("plot_theta"); 
-                orb_no = .in%buffer.get_item.to_int
-                .plot_theta_orbitals( orb_no)
+            case("plot_theta_c"); 
+                o_no = .in%buffer.get_item.to_int
+                .plot_theta_orbitals( orb_type="covalent_orbitals", orb_no=o_no)
+            case("plot_theta_i");
+                o_no = .in%buffer.get_item.to_int
+                .plot_theta_orbitals( orb_type="ionic_orbitals", orb_no=o_no)
             case("shared");     .read_atoms_to_share( S)
+            case("plot_density"); .plot_subspace_density( S)
+            case("plot_diff");    .plot_density_difference( S)
             case("energy");     
-               .make_fock_matrix;
-               .out.put( .scf_electronic_energy( .density_matrix))
-               .out.flush
                .read_shared_energy_atoms( S)
          end
       end do read_loop
@@ -249,12 +250,22 @@ contains
             s_pair(i) = 0
          else if (abs(sval(i)) > 0.99999) then
             s_pair(i)=-1
+            .out.flush
+            .out.put("Sine Eigenvalue = 1. Orbital: ");
+            .out.put( i); .out.flush
          else
             do j = 1, i - 1
                if (any(s_pair == j)) cycle
                if (abs(sval(j) + sval(i)) < 1.0d-05) then 
                   if (sval(i)>0) then
                      s_pair(i)=j
+                     .out.flush
+                     .out.put("Sine Eigenvalue = ");
+                     .out.put(sval(i));
+                     .out.put("Orbital: ");
+                     .out.put(i); .out.flush
+                     .out.put("Paired orbital: ");
+                     .out.put(j); .out.flush
                   else
                      s_pair(i)=0
                   end
@@ -273,12 +284,15 @@ contains
         s_m(i) = .calculate_theta_population( tmp(:), SO)
       end
       covalency.create( n_ab); ionicity.create( n_ab); l = 0; l2 = 0
-      .out.flush; .out.dash(int_fields = 1, dbl_fields = 1)
-      .out.put("Bond Index Data:"); .out.flush
+      .out.flush; .out.dash(int_fields = 1, dbl_fields = 3)
+      .out.put("Bond Index Data: "); .out.flush
       .out.put( .atom(a)%label.trim // " and " // .atom(b)%label.trim ); .out.flush
-      .out.dash(int_fields = 1, dbl_fields = 1)
-      .out.put("Orbital Angles:"); .out.flush
-      .out.dash(dbl_fields = 1)
+      .out.dash(int_fields = 1, dbl_fields = 3)
+      .out.put("Orbital Angles")
+      .out.put("Theta+ Popn")
+      .out.put("Theta- Popn")
+      .out.flush
+      .out.dash(int_fields = 1, dbl_fields = 3)
       do i = 1, n_ab
          if (c_pair(i) <= 0) then
            covalency(i) = 0
@@ -287,10 +301,12 @@ contains
            l2 = l2 + c_b(i) + c_b(c_pair(i))
            l = l + c_a(i) + c_a(c_pair(i))
            .out.put_int( i)
-           .out.put_dbl( 180 * cval(i).arccos / PI); .out.flush
+           .out.put_dbl( 180 * cval(i).arccos / PI)
+           .out.put( c_m(i)); .out.put( c_m(c_pair(i)))
+           .out.flush
          end
       end
-      .out.dash(dbl_fields = 1)
+      .out.dash(int_fields = 1, dbl_fields = 3)
       do i = 1, n_ab
          if (s_pair(i) == 0) then
            ionicity(i) = 0
@@ -327,9 +343,9 @@ contains
       tmp_mat2%restricted( 1:size(mat2,1), .first(a) : .last(a)) &
          = mat2(:, 1 : .atom(a)%basis%n_bf)
       count = count + .atom(a)%basis%n_bf
-      tmp_mat1%restricted( 1:size(mat1,1), .first(a) : .last(a)) &
+      tmp_mat1%restricted( 1:size(mat1,1), count + 1 : count + .atom(b)%basis%n_bf) &
           = mat1(: , .atom(a)%basis%n_bf + 1 : size(mat1, 2))
-      tmp_mat2%restricted(1:size(mat2,1), count + 1 : count + .atom(a)%basis%n_bf) &
+      tmp_mat2%restricted(1:size(mat2,1), count + 1 : count + .atom(b)%basis%n_bf) &
           = mat2(:, .atom(a)%basis%n_bf + 1 : size(mat2, 2))
       archive.set( .name, "covalent_orbitals", "restricted")
       archive.write( tmp_mat1)
@@ -338,10 +354,20 @@ contains
       tmp_mat1.destroy; tmp_mat2.destroy   
     end  
 
-   plot_theta_orbitals( orb_no)
+   plot_theta_orbitals( orb_type, orb_no)
+   ARCHIVE :: archive
+   STR(*) :: orb_type
+   OPMAT, PTR :: temp_NOs
    INT :: orb_no
       .grid.put( .out)
-      .make_orbital_density_grid( orb_no, make_NOs=TRUE)
+      print *, orb_type
+      archive.set( .name, orb_type.trim, "restricted")
+      temp_NOs.create( .n_bf, "restricted")
+      temp_NOs = .natural_orbitals
+      archive.read( .natural_orbitals)
+      archive.close
+      .make_orbital_density_grid( orb_no, make_NOs=FALSE)
+      .natural_orbitals = temp_NOs; temp_NOs.destroy
    end
 
    calculate_orbital_population( orbital, S, Sconv, P) result(pop)
@@ -539,11 +565,12 @@ contains
       comb_mat.destroy; energy.destroy
    end
 
-   calc_population( comb, S, P, rho, overlap) result(pop)
+   calc_population( comb, S, P, rho, overlap, proj_NOs) result(pop)
    ! gives the total population of the subgrouping of atoms determined by permutation
       MAT, PTR, optional :: P   ! if the projection matrix is to be returned
       MAT, PTR, optional :: rho ! if the subspace  density is to be returned
       MAT, PTR, optional :: overlap ! if the portion of the overlap matrix is to be returned
+      MAT, PTR, optional :: proj_NOs ! if we want the projected NOs to be returned
       IVEC, PTR :: comb, sub_f, sub_l, bases, occs
       INT :: i, a, aa
       INT :: total_occs, total_bases
@@ -587,23 +614,28 @@ contains
       Y.to_inverse_of(X); X.destroy
       Z.create(total_bases, total_bases)
       Y.back_transform(Z,W)
-      if (present(P)) P=Z
+      if (present(P)) P=Z    ! projection matrix made in comb(:) basis subspace
       Y.destroy; W.destroy
-      W.create(.n_bf, .n_bf); Y.create(total_bases, .n_bf)
+      W.create(.n_bf, .n_bf)
+      Y.create(total_bases, .n_bf) ! Make the small -> big overlap matrix, S(rect)
       basis_count = 0
       do a = 1, size(comb)
          Y(basis_count + 1:basis_count + bases(a) ,:) = S( sub_f(a):sub_l(a),:)
          basis_count = basis_count + bases(a)
       end
-      Z.change_basis(W,Y)
+      Z.change_basis(W,Y)           ! W = S(rect) . S-1 (small) . S(rect)
       X.create(.n_bf, .n_bf)
-      X.to_product(W, .density_matrix%restricted)
+      X.to_product(W, .density_matrix%restricted) ! Trace X = (P_w D) to get Roby pop.
       if (present(rho)) then
-         overlap = Y; Y.destroy
+         if (present(overlap)) overlap = Y  ! Store S(rect) for later
          V.create( total_bases, total_bases)
-         .density_matrix%restricted.back_transform( V, overlap)
+         .density_matrix%restricted.back_transform( V, Y)
          rhoW.create( total_bases, total_bases)
-         V.change_basis(rhoW, Z); V.destroy
+         rhoW.to_product(V, Z)
+         V.to_product(Z,rhoW)
+         rhoW= V; V.destroy                 ! rhoW(small) = P_w(small) D(small) . P_w(small)
+         rhoW.zero_small_values(1.0d-10)
+         ! Put rhoW(small) into rho(big)
          basis_count = 0; bbasis_count = 0; rho.zero
          do a = 1, size(comb)
            do aa = 1, size(comb)
@@ -613,11 +645,12 @@ contains
            end
            basis_count = basis_count + bases(a)
         end
-        rho.zero_small_values(1.0d-5)
         rhoW.destroy
       end
+      if (present(proj_NOs)) &
+          proj_NOs.to_product( W, .natural_orbitals%restricted)
       pop = X.trace
-      X.destroy; W.destroy
+      X.destroy; W.destroy; Y.destroy
       sub_f.destroy; sub_l.destroy; bases.destroy; occs.destroy
    end
 
@@ -628,70 +661,171 @@ contains
    DBL :: energy
       rho_save.create( .n_bf, .n_bf)
       rho_save = .density_matrix%restricted
-      .density_matrix%restricted = rho
-      H.create( .n_bf, .n_bf)
-      .get_kinetic_matrix(H)
-      F.create( .n_bf, .n_bf)
-      .get_nuclear_matrix(F)
-      H = H +F
-      P.change_basis(F,O)
-      R.create( .n_bf, .n_bf) 
-      H.change_basis(R,F)
-      F.destroy; H.destroy
-      archive.set(.name,"core_matrix")
-      archive.write(R)
-      .make_fock_matrix(core=FALSE)
-      I.create( .n_bf, .n_bf)
-      I = R + .fock_matrix%restricted + R
-      R.destroy
-!      R.create(.n_bf, .n_bf)
-!      P.change_basis(R, O)
-!      F.create( .n_bf, .n_bf)
-!      I.change_basis(F, R)
-      F.create( .n_bf, .n_bf); F = I ! For no projection of the Fock matrix...
-      I.to_product(rho_save, F)
-      energy = HALF * I.trace 
+      .density_matrix%restricted = rho ! rho is project density
+      .make_fock_matrix
+      F => .fock_matrix%restricted
+      .add_core_hamiltonian(F)
+      energy = HALF * F.trace_product_with(rho)
       .density_matrix%restricted = rho_save
       rho_save.destroy
-      I.destroy; R.destroy; F.destroy
    end
+
+   plot_subspace_density( S)
+   ! plots the density of the subspace given in the mol.in file
+   MAT, PTR :: S   ! The overlap matrix
+   MAT, PTR :: sub_NOs, saved_NOs, sub_density, saved_rho
+   VEC, PTR :: proj_grid
+   IVEC, PTR :: comb
+   INT :: i
+   DBL ::pop
+   ARCHIVE :: archive
+      comb.create( .in%buffer%n_items - 1)
+      print *, 1
+      do i = 1, .in%buffer%n_items - 1
+         comb(i) = .in%buffer.get_item.to_int
+      end
+      print *, comb
+      sub_density.create( .n_bf, .n_bf)
+      sub_NOs.create( .n_bf, .n_bf)
+      pop = .calc_population( comb, S, rho=sub_density, proj_NOs=sub_NOs)
+      saved_NOs.create( .n_bf, .n_bf)
+      saved_rho.create( .n_bf, .n_bf)
+      saved_NOs = .natural_orbitals%restricted
+      saved_rho = .density_matrix%restricted
+      .natural_orbitals%restricted = sub_NOs
+      .density_matrix%restricted = sub_density
+      proj_grid.create( .grid%n_pt)
+      print *, 2
+      .make_density_grid(proj_grid, make_NOs=FALSE)
+      print *, 3
+      archive.set(.name,"proj_density_grid,gnuplot",format="ascii")
+      archive.write_gnuplot(proj_grid, .grid%n_x, .grid%n_y, .grid%n_z)
+      .natural_orbitals%restricted = saved_NOs
+      .density_matrix%restricted = saved_rho
+      saved_rho.destroy; saved_NOs.destroy
+      comb.destroy; sub_NOs.destroy; sub_density.destroy
+   end
+   
+   plot_density_difference( S)
+   ! plots the difference density map for the molecule
+   ARCHIVE  :: archive
+   MAT, PTR :: S
+   MAT, PTR :: sub_NOs, saved_NOs, sub_density, saved_rho
+   VEC, PTR :: density_grid, proj_grid, grid
+   IVEC, PTR :: comb
+   INT :: i
+   DBL :: pop
+      density_grid.create( .grid%n_pt)
+      .make_density_grid(density_grid)
+      comb.create( .n_atom)
+      do i = 1, .n_atom
+       comb(i) = i
+      end
+      sub_NOs.create( .n_bf, .n_bf)
+      sub_density.create( .n_bf, .n_bf)
+      pop = .calc_population( comb, S, rho=sub_density, proj_NOs=sub_NOs)
+      comb.destroy
+      saved_NOs.create( .n_bf, .n_bf)
+      saved_rho.create( .n_bf, .n_bf)
+      saved_NOs = .natural_orbitals%restricted
+      saved_rho = .density_matrix%restricted
+      .natural_orbitals%restricted = sub_NOs
+      .density_matrix%restricted = sub_density
+      proj_grid.create( .grid%n_pt)
+      .make_density_grid(proj_grid, make_NOs=FALSE)
+      grid.create( .grid%n_pt)
+      grid = density_grid - proj_grid
+      archive.set(.name,"diff_proj_density_grid,gnuplot",format="ascii")
+      archive.write_gnuplot(grid, .grid%n_x, .grid%n_y, .grid%n_z)
+      .natural_orbitals%restricted = saved_NOs
+      .density_matrix%restricted = saved_rho
+      saved_NOs.destroy; saved_rho.destroy
+      grid.destroy; proj_grid.destroy; density_grid.destroy
+   end      
+         
+
 
    put_roby_populations(n1, n2, less, index, covalency)
    ! Put .out the roby populations
       VEC  :: n1
-      VEC, PTR :: less, charge
+      ! charge = fitted excess charge
+      ! charge2 =  roby_gould charge
+      ! charge3 = equally distributed charge
+      ! charge4 = fitted equally distributed charge
+      ! charge5 = proportionate fitin gto Roby Gould charge
+      VEC, PTR :: less, charge, charge2, charge3, charge4, charge5
       MAT, PTR :: index, covalency
-      DBL :: polarization
+      DBL :: polarization, polarization2, sum_n
       MAT  :: n2
       INT :: k,l,kk,ll,a,b
       STR :: symbol_a,symbol_b
       charge.create( .n_atom)
+      charge2.create( .n_atom)
+      charge3.create( .n_atom); charge3.zero
+      charge4.create( .n_atom)
+      charge5.create( .n_atom)
       do a = 1, .n_atom
          charge(a) = .atom(a)%atomic_number - n1(a) + less(a)
+         do b = 1, .n_atom
+            if (a==b) cycle
+            if (.atom.not_bonded(a,b)) cycle
+            charge3(a) = charge3(a) + 0.5*(n1(a) + n1(b) - n2(a,b))
+         end
+         charge3(a) = charge3(a) + .atom(a)%atomic_number - n1(a)
       end
+      charge2 = charge
       polarization = charge.sum_elements - .charge
-      if ( abs(polarization) > 1.0d-05) charge = charge - polarization/( .n_atom)
+      polarization2 = charge3.sum_elements - .charge
+      sum_n = n1.sum_elements
+      if ( abs(polarization) > 1.0d-05) then
+         do a = 1, .n_atom
+           charge5(a) = charge(a) - polarization*n1(a)/sum_n
+           charge(a) = charge(a) - polarization/( .n_atom)
+           charge4(a) = charge3(a) - polarization2/( .n_atom)
+         end
+      end
       .out.flush
       .out.text("Roby populations",flush=2)
-      .out.dash(int_fields=1,dbl_fields=2)
+      .out.dash(int_fields=1,dbl_fields=1)
       .out.put("Atom",int_width=TRUE)
       .out.put("Population")
-      .out.put("Roby Charge *",flush=1)
-      .out.dash(int_fields=1,dbl_fields=2)
+      .out.dash(int_fields=1,dbl_fields=1)
       do k = 1,size( .atom_kind)
       do kk = 1,size( .atom_kind(k)%vec)
          a = .atom_kind(k)%vec(kk)
          symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
          .out.put( symbol_a,int_width=TRUE)
          .out.put( n1(a))
-         .out.put( charge(a))
          .out.flush
       end
       end
-      .out.dash(int_fields=1,dbl_fields=2)
+      .out.dash(int_fields=1,dbl_fields=1)
+      .out.flush
+      .out.dash(int_fields=1,dbl_fields=5)
+      .out.put("Atomic Charges:"); .out.flush
+      .out.dash(int_fields=1,dbl_fields=5)
+      .out.put("Atom",int_width=TRUE)
+      .out.put("Gould Charge");
+      .out.put("Equiportion Gould")
+      .out.put("Proportionate Gould")
+      .out.put("Cruikshank")
+      .out.put("Equiportionate Cruikshank"); .out.flush
+      do k = 1, size( .atom_kind)
+      do kk = 1,size( .atom_kind(k)%vec)
+         a = .atom_kind(k)%vec(kk)
+         symbol_a = .atom(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         .out.put(symbol_a, int_width=TRUE)
+         .out.put(charge2(a))
+         .out.put(charge(a))
+         .out.put(charge5(a))
+         .out.put(charge3(a))
+         .out.put(charge4(a))
+         .out.flush
+      end
+      end
       .out.put("* Roby charges assume negligible multiple overlap.")
       .out.flush
-      .out.dash(int_fields=1,dbl_fields=2)
+      .out.dash(int_fields=1,dbl_fields=3)
       .out.flush
       .out.text("Pair populations:",flush=2)
       .out.dash(int_fields=2,dbl_fields=4)
@@ -724,6 +858,8 @@ contains
       end
       end
       .out.dash(int_fields=2,dbl_fields=4); charge.destroy
+      charge2.destroy; charge3.destroy; charge4.destroy
+      charge5.destroy
    end
 
    dylans_population_analysis
