@@ -1,0 +1,474 @@
+!-------------------------------------------------------------------------------
+!
+! CIF: An object for processing Crystallographic Information Files (CIF).
+!
+! Copyright (C) Dylan Jayatilaka, 2002
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!-------------------------------------------------------------------------------
+
+module CIF
+
+   implicit none
+
+contains
+
+   create(name)
+   ! Create the object
+     self :: PTR
+     name :: STR(*), optional
+     nullify(self)
+     allocate(self)
+     ADD_MEMORY(CIF_SIZE)
+     .nullify_ptr_part 
+     .set_defaults(name)
+   end
+
+   destroy
+   ! Destroy the object
+      self :: PTR
+      if (.destroyed) return
+      .destroy_ptr_part
+      deallocate(self)
+      DELETE_MEMORY(CIF_SIZE)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.file)
+   end
+
+   destroy_ptr_part
+   ! Destroy the pointer parts
+      .file.destroy
+   end
+
+!   created result(res)
+!   ! Returns true if self has been created
+!      self :: PTR
+!      res :: BIN
+!      res = associated(self)
+!   end
+
+!   destroyed result(res)
+!   ! Returns true if self has *not* been created
+!      self :: PTR
+!      res :: BIN
+!      res = NOT associated(self)
+!   end
+
+   create_copy(cif) ::: leaky
+   ! Create a copy.
+      self :: PTR
+      cif :: CIF, IN
+      .create
+      .copy(cif)
+   end
+
+   copy(cif) ::: leaky
+   ! Set self to be a copy of "cif"
+      cif :: CIF, IN
+      self = cif
+      if (cif.file.created) .file.create_copy(cif.file)
+   end
+
+   set_defaults(name) ::: leaky
+   ! Set up defaults, especially the CIF file "name" if it is present.
+      name :: STR(*), optional
+      .start_of_data = 1
+      .end_of_data = 0
+      if (present(name)) .open(name)
+   end
+
+   open(name) ::: leaky
+   ! Create and open the CIF
+      name :: STR(*)
+      .file.create(name)
+    ! .file.quote_chars = "'" ! disallow ", it is used as an axis symbol !
+      .file.open(for="read")
+   end
+
+   close ::: leaky
+   ! Close the CIF, and destroy it
+      ENSURE(.file.created,"CIF already exists")
+      .file.close
+      .file.destroy
+   end
+
+!  *****************
+!  Find/read methods
+!  *****************
+
+   find_data_block(block_name)
+   ! Read and find the start of the data block with name "block_name", starting
+   ! from ".start_of_data", and store its ".data_block_name". 
+      block_name :: STR(*)
+      name :: STR
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+      name = "data_" // block_name.trim
+      do
+         .find_data_block
+         if (.data_block_name==name) exit
+         .start_of_data = .end_of_data + 1
+      end
+   end
+
+   find_crystal_data_block(found)
+   ! Read through and find the first acceptable crystal data block, starting
+   ! from ".start_of_data", and store its ".data_block_name". It is an error if
+   ! a data block is not found; except in the case when "found" is present, in
+   ! which case it is set TRUE if the data block exists, otherwise FALSE.
+      found :: BIN, OUT, optional
+      there :: BINVEC(4)
+      first,last :: INT
+      fnd :: BIN
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+      do
+         .find_data_block(fnd)
+         if (present(found)) then
+            found = fnd
+            if (NOT found) return
+         else if (NOT fnd) then
+            DIE("valid data block can't be found in file: "//.file.name.trim)
+         end
+         first = .start_of_data
+         last  = .end_of_data
+         .file.look_for_item("_symmetry_space_group_name",from=first,until=last,found=there(1))
+         .file.look_for_item("_cell_length",from=first,until=last,found=there(2))
+         .file.look_for_item("_atom_site_label",from=first,until=last,found=there(3))
+         if (NOT there(3)) &
+         .file.look_for_item("_atom_site_type_symbol",from=first,until=last,found=there(3))
+         .file.look_for_item("_atom_site_fract",from=first,until=last,found=there(4))
+         if (all(there)) exit ! This is really a crystal info data block
+         .start_of_data = .end_of_data 
+      end
+      if (present(found)) found = TRUE
+   end
+
+   find_data_block(found)
+   ! Read through and find a data block, and store its ".data_block_name",
+   ! ".start_of_data", and ".end_of_data" line numbers. The search begins from
+   ! line ".start_of_data". Normally it is an error if a data block is not
+   ! found; however, if "found" is present, it is instead set to be TRUE or
+   ! false depending on whether a data block has been found.
+      found :: BIN, OUT, optional
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+      .find_start_data_block(found)
+      .find_end_data_block
+   end
+
+   find_start_data_block(found)
+   ! Read through and find a data block, and store its ".data_block_name",
+   ! ".start_of_data". The search begins from line ".start_of_data". Normally it
+   ! is an error if a data block is not found; however, if "found" is present,
+   ! it is instead set to be TRUE or FALSE depending on whether a data block has
+   ! been found. The cursor is left after the starting data block token.
+      found :: BIN, OUT, optional
+      fnd :: BIN
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+      .file.look_for_item("data_",from=.start_of_data,head_match=TRUE,found=fnd)
+      if (present(found)) then
+         found = fnd
+         if (NOT found) return
+      else if (NOT fnd) then
+         DIE("a data block has not been found in the file")
+      end
+      .file.move_to_previous_item
+      .file.read(.data_block_name)
+      .data_block_name = .data_block_name(6:) ! without data_ at start
+      .start_of_data = .file.line_number
+   end
+
+   find_end_data_block
+   ! Read through and find the end of a data block, starting from the first line
+   ! after ".start_of_data", and store this end in ".end_of_data". The cursor is
+   ! left at the end of the data block (possibly at the end of the file if there
+   ! was no explicit block terminator found).
+      found :: BIN
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+      .file.look_for_item("_eof",return_cursor=FALSE, &
+                                 from=.start_of_data+1, &
+                                 end_tokens=["data_","eof_ "], &
+                                 found=found)
+      if (.file.no_of_lines>0) then; .end_of_data = .file.no_of_lines
+      else;                          .end_of_data = .file.line_number
+      end
+   end
+
+   find_item(ID,found)
+   ! Find a (non-looped) data item with identifier "ID" in the current data
+   ! block, and leave the file cursor positioned just after it. If present,
+   ! "found" is set TRUE if "ID" is found, else it is set FALSE and the routine
+   ! returns without an error. NOTE: it is *not* checked that "ID" is a true
+   ! non-looped item. 
+      ID :: STR(*), IN
+      found :: BIN, OUT, optional
+      fnd :: BIN
+      ID_label :: STR
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+   ENSURE(.end_of_data>.start_of_data,"no data block found")
+      .file.look_for_item(ID,from=.start_of_data,until=.end_of_data,found=fnd,exact_match=TRUE)
+      if (present(found)) then
+         found = fnd
+         if (NOT found) return
+      else if (NOT fnd) then
+         DIE("data item "//ID.trim//" not found")
+      end
+   end
+
+   read_item(ID,item,itemvec,found) ::: leaky
+   ! Read a non-looped STR data item with string identifier "ID" from the data
+   ! block.  The result is put in "item" if it is a single string, or "itemvec"
+   ! if it is a multi-line semicolon delimited paragraph. If present, "found" is
+   ! set TRUE if "ID" is found.
+      ID :: STR(*), IN
+      item :: STR, OUT
+      itemvec :: STRVEC*
+      found :: BIN, OUT, optional
+      semicolon :: STR
+    ENSURE(.file.created,"CIF file has not been created")
+    ENSURE(.file.is_open,"CIF file has not been opened")
+    ENSURE(.start_of_data>0,"no data block found")
+      .find_item(ID,found)
+      .file.read(item) ! read the item
+      semicolon = ";"
+      if (item==semicolon AND .file.buffer.item_start==1) then
+       ! quote_chars = .file.quote_chars     ! switch off quotes
+       ! .file.set_quote_chars(" ")
+         itemvec.create(0)
+         item = .file.rest_of_line
+         if (item/=" ") itemvec.append(item)
+         do
+           .file.read(item)
+           if (item==semicolon AND .file.buffer.item_start==1) exit
+           itemvec.append(.file.buffer.string)
+           .file.read_line
+         end
+         ENSURE(itemvec.dim>0,"zero length string")
+         if (itemvec.dim==1) then
+            item = itemvec(1)
+            itemvec.destroy
+         else
+            item = " "
+         end
+       ! .file.set_quote_chars(quote_chars)  ! put back quotes
+      end
+   end
+
+   read_item(ID,dbl,error,found)
+   ! Read a non-looped REAL data item with string identifier "ID" from the data block.
+   ! The result is put in "dbl". If present, andy "error" associated with "dbl" is
+   ! also read. If present, "found" is set TRUE if "ID" is found.
+      ID :: STR(*)
+      dbl :: REAL
+      error :: REAL, optional
+      found :: BIN, OUT, optional
+      found_it :: BIN
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+      .find_item(ID,found)
+      if (present(found)) then
+        if (NOT found) return
+      end
+      if (present(error)) then; .file.read(dbl,error)
+      else;                     .file.read(dbl)
+      end
+   end
+
+   read_item(ID,int,found)
+   ! Read a non-looped INT data item with string identifier "ID" from the data block.
+   ! The result is put in "int". If present, "found" is set TRUE if "ID" is found.
+      ID :: STR(*)
+      int :: INT
+      found :: BIN, OUT, optional
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+      .find_item(ID,found)
+      if (present(found)) then
+        if (NOT found) return
+      end
+      .file.read(int)
+   end
+
+   find_looped_item(ID,found,n_item,n_data)
+   ! Find a looped data item with identifier "ID" in the current data block, and
+   ! leave the file cursor just before the actual looped data.  If present,
+   ! "found" is set TRUE if "ID" is found, else it is set FALSE and the routine
+   ! returns without an error. If present, "n_item" is set to the position
+   ! number of the item in the looped list, and "n_data" is set to the number of
+   ! data elements in the looped list.
+      ID :: STR(*), IN
+      found :: BIN, OUT, optional
+      n_item,n_data :: INT, OUT, optional
+      fnd :: BIN
+      word :: STR
+      n_dat,n_itm :: INT
+   ENSURE(.file.created,"CIF file has not been created")
+   ENSURE(.file.is_open,"CIF file has not been opened")
+   ENSURE(.start_of_data>0,"no data block found")
+      .file.look_for_item(ID,from=.start_of_data, &
+                             until=.end_of_data, &
+                             found=fnd, &
+                             exact_match=TRUE)
+      if (present(found)) then
+         found = fnd
+         if (NOT found) return
+      else if (NOT fnd) then
+         DIE("data item "//ID.trim//" not found")
+      end
+      .file.look_backwards_for_item("loop_",until=.start_of_data,found=fnd)
+      if (present(found)) then
+         found = fnd
+         if (NOT found) return
+      else if (NOT fnd) then
+         DIE("data item "//ID.trim//" is not looped")
+      end
+      n_dat = 0
+      do
+         .file.read(word) ! read first looped data item
+         if (ID==word) n_itm = n_dat + 1
+         if (word(1:1)/="_") exit ! this is an actual datum
+         n_dat = n_dat + 1
+      end
+      .file.move_to_previous_item
+      if (present(n_data)) n_data = n_dat
+      if (present(n_item)) n_item = n_itm
+   end
+
+   read_looped_item(ID,ivec,found) ::: leaky
+   ! Read a looped REALVEC data item with string identifier "ID" from the data block.
+   ! The result is put in "ivec". NOTE: "ivec" is created. If present,
+   ! "found" is set TRUE if "ID" is found, else it is set FALSE and the routine
+   ! returns without an error.
+      ID :: STR(*), IN
+      ivec :: INTVEC*
+      found :: BIN, OUT, optional
+      n_data,n_item,i :: INT
+      word :: STR
+      val :: INT
+      ENSURE(.file.created,"CIF file has not been created")
+      ENSURE(.file.is_open,"CIF file has not been opened")
+      ENSURE(.start_of_data>0,"no data block found")
+      .find_looped_item(ID,found,n_item,n_data)
+      ivec.create(0)
+      do
+         do i = 1,n_item-1
+            .file.skip_next_item
+         end
+         .file.read(val)
+         ivec.append(val)
+         do i = n_item+1,n_data
+            .file.skip_next_item
+         end
+         if (.file.at_end_of_file) exit
+         word = .file.next_item
+         if (word(1:1)=="_") exit
+         if (word(1:5)=="loop_") exit
+         if (word(1:5)=="data_") exit
+         if (word(1:5)=="save_") exit
+         if (word(1:7)=="global_") exit
+      end
+   end
+
+   read_looped_item(ID,vec,error,found) ::: leaky
+   ! Read a looped REALVEC data item with string identifier "ID" from the data block.
+   ! The result is put in "vec" and the associated errors are placed in "error".
+   ! NOTE: "vec" and "err" are created. If present, "found" is set TRUE if "ID"
+   ! is found, else it is set FALSE and the routine returns without an error.
+      ID :: STR(*), IN
+      vec :: REALVEC*
+      error :: REALVEC*, optional
+      found :: BIN, OUT, optional
+      n_data,n_item,i :: INT
+      word :: STR
+      val,err :: REAL
+      ENSURE(.file.created,"CIF file has not been created")
+      ENSURE(.file.is_open,"CIF file has not been opened")
+      ENSURE(.start_of_data>0,"no data block found")
+      .find_looped_item(ID,found,n_item,n_data)
+      vec.create(0)
+      if (present(error)) error.create(0)
+      do
+         do i = 1,n_item-1
+            .file.skip_next_item
+         end
+         if (present(error)) then ! read both value and error
+            .file.read(val,err)
+            vec.append(val)
+            error.append(err)
+         else                     ! read only value
+            .file.read(val,err)
+            vec.append(val)
+         end
+         do i = n_item+1,n_data
+            .file.skip_next_item
+         end
+         if (.file.at_end_of_file) exit
+         word = .file.next_item
+         if (word(1:1)=="_") exit
+         if (word(1:5)=="loop_") exit
+         if (word(1:5)=="data_") exit
+         if (word(1:5)=="save_") exit
+         if (word(1:7)=="global_") exit
+      end
+   end
+
+   read_looped_item(ID,strvec,found) ::: leaky
+   ! Read a looped REALVEC data item with string identifier "ID" from the data block.
+   ! The result is put in "strvec". NOTE: "strvec" is created. If present,
+   ! "found" is set TRUE if "ID" is found, else it is set FALSE and the routine
+   ! returns without an error.
+      ID :: STR(*), IN
+      strvec :: STRVEC*
+      found :: BIN, OUT, optional
+      n_data,n_item,i :: INT
+      word :: STR
+      ENSURE(.file.created,"CIF file has not been created")
+      ENSURE(.file.is_open,"CIF file has not been opened")
+      ENSURE(.start_of_data>0,"no data block found")
+      .find_looped_item(ID,found,n_item,n_data)
+      strvec.create(0)
+      do
+         do i = 1,n_item-1
+            .file.skip_next_item
+         end
+         .file.read(word)
+         strvec.append(word)
+         do i = n_item+1,n_data
+            .file.skip_next_item
+         end
+         if (.file.at_end_of_file) exit
+         word = .file.next_item
+         if (word(1:1)=="_") exit
+         if (word(1:5)=="loop_") exit
+         if (word(1:5)=="data_") exit
+         if (word(1:5)=="save_") exit
+         if (word(1:7)=="global_") exit
+      end
+   end
+
+end
