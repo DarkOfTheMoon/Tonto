@@ -1578,23 +1578,20 @@ contains
 !* Overlap Matrix formation *
 !****************************
 
-
    get_overlap_matrix(S)
    ! Set "S" to the overlap matrix.
    ! If the archive file exists, read it; otherwise make it.
       S :: MAT{REAL}
       arch :: ARCHIVE
-      write_archive,calc_it,group,rxhf :: BIN
+      write_archive,calc_it,group :: BIN
       arch.set(.name,"overlap_matrix")
       if (.scfdata.destroyed) then
          calc_it = TRUE
          write_archive = TRUE
-         rxhf = FALSE
          group = FALSE
       else
          calc_it = .scfdata.direct
          write_archive = NOT .scfdata.direct
-         rxhf  = .scfdata.kind=="rxhf"
          group = .scfdata.kind=="noninteracting-group-rhf"
       end
       if (NOT calc_it) then
@@ -1607,9 +1604,8 @@ contains
         end
       end
       if (calc_it) then
-         if (rxhf) then;       .make_rxhf_overlap_matrix(S)
-         else if (group) then; .make_group_overlap_matrix(S)
-         else;                 .make_overlap_matrix(S)
+         if (group) then; .make_group_overlap_matrix(S)
+         else;            .make_overlap_matrix(S)
          end
       end
       if (write_archive) arch.write(S)
@@ -1634,35 +1630,35 @@ contains
      S.symmetric_reflect
    end
 
-   make_rxhf_overlap_matrix(S)
-   ! Calculate the overlap matrix "S" for a restricted crystal Hartree-Fock
-   ! calculation.
-     S :: MAT{REAL}, target
-   ENSURE(.atom.created,  "no fragment atom list")
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.crystal.created,"no crystal data")
-   ENSURE(.cluster.created,"no cluster data")
-   ENSURE(.cluster.atom.created,"no cluster atom data")
-   ENSURE(.cluster.info_made,"no cluster data")
-   ENSURE(S.is_square,"S is not square")
-   ENSURE(S.dim1==.cluster.atom.no_of_basis_functions,"S has wrong shape")
-     n_shell_pairs,q,fa,la,fb,lb,start,step :: INT
-     sh :: SHELL2
-     stdout.text("here")
-     n_shell_pairs = .cluster.atom.n_shell_pairs
-     stdout.show("n_shell_pairs = ",n_shell_pairs)
-     start = 1 + tonto_parallel.this_proc
-     step = tonto_parallel.n_proc
-     if (tonto_parallel.do_parallel) S = ZERO
-     do q = start,n_shell_pairs,step
-       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
-       sh.make_overlap(S(fa:la,fb:lb))
-       sh.destroy_ptr_part
-     end
-     stdout.text("here2")
-     tonto_parallel.sum_symmetric_matrices(S)
-     S.symmetric_reflect
-   end
+!   make_rxhf_overlap_matrix(S)
+!   ! Calculate the overlap matrix "S" for a restricted crystal Hartree-Fock
+!   ! calculation.
+!     S :: MAT{REAL}, target
+!   ENSURE(.atom.created,  "no fragment atom list")
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.crystal.created,"no crystal data")
+!   ENSURE(.cluster.created,"no cluster data")
+!   ENSURE(.cluster.atom.created,"no cluster atom data")
+!   ENSURE(.cluster.info_made,"no cluster data")
+!   ENSURE(S.is_square,"S is not square")
+!   ENSURE(S.dim1==.cluster.atom.no_of_basis_functions,"S has wrong shape")
+!     n_shell_pairs,q,fa,la,fb,lb,start,step :: INT
+!     sh :: SHELL2
+!     stdout.text("here")
+!     n_shell_pairs = .cluster.atom.n_shell_pairs
+!     stdout.show("n_shell_pairs = ",n_shell_pairs)
+!     start = 1 + tonto_parallel.this_proc
+!     step = tonto_parallel.n_proc
+!     if (tonto_parallel.do_parallel) S = ZERO
+!     do q = start,n_shell_pairs,step
+!       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
+!       sh.make_overlap(S(fa:la,fb:lb))
+!       sh.destroy_ptr_part
+!     end
+!     stdout.text("here2")
+!     tonto_parallel.sum_symmetric_matrices(S)
+!     S.symmetric_reflect
+!   end
 
    make_group_overlap_matrix(S)
    ! Calculate the noninteracting group overlap matrix "S"
@@ -7521,6 +7517,8 @@ contains
    ! are produced as results.
    ENSURE(.scfdata.created,"no scfdata provided")
      select case (.scfdata.kind)
+       case ("embedded_rhf")
+         .embedded_scf
        case ("xray_rhf","xray_rks","xray_rdft","xray_udft")
          .constrained_scf
        case default;
@@ -7534,17 +7532,7 @@ contains
    ! are produced as results.
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
-     scf_kind :: STR
-     scf_kind = .scfdata.kind
-     if (scf_kind == "dft" AND .dftgrid.destroyed) then
-       .dftgrid.create
-       .dftgrid.set_defaults
-     end
-     .get_initial_guess
-     .make_fock_matrix
-     .initialise_scfdata
-     .initialise_scfdata_error
-!     .set_scfdata_dft_energy_correction
+     .initialise_scf
      .put_scf_results
      do
        if (.scfdata.scf_done) exit
@@ -7555,57 +7543,10 @@ contains
        .make_fock_matrix
        .update_scfdata
        .update_scfdata_error
-!       .set_scfdata_dft_energy_correction
        .put_scf_results
      end
      .archive_scf_results
      .cleanup_scf
-   end
-
-   make_integration_grid
-   ! Makes an integration grid for numerical integration.
-   ! Note that the routine "dftgrid.make_grid" archives the grid.
-     pt :: MAT{REAL}*
-     wt :: VEC{REAL}*
-     n_pts :: INT
-     n_pts = .dftgrid.n_pts*.n_atom
-     pt.create(n_pts,3)
-     wt.create(n_pts)
-     .dftgrid.make_grid(pt,wt,.atom)
-     pt.destroy
-     wt.destroy
-   end
-
-   make_grid_densities
-   ! Make various "time-consuming" grid densities and archive them.
-   ! Densities made in this routine:
-   ! 1. density  (= rho)
-   ! 2. grad of density (= nabla_rho)
-     pt, nabla_rho :: MAT{REAL}*
-     wt, rho :: VEC{REAL}*
-     n_pts :: INT
-     old_NOs :: BIN
-     archive :: ARCHIVE
-     old_NOs = FALSE
-     if (.natural_orbitals.created) old_NOs = .natural_orbitals.any_created
-     if (NOT old_NOs) .make_natural_orbitals
-     n_pts = .dftgrid.n_pts*.n_atom
-     pt.create(n_pts,3)
-     wt.create(n_pts)
-     rho.create(n_pts)
-     nabla_rho.create(n_pts,3)
-     .dftgrid.make_grid(pt,wt,.atom)
-     .make_density_grid(rho,pt)
-     .make_nabla_density_grid(nabla_rho,pt)
-     archive.set(.name, "DENSITY_grid")
-     archive.write(rho)
-     archive.set(.name, "NABLA_DENSITY_grid")
-     archive.write(nabla_rho)
-     pt.destroy
-     wt.destroy
-     rho.destroy
-     nabla_rho.destroy
-      if (NOT old_NOs) .natural_orbitals.destroy_ptr_part
    end
 
    put_scf_results
@@ -7649,16 +7590,6 @@ contains
      end
    end
 
-!   set_scfdata_dft_energy_correction
-!   ! Set the scfdata dft energy correction to the SCF energy.  It is not an
-!   ! error to call this routine without the scf being for dft.
-!     dft_energy_correction :: REAL
-!     if (.scfdata.kind.includes("dft")) then
-!       dft_energy_correction = .dft_energy_correction
-!       .scfdata.set(dft_energy_correction=dft_energy_correction)
-!     end
-!   end
-
    initialise_scfdata_error
    ! Reset the scfdata gradient of the SCF energy with respect to orbital
    ! rotations, otherwise known as the "diis error". This is used to check for
@@ -7675,6 +7606,355 @@ contains
      diis_error :: REAL
      .make_diis_error(diis_error)
      .scfdata.set_diis_error(diis_error)
+   end
+
+   embedded_scf ::: leaky
+   ! Do an SCF calculation for a molecular fragment embedded in a crystal
+   ! generated cluster. The .molecular_orbitals and .orbital_energies are
+   ! obtained for the embedded fragment. The .density_matrix is obtained for the
+   ! whole cluster. There must be a pre-existing cluster, and self must be the
+   ! same as this cluster. Also, there must be a .saved molecule representing the
+   ! embedded fragment whose orbitals are obtained.
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.cluster.created,"no cluster")
+   ENSURE(.saved.created,"no saved fragment molecule")
+   ENSURE(.saved.molecular_orbitals.created,"no saved molecular orbitals")
+     .initialise_scf
+   ! .put_scf_results
+   ! do
+   !   if (.scfdata.scf_done) exit
+   !   .extrapolate_fock_matrix
+   !   .update_molecular_orbitals
+   !   .schmidt_orthonormalise_MOs
+   !   .make_scf_density_matrix
+   !   .make_fock_matrix
+   !   .update_scfdata
+   !   .update_scfdata_error
+   !   .put_scf_results
+   ! end
+   ! .archive_scf_results
+   ! .cleanup_scf
+   end
+
+   initialise_scf ::: leaky
+   ! Initialise the SCF procedure
+   ENSURE(.scfdata.created,"no scfdata provided")
+     scf_kind :: STR
+     scf_kind = .scfdata.kind
+     select case (scf_kind)
+       case ("embedded_rhf")
+         .initialise_embedded_scf
+       case ("xray_rhf","xray_rks","xray_rdft","xray_udft")
+         .initialise_constrained_scf
+       case default;
+         .initialise_usual_scf
+     end
+   end
+
+   initialise_usual_scf ::: leaky
+   ! Initialise the usual SCF procedure
+     scf_kind :: STR
+     scf_kind = .scfdata.kind
+     if ((scf_kind == "rdft" OR scf_kind=="udft") AND .dftgrid.destroyed) then
+       .dftgrid.create
+       .dftgrid.set_defaults
+     end
+     .get_initial_guess
+     .make_fock_matrix
+     .initialise_scfdata
+     .initialise_scfdata_error
+     .scfdata.diis.cleanup
+   end
+
+   initialise_embedded_scf ::: leaky
+   ! Initialise the embedded SCF procedure
+     S,B :: MAT{REAL}*
+     scf_kind :: STR
+     scf_kind = .scfdata.kind
+     if ((scf_kind == "embedded_rdft" OR scf_kind=="embedded_udft") AND .dftgrid.destroyed) then
+       .dftgrid.create
+       .dftgrid.set_defaults
+     end
+     B.create(.n_bf,.n_bf)
+     B.to_unit_matrix
+     S.create(.n_bf,.n_bf)
+     .get_overlap_matrix(S)
+     B.schmidt_orthonormalise(S)
+     S.change_basis_using(B)
+     stdout.text("new S:")
+     stdout.put(S)
+     S.to_power_series_inverse_of(B)
+   ! .get_initial_guess
+   ! .make_fock_matrix
+   ! .initialise_scfdata
+   ! .initialise_scfdata_error
+   ! .scfdata.diis.cleanup
+   end
+
+   initialise_constrained_scf ::: leaky
+   ! Initialise the constrained SCF procedure
+     scf_kind :: STR
+     scf_kind = .scfdata.kind
+     if ((scf_kind == "rdft" OR scf_kind=="udft") AND .dftgrid.destroyed) then
+       .dftgrid.create
+       .dftgrid.set_defaults
+     end
+     .scfdata.using_rough_convergence = FALSE
+     .get_initial_guess
+     .make_fock_matrix
+     .make_constraint_data
+     .initialise_scfdata
+     .add_constraint
+     .initialise_scfdata_error
+     .scfdata.diis.cleanup
+   end
+
+!  ******************
+!  Constraint methods
+!  ******************
+
+   constrained_scf ::: leaky
+   ! Do a constrained SCF calculation.
+   ! The following objects are produced as results:
+   !   .molecular_orbitals, .orbital_energies, .density_matrix
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+     archive :: ARCHIVE
+     .initialise_scf
+     do
+       .put_scf_results        ! Banner and 0th iteration results
+       do
+         .extrapolate_fock_matrix
+         .update_molecular_orbitals
+         .schmidt_orthonormalise_MOs
+         .make_scf_density_matrix
+         .make_fock_matrix
+         .make_constraint_data
+         .save_constraint_for_diis
+         .update_scfdata
+         .add_constraint
+         .update_scfdata_error
+         .put_scf_results
+         if (.scfdata.scf_done) exit
+       end
+       .scfdata.update_lambda
+       if (.scfdata.exceeded_lambda_max) exit
+
+       .reset_constraint_stuff
+       .update_scfdata_error
+     end
+     .cleanup_scf
+     .crystal.put_reflection_data
+     archive.set(.name,"constraint_matrix"); archive.delete_all_genres
+   end
+
+   make_constraint_data
+   ! Make the predicted constraint data, e.g. X-ray structure factors or
+   ! PND structure factors, or whatever data are to be used in the constrained
+   ! wavefunction procedure
+   ENSURE(.scfdata.created,"no scfdata")
+      scf_kind :: STR
+      scf_kind = .scfdata.kind
+      select case (scf_kind)
+         case ("xray_rdft"); .make_structure_factors
+         case ("xray_udft"); .make_structure_factors
+         case ("xray_rhf");  .make_structure_factors
+         case ("xray_uhf");  .make_structure_factors
+         case ("pnd_uhf");   .make_sz_structure_factors
+         case default
+            DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
+      end
+   end
+
+   add_constraint
+   ! Make the constraint matrix for wavefunction fitting and add it to the fock
+   ! matrix to obtain the effective fock matrix.
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.fock_matrix.created,"no fock matrix")
+   ENSURE(.fock_matrix.any_created,"no fock matrix")
+     scf_kind :: STR
+     C :: MAT{REAL}*
+     C_tri :: VEC{REAL}*
+     arch :: ARCHIVE
+     C.create(.n_bf,.n_bf)
+     .make_constraint(C)
+     ! Now add in the contribution
+     scf_kind = .scfdata.kind
+     select case (scf_kind)
+        case("xray_rdft","xray_rhf")
+           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda)
+        case("xray_uhf","xray_udft")
+           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
+           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda)
+        case("pnd_uhf")
+           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
+           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda)
+        case default
+           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
+     end
+     C_tri.create(C.tri_size)
+     C.compress_to_triangle(C_tri)
+     arch.set(.name,"constraint_matrix")
+     arch.write(C_tri)
+     C_tri.destroy
+     C.destroy
+   end
+
+   make_constraint(C)
+   ! Make the constraint matrix "C" for wavefunction fitting.
+     C :: MAT{REAL}, INOUT
+   ENSURE(.scfdata.spinorbital_kind=="restricted","can only do restricted calculations")
+   ENSURE(.crystal.created,  "no crystal info")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+     k_pts :: MAT{REAL}*
+     ft_ab_eq,ft_ab :: MAT3{CPX}*
+     Fc,fac_times_alpha,Fconjg :: VEC{CPX}*
+     Fm,Fexp,Fsig,alpha :: VEC{REAL}*
+     sh :: SHELL2
+     fac,cutoff :: REAL
+     q,fa,la,fb,lb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
+     n_unique = .crystal.n_unique_SF_k_pts
+     n_refl = .crystal.n_refl
+     fac = TWO/max(n_refl - .crystal.n_param,1)
+     fac_times_alpha.create(n_refl)
+     Fc.create(n_refl);    Fc = .crystal.F_calc
+     alpha.create(n_refl)
+     alpha = .crystal.extinction_correction
+     Fexp.create(n_refl);  Fexp = .crystal.F_exp
+     Fsig.create(n_refl);  Fsig = .crystal.F_sigma
+     Fm.create(n_refl);    Fm = max(abs(Fc),TOL(10))
+     fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+ !   fac_times_alpha = fac * alpha * (alpha - Fexp/Fm) / (Fsig * Fsig)
+     Fm.destroy
+     Fsig.destroy
+     Fexp.destroy
+     alpha.destroy
+     Fconjg.create(n_refl)
+     Fconjg=conjg(Fc(:))
+     k_pts.create(n_unique,3)
+     .crystal.make_unique_SF_k_pts(k_pts)
+     cutoff = TOL(10) / .n_shell_pairs
+     do q=1, .n_shell_pairs
+       .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+       if (sh.skip_ft(cutoff)) then
+         C(fa:la,fb:lb) = ZERO
+         sh.destroy_ptr_part
+         cycle
+       end
+       ft_ab.create([1,n_refl],[fa,la],[fb,lb])
+       ft_ab_eq.create(n_unique,sh.a.n_comp,sh.b.n_comp)
+       .make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
+       .crystal.sum_ft_ints(ft_ab,ft_ab_eq)
+       ft_ab_eq.destroy
+       do i = fa,la
+         do j = fb,min(lb,i)
+ !         C(i,j) = sum(fac_times_alpha(:) * real(ft_ab(:,i,j) * Fconjg(:)))
+           C(i,j) = sum(fac_times_alpha(:) &
+                            * (real(ft_ab(:,i,j)) * real(Fconjg(:)) &
+                            -  aimag(ft_ab(:,i,j)) * aimag(Fconjg(:))))
+           ! real(a*b) = real(a)*real(b)-aimag(a)*aimag(b)
+
+         end
+       end
+       ft_ab.destroy
+       sh.destroy_ptr_part
+     end
+     C.symmetric_reflect
+     Fconjg.destroy
+     k_pts.destroy
+     Fc.destroy
+     fac_times_alpha.destroy
+   end
+
+   save_constraint_for_diis
+   ! ?
+     arch :: ARCHIVE
+     C_tri :: VEC{REAL}*
+     if (NOT .scfdata.apply_fock_diis) return
+
+     ! Read in the matrix from disk
+     arch.set(.name,"constraint_matrix")
+     C_tri.create(.n_bf.triangle)
+     arch.read(C_tri)
+     arch.close
+     arch.delete
+
+     ! Save the constraint matrix to disk with a different name
+     .scfdata.diis.save_item(C_tri,"constraint",.scfdata.diis.new)
+     C_tri.destroy
+
+     ! Save the density matrix to disk with a different name
+     .scfdata.diis.save_item(.density_matrix,"density",.scfdata.diis.new)
+   end
+
+   reset_constraint_stuff
+   ! ?
+     arch :: ARCHIVE
+     i :: INT
+     error,density :: OPMATRIX*
+     F_tri,C_tri :: VEC{REAL}*
+     F,C :: MAT{REAL}*
+     scf_kind :: STR
+     if (NOT .scfdata.apply_fock_diis) return
+
+     C_tri.create(.n_bf.triangle)
+     F.create(.n_bf,.n_bf)
+
+     F_tri.create(.n_bf.triangle)
+     density.create(.n_bf,"restricted")
+     error.create(.n_bf,"restricted")
+
+     do i=1,.scfdata.diis.dimension-1
+       ! Read in the constraint
+       .scfdata.diis.get_item(C_tri,"constraint",i)
+       ! Read in the Fock
+       .scfdata.diis.get_parameter_item(i,F_tri)
+       ! Read in the density matrix
+       .scfdata.diis.get_item(density,"density",i)
+
+       ! Scale the Fock matrix to the new lambda
+       F_tri = F_tri + .scfdata.lambda_step*C_tri
+
+       F.uncompress_from_triangle(F_tri)
+
+       .make_r_diis_error(error.restricted,F,density.restricted)
+       error.compress
+       .scfdata.diis.save_pair(F_tri,error.triangle,i)
+       error.uncompress
+     end
+     .scfdata.diis.remake_diis_matrix(.n_bf.triangle)
+     error.destroy
+     density.destroy
+     F_tri.destroy
+     .unarchive_density_matrix
+
+     ! Just to save effort on memory reallocation.
+     C => F; nullify(F)
+
+     ! The current Fock matrix is for the old lambda, so let's make it for the
+     ! new lambda.
+     arch.set(.name,"constraint_matrix")
+     arch.read(C_tri)
+     C.uncompress_from_triangle(C_tri)
+     scf_kind = .scfdata.kind
+     select case (scf_kind)
+        case("xray_rdft","xray_rhf")
+           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda_step)
+        case("xray_uhf","xray_udft")
+           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
+           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda_step)
+        case("pnd_uhf")
+           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
+           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda_step)
+        case default
+           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
+     end
+
+     C.destroy
+     C_tri.destroy
    end
 
 !  ********************************
@@ -11884,267 +12164,6 @@ contains
       stdout.text("S in the promolecule monomer basis:")
       stdout.put(S)
       S.destroy
-   end
-
-!  ******************
-!  Constraint methods
-!  ******************
-
-   constrained_scf ::: leaky
-   ! Do a constrained SCF calculation.
-   ! The following objects are produced as results:
-   !   .molecular_orbitals, .orbital_energies, .density_matrix
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-     scf_kind :: STR
-     archive :: ARCHIVE
-     scf_kind = .scfdata.kind
-     if (scf_kind == "dft" AND .dftgrid.destroyed) then
-       .dftgrid.create
-       .dftgrid.set_defaults
-     end
-     .scfdata.using_rough_convergence = FALSE
-     .get_initial_guess
-     .make_fock_matrix
-     .make_constraint_data
-     .initialise_scfdata
-     .add_constraint
-     .initialise_scfdata_error
-     .scfdata.diis.cleanup
-     do
-       .put_scf_results        ! Banner and 0th iteration results
-       do
-         .extrapolate_fock_matrix
-         .update_molecular_orbitals
-         .schmidt_orthonormalise_MOs
-         .make_scf_density_matrix
-         .make_fock_matrix
-         .make_constraint_data
-         .save_constraint_for_diis
-         .update_scfdata
-         .add_constraint
-         .update_scfdata_error
-         .put_scf_results
-         if (.scfdata.scf_done) exit
-       end
-       .scfdata.update_lambda
-       if (.scfdata.exceeded_lambda_max) exit
-
-       .reset_constraint_stuff
-       .update_scfdata_error
-     end
-     .scfdata.diis.cleanup
-     .cleanup_scf
-     .crystal.put_reflection_data
-     archive.set(.name,"constraint_matrix"); archive.delete_all_genres
-   end
-
-   make_constraint_data
-   ! Make the predicted constraint data, e.g. X-ray structure factors or
-   ! PND structure factors, or whatever data are to be used in the constrained
-   ! wavefunction procedure
-   ENSURE(.scfdata.created,"no scfdata")
-      scf_kind :: STR
-      scf_kind = .scfdata.kind
-      select case (scf_kind)
-         case ("xray_rdft"); .make_structure_factors
-         case ("xray_udft"); .make_structure_factors
-         case ("xray_rhf");  .make_structure_factors
-         case ("xray_uhf");  .make_structure_factors
-         case ("pnd_uhf");   .make_sz_structure_factors
-         case default
-            DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
-      end
-   end
-
-   add_constraint
-   ! Make the constraint matrix for wavefunction fitting and add it to the fock
-   ! matrix to obtain the effective fock matrix.
-   ENSURE(.scfdata.created,"no scf data")
-   ENSURE(.fock_matrix.created,"no fock matrix")
-   ENSURE(.fock_matrix.any_created,"no fock matrix")
-     scf_kind :: STR
-     C :: MAT{REAL}*
-     C_tri :: VEC{REAL}*
-     arch :: ARCHIVE
-     C.create(.n_bf,.n_bf)
-     .make_constraint(C)
-     ! Now add in the contribution
-     scf_kind = .scfdata.kind
-     select case (scf_kind)
-        case("xray_rdft","xray_rhf")
-           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda)
-        case("xray_uhf","xray_udft")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
-           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda)
-        case("pnd_uhf")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
-           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda)
-        case default
-           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
-     end
-     C_tri.create(C.tri_size)
-     C.compress_to_triangle(C_tri)
-     arch.set(.name,"constraint_matrix")
-     arch.write(C_tri)
-     C_tri.destroy
-     C.destroy
-   end
-
-   make_constraint(C)
-   ! Make the constraint matrix "C" for wavefunction fitting.
-     C :: MAT{REAL}, INOUT
-   ENSURE(.scfdata.spinorbital_kind=="restricted","can only do restricted calculations")
-   ENSURE(.crystal.created,  "no crystal info")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-     k_pts :: MAT{REAL}*
-     ft_ab_eq,ft_ab :: MAT3{CPX}*
-     Fc,fac_times_alpha,Fconjg :: VEC{CPX}*
-     Fm,Fexp,Fsig,alpha :: VEC{REAL}*
-     sh :: SHELL2
-     fac,cutoff :: REAL
-     q,fa,la,fb,lb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
-     n_unique = .crystal.n_unique_SF_k_pts
-     n_refl = .crystal.n_refl
-     fac = TWO/max(n_refl - .crystal.n_param,1)
-     fac_times_alpha.create(n_refl)
-     Fc.create(n_refl);    Fc = .crystal.F_calc
-     alpha.create(n_refl)
-     alpha = .crystal.extinction_correction
-     Fexp.create(n_refl);  Fexp = .crystal.F_exp
-     Fsig.create(n_refl);  Fsig = .crystal.F_sigma
-     Fm.create(n_refl);    Fm = max(abs(Fc),TOL(10))
-     fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
- !   fac_times_alpha = fac * alpha * (alpha - Fexp/Fm) / (Fsig * Fsig)
-     Fm.destroy
-     Fsig.destroy
-     Fexp.destroy
-     alpha.destroy
-     Fconjg.create(n_refl)
-     Fconjg=conjg(Fc(:))
-     k_pts.create(n_unique,3)
-     .crystal.make_unique_SF_k_pts(k_pts)
-     cutoff = TOL(10) / .n_shell_pairs
-     do q=1, .n_shell_pairs
-       .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
-       if (sh.skip_ft(cutoff)) then
-         C(fa:la,fb:lb) = ZERO
-         sh.destroy_ptr_part
-         cycle
-       end
-       ft_ab.create([1,n_refl],[fa,la],[fb,lb])
-       ft_ab_eq.create(n_unique,sh.a.n_comp,sh.b.n_comp)
-       .make_ft_pair(ft_ab_eq,k_pts,sh,atom_a,atom_b)
-       .crystal.sum_ft_ints(ft_ab,ft_ab_eq)
-       ft_ab_eq.destroy
-       do i = fa,la
-         do j = fb,min(lb,i)
- !         C(i,j) = sum(fac_times_alpha(:) * real(ft_ab(:,i,j) * Fconjg(:)))
-           C(i,j) = sum(fac_times_alpha(:) &
-                            * (real(ft_ab(:,i,j)) * real(Fconjg(:)) &
-                            -  aimag(ft_ab(:,i,j)) * aimag(Fconjg(:))))
-           ! real(a*b) = real(a)*real(b)-aimag(a)*aimag(b)
-
-         end
-       end
-       ft_ab.destroy
-       sh.destroy_ptr_part
-     end
-     C.symmetric_reflect
-     Fconjg.destroy
-     k_pts.destroy
-     Fc.destroy
-     fac_times_alpha.destroy
-   end
-
-   save_constraint_for_diis
-   ! ?
-     arch :: ARCHIVE
-     C_tri :: VEC{REAL}*
-     if (NOT .scfdata.apply_fock_diis) return
-
-     ! Read in the matrix from disk
-     arch.set(.name,"constraint_matrix")
-     C_tri.create(.n_bf.triangle)
-     arch.read(C_tri)
-     arch.close
-     arch.delete
-
-     ! Save the constraint matrix to disk with a different name
-     .scfdata.diis.save_item(C_tri,"constraint",.scfdata.diis.new)
-     C_tri.destroy
-
-     ! Save the density matrix to disk with a different name
-     .scfdata.diis.save_item(.density_matrix,"density",.scfdata.diis.new)
-   end
-
-   reset_constraint_stuff
-   ! ?
-     arch :: ARCHIVE
-     i :: INT
-     error,density :: OPMATRIX*
-     F_tri,C_tri :: VEC{REAL}*
-     F,C :: MAT{REAL}*
-     scf_kind :: STR
-     if (NOT .scfdata.apply_fock_diis) return
-
-     C_tri.create(.n_bf.triangle)
-     F.create(.n_bf,.n_bf)
-
-     F_tri.create(.n_bf.triangle)
-     density.create(.n_bf,"restricted")
-     error.create(.n_bf,"restricted")
-
-     do i=1,.scfdata.diis.dimension-1
-       ! Read in the constraint
-       .scfdata.diis.get_item(C_tri,"constraint",i)
-       ! Read in the Fock
-       .scfdata.diis.get_parameter_item(i,F_tri)
-       ! Read in the density matrix
-       .scfdata.diis.get_item(density,"density",i)
-
-       ! Scale the Fock matrix to the new lambda
-       F_tri = F_tri + .scfdata.lambda_step*C_tri
-
-       F.uncompress_from_triangle(F_tri)
-
-       .make_r_diis_error(error.restricted,F,density.restricted)
-       error.compress
-       .scfdata.diis.save_pair(F_tri,error.triangle,i)
-       error.uncompress
-     end
-     .scfdata.diis.remake_diis_matrix(.n_bf.triangle)
-     error.destroy
-     density.destroy
-     F_tri.destroy
-     .unarchive_density_matrix
-
-     ! Just to save effort on memory reallocation.
-     C => F; nullify(F)
-
-     ! The current Fock matrix is for the old lambda, so let's make it for the
-     ! new lambda.
-     arch.set(.name,"constraint_matrix")
-     arch.read(C_tri)
-     C.uncompress_from_triangle(C_tri)
-     scf_kind = .scfdata.kind
-     select case (scf_kind)
-        case("xray_rdft","xray_rhf")
-           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda_step)
-        case("xray_uhf","xray_udft")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
-           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda_step)
-        case("pnd_uhf")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
-           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda_step)
-        case default
-           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
-     end
-
-     C.destroy
-     C_tri.destroy
    end
 
 !*******************************************************************************
