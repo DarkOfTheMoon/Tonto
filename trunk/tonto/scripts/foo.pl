@@ -2942,7 +2942,7 @@ sub html_do_new_end_scope {
 # Process the end of new scoping unit into Fortran.
 sub fortran_do_new_end_scope {
 
-  my($i,$getfile,$found,$name);
+  my($i,$getfile,$found,$name,$pre_out);
   $name = $current_rout_name;
 
 #print "-----------------------> end scope";
@@ -2972,6 +2972,13 @@ sub fortran_do_new_end_scope {
      else                                     { 
         $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1CHECK\n$1end $oldscopeunit/; 
      }
+     $pre_out = "";
+     if ( ! defined $routine{$name}{pure} &&
+            defined $routine{$current_rout_name}{first_active_line} &&
+                    $routine{$current_rout_name}{first_active_line} == 0) {
+        $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")\n";
+     }
+     $fortran_out = $pre_out . $fortran_out;
   } 
 
   elsif ($oldscopeunit eq 'array type') {
