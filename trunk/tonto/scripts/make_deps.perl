@@ -116,9 +116,10 @@ LINE: while (<FOOFILE>) {
   if ($inp =~ "^ *module +")  { $unitname = lc($arg[2]); $is_module = 1; }
   elsif ($inp =~ "^ *program +") { $unitname = lc($arg[2]); $is_program= 1; }
   elsif ($inp =~ "^ *[Uu][Ss][Ee] +") {
-     $n++;
      $name = lc($arg[3]);
      $name =~ s/[ ,]+.*//g; # get rid of stuff after the comma.
+     next LINE if ($name =~ /service_routines/); # not a real module to use.
+     $n++;
      $used_module_name[$n] = $name;
   }
 }
