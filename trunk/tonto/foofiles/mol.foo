@@ -1471,14 +1471,19 @@ contains
      end
   end
 
-  make_kinetic_matrix(T)
+  make_kinetic_matrix(T,output)
   ! Calculate the kinetic energy matrix "T"
+  ! if PRESENT and FALSE the matrix is not archived
     MAT :: T
+    BIN, OPTIONAL :: output
     INT :: q,a,b,fa,la,fb,lb,atom_a,atom_b
     SHELL2 :: shell
+    BIN :: do_archive
     ARCHIVE :: archive
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
+    do_archive = TRUE
+    if (present(output)) do_archive=output
     if (.scfdata.nddo) then
       do q=1,.n_shell_pairs
         .get_shell_pair(q,shell,a,b,fa,la,fb,lb,atom_a,atom_b)
@@ -1495,8 +1500,10 @@ contains
       end
     end
     T.make_symmetric
-    archive.set(.name,"kinetic_matrix")
-    archive.write(T)
+    if (do_archive) then
+      archive.set(.name,"kinetic_matrix")
+      archive.write(T)
+    end
   end
 
   get_kinetic_overlap(T,S)
@@ -1600,14 +1607,66 @@ contains
     archive.write(Z)
   end
 
-  get_core_matrix(H)
+  make_nuclear_matrix(Z,nuclei)
+  ! Using the nuclei specified in "nuclei"
+  ! Calculate the nuclear attraction matrix "Z"
+    MAT :: Z
+    IVEC :: nuclei
+    ATOM, PTR :: atom
+    MAT, PTR :: Z_c
+    INT :: q,c,a,b,fa,la,fb,lb,n_atom,atom_a,atom_b
+    SHELL2 :: shell
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.bases_are_all_resolved, "no basis set")
+    Z = ZERO
+    n_atom = size(nuclei)
+    if (.scfdata.nddo) then
+      do q=1,.n_shell_pairs
+        .get_shell_pair(q,shell,a,b,fa,la,fb,lb,atom_a,atom_b)
+        if (atom_a==atom_b) then
+          Z_c.create(shell.a.n_comp,shell.b.n_comp)
+          do c=1,n_atom
+            atom=>.atom(nuclei(c))
+            shell.get_nuc(Z_c, atom.mass,atom.pos)
+          ! shell.make_nuclear_attraction_ints(Z_c, atom.pos)
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.atomic_number * Z_c
+          end
+          Z_c.destroy
+        end
+        shell.destroy_ptr_part
+      end
+    else
+      do q=1,.n_shell_pairs
+        .get_shell_pair(q,shell,fa,la,fb,lb)
+        Z_c.create(shell.a.n_comp,shell.b.n_comp)
+        do c=1,n_atom
+          atom=>.atom(nuclei(c))
+        ! shell.get_nuc(Z_c, atom.mass,atom.pos)
+          shell.make_nuclear_attraction_ints(Z_c, atom.pos)
+          Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.atomic_number * Z_c
+        end
+        Z_c.destroy
+        shell.destroy_ptr_part
+      end
+    end
+    Z.make_symmetric
+  end
+
+  get_core_matrix(H,nuclei)
   ! Get the core hamiltonian matrix. If already in memory, do nothing. Else if
   ! the archive file exists, read it. Otherwise make it.
+  ! If the nuclei are given make it regardless, since the stored one is
+  ! likely to be different
      MAT :: H
+     IVEC, optional :: nuclei
      ARCHIVE :: archive
-     archive.set(.name,"core_matrix")
-     if ( archive.exists) then; archive.read(H)
-     else;                     .make_core_matrix(H)
+     if (present(nuclei)) then
+      .make_core_matrix(H,nuclei)
+     else
+      archive.set(.name,"core_matrix")
+      if ( archive.exists) then; archive.read(H)
+       else; .make_core_matrix(H)
+      end
      end
   end
 
@@ -1623,6 +1682,18 @@ contains
      Z.destroy
      archive.set(.name,"core_matrix")
      archive.write(H)
+  end
+
+  make_core_matrix(H,nuclei)
+  ! Get the core hamiltonian matrix "H".
+     MAT :: H
+     IVEC :: nuclei
+     MAT, PTR :: Z
+     .make_kinetic_matrix(H)
+     Z.create( .n_bf, .n_bf)
+     .make_nuclear_matrix(Z,nuclei)
+     H = H + Z
+     Z.destroy
   end
 
   get_dipole_matrices(Dx,Dy,Dz)
@@ -4707,6 +4778,48 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
     end
   end
 
+  scf_electronic_energy(P,nuclei) result (res)
+  ! Evaluates the SCF electronic energy as a trace of "D" with the ".fock
+  ! matrix". 
+  ! "nuclei" lists the nuclei to be used for obtaining n->e attractions.
+    OPMAT, target :: P
+    IVEC :: nuclei
+    BIN :: add_core
+    DBL :: res
+    STR :: kind
+    MAT, PTR :: F
+    CMAT, PTR :: FF
+    kind = .scfdata.kind
+    ENSURE( .fock_matrix.any_created,    "no fock matrix")
+    ENSURE( .density_matrix.any_created, "no density matrix")
+    add_core = TRUE
+    select case (kind)
+       case ("rhf","restricted_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock")
+          F.create(.n_bf,.n_bf)
+          F = .fock_matrix.restricted
+          .add_core_hamiltonian(F,nuclei)
+          res = HALF * P.restricted.trace_of_product(F)
+          F.destroy
+       case ("uhf","unrestricted_hartree_fock","rohf","restricted_open_shell_hartree_fock")
+          F.create(.n_bf,.n_bf);
+          F = .fock_matrix.alpha
+          .add_core_hamiltonian(F,nuclei)
+          res = HALF * P.alpha.trace_of_product(F)
+          F = .fock_matrix.beta
+          .add_core_hamiltonian(F,nuclei)
+          res = HALF * P.beta.trace_of_product(F) + res
+          F.destroy
+       case ("cghf","gchf","general_complex_hartree_fock","complex_general_hartree_fock")
+          FF.create(2*.n_bf,2*.n_bf);
+          FF = .fock_matrix.general_complex
+          .add_core_hamiltonian(FF,nuclei)
+          res = HALF * P.general_complex.trace_of_product(FF)
+          FF.destroy
+       case default; DIE("not yet implemented, " // .scfdata.kind)
+    end
+  end
+
   get_scf_results [leaky]
   ! Get the SCF results in from archives. Do not get the density matrix, because
   ! it can/should be generated from the orbitals, depending on the kind of SCF.
@@ -5310,19 +5423,23 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
     end
   end
 
-  add_core_hamiltonian(F)
+  add_core_hamiltonian(F,nuclei)
   ! Add the core hamiltonain to "F"
+  ! if "nuclei" is present then the core_matrix is calculated using 
+  ! only the nuclei specified
      MAT :: F
+     IVEC, optional :: nuclei
      MAT, PTR :: H
      H.create( .n_bf, .n_bf)
-     .get_core_matrix(H)
+     .get_core_matrix(H,nuclei)
      F = F + H
      H.destroy
   end
 
-  add_core_hamiltonian(F)
+  add_core_hamiltonian(F,nuclei)
   ! Add the core hamiltonain to a general complex "F"
      CMAT :: F
+     IVEC, optional :: nuclei
      CMAT,PTR :: HH
      MAT, PTR :: H,S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz
      MAT(3,3) :: BB
@@ -5331,7 +5448,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
      CDBL :: I
      HH.create( 2*.n_bf, 2*.n_bf); HH = ZERO
      H.create( .n_bf, .n_bf)
-     .get_core_matrix(H)
+     .get_core_matrix(H,nuclei)
      HH.alpha_alpha_plus(H)
      HH.beta_beta_plus(H)
      H.destroy
@@ -8725,7 +8842,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
        comb_mat = roby_atom.get_combination_matrix_from(k)
        en_groups = 0
        do m = 1,n_k
-         energy_subgroup = .roby_energy(comb_mat(:,m))
+         energy_subgroup = .roby_atom_energy(comb_mat(:,m))
          en_groups = en_groups + energy_subgroup
        end      
        comb_mat.destroy
@@ -8739,8 +8856,8 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
    IVEC :: roby_atom, roby_atom2
    DBL :: ionic_energy, energy_group1, energy_group2 
    DBL :: ground1, ground2
-       energy_group1 = .roby_energy(roby_atom)  
-       energy_group2 = .roby_energy(roby_atom2) 
+       energy_group1 = .roby_atom_energy(roby_atom)  
+       energy_group2 = .roby_atom_energy(roby_atom2) 
        ground1 = sum(.atom(roby_atom).energy)
        ground2 = sum(.atom(roby_atom2).energy)
        stdout.flush
@@ -8795,8 +8912,29 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       roby_atom.destroy
    end
 
-   roby_energy(roby_atom) result(energy) [leaky]
-   ! Return the (total) Roby energy for the group of atoms whose
+   put_roby_atom_energy [leaky]
+   ! Evaluate and put the Roby ionic energy for a group of atoms
+      INT :: n_roby_atom
+      IVEC, PTR :: roby_atom
+      .read_roby_atom(roby_atom)
+      n_roby_atom = size(roby_atom)
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
+      stdout.text("Roby atom energy analysis:")
+      stdout.flush
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
+      stdout.show("Atom Total Energy =", .roby_total_atom_energy(roby_atom))
+      stdout.flush
+      stdout.show("Promoted Atom Energy =", .roby_atom_energy(roby_atom))
+      stdout.flush
+      stdout.dash(dbl_fields=3) 
+      stdout.flush
+      roby_atom.destroy
+   end
+
+   roby_atom_energy(roby_atom) result(energy) [leaky]
+   ! Return the Roby promoted atom energy for the group of atoms whose
    ! indices are given in "roby_atom".
       IVEC :: roby_atom
       DBL :: energy
@@ -8810,7 +8948,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       D.restricted = P        ! P is projected density
       .density_matrix => D
       .make_fock_matrix
-      energy = .scf_electronic_energy(D)
+      energy = .scf_electronic_energy(D,roby_atom)
       stdout.put("Atoms")
       do i=1,size(roby_atom)
          stdout.put(.atom(roby_atom(i))%label)
@@ -8819,6 +8957,31 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       stdout.put("Energy of group of Atoms")
       stdout.put(energy); stdout.flush
       .density_matrix => D_save
+      D.destroy
+      P.destroy
+   end
+
+   roby_total_atom_energy(roby_atom) result(energy) [leaky]
+   ! Return the total Roby energy for the group of atoms whose
+   ! indices are given in "roby_atom".
+      IVEC :: roby_atom
+      DBL :: energy
+      OPMAT, PTR :: D
+      INT :: i
+      MAT, PTR :: P
+      P.create(.n_bf, .n_bf)
+      .make_roby_projected_density(P,roby_atom)
+      D.create(.n_bf,"restricted")
+      D.restricted = P        ! P is projected density
+      .make_fock_matrix
+      energy = .scf_electronic_energy(D)
+      stdout.put("Atoms")
+      do i=1,size(roby_atom)
+         stdout.put(.atom(roby_atom(i))%label)
+      end 
+      stdout.flush
+      stdout.put("Total electronic energy of group of atoms")
+      stdout.put(energy); stdout.flush
       D.destroy
       P.destroy
    end
@@ -9147,8 +9310,6 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
         .put_roby_gould_data(roby_atom1,roby_atom2,bond_index,pcc,1-pcc)
         .put_roby_gould_c_data(covalency,ionicity,cval,c_p,c_pair,c_a,c_b)
         .put_roby_gould_s_data(covalency,ionicity,sval,s_p,s_pair,s_a,s_b)
-           ! the following directs the partitioning verification ...
-        .roby_gould_partitioning(cval,c_p,c_pair,sval,s_p,s_pair)
       end
       covalency.destroy
       ionicity.destroy
@@ -9199,7 +9360,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
      IVEC :: roby_atom
      MAT :: theta
      VEC :: p
-     VEC, OPTIONAL :: a, b
+     VEC, optional :: a, b
      INT :: i
      do i = 1, size(p)
        p(i) = .roby_population(roby_atom,theta(:,i:i)) 
