@@ -3991,8 +3991,30 @@ contains
 
    read_geminal_wavefunction
    ! Read in geminale wavefunction options
+      self :: target
    ENSURE(.atom.created,"no atom info")
    ENSURE(.basis_info_made,"no basis info")
+      main :: MOLECULE.MAIN*
+      v :: MAT4{REAL}*
+      eri_archive :: ARCHIVE
+      en :: REAL
+      i,j :: INT
+      ! First create the MO integrals on disk
+      eri_archive.set(.name,"h_integrals")
+      v.create(.n_bf,.n_bf,.n_bf,.n_bf)
+      main => self
+      main.make_eri_integrals(v)
+      main.make_mo_eri_integrals(v,eri_archive,add_core=TRUE)
+      en = ZERO
+      do i = 1,.n_a
+      do j = 1,.n_a
+         en = en + TWO*v(i,i,j,j) - v(i,j,i,j)
+      end
+      end
+      stdout.show("energy = ",en)
+      v.destroy      
+      ! Now read the commands
+      .geminal_wavefunction.destroy
       .geminal_wavefunction.create(.n_a,.n_bf,use_hf_default=TRUE)
       .geminal_wavefunction.read_keywords
    end
@@ -4005,6 +4027,86 @@ contains
       n_bas = .n_bf * .n_bf - .n_a + 1
       .geminal_mf_spectrum.create(.n_a,.n_bf,n_bas,use_hf_default=TRUE)
       .geminal_mf_spectrum.read_keywords
+   end
+
+   make_eri_integrals(v)
+   ! Calculate the electron repulsion integrals (ERI's) over all basis functions
+   ! and place them in the array "v". This will use up a lot of space!
+     v :: MAT4{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(all(v.shape==[.n_bf,.n_bf,.n_bf,.n_bf]),"wrong shape for array v")
+     sh4 :: SHELL4
+     ab,cd,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld,skipped :: INT
+     skipped = 0
+     if (.scfdata.output) then
+       stdout.set_real_style("e")
+       stdout.show("Skipping electron repulsion integrals less than ",.scfdata.eri_limit)
+       stdout.set_real_style("f")
+     end
+     do ab = 1,.n_shell_pairs
+       .get_shell_pair_indices(ab,a,b,fa,la,fb,lb) ! a & b shell indices.
+       .set_shell_quartet_ab(sh4,a,b) 
+       do cd = 1,ab
+         .get_shell_pair_indices(cd,c,d,fc,lc,fd,ld)  ! c & d shell indices.
+         .set_shell_quartet_cd(sh4,c,d) 
+         if (sh4.skip_ERI(.scfdata.eri_limit)) then
+           skipped = skipped + 1
+           sh4.destroy_cd
+           cycle
+         end
+         sh4.get_ERI(v(fa:la,fb:lb,fc:lc,fd:ld))
+         sh4.destroy_cd
+       end
+       sh4.destroy_ab
+     end
+     v.make_symmetric
+     if (.scfdata.output) then
+       a = .n_shell_quartets
+       stdout.text("Skipped "//skipped.to_str.trim//" out of "//a.to_str.trim//" blocks.")
+     end
+   end
+
+   make_mo_eri_integrals(v,eri_archive,add_core)
+   ! Calculate the electron repulsion integrals (ERI's) in the MO basis from the
+   ! AO integrals stored in "v" and write them to disk in "eri_archive". If
+   ! "add_core" is present and true, the one electron core integrals are added
+   ! into the two electron MO integrals.
+     v :: MAT4{REAL}
+     eri_archive :: ARCHIVE
+     add_core :: BIN, optional
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.molecular_orbitals.created,"no molecular orbitals")
+   ENSURE(.molecular_orbitals.restricted.created,"no molecular orbitals")
+     H :: MAT{REAL}*
+     a,b,c,d :: INT
+     core :: BIN
+     core = FALSE
+     if (present(add_core)) core = add_core
+     if (core) then
+        H.create(.n_bf,.n_bf)
+        .get_core_matrix(H)
+        H = H/(TWO*.n_a)
+     end
+     do a = 1,.n_bf
+     do b = 1,a
+        if (core) v(a,b,:,:) = v(a,b,:,:) + H
+        v(a,b,:,:).change_basis_using(.molecular_orbitals.restricted)
+        if (a==b) cycle
+        v(b,a,:,:) = v(a,b,:,:)
+     end
+     end
+     do c = 1,.n_bf
+     do d = 1,c
+        if (core) v(:,:,c,d) = v(:,:,c,d) + H
+        v(:,:,c,d).change_basis_using(.molecular_orbitals.restricted)
+        if (c==d) cycle
+        v(:,:,d,c) = v(:,:,c,d)
+     end
+     end
+     H.destroy
+     eri_archive.write(v)
    end
 
 end
