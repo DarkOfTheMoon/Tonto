@@ -368,7 +368,24 @@ contains
       kind = .natural_orbitals.spinorbital_kind
       .occupation.create(kind)
       .occupation.zero
-      select case ( .molecular_orbitals.spinorbital_kind)
+      .set_scf_occupations(kind)
+   end
+
+   assign_MOs_to_NOs [leaky]
+   ! Assign the MOs to be the same as the natural orbitals 
+      STR :: kind
+      .molecular_orbitals.destroy
+      .molecular_orbitals.create_copy(.natural_orbitals)
+      kind = .natural_orbitals.spinorbital_kind
+      .occupation.create(kind)
+      .occupation.zero
+      .set_scf_occupations(kind)
+   end
+
+   set_scf_occupations(kind)
+   ! Set the SCF occupation numbers for the natural orbitals
+      STR :: kind
+      select case (kind)
          case ("restricted")
             .occupation.restricted(1:.n_a) = TWO
          case ("unrestricted")
@@ -4433,11 +4450,29 @@ contains
       wfnfile.destroy
    end
    
-   write_ascii_archive
+   write_archive
    ! Write the archive called "name". The kind is defined by the object to be
    ! written.
-   ! If required, the output order may be specified as "by_row" (default) or
-   ! "by_column".
+      STR :: name
+      ARCHIVE :: archive
+      stdin.read(name)
+      archive.set(.name,name)
+      select case (name)
+         case ("molecular_orbitals"); archive.write(.molecular_orbitals)
+         case ("density_matrix");     archive.write(.density_matrix)
+         case ("natural_orbitals");   archive.write(.natural_orbitals)
+         case ("occupation");         archive.write(.occupation)
+         case ("fock_matrix");        archive.write(.fock_matrix)
+         case ("orbital_energies");   archive.write(.orbital_energies)
+         case default;     DIE("unknown archive name, " // trim(name))
+      end
+      archive.close
+   end
+   
+   write_ascii_archive
+   ! Write the archive called "name". The kind is defined by the object to be
+   ! written. If required, the output order may be specified as 
+   ! "by_row" (default) or "by_column".
       STR :: name,order
       ARCHIVE :: archive
       stdin.read(name)
@@ -4452,25 +4487,6 @@ contains
          case ("fock_matrix");        archive.write(.fock_matrix,order=order)
          case ("orbital_energies");   archive.write(.orbital_energies,order=order)
          case default;     DIE("unknown ascii archive name, " // trim(name))
-      end
-      archive.close
-   end
-
-   write_archive
-   ! Write the archive called "name". The kind is defined by the object to be
-   ! written.
-      STR :: name,order
-      ARCHIVE :: archive
-      stdin.read(name)
-      archive.set(.name,name)
-      select case (name)
-         case ("molecular_orbitals"); archive.write(.molecular_orbitals)
-         case ("density_matrix");     archive.write(.density_matrix)
-         case ("natural_orbitals");   archive.write(.natural_orbitals)
-         case ("occupation");         archive.write(.occupation)
-         case ("fock_matrix");        archive.write(.fock_matrix)
-         case ("orbital_energies");   archive.write(.orbital_energies)
-         case default;     DIE("unknown archive name, " // trim(name))
       end
       archive.close
    end
@@ -4902,7 +4918,6 @@ contains
   ! are produced as results.
     MAT, PTR :: S
     OPMAT, PTR :: dP,dF,old_P,old_F
-    STR :: kind
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     .get_initial_guess
@@ -4912,10 +4927,9 @@ contains
     .scfdata.set(nuclear_energy=.nuclear_energy)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
     .scfdata.put_banner
-    kind = .molecular_orbitals.spinorbital_kind
 
-    dP.create(.n_bf,kind)
-    dF.create(.n_bf,kind)
+    dP.create(.n_bf)
+    dF.create(.n_bf)
     old_P.create_copy(.density_matrix)
     old_F.create_copy(.fock_matrix)
 
@@ -4961,7 +4975,7 @@ contains
     old_P.destroy
 
     .scfdata.cleanup_diis
-    .fock_matrix.destroy(kind)
+    .fock_matrix.destroy("all")
   end
 
   update_molecular_orbitals
@@ -5318,46 +5332,92 @@ contains
 
   get_initial_guess [leaky]
   ! Get the initial guess for the ".density_matrix" and ".molecular_orbitals"
-  ! If .initial_mos is set, it overides .initial_density.
-     STR :: initial_density,initial_mos
-     initial_mos     = .scfdata.initial_mos
-     initial_density = .scfdata.initial_density
-     if (initial_mos/="--not used--") then
-        .make_MO_guess(initial_mos) 
-     else
-        select case (initial_density)
-           case ("core"); .make_core_guess
-           case ("fock"); .make_fock_guess
-           case ("atom"); .make_atom_guess
-           case("restricted","unrestricted","general", &
-                "restricted_complex","unrestricted_complex","general_complex", &
-                "complex_restricted","complex_unrestricted","complex_general")
-              .make_density_guess(initial_density)
-           case default
-              DIE("unknown initial guess density, "// initial_density.trim)
-        end
+  ! If .scfdata.initial_mos is set, it overides .initial_density.
+     STR :: initial_mos
+     initial_mos = .scfdata.initial_mos
+     if (initial_mos/=" ") then; .get_initial_MOs
+     else;                       .get_initial_density
      end
   end
 
-  make_MO_guess(initial_mos) [leaky]
-  ! Read old .molecular_orbitals of type "initial_mos" and use it to
-  ! make initial .density_matrix to start the scf calculation.
+  get_initial_MOs [leaky]
+  ! Get the initial guess for the .molecular_orbitals
   ! Convert the .molecular_orbitals, if neccesary.
      STR :: initial_mos
+     initial_mos = .scfdata.initial_mos
+     select case (initial_mos)
+      ! case ("atom")
+      !    .make_atom_MOs_guess
+        case("restricted","unrestricted","general", &
+             "restricted_complex","unrestricted_complex","general_complex", &
+             "complex_restricted","complex_unrestricted","complex_general")
+           .read_old_MOs_guess
+        case default
+           DIE("unknown initial MO's, "// initial_mos.trim)
+     end
+  end
+
+  read_old_MOs_guess [leaky]
+  ! Get the initial guess for the .molecular_orbitals by reading an old archive of 
+  ! .molecular_orbitals, and then make the SCF density matrix as well. 
+  ! Convert the .molecular_orbitals, if neccesary.
+     STR :: kind
      ARCHIVE :: archive
-     archive.set(.name,"molecular_orbitals",kind=initial_mos)
+     kind = .scfdata.initial_mos
+     archive.set(.name,"molecular_orbitals",kind=kind)
      archive.read(.molecular_orbitals)
      .molecular_orbitals.convert_to( .scfdata.molecular_orbital_kind,.n_bf,.n_a,.n_b)
      .make_scf_density_matrix
      .orbital_energies.create(kind=.scfdata.orbital_energies_kind)
   end
 
-  make_density_guess(initial_density) [leaky]
+  make_atom_MOs_guess [leaky]
+  ! Get the initial guess for the .molecular_orbitals by getting the highest
+  ! occupied restricted natural orbitals from the sum of atomic densities guess 
+  ! for the density matrix. Convert these .molecular_orbitals, if neccesary.
+  ! Also make the SCF .density_matrix from these .molecular_orbitals.
+     STR :: initial_mos,kind
+     ARCHIVE :: archive
+     .get_atom_density
+     kind = .density_matrix.spinorbital_kind
+     if (kind/="restricted") then
+        archive.set(.name,"atom_density_matrix", kind="restricted")
+        .density_matrix.destroy("restricted")
+        archive.read(.density_matrix)
+     end
+     .make_natural_orbitals
+     .put_natural_orbitals
+     .assign_MOs_to_NOs
+     kind = .scfdata.molecular_orbital_kind
+     .molecular_orbitals.convert_to(kind,.n_bf,.n_a,.n_b)
+     .make_scf_density_matrix
+     .orbital_energies.create(kind=.scfdata.orbital_energies_kind)
+  end
+
+  get_initial_density [leaky]
+  ! Get the initial guess for the ".density_matrix" 
+     STR :: initial_density
+     initial_density = .scfdata.initial_density
+     select case (initial_density)
+        case ("core"); .make_core_guess
+        case ("fock"); .make_fock_guess
+        case ("atom"); .make_atom_guess
+        case("restricted","unrestricted","general", &
+             "restricted_complex","unrestricted_complex","general_complex", &
+             "complex_restricted","complex_unrestricted","complex_general")
+           .make_density_guess
+        case default
+           DIE("unknown initial guess density, "// initial_density.trim)
+     end
+  end
+
+  make_density_guess [leaky]
   ! Read an old .density_matrix of type "initial_guess" and use it to
   ! make initial .molecular_orbitals to start an scf calculation.
   ! Convert the .density_matrix, if neccesary.
      STR :: initial_density
      ARCHIVE :: archive
+     initial_density = .scfdata.initial_density
      archive.set(.name,"density_matrix")
      archive.read(.density_matrix,kind=initial_density)
      .density_matrix.convert_to(newkind = .scfdata.spinorbital_kind)
@@ -5380,7 +5440,7 @@ contains
     kind = .scfdata.molecular_orbital_kind
     .molecular_orbitals.convert_to(kind,factor=HALF)
     .make_scf_density_matrix
-    .make_fock_matrix  ! Make a fock matrix
+    .make_fock_matrix  ! Make a fock matrix (only to get MO's)
     .make_fock_guess   ! Get a reasonable set of starting MO's
   end
 
@@ -5406,10 +5466,13 @@ contains
   end
 
   make_atom_guess [leaky]
-  ! Make a ".density matrix" and fock matrix from the sum of atomic densities
+  ! Make a ".density matrix" and fock matrix from the sum of atomic densities.
+  ! Then get initial orbitals from this fock matrix, and make the density
+  ! corresponding to these initial orbitals.
+     ENSURE(.scfdata.kind/="rohf","atom guess not available for ROHF")
      .get_atom_density
-     .make_fock_matrix  ! Make a fock matrix
-     .make_fock_guess   ! Get a reasonable set of starting MO's
+     .make_fock_matrix       ! Make a fock matrix (only to get MO's)
+     .make_fock_guess        ! Get a reasonable set of starting MO's
   end
 
   get_atom_density [leaky]
@@ -5481,8 +5544,8 @@ contains
   end
 
   make_fock_guess [leaky]
-  ! Make the .density_matrix, .molecular_orbitals, and .orbital_energies
-  ! from an initial .fock_matrix; destroy .fock_matrix afterwards
+  ! From an initial .fock_matrix make the .molecular_orbitals, and .orbital_energies.
+  ! Then make the .density_matrix from these orbitals. Destroy .fock_matrix afterwards
     STR :: kind
     VEC, PTR :: e
     MAT, PTR :: MO,F
@@ -5495,6 +5558,7 @@ contains
     !  F~ = S^-1/2 F S^-1/2
     !  c  = S^-1/2 c~
        case ("rhf","restricted_hartree_fock", &
+             "rohf","restricted_open_shell_hartree_fock", &
              "xray_rhf","xray_constrained_restricted_hartree_fock", &
              "xray_fit","xray_constrained")
           .orbital_energies.destroy("restricted")
@@ -5777,14 +5841,14 @@ contains
        case ("gchf","cghf", &
              "general_complex_hartree_fock","complex_general_hartree_fock")
                                  .make_gc_fock(direct,core,r12) 
-                                 .make_gc_so_fock 
+                                 .add_gc_so_fock 
        case default; DIE("unknown scf kind, "// scf_kind.trim)
     end
   end
 
   make_fock_matrix(P,F,core,r12) [leaky]
   ! For the quicker ERI method.
-    OPMAT :: P,F
+    OPMAT, PTR :: P,F
     BIN, optional :: core,r12
     STR :: scf_kind 
     BIN :: direct
@@ -5801,7 +5865,7 @@ contains
        case ("gchf","cghf", &
              "general_complex_hartree_fock","complex_general_hartree_fock")
                                  .make_gc_fock(P,F,direct,core,r12) 
-                                 .make_gc_so_fock(P,F)
+                                 .add_gc_so_fock(P,F)
        case default; DIE("unknown scf kind, "// scf_kind.trim)
     end
   end
@@ -5941,39 +6005,31 @@ contains
   make_r_fock(direct,core,r12) [leaky]
   ! Make a new restricted Fock matrix. 
     BIN, optional :: direct,core,r12
-    .fock_matrix.destroy("restricted")
-    .fock_matrix.create(.n_bf,"restricted")
     .make_r_fock(.density_matrix,.fock_matrix,direct,core,r12)
   end
 
   make_u_fock(direct,core,r12) [leaky]
   ! Make a new unrestricted Fock matrix. 
     BIN, optional :: direct,core,r12
-    .fock_matrix.destroy("unrestricted")
-    .fock_matrix.create(.n_bf,"unrestricted")
     .make_u_fock(.density_matrix,.fock_matrix,direct,core,r12)
   end
 
   make_ro_fock(direct,core,r12) [leaky]
   ! Make a new restricted open shell Fock matrix. 
     BIN, optional :: direct,core,r12
-    .fock_matrix.destroy("restricted")
-    .fock_matrix.create("restricted")
-    .make_ro_fock(.fock_matrix,.density_matrix,direct,core,r12)
+    .make_ro_fock(.density_matrix,.fock_matrix,direct,core,r12)
   end
 
   make_gc_fock(direct,core,r12) [leaky]
   ! Make a new complex general Fock matrix.
     BIN, optional :: direct,core,r12
-    .fock_matrix.destroy("general_complex")
-    .fock_matrix.general_complex.create(2*.n_bf,2*.n_bf)
     .make_gc_fock(.density_matrix,.fock_matrix,direct,core,r12)
   end
 
-  make_gc_so_fock [leaky]
-  ! Make the general complex two electron spin orbit contribution to the Fock
-  ! matrix. 
-    .make_gc_so_fock(.density_matrix,.fock_matrix)
+  add_gc_so_fock [leaky]
+  ! Add the general complex two electron spin orbit contribution to the 
+  ! .fock_matrix. 
+    .add_gc_so_fock(.density_matrix,.fock_matrix)
   end
 
   make_r_fock(P,F,direct,core,r12) [leaky]
@@ -5982,15 +6038,16 @@ contains
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
-    OPMAT :: P,F
+    OPMAT, PTR :: P,F
     MAT, PTR :: J,K
     BIN :: do_direct,add_core,add_r12
-
+    ENSURE(P.created,"no density matrix")
+    ENSURE(F.created,"no fock matrix")
     ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
     ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
-    ENSURE(F.restricted.created, "no fock matrix")
     ENSURE(P.restricted.created, "no density matrix")
-
+    F.destroy("restricted")
+    F.create("restricted")
     do_direct= FALSE
     add_core = TRUE
     add_r12  = TRUE
@@ -6017,17 +6074,18 @@ contains
   ! If present and TRUE , "direct" means calculate integrals on the fly
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
-    OPMAT :: P,F
+    OPMAT, PTR :: P,F
     BIN, optional :: direct,core,r12
     MAT, PTR :: J,Ka,Kb,Pab
     BIN :: do_direct,add_core,add_r12
-
-    ENSURE(F.alpha.created, "no fock matrix")
-    ENSURE(F.beta.created, "no fock matrix")
+    ENSURE(P.created,"no density matrix")
+    ENSURE(F.created,"no fock matrix")
     ENSURE(P.alpha.created,"no density matrix")
     ENSURE(P.beta.created, "no density matrix")
     ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
     ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
+    F.destroy("unrestricted")
+    F.create("unrestricted")
     do_direct= FALSE
     add_core = TRUE
     add_r12  = TRUE
@@ -6044,6 +6102,12 @@ contains
        else;                .make_u_JK_disk(J,Ka,Kb,Pab,P.alpha,P.beta)
        end
        Pab.destroy
+                               ! stdout.text("J:")
+                               ! stdout.put(J)
+                               ! stdout.text("Ka:")
+                               ! stdout.put(Ka)
+                               ! stdout.text("Kb:")
+                               ! stdout.put(Kb)
        F.alpha = J - Ka 
        F.beta = J - Kb 
        Kb.destroy
@@ -6053,8 +6117,12 @@ contains
        F.alpha = ZERO
        F.beta  = ZERO
     end
+                               ! stdout.text("r12 part")
+                               ! .put_fock_matrix
     if (add_core) .add_core_hamiltonian(F.alpha)
     if (add_core) .add_core_hamiltonian(F.beta)
+                               ! stdout.text("total fock")
+                               ! .put_fock_matrix
   end
 
   make_ro_fock(P,F,direct,core,r12) [leaky]
@@ -6062,15 +6130,13 @@ contains
   ! If present and TRUE , "direct" means calculate integrals on the fly
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
-    OPMAT :: F,P
+    OPMAT, PTR :: F,P
     BIN, optional :: direct,core,r12
     MAT, PTR :: Fr,Fa,Fb,S,W
-    ENSURE( .molecular_orbitals.restricted.created, "no orbitals")
-    ENSURE(F.restricted.created, "no density matrix")
-    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
-
-    .make_u_fock(F,P,direct,core,r12)
-
+    ENSURE(.molecular_orbitals.restricted.created,"no orbitals")
+    F.destroy("restricted")
+    F.create("restricted")
+    .make_u_fock(P,F,direct,core,r12)
     Fr => F.restricted
     Fa.create(.n_bf,.n_bf); Fa = F.alpha
     Fb.create(.n_bf,.n_bf); Fb = F.beta
@@ -6094,14 +6160,17 @@ contains
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
-    OPMAT :: P,F
+    OPMAT, PTR :: P,F
     CMAT, PTR :: Ka,Kb,Kba,Pa,Pb,Pba,Fgc
     MAT, PTR :: J, Pab
     BIN :: do_direct,add_core,add_r12
-    ENSURE(F.general_complex.created, "no density matrix")
+    ENSURE(P.created,"no density matrix")
+    ENSURE(F.created,"no fock matrix")
     ENSURE(P.general_complex.created, "no density matrix")
     ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
-    ENSURE(P.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
+    F.destroy("general_complex")
+    F.create("general_complex")
     do_direct= FALSE
     add_core = TRUE
     add_r12  = TRUE
@@ -6126,6 +6195,12 @@ contains
        Pba.destroy
        Pb.destroy
        Pa.destroy
+                               ! stdout.text("J:")
+                               ! stdout.put(J)
+                               ! stdout.text("Ka:")
+                               ! stdout.put(Ka)
+                               ! stdout.text("Kb:")
+                               ! stdout.put(Kb)
        Ka = J - Ka; Fgc.alpha_alpha_set_to(Ka)
        Kb = J - Kb; Fgc.beta_beta_set_to(Kb)
        Kba = -Kba;  Fgc.beta_alpha_set_to(Kba)
@@ -6136,14 +6211,18 @@ contains
     else
        Fgc = ZERO
     end
-    if (add_core) .add_core_hamiltonian(Fgc)
     Fgc.make_hermitian
+                               ! stdout.text("r12 part")
+                               ! .put_fock_matrix
+    if (add_core) .add_core_hamiltonian(Fgc)
+                               ! stdout.text("total fock")
+                               ! .put_fock_matrix
   end
 
-  make_gc_so_fock(P,F) [leaky]
+  add_gc_so_fock(P,F) [leaky]
   ! Make the general complex two electron spin orbit contribution to the Fock
   ! matrix. 
-    OPMAT      :: P,F
+    OPMAT, PTR :: P,F
     CMAT5, PTR :: JS,KS,JO,KO
     CMAT4, PTR :: Pgc
     CMAT, PTR  :: Faa,Fbb,Fba
@@ -6151,10 +6230,12 @@ contains
     CDBL :: I
     DBL :: fac
     INT :: a,b,x,y,z
-    ENSURE(F.general_complex.created, "no density matrix")
+    ENSURE(P.created,"no density matrix")
+    ENSURE(F.created,"no fock matrix")
     ENSURE(P.general_complex.created, "no density matrix")
+    ENSURE(F.general_complex.created, "no fock matrix")
     ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
-    ENSURE(P.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
     if (.scfdata.using_2e_sl_term) then
       .get_spin_orbit_integrals
       Faa.create(.n_bf,.n_bf)
@@ -6205,88 +6286,6 @@ contains
       F.general_complex.alpha_beta_plus(Fbb,factor=-I*fac)
       Fba.destroy; Fbb.destroy; Faa.destroy
     end
-  end
-
-  make_gc_so_JK_disk(JS,KS,JO,KO,P,SO_archive,ind_archive)
-  ! Make the general complex spin orbit Classical and Exchange matrices.
-    CMAT4 :: JS,KS,JO,KO,P
-    ARCHIVE :: SO_archive,ind_archive
-    MAT4, PTR   :: S,O
-    INT :: q,n_quartets
-    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,m,n
-    DBL :: S_abcd,O_abcd
-    CDBL :: I
-    ENSURE( .atom.created,  "no atom list")
-    ENSURE( .atom.bases_are_all_resolved, "no basis set")
-    ENSURE( SO_archive.exists,  "no spin orbit integral file!")
-    ENSURE( ind_archive.exists, "no spin orbit integral index file")
-    SO_archive.open(for="read-only",buffered=TRUE,type="dbl")
-    ind_archive.open(for="read-only",buffered=TRUE,type="dbl")
-    JS = ZERO; KS = ZERO; JO = ZERO; KO = ZERO
-    I = (ZERO,ONE)
-    n_quartets = .n_shell_quartets
-    do
-       ind_archive.file.read(q)
-       if (q > n_quartets) exit
-       .get_shell_quartet(q,fa,la,fb,lb,fc,lc,fd,ld)
-       S.create(fa,la,fb,lb,fc,lc,fd,ld)
-       O.create(fa,la,fb,lb,fc,lc,fd,ld)
-       SO_archive.file.read(S)
-       SO_archive.file.read(O)
-       do a = fa,la
-       do b = fb,lb
-       do c = fc,lc
-       do d = fd,ld
-          S_abcd = S(a,b,c,d)
-          O_abcd = O(a,b,c,d)
-          do m = 1,2
-          do n = 1,2
-             !
-             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(d,c, m,n)
-             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(c,d, m,n)
-             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(d,c, m,n)
-             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(c,d, m,n)
-             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(b,a, m,n)
-             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(a,b, m,n)
-             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(b,a, m,n)
-             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(a,b, m,n)
-             !
-             JO(a,b, m,n) = JO(a,b, m,n) + O_abcd*P(d,c, m,n)
-             JO(a,b, m,n) = JO(a,b, m,n) - O_abcd*P(c,d, m,n)
-             JO(b,a, m,n) = JO(b,a, m,n) + O_abcd*P(d,c, m,n)
-             JO(b,a, m,n) = JO(b,a, m,n) - O_abcd*P(c,d, m,n)
-             JO(c,d, m,n) = JO(c,d, m,n) + S_abcd*P(b,a, m,n)
-             JO(c,d, m,n) = JO(c,d, m,n) - S_abcd*P(a,b, m,n)
-             JO(d,c, m,n) = JO(d,c, m,n) + S_abcd*P(b,a, m,n)
-             JO(d,c, m,n) = JO(d,c, m,n) - S_abcd*P(a,b, m,n)
-             !
-             KS(a,d, m,n) = KS(a,d, m,n) + S_abcd*P(b,c, m,n)
-             KS(a,c, m,n) = KS(a,c, m,n) + S_abcd*P(b,d, m,n)
-             KS(b,d, m,n) = KS(b,d, m,n) - S_abcd*P(a,c, m,n)
-             KS(b,c, m,n) = KS(b,c, m,n) - S_abcd*P(a,d, m,n)
-             KS(c,b, m,n) = KS(c,b, m,n) + O_abcd*P(d,a, m,n)
-             KS(c,a, m,n) = KS(c,a, m,n) + O_abcd*P(d,b, m,n)
-             KS(d,b, m,n) = KS(d,b, m,n) - O_abcd*P(c,a, m,n)
-             KS(d,a, m,n) = KS(d,a, m,n) - O_abcd*P(c,b, m,n)
-             !
-             KO(a,d, m,n) = KO(a,d, m,n) + O_abcd*P(b,c, m,n)
-             KO(a,c, m,n) = KO(a,c, m,n) - O_abcd*P(b,d, m,n)
-             KO(b,d, m,n) = KO(b,d, m,n) + O_abcd*P(a,c, m,n)
-             KO(b,c, m,n) = KO(b,c, m,n) - O_abcd*P(a,d, m,n)
-             KO(c,b, m,n) = KO(c,b, m,n) + S_abcd*P(d,a, m,n)
-             KO(c,a, m,n) = KO(c,a, m,n) - S_abcd*P(d,b, m,n)
-             KO(d,b, m,n) = KO(d,b, m,n) + S_abcd*P(c,a, m,n)
-             KO(d,a, m,n) = KO(d,a, m,n) - S_abcd*P(c,b, m,n)
-          end
-          end
-       end
-       end
-       end
-       end
-       O.destroy; S.destroy
-    end
-    SO_archive.close
-    ind_archive.close
   end
 
 !**********************
@@ -6833,6 +6832,88 @@ contains
     Ka.make_hermitian
     Kb.make_hermitian
     J = TWO*J 
+  end
+
+  make_gc_so_JK_disk(JS,KS,JO,KO,P,SO_archive,ind_archive)
+  ! Make the general complex spin orbit Classical and Exchange matrices.
+    CMAT4 :: JS,KS,JO,KO,P
+    ARCHIVE :: SO_archive,ind_archive
+    MAT4, PTR   :: S,O
+    INT :: q,n_quartets
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,m,n
+    DBL :: S_abcd,O_abcd
+    CDBL :: I
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.bases_are_all_resolved, "no basis set")
+    ENSURE( SO_archive.exists,  "no spin orbit integral file!")
+    ENSURE( ind_archive.exists, "no spin orbit integral index file")
+    SO_archive.open(for="read-only",buffered=TRUE,type="dbl")
+    ind_archive.open(for="read-only",buffered=TRUE,type="dbl")
+    JS = ZERO; KS = ZERO; JO = ZERO; KO = ZERO
+    I = (ZERO,ONE)
+    n_quartets = .n_shell_quartets
+    do
+       ind_archive.file.read(q)
+       if (q > n_quartets) exit
+       .get_shell_quartet(q,fa,la,fb,lb,fc,lc,fd,ld)
+       S.create(fa,la,fb,lb,fc,lc,fd,ld)
+       O.create(fa,la,fb,lb,fc,lc,fd,ld)
+       SO_archive.file.read(S)
+       SO_archive.file.read(O)
+       do a = fa,la
+       do b = fb,lb
+       do c = fc,lc
+       do d = fd,ld
+          S_abcd = S(a,b,c,d)
+          O_abcd = O(a,b,c,d)
+          do m = 1,2
+          do n = 1,2
+             !
+             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(d,c, m,n)
+             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(c,d, m,n)
+             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(d,c, m,n)
+             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(c,d, m,n)
+             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(b,a, m,n)
+             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(a,b, m,n)
+             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(b,a, m,n)
+             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(a,b, m,n)
+             !
+             JO(a,b, m,n) = JO(a,b, m,n) + O_abcd*P(d,c, m,n)
+             JO(a,b, m,n) = JO(a,b, m,n) - O_abcd*P(c,d, m,n)
+             JO(b,a, m,n) = JO(b,a, m,n) + O_abcd*P(d,c, m,n)
+             JO(b,a, m,n) = JO(b,a, m,n) - O_abcd*P(c,d, m,n)
+             JO(c,d, m,n) = JO(c,d, m,n) + S_abcd*P(b,a, m,n)
+             JO(c,d, m,n) = JO(c,d, m,n) - S_abcd*P(a,b, m,n)
+             JO(d,c, m,n) = JO(d,c, m,n) + S_abcd*P(b,a, m,n)
+             JO(d,c, m,n) = JO(d,c, m,n) - S_abcd*P(a,b, m,n)
+             !
+             KS(a,d, m,n) = KS(a,d, m,n) + S_abcd*P(b,c, m,n)
+             KS(a,c, m,n) = KS(a,c, m,n) + S_abcd*P(b,d, m,n)
+             KS(b,d, m,n) = KS(b,d, m,n) - S_abcd*P(a,c, m,n)
+             KS(b,c, m,n) = KS(b,c, m,n) - S_abcd*P(a,d, m,n)
+             KS(c,b, m,n) = KS(c,b, m,n) + O_abcd*P(d,a, m,n)
+             KS(c,a, m,n) = KS(c,a, m,n) + O_abcd*P(d,b, m,n)
+             KS(d,b, m,n) = KS(d,b, m,n) - O_abcd*P(c,a, m,n)
+             KS(d,a, m,n) = KS(d,a, m,n) - O_abcd*P(c,b, m,n)
+             !
+             KO(a,d, m,n) = KO(a,d, m,n) + O_abcd*P(b,c, m,n)
+             KO(a,c, m,n) = KO(a,c, m,n) - O_abcd*P(b,d, m,n)
+             KO(b,d, m,n) = KO(b,d, m,n) + O_abcd*P(a,c, m,n)
+             KO(b,c, m,n) = KO(b,c, m,n) - O_abcd*P(a,d, m,n)
+             KO(c,b, m,n) = KO(c,b, m,n) + S_abcd*P(d,a, m,n)
+             KO(c,a, m,n) = KO(c,a, m,n) - S_abcd*P(d,b, m,n)
+             KO(d,b, m,n) = KO(d,b, m,n) + S_abcd*P(c,a, m,n)
+             KO(d,a, m,n) = KO(d,a, m,n) - S_abcd*P(c,b, m,n)
+          end
+          end
+       end
+       end
+       end
+       end
+       O.destroy; S.destroy
+    end
+    SO_archive.close
+    ind_archive.close
   end
  
   weight_diagonal_blocks(X,fac) [pure]
