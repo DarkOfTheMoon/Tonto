@@ -177,19 +177,42 @@ sub IBM_xlf90_on_AIX {
 }
 
 sub INTEL_ifc_on_LINUX {
-# version 7.1.  For version 08.00.00 if their module file format, ignore the
-# last record of the file, where the record separator is chr(0).
-  my $lastreclength = 0;
+
+  my $version = " ";
+  my $found;
+
+  # Check whether this is version 7.1 of the compiler.
   open(FILE1,$file1) or die "Cannot open $file1\n";
   binmode(FILE1);
   local $/ = chr(0);
+  $found = 0;
   while (<FILE1>) {
-    $lastreclength = length($_);
+    if (m'FORTRAN Module File, version 08.00.00') {
+      $found = 1;
+      last;
+    }
   }
+  if ($found) {$version = "7.1";}
   close(FILE1);
-  for ($j=0; $j<$lastreclength; $j++) {
-    push @skip_array,$size1-$j;
+
+  if ($version eq "7.1") {
+  # version 7.1.  For version 08.00.00 if their module file format, ignore the
+  # last record of the file, where the record separator is chr(0).
+    my $lastreclength = 0;
+    open(FILE1,$file1) or die "Cannot open $file1\n";
+    binmode(FILE1);
+    local $/ = chr(0);
+    while (<FILE1>) {
+      $lastreclength = length($_);
+    }
+    close(FILE1);
+    for ($j=0; $j<$lastreclength; $j++) {
+      push @skip_array,$size1-$j;
+    }
+  } else {
+     push @skip_array,(45,46,47,48);
   }
+
   return 0;
 }
 
