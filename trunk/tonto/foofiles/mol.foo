@@ -1914,7 +1914,7 @@ contains
          pos = .atom(n).pos
          do i = 1,n_pts
             r_ni = pos.distance_to(pts(i,:))
-            values(i) = values(i) - Z_n/r_ni
+            values(i) = values(i) + Z_n/r_ni
          end
       end
    end
@@ -1925,7 +1925,7 @@ contains
       VEC :: values
       MAT :: pts
       .nuclear_potential(values,pts)
-      values = ONE/(TWO - values/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU))
+      values = ONE/(TWO + values/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU))
    end
 
   get_1e_ZORA_matrices(T,SOx,SOy,SOz)
@@ -2756,9 +2756,9 @@ contains
     BIN, optional :: output
     VEC, PTR :: dU,U,direction,old_U,old_dU,lambda
     MAT, PTR :: therm
-    DBL :: chi2,old_chi2,max_dU,old_norm,norm,err
+    DBL :: chi2,old_chi2,max_dU,old_norm,norm,err,start_lambda
     BINVEC, PTR :: ok
-    INT :: i,j,dim,total,n,base
+    INT :: i,j,dim,total,n,base,n_ok
     ENSURE( .crystal.created, "no crystal")
     ENSURE( .atom.created, "no atoms to fit")
 
@@ -2787,33 +2787,51 @@ contains
     total = 0
     old_chi2 = chi2
     old_norm = dU.norm / sqrt(ONE*dim)
+    start_lambda = ONE
+    lambda = start_lambda
 
-    do i=1,100! loop until converged to minimum.
+    do i=1,100 ! loop until converged to minimum.
       do n=1, .n_atom                 ! get thermal parameters into array
         base = (n-1) * 6
         therm => .atom(n).thermal_tensor
-        U(base+1) = therm(1,1)
-        U(base+2) = therm(1,2)
-        U(base+3) = therm(1,3)
-        U(base+4) = therm(2,2)
-        U(base+5) = therm(2,3)
-        U(base+6) = therm(3,3)
+        old_U(base+1) = therm(1,1)
+        old_U(base+2) = therm(1,2)
+        old_U(base+3) = therm(1,3)
+        old_U(base+4) = therm(2,2)
+        old_U(base+5) = therm(2,3)
+        old_U(base+6) = therm(3,3)
       end
       direction = - dU                                     ! dU = - dchi2/dU.
-      direction = direction * TOL(3)
       direction = sign(min(abs(direction),TOL(2)),direction) ! limit size of dU.
-
-      old_U = U
       old_dU = dU
-      ok = FALSE
-      lambda = TEN
+
+      U(:) = old_U(:) + lambda(:) * direction(:)
+      do n=1, .n_atom               ! replace thermal parameters with new ones
+        base = (n-1) * 6
+        therm => .atom(n).thermal_tensor
+        therm(1,1) = U(base+1)
+        therm(1,2) = U(base+2)
+        therm(1,3) = U(base+3)
+        therm(2,1) = therm(1,2)
+        therm(2,2) = U(base+4)
+        therm(2,3) = U(base+5)
+        therm(3,1) = therm(1,3)
+        therm(3,2) = therm(2,3)
+        therm(3,3) = U(base+6)
+      end
+      .make_structure_factors
+      .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+      .make_d_chi2_d_U(dU)
+
+      ok = abs(dU) < abs(old_dU)
+!      where (ok)                      ! we don't want the step size too small
+!        lambda = lambda * FIVE
+!      end
 
       do j=1,10
-        do n=1,dim                    ! decrease the step size where necessary
-          if (NOT ok(n)) then
-            lambda(n) = lambda(n) / TEN
-            U(n) = old_U(n) + lambda(n) * direction(n)
-          end
+        where (NOT ok)                ! decrease the step size where necessary
+          lambda = lambda / FIVE
+          U = old_U + lambda * direction
         end
         do n=1, .n_atom               ! replace thermal parameters with new ones
           base = (n-1) * 6
@@ -2834,25 +2852,20 @@ contains
 
         norm = dU.norm / sqrt(ONE*dim)
         ok = abs(dU) < abs(old_dU)
+        n_ok = count(ok)
 
+        old_chi2 = chi2
+        old_norm = norm
+write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
         if (norm < old_norm) exit
-        if (count(ok)==dim) exit
+        if (n_ok==dim) exit
       end
       total = total + j
 
-      do n=1,dim                      ! put back ones we didn't improve
-        if (NOT ok(n)) then
-          U(n) = old_U(n)
-        end
-      end
-      .make_structure_factors
-      .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
-      .make_d_chi2_d_U(dU);                   max_dU = dU.largest_value
-
-      old_norm = dU.norm / sqrt(ONE*dim)
-      old_chi2 = chi2
-
       if (old_norm < TOL(1)) exit     ! if near the minimum
+
+      start_lambda = TWO * maxval(lambda)
+      lambda = start_lambda
     end
 
     if (present(output)) then
@@ -3625,6 +3638,7 @@ contains
       select case (name)
          case ("molecular_orbitals"); archive.read(.molecular_orbitals)
          case ("density_matrix");     archive.read(.density_matrix)
+         case ("orbital_energies");   archive.read(.orbital_energies)
          case ("natural_orbitals");   archive.read(.natural_orbitals)
          case ("occupation_numbers"); archive.read(.occupation)
          case ("covalent_orbitals");  archive.read(.natural_orbitals)
@@ -3650,6 +3664,7 @@ contains
       select case (name)
          case ("molecular_orbitals"); archive.read(.molecular_orbitals,order=order)
          case ("density_matrix");     archive.read(.density_matrix,order=order)
+         case ("orbital_energies");   archive.read(.orbital_energies)
          case ("natural_orbitals");   archive.read(.natural_orbitals,order=order)
          case ("occupation");         archive.read(.occupation)
          case ("occupation_numbers"); archive.read(.occupation)
@@ -3942,7 +3957,7 @@ contains
       IVEC, PTR :: lvec
       VEC, PTR :: evec
       MAT, PTR :: dmatrix, cc
-      INT :: i, j, pcount, n_orbitals, b, a, l
+      INT :: i, j, pcount, n_orbitals, b, a, l, atom, shell
       STR, parameter :: title_format = "(A80)"
       STR, parameter :: n_vars_format = "(A8, 12X, I3, 17X, I3, 17X, I3, 17X)"
       STR, parameter :: atom_format = "(A5, I3, '    (CENTRE', 1I3, ') ', 3F12.8, '          ', F5.1)"
@@ -3952,6 +3967,10 @@ contains
       STR, parameter :: mol_title_format = "(1A4, I3, 1A30, F12.8, 1A15, F12.8)"
       STR, parameter :: coefficient_format = "(5E16.8)"
       STR, parameter :: e_v_format = "(' THE HF ENERGY = ', F20.12, ' THE VIRIAL(-V/T)=', F13.8)"
+      SHELL, PTR :: sh
+      ENSURE(.occupation.restricted.created, "No occupation numbers")
+      ENSURE(.orbital_energies.restricted.created, "No orbital energies")
+      ENSURE(.molecular_orbitals.restricted.created, "No orbitals")
       name = .name 
       if (stdin.buffer.not_exhausted) stdin.read(name)
       wfnfile.create(name)
@@ -3969,17 +3988,18 @@ contains
       pcount = 1
       lvec.create( .n_prim)
       evec.create( .n_prim)
-      do a = 1, .n_atom
-         do b = 1, .basis(a).n_shell
-            l = .atom(a).basis.shell(b).l.n_comp_sum - .atom(a).basis.shell(b).n_comp
-            do j = pcount, pcount + .atom(a).basis.shell(b).n_prim - 1, .atom(a).basis.shell(b).n_comp
-               do i = 1, .atom(a).basis.shell(b).n_comp
-                  evec( j + i - 1) = .atom(a).basis.shell(b).ex(1 + (j - pcount) / .atom(a).basis.shell(b).n_comp)
-                  lvec( j + i - 1) = l + i
-               end
-            end
-            pcount = pcount + .atom(a).basis.shell(b).n_prim
-         end
+      do a = 1, .n_shell
+        atom  = .atom_for_shell(a)
+        shell = .atom_shell_for_shell(a)
+        sh => .atom(atom).basis.shell(shell) 
+        l = sh.l.n_comp_sum - sh.n_comp
+        do j = 1, sh.n_cc
+          do i = 1, sh.n_comp
+            evec( pcount ) = sh.ex(j)
+            lvec( pcount ) = l + i
+            pcount = pcount + 1
+          end
+        end
       end
       write(unit = wfnfile.unit, fmt = t_assignment_format) lvec
       write( unit = wfnfile.unit, fmt = exponent_format) evec 
@@ -3990,9 +4010,9 @@ contains
       cc.create(.n_prim, .n_bf);    .make_contraction_matrix(cc)
       dmatrix.to_product(cc,.molecular_orbitals.restricted)
       do i = 1, n_orbitals
-         write( unit = wfnfile.unit, fmt = mol_title_format) "MO  ", i, "OCC NO = ", &
+         write(unit = wfnfile.unit, fmt = mol_title_format) "MO  ", i, "OCC NO = ", &
             .occupation.restricted(i), " ORB. ENERGY = ", .orbital_energies.restricted(i)
-         write( unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
+         write(unit = wfnfile.unit, fmt = coefficient_format) dmatrix(:, i)
       end
       write( unit = wfnfile.unit, fmt = "(1A8)") "END DATA"
       write( unit = wfnfile.unit, fmt = e_v_format) .scfdata.energy, 2.0D00
@@ -7901,38 +7921,40 @@ contains
     pot_grid.destroy
   end
 
-!   make_electric_potential_grid(pot_grid,dens)
-!   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
-!   ! "dens"
-!      VEC :: pot_grid
-!      MAT, target :: dens
-!      VEC, PTR :: pot_grid_q
-!      MAT, PTR :: pt,Vab,Dba
-!      INT :: q,a,b,fa,fb,la,lb,k
-!      SHELL2 :: shell
-!      ENSURE( .grid.created,  "no grid")
-!      ENSURE( .atom.created,  "no atom list")
-!      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-!      pt.create(.grid.n_pt,3); .grid.points(pt)
-!      pot_grid = ZERO
-!      pot_grid_q.create(.grid.n_pt)
-!      do q = 1,.n_shell_pairs
-!         .get_shell_pair(q,shell,a,b,fa,la,fb,lb)
-!         Dba => dens(fb:lb,fa:la)
-!         shell.make_electric_potential_grid(pot_grid_q,Dba,pt)
-!         if (a==b) then     ! fac=ONE
-!           pot_grid(:) = pot_grid(:) - pot_grid_q(:)
-!         else               ! fac=TWO
-!           pot_grid(:) = pot_grid(:) - TWO * pot_grid_q(:)
-!         end
-!         shell.destroy_ptr_part
-!      end
-!      pot_grid_q.destroy
-!      pt.destroy
-!   end
+  make_electric_potential_grid(pot_grid,dens)
+  ! Make the total electric potential "pot_grid" on ".grid" using AO density
+  ! matrix "dens"
+    VEC :: pot_grid
+    CMAT, target :: dens
+    VEC, PTR :: elec_grid
+    MAT, PTR :: pt
+    pt.create(.grid.n_pt,3); .grid.points(pt)
+    .nuclear_potential(pot_grid,pt)
+    pt.destroy
+    elec_grid.create(size(pot_grid))
+    .make_electronic_pot_grid(elec_grid,dens)
+    pot_grid.plus_vec(elec_grid)
+    elec_grid.destroy
+  end
 
-   make_electric_potential_grid(pot_grid,dens)
-   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
+  make_electric_potential_grid(pot_grid,dens)
+  ! Make the total electric potential "pot_grid" on ".grid" using AO density
+  ! matrix "dens"
+    VEC :: pot_grid
+    MAT, target :: dens
+    VEC, PTR :: elec_grid
+    MAT, PTR :: pt
+    pt.create(.grid.n_pt,3); .grid.points(pt)
+    .nuclear_potential(pot_grid,pt)
+    pt.destroy
+    elec_grid.create(size(pot_grid))
+    .make_electronic_pot_grid(elec_grid,dens)
+    pot_grid.plus_vec(elec_grid)
+    elec_grid.destroy
+  end
+
+   make_electronic_pot_grid(pot_grid,dens)
+   ! Make the electronic potential "pot_grid" on ".grid" using AO density matrix
    ! "dens"
       VEC :: pot_grid
       CMAT, target :: dens
@@ -7961,8 +7983,8 @@ contains
       pt.destroy
    end
 
-   make_electric_potential_grid(pot_grid,dens)
-   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
+   make_electronic_pot_grid(pot_grid,dens)
+   ! Make the electronic potential "pot_grid" on ".grid" using AO density matrix
    ! "dens"
       VEC :: pot_grid
       MAT, target :: dens
