@@ -14,10 +14,11 @@ $ExitValue = 0;
 ## Define the .foo file and corresponding .f90 file       
 ## -----------------------------------------------------------------------------
 
-@ARGV==2  or die "Must supply 2 file names, input file and output file,";
+@ARGV==3  or die "Must supply 3 file names; input, output and interface files.";
 
 $foofile = $ARGV[0];   # This is the .foo file to work on
 $f90file = $ARGV[1];   # This is the .f90 file produced
+$intfile = $ARGV[2];   # This is the .int file produced
 
 open(FOOFILE,$foofile) or die "$FOOFILE does not exist,";
 
@@ -489,9 +490,7 @@ close(F90FILE);
 ## Dump the interface file
 ## -------------------------------------------------------
 
-$intfile = lc($long_module_name) . ".int";
-
-if ($intfile ne '.int') {
+if (lc($long_module_name) ne '') {
 
     system("/bin/rm -f $intfile");
     open(INTFILE,">".$intfile);
