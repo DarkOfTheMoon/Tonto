@@ -119,6 +119,7 @@ my %module_type;              # All types defined within the module, *not* $type
 my %tonto_type_info;          # Information about each tonto type WITHOUT all component info
 my @tonto_intrinsic_scalar_type_names; # The tonto names STR, INT, BIN, etc ...
 my @tonto_intrinsic_array_type_names;  # The tonto names for 1,2,...,7 dimension arrays
+my @tonto_intrinsic_functions; # Intrinsic routines in Tonto.
 my @all_known_type_names;
 my %tonto_assumed_array_part; # Assumed array subroutine argument substitutions
 my %global_var_info;          # Type (and other) information of all GLOBALLY available variables.
@@ -174,6 +175,28 @@ my $html_GNU_found = 0;
 ## -----------------------------------------------------------------------------
 ## Set up some tonto type information, including array substitution information
 ## -----------------------------------------------------------------------------
+
+$function_res_type{"INT_to_str"} = 'STR';
+$function_res_type{"REAL_to_str"} = 'STR';
+
+@tonto_intrinsic_functions = (
+    'abs',
+    'acos',
+    'allocated',
+    'asin',
+    'associated',
+    'atan',
+    'cos',
+    'mod',
+    'modulo',
+    'nullify',
+    'scan',
+    'sin',
+    'size',
+    'tan',
+    'trim',
+    'verify'
+);
 
 @tonto_intrinsic_scalar_type_names = ( # Tonto intrinsic scalar type names
     'STR',
@@ -816,7 +839,13 @@ sub analyse_variable_declaration {
             if ($var eq $function_result && 
                 defined $module_full_name &&
                 defined $current_rout_name) {
-              $function_res_type{"${module_full_name}_${current_rout_name}"} = $typ;
+              my $typ1 = $typ;
+              if ($typ1 =~ m'STR'io) {
+                $typ1 =~ s/len=(\d+)//og;
+                $typ1 =~ s/[(][)]//o;
+              }
+
+              $function_res_type{"${module_full_name}_${current_rout_name}"} = $typ1;
             }
 
             # Check if all args are routine arguments, or all aren't
@@ -4248,46 +4277,27 @@ sub dots_to_fortran {
 
       } else {                                    # $rout is a routine call ...
 
+        my $done = 0;
         # Deal with some intrinsics by explicit inlining
+        foreach $i (@tonto_intrinsic_functions) {
+          if ($rout =~ m/^$i$/) {
+            $rout = $i;
+            $underscore = '';
+            $done = 1;
+            last;
+          }
+        }
 
-        if ($rout =~ m'^dim([1234567]?)$'o) {   # Modify dim statements explicitly
+        if (! $done && $rout =~ m'^dim([1234567]?)$'o) {   # Modify dim statements explicitly
           if (defined $1 && $1 ne '') { $arg .= ",$1"}
           $rout = 'size';
           $underscore = '';
-        } elsif ($rout =~ m'^nullify$'o) {      # Modify nullify statements explicitly
-          $rout = 'nullify';
-          $underscore = '';
-        } elsif ($rout =~ m'^size$'o) {         # Modify size statements explicitly
-          $rout = 'size';
-          $underscore = '';
-        } elsif ($rout =~ m'^trim$'o) {         # Modify trim statements explicitly
-          $rout = 'trim';
-          $underscore = '';
-        } elsif ($rout =~ m'^verify$'o) {       # Modify verify statements explicitly
-          $rout = 'verify';
-          $underscore = '';
-        } elsif ($rout =~ m'^asin$'o) {         # Modify asin statements explicitly
-          $rout = 'asin';
-          $underscore = '';
-        } elsif ($rout =~ m'^acos$'o) {         # Modify acos statements explicitly
-          $rout = 'acos';
-          $underscore = '';
-        } elsif ($rout =~ m'^atan$'o) {         # Modify atan statements explicitly
-          $rout = 'atan';
-          $underscore = '';
-        } elsif ($rout =~ m'^sin$'o) {          # Modify sin statements explicitly
-          $rout = 'sin';
-          $underscore = '';
-        } elsif ($rout =~ m'^cos$'o) {          # Modify cos statements explicitly
-          $rout = 'cos';
-          $underscore = '';
-        } elsif ($rout =~ m'^tan$'o) {          # Modify tan statements explicitly
-          $rout = 'tan';
-          $underscore = '';
+          $done = 1;
         } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {   
                                                   # Modify argumentless "created" statements explicitly
           $rout = 'associated';
           $underscore = '';
+          $done = 1;
         } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) { 
                                                   # Modify argumentless "destroyed" statements explicitly
           $rout = 'NOT associated';
@@ -4296,10 +4306,11 @@ sub dots_to_fortran {
           if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) {
             $rout = 'associated';
           }
+          $done = 1;
+        }
 
         # Deal with a "normal" routine
-
-        } else {                                  # Do a normal routine
+        if (! $done) {                            # Do a normal routine
           # add to use list.
           my ($fortran_type_name,$fortran_mod_name);
           $arg_type = $local_var_info{$arg}{full_type_name};
@@ -4311,11 +4322,6 @@ sub dots_to_fortran {
              $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
              $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
           }
-#print "X        = $X";
-#print "arg      = $arg";
-#print "arg_type = $arg_type";
-#print "fort_mod =",$fortran_mod_name;
-#print "fort_type =",$fortran_type_name;
           if (! defined $fortran_mod_name) {
             &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
           }
@@ -4329,11 +4335,6 @@ sub dots_to_fortran {
             $rout = $fortran_mod_name . '_' . $rout;
             $underscore = '';
           }
-        }
-
-        if ($rout =~ m'^trim$'o) {     # Modify trim statements explicitly
-          $rout = 'trim';
-          $underscore = '';
         }
 
         # check for other arguments to the function call.
@@ -4403,13 +4404,6 @@ sub dots_to_html {
              $arg_type = &type_of_this($arg);
          }
          $lc_arg_type = lc $arg_type;
-#print "X        = $X";
-#print "L        = $left";
-#print "R        = $right";
-#print "i        = $i";
-#print "arg      = $arg";
-#print "rout     = $rout";
-#print "arg_type = $arg_type";
 
          # match is the same as post but for matching in an regex
          $match = $post;
@@ -4419,7 +4413,6 @@ sub dots_to_html {
          $match =~ s/\./\\./g; $match =~ s/\?/\\?/g;
          $match =~ s/\*/\\*/g; $match =~ s/\+/\\+/g;
          $Y =~ "(.*?\\.)$rout$match";
-#         my $the_arg = $1;
          if (defined $1) {
            $Y = $1;
          } else {
@@ -4724,8 +4717,6 @@ sub type_of_this {
   ($is_a_var,$arg_type) = &is_declared_variable($arg);
   if ($is_a_var) { return ($arg_type); }
 
-  # <<<<<<< EOF
-
   # a real literal constant.
   if ($arg =~ '^([+-])?\d*[.](\d+)?') {
     return ('REAL');
@@ -4751,9 +4742,10 @@ sub type_of_this {
   # is above foolproof?
     # maybe do something more fancy with $2 later - recursive call to
     # fortran_type_of_this?
+
     if (defined $local_var_info{$2}{type_name}) {
-      if (defined $function_res_type{"$local_var_info{$2}_$1"}) {
-        return ($function_res_type{"$local_var_info{$2}_$1"});
+      if (defined $function_res_type{"$local_var_info{$2}{type_name}_$1"}) {
+        return ($function_res_type{"$local_var_info{$2}{type_name}_$1"});
       }
     }
   }
@@ -4774,7 +4766,7 @@ sub type_of_this {
   if ($arg =~ '^max[(](.*)[)]$' || $arg =~ '^min[(](.*)[)]$') {
     @tmp = split /[,]+/,$1;
     undef $tmp;
-    THAT : foreach $i (@tmp) {
+    THAT : foreach my $i (@tmp) {
       $x = &type_of_this($i);
       if (! defined $tmp) { $tmp = $x; }
       if ($tmp ne $x)     { $tmp = "unknown"; last THAT; }
@@ -4783,8 +4775,20 @@ sub type_of_this {
   }
 
   # is it a function call?
+  # This should get combined with function call stuff above.
   if ($arg =~ '^(.*?)[(](.*)[)]$' && &has_matching_brackets($arg)) {
-    $tmp = $1;
+    my $tmp = $1;
+    my $i = $2;
+    if (defined $tmp && $tmp =~ '\w$') {
+      my $typ = &type_of_this($i);
+      $tmp =~ s/_$//g;
+      if (defined $function_res_type{"${typ}_$tmp"}) {
+        return ($function_res_type{"${typ}_$tmp"});
+      }
+      if (defined $function_res_type{"${typ}_${tmp}_"}) {
+        return ($function_res_type{"${typ}_${tmp}_"});
+      }
+    }
     if (defined $tmp && $tmp =~ '\w$') {
       return 'unknown';
     }
