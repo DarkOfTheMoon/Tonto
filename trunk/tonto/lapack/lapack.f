@@ -1,11 +1,11 @@
-      double precision function ddot(n,dx,incx,dy,incy)
+      real(kind=kind(1.0d0)) function ddot(n,dx,incx,dy,incy)
 c
 c     forms the dot product of two vectors.
 c     uses unrolled loops for increments equal to one.
 c     jack dongarra, linpack, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision dx(*),dy(*),dtemp
+      real(kind=kind(1.0d0)) dx(*),dy(*),dtemp
       integer i,incx,incy,ix,iy,m,mp1,n
 c
       ddot = 0.0d0
@@ -59,7 +59,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -87,7 +87,7 @@ c
 *          The number of right hand sides, i.e., the number of columns
 *          of the matrix B.  NRHS >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the N-by-N coefficient matrix A.
 *          On exit, the factors L and U from the factorization
 *          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -99,7 +99,7 @@ c
 *          The pivot indices that define the permutation matrix P;
 *          row i of the matrix was interchanged with row IPIV(i).
 *
-*  B       (input/output) DOUBLE PRECISION array, dimension (LDB,NRHS)
+*  B       (input/output) real(kind=kind(1.0d0)) array, dimension (LDB,NRHS)
 *          On entry, the N-by-NRHS matrix of right hand side matrix B.
 *          On exit, if INFO = 0, the N-by-NRHS solution matrix X.
 *
@@ -117,9 +117,6 @@ c
 *
 *     .. External Subroutines ..
       EXTERNAL           DGETRF, DGETRS, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -167,7 +164,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -185,7 +182,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the factors L and U from the factorization
 *          A = P*L*U as computed by DGETRF.
 *          On exit, if INFO = 0, the inverse of the original matrix A.
@@ -197,7 +194,7 @@ c
 *          The pivot indices from DGETRF; for 1<=i<=N, row i of the
 *          matrix was interchanged with row IPIV(i).
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO=0, then WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -219,7 +216,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -233,9 +230,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DGEMM, DGEMV, DSWAP, DTRSM, DTRTRI, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -361,7 +355,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -375,7 +369,7 @@ c
 *  Arguments
 *  =========
 *
-*  TRANS   (input) CHARACTER*1
+*  TRANS   (input) character(len=1)
 *          Specifies the form of the system of equations:
 *          = 'N':  A * X = B  (No transpose)
 *          = 'T':  A'* X = B  (Transpose)
@@ -388,7 +382,7 @@ c
 *          The number of right hand sides, i.e., the number of columns
 *          of the matrix B.  NRHS >= 0.
 *
-*  A       (input) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          The factors L and U from the factorization A = P*L*U
 *          as computed by DGETRF.
 *
@@ -399,7 +393,7 @@ c
 *          The pivot indices from DGETRF; for 1<=i<=N, row i of the
 *          matrix was interchanged with row IPIV(i).
 *
-*  B       (input/output) DOUBLE PRECISION array, dimension (LDB,NRHS)
+*  B       (input/output) real(kind=kind(1.0d0)) array, dimension (LDB,NRHS)
 *          On entry, the right hand side matrix B.
 *          On exit, the solution matrix X.
 *
@@ -413,7 +407,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -421,9 +415,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLASWP, DTRSM, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -502,7 +493,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, D, P, Q
+      real(kind=kind(1.0d0))   A, B, C, D, P, Q
 *     ..
 *
 *  Purpose
@@ -520,23 +511,20 @@ c
 *  Arguments
 *  =========
 *
-*  A       (input) DOUBLE PRECISION
-*  B       (input) DOUBLE PRECISION
-*  C       (input) DOUBLE PRECISION
-*  D       (input) DOUBLE PRECISION
+*  A       (input) real(kind=kind(1.0d0))
+*  B       (input) real(kind=kind(1.0d0))
+*  C       (input) real(kind=kind(1.0d0))
+*  D       (input) real(kind=kind(1.0d0))
 *          The scalars a, b, c, and d in the above expression.
 *
-*  P       (output) DOUBLE PRECISION
-*  Q       (output) DOUBLE PRECISION
+*  P       (output) real(kind=kind(1.0d0))
+*  Q       (output) real(kind=kind(1.0d0))
 *          The scalars p and q in the above expression.
 *
 *  =====================================================================
 *
 *     .. Local Scalars ..
-      DOUBLE PRECISION   E, F
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS
+      real(kind=kind(1.0d0))   E, F
 *     ..
 *     .. Executable Statements ..
 *
@@ -565,7 +553,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, RT1, RT2
+      real(kind=kind(1.0d0))   A, B, C, RT1, RT2
 *     ..
 *
 *  Purpose
@@ -580,19 +568,19 @@ c
 *  Arguments
 *  =========
 *
-*  A       (input) DOUBLE PRECISION
+*  A       (input) real(kind=kind(1.0d0))
 *          The (1,1) element of the 2-by-2 matrix.
 *
-*  B       (input) DOUBLE PRECISION
+*  B       (input) real(kind=kind(1.0d0))
 *          The (1,2) and (2,1) elements of the 2-by-2 matrix.
 *
-*  C       (input) DOUBLE PRECISION
+*  C       (input) real(kind=kind(1.0d0))
 *          The (2,2) element of the 2-by-2 matrix.
 *
-*  RT1     (output) DOUBLE PRECISION
+*  RT1     (output) real(kind=kind(1.0d0))
 *          The eigenvalue of larger absolute value.
 *
-*  RT2     (output) DOUBLE PRECISION
+*  RT2     (output) real(kind=kind(1.0d0))
 *          The eigenvalue of smaller absolute value.
 *
 *  Further Details
@@ -612,20 +600,17 @@ c
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
+      real(kind=kind(1.0d0))   TWO
       PARAMETER          ( TWO = 2.0D0 )
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   HALF
+      real(kind=kind(1.0d0))   HALF
       PARAMETER          ( HALF = 0.5D0 )
 *     ..
 *     .. Local Scalars ..
-      DOUBLE PRECISION   AB, ACMN, ACMX, ADF, DF, RT, SM, TB
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SQRT
+      real(kind=kind(1.0d0))   AB, ACMN, ACMX, ADF, DF, RT, SM, TB
 *     ..
 *     .. Executable Statements ..
 *
@@ -689,7 +674,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   A, B, C, CS1, RT1, RT2, SN1
+      real(kind=kind(1.0d0))   A, B, C, CS1, RT1, RT2, SN1
 *     ..
 *
 *  Purpose
@@ -708,24 +693,24 @@ c
 *  Arguments
 *  =========
 *
-*  A       (input) DOUBLE PRECISION
+*  A       (input) real(kind=kind(1.0d0))
 *          The (1,1) element of the 2-by-2 matrix.
 *
-*  B       (input) DOUBLE PRECISION
+*  B       (input) real(kind=kind(1.0d0))
 *          The (1,2) element and the conjugate of the (2,1) element of
 *          the 2-by-2 matrix.
 *
-*  C       (input) DOUBLE PRECISION
+*  C       (input) real(kind=kind(1.0d0))
 *          The (2,2) element of the 2-by-2 matrix.
 *
-*  RT1     (output) DOUBLE PRECISION
+*  RT1     (output) real(kind=kind(1.0d0))
 *          The eigenvalue of larger absolute value.
 *
-*  RT2     (output) DOUBLE PRECISION
+*  RT2     (output) real(kind=kind(1.0d0))
 *          The eigenvalue of smaller absolute value.
 *
-*  CS1     (output) DOUBLE PRECISION
-*  SN1     (output) DOUBLE PRECISION
+*  CS1     (output) real(kind=kind(1.0d0))
+*  SN1     (output) real(kind=kind(1.0d0))
 *          The vector (CS1, SN1) is a unit right eigenvector for RT1.
 *
 *  Further Details
@@ -747,22 +732,19 @@ c
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
+      real(kind=kind(1.0d0))   TWO
       PARAMETER          ( TWO = 2.0D0 )
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   HALF
+      real(kind=kind(1.0d0))   HALF
       PARAMETER          ( HALF = 0.5D0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            SGN1, SGN2
-      DOUBLE PRECISION   AB, ACMN, ACMX, ACS, ADF, CS, CT, DF, RT, SM,
-     $                   TB, TN
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SQRT
+      real(kind=kind(1.0d0))   AB, ACMN, ACMX, ACS, ADF
+      real(kind=kind(1.0d0))   CS, CT, DF, RT, SM, TB, TN
 *     ..
 *     .. Executable Statements ..
 *
@@ -851,7 +833,7 @@ c
 *     End of DLAEV2
 *
       END
-      DOUBLE PRECISION FUNCTION DLANST( NORM, N, D, E )
+      real(kind=kind(1.0d0)) FUNCTION DLANST( NORM, N, D, E )
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -863,7 +845,7 @@ c
       INTEGER            N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
+      real(kind=kind(1.0d0))   D( * ), E( * )
 *     ..
 *
 *  Purpose
@@ -894,7 +876,7 @@ c
 *  Arguments
 *  =========
 *
-*  NORM    (input) CHARACTER*1
+*  NORM    (input) character(len=1)
 *          Specifies the value to be returned in DLANST as described
 *          above.
 *
@@ -902,27 +884,24 @@ c
 *          The order of the matrix A.  N >= 0.  When N = 0, DLANST is
 *          set to zero.
 *
-*  D       (input) DOUBLE PRECISION array, dimension (N)
+*  D       (input) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of A.
 *
-*  E       (input) DOUBLE PRECISION array, dimension (N-1)
+*  E       (input) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The (n-1) sub-diagonal or super-diagonal elements of A.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I
-      DOUBLE PRECISION   ANORM, SCALE, SUM
+      real(kind=kind(1.0d0))   ANORM, SCALE, SUM
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLASSQ
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -972,7 +951,7 @@ c
 *     End of DLANST
 *
       END
-      DOUBLE PRECISION FUNCTION DLANSY( NORM, UPLO, N, A, LDA, WORK )
+      real(kind=kind(1.0d0)) FUNCTION DLANSY(NORM,UPLO,N,A,LDA,WORK)
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -984,7 +963,7 @@ c
       INTEGER            LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -1015,11 +994,11 @@ c
 *  Arguments
 *  =========
 *
-*  NORM    (input) CHARACTER*1
+*  NORM    (input) character(len=1)
 *          Specifies the value to be returned in DLANSY as described
 *          above.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the upper or lower triangular part of the
 *          symmetric matrix A is to be referenced.
 *          = 'U':  Upper triangular part of A is referenced
@@ -1029,7 +1008,7 @@ c
 *          The order of the matrix A.  N >= 0.  When N = 0, DLANSY is
 *          set to zero.
 *
-*  A       (input) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          The symmetric matrix A.  If UPLO = 'U', the leading n by n
 *          upper triangular part of A contains the upper triangular part
 *          of the matrix A, and the strictly lower triangular part of A
@@ -1041,25 +1020,22 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(N,1).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (LWORK),
 *          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 *          WORK is not referenced.
 *
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      real(kind=kind(1.0d0))   ABSA, SCALE, SUM, VALUE
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLASSQ
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -1141,7 +1117,7 @@ c
 *     End of DLANSY
 *
       END
-      DOUBLE PRECISION FUNCTION DLAPY2( X, Y )
+      real(kind=kind(1.0d0)) FUNCTION DLAPY2( X, Y )
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1149,7 +1125,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   X, Y
+      real(kind=kind(1.0d0))   X, Y
 *     ..
 *
 *  Purpose
@@ -1161,23 +1137,20 @@ c
 *  Arguments
 *  =========
 *
-*  X       (input) DOUBLE PRECISION
-*  Y       (input) DOUBLE PRECISION
+*  X       (input) real(kind=kind(1.0d0))
+*  Y       (input) real(kind=kind(1.0d0))
 *          X and Y specify the values x and y.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D0 )
 *     ..
 *     .. Local Scalars ..
-      DOUBLE PRECISION   W, XABS, YABS, Z
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN, SQRT
+      real(kind=kind(1.0d0))   W, XABS, YABS, Z
 *     ..
 *     .. Executable Statements ..
 *
@@ -1195,7 +1168,7 @@ c
 *     End of DLAPY2
 *
       END
-      DOUBLE PRECISION FUNCTION DLAPY3( X, Y, Z )
+      real(kind=kind(1.0d0)) FUNCTION DLAPY3( X, Y, Z )
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1203,7 +1176,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   X, Y, Z
+      real(kind=kind(1.0d0))   X, Y, Z
 *     ..
 *
 *  Purpose
@@ -1215,22 +1188,19 @@ c
 *  Arguments
 *  =========
 *
-*  X       (input) DOUBLE PRECISION
-*  Y       (input) DOUBLE PRECISION
-*  Z       (input) DOUBLE PRECISION
+*  X       (input) real(kind=kind(1.0d0))
+*  Y       (input) real(kind=kind(1.0d0))
+*  Z       (input) real(kind=kind(1.0d0))
 *          X, Y and Z specify the values x, y and z.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D0 )
 *     ..
 *     .. Local Scalars ..
-      DOUBLE PRECISION   W, XABS, YABS, ZABS
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SQRT
+      real(kind=kind(1.0d0))   W, XABS, YABS, ZABS
 *     ..
 *     .. Executable Statements ..
 *
@@ -1262,7 +1232,7 @@ c
       INTEGER            K, LDC, LDT, LDV, LDWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   C( LDC, * ), T( LDT, * ), V( LDV, * ),
+      real(kind=kind(1.0d0))   C( LDC, * ), T( LDT, * ), V( LDV, * ),
      $                   WORK( LDWORK, * )
 *     ..
 *
@@ -1275,21 +1245,21 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          = 'L': apply H or H' from the Left
 *          = 'R': apply H or H' from the Right
 *
-*  TRANS   (input) CHARACTER*1
+*  TRANS   (input) character(len=1)
 *          = 'N': apply H (No transpose)
 *          = 'T': apply H' (Transpose)
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Indicates how H is formed from a product of elementary
 *          reflectors
 *          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 *          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 *
-*  STOREV  (input) CHARACTER*1
+*  STOREV  (input) character(len=1)
 *          Indicates how the vectors which define the elementary
 *          reflectors are stored:
 *          = 'C': Columnwise
@@ -1305,7 +1275,7 @@ c
 *          The order of the matrix T (= the number of elementary
 *          reflectors whose product defines the block reflector).
 *
-*  V       (input) DOUBLE PRECISION array, dimension
+*  V       (input) real(kind=kind(1.0d0)) array, dimension
 *                                (LDV,K) if STOREV = 'C'
 *                                (LDV,M) if STOREV = 'R' and SIDE = 'L'
 *                                (LDV,N) if STOREV = 'R' and SIDE = 'R'
@@ -1317,21 +1287,21 @@ c
 *          if STOREV = 'C' and SIDE = 'R', LDV >= max(1,N);
 *          if STOREV = 'R', LDV >= K.
 *
-*  T       (input) DOUBLE PRECISION array, dimension (LDT,K)
+*  T       (input) real(kind=kind(1.0d0)) array, dimension (LDT,K)
 *          The triangular k by k matrix T in the representation of the
 *          block reflector.
 *
 *  LDT     (input) INTEGER
 *          The leading dimension of the array T. LDT >= K.
 *
-*  C       (input/output) DOUBLE PRECISION array, dimension (LDC,N)
+*  C       (input/output) real(kind=kind(1.0d0)) array, dimension (LDC,N)
 *          On entry, the m by n matrix C.
 *          On exit, C is overwritten by H*C or H'*C or C*H or C*H'.
 *
 *  LDC     (input) INTEGER
 *          The leading dimension of the array C. LDA >= max(1,M).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (LDWORK,K)
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (LDWORK,K)
 *
 *  LDWORK  (input) INTEGER
 *          The leading dimension of the array WORK.
@@ -1341,7 +1311,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -1843,10 +1813,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          SIDE
       INTEGER            INCV, LDC, M, N
-      DOUBLE PRECISION   TAU
+      real(kind=kind(1.0d0))   TAU
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   C( LDC, * ), V( * ), WORK( * )
+      real(kind=kind(1.0d0))   C( LDC, * ), V( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -1864,7 +1834,7 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          = 'L': form  H * C
 *          = 'R': form  C * H
 *
@@ -1874,7 +1844,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix C.
 *
-*  V       (input) DOUBLE PRECISION array, dimension
+*  V       (input) real(kind=kind(1.0d0)) array, dimension
 *                     (1 + (M-1)*abs(INCV)) if SIDE = 'L'
 *                  or (1 + (N-1)*abs(INCV)) if SIDE = 'R'
 *          The vector v in the representation of H. V is not used if
@@ -1883,10 +1853,10 @@ c
 *  INCV    (input) INTEGER
 *          The increment between elements of v. INCV <> 0.
 *
-*  TAU     (input) DOUBLE PRECISION
+*  TAU     (input) real(kind=kind(1.0d0))
 *          The value tau in the representation of H.
 *
-*  C       (input/output) DOUBLE PRECISION array, dimension (LDC,N)
+*  C       (input/output) real(kind=kind(1.0d0)) array, dimension (LDC,N)
 *          On entry, the m by n matrix C.
 *          On exit, C is overwritten by the matrix H * C if SIDE = 'L',
 *          or C * H if SIDE = 'R'.
@@ -1894,14 +1864,14 @@ c
 *  LDC     (input) INTEGER
 *          The leading dimension of the array C. LDC >= max(1,M).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension
 *                         (N) if SIDE = 'L'
 *                      or (M) if SIDE = 'R'
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. External Subroutines ..
@@ -1954,10 +1924,10 @@ c
 *
 *     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   ALPHA, TAU
+      real(kind=kind(1.0d0))   ALPHA, TAU
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   X( * )
+      real(kind=kind(1.0d0))   X( * )
 *     ..
 *
 *  Purpose
@@ -1989,11 +1959,11 @@ c
 *  N       (input) INTEGER
 *          The order of the elementary reflector.
 *
-*  ALPHA   (input/output) DOUBLE PRECISION
+*  ALPHA   (input/output) real(kind=kind(1.0d0))
 *          On entry, the value alpha.
 *          On exit, it is overwritten with the value beta.
 *
-*  X       (input/output) DOUBLE PRECISION array, dimension
+*  X       (input/output) real(kind=kind(1.0d0)) array, dimension
 *                         (1+(N-2)*abs(INCX))
 *          On entry, the vector x.
 *          On exit, it is overwritten with the vector v.
@@ -2001,25 +1971,22 @@ c
 *  INCX    (input) INTEGER
 *          The increment between elements of X. INCX > 0.
 *
-*  TAU     (output) DOUBLE PRECISION
+*  TAU     (output) real(kind=kind(1.0d0))
 *          The value tau.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            J, KNT
-      DOUBLE PRECISION   BETA, RSAFMN, SAFMIN, XNORM
+      real(kind=kind(1.0d0))   BETA, RSAFMN, SAFMIN, XNORM
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DLAPY2, DNRM2
+      real(kind=kind(1.0d0))   DLAPY2, DNRM2
       EXTERNAL           DLAPY2, DNRM2
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SIGN
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DSCAL
@@ -2095,7 +2062,7 @@ c
       INTEGER            K, LDT, LDV, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   T( LDT, * ), TAU( * ), V( LDV, * )
+      real(kind=kind(1.0d0))   T( LDT, * ), TAU( * ), V( LDV, * )
 *     ..
 *
 *  Purpose
@@ -2121,13 +2088,13 @@ c
 *  Arguments
 *  =========
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Specifies the order in which the elementary reflectors are
 *          multiplied to form the block reflector:
 *          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 *          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 *
-*  STOREV  (input) CHARACTER*1
+*  STOREV  (input) character(len=1)
 *          Specifies how the vectors which define the elementary
 *          reflectors are stored (see also Further Details):
 *          = 'C': columnwise
@@ -2140,7 +2107,7 @@ c
 *          The order of the triangular factor T (= the number of
 *          elementary reflectors). K >= 1.
 *
-*  V       (input/output) DOUBLE PRECISION array, dimension
+*  V       (input/output) real(kind=kind(1.0d0)) array, dimension
 *                               (LDV,K) if STOREV = 'C'
 *                               (LDV,N) if STOREV = 'R'
 *          The matrix V. See further details.
@@ -2149,11 +2116,11 @@ c
 *          The leading dimension of the array V.
 *          If STOREV = 'C', LDV >= max(1,N); if STOREV = 'R', LDV >= K.
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (K)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i).
 *
-*  T       (output) DOUBLE PRECISION array, dimension (LDT,K)
+*  T       (output) real(kind=kind(1.0d0)) array, dimension (LDT,K)
 *          The k by k triangular factor T of the block reflector.
 *          If DIRECT = 'F', T is upper triangular; if DIRECT = 'B', T is
 *          lower triangular. The rest of the array is not used.
@@ -2189,12 +2156,12 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   VII
+      real(kind=kind(1.0d0))   VII
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DGEMV, DTRMV
@@ -2307,10 +2274,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          TYPE
       INTEGER            INFO, KL, KU, LDA, M, N
-      DOUBLE PRECISION   CFROM, CTO
+      real(kind=kind(1.0d0))   CFROM, CTO
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -2325,7 +2292,7 @@ c
 *  Arguments
 *  =========
 *
-*  TYPE    (input) CHARACTER*1
+*  TYPE    (input) character(len=1)
 *          TYPE indices the storage type of the input matrix.
 *          = 'G':  A is a full matrix.
 *          = 'L':  A is a lower triangular matrix.
@@ -2348,8 +2315,8 @@ c
 *          The upper bandwidth of A.  Referenced only if TYPE = 'B',
 *          'Q' or 'Z'.
 *
-*  CFROM   (input) DOUBLE PRECISION
-*  CTO     (input) DOUBLE PRECISION
+*  CFROM   (input) real(kind=kind(1.0d0))
+*  CTO     (input) real(kind=kind(1.0d0))
 *          The matrix A is multiplied by CTO/CFROM. A(I,J) is computed
 *          without over/underflow if the final result CTO*A(I,J)/CFROM
 *          can be represented without over/underflow.  CFROM must be
@@ -2361,7 +2328,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,M)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,M)
 *          The matrix to be multiplied by CTO/CFROM.  See TYPE for the
 *          storage type.
 *
@@ -2375,16 +2342,13 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            DONE
       INTEGER            I, ITYPE, J, K1, K2, K3, K4
-      DOUBLE PRECISION   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN
+      real(kind=kind(1.0d0)) BIGNUM,CFROM1,CFROMC,CTO1,CTOC,MUL,SMLNUM
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -2570,10 +2534,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          UPLO
       INTEGER            LDA, M, N
-      DOUBLE PRECISION   ALPHA, BETA
+      real(kind=kind(1.0d0))   ALPHA, BETA
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -2585,7 +2549,7 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies the part of the matrix A to be set.
 *          = 'U':      Upper triangular part is set; the strictly lower
 *                      triangular part of A is not changed.
@@ -2599,13 +2563,13 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.  N >= 0.
 *
-*  ALPHA   (input) DOUBLE PRECISION
+*  ALPHA   (input) real(kind=kind(1.0d0))
 *          The constant to which the offdiagonal elements are to be set.
 *
-*  BETA    (input) DOUBLE PRECISION
+*  BETA    (input) real(kind=kind(1.0d0))
 *          The constant to which the diagonal elements are to be set.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On exit, the leading m-by-n submatrix of A is set as follows:
 *
 *          if UPLO = 'U', A(i,j) = ALPHA, 1<=i<=j-1, 1<=j<=n,
@@ -2621,9 +2585,6 @@ c
 *
 *     .. Local Scalars ..
       INTEGER            I, J
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -2683,7 +2644,7 @@ c
       INTEGER            LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), C( * ), S( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), C( * ), S( * )
 *     ..
 *
 *  Purpose
@@ -2731,19 +2692,19 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          Specifies whether the plane rotation matrix P is applied to
 *          A on the left or the right.
 *          = 'L':  Left, compute A := P*A
 *          = 'R':  Right, compute A:= A*P'
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Specifies whether P is a forward or backward sequence of
 *          plane rotations.
 *          = 'F':  Forward, P = P( z - 1 )*...*P( 2 )*P( 1 )
 *          = 'B':  Backward, P = P( 1 )*P( 2 )*...*P( z - 1 )
 *
-*  PIVOT   (input) CHARACTER*1
+*  PIVOT   (input) character(len=1)
 *          Specifies the plane for which P(k) is a plane rotation
 *          matrix.
 *          = 'V':  Variable pivot, the plane (k,k+1)
@@ -2758,7 +2719,7 @@ c
 *          The number of columns of the matrix A.  If n <= 1, an
 *          immediate return is effected.
 *
-*  C, S    (input) DOUBLE PRECISION arrays, dimension
+*  C, S    (input) real(kind=kind(1.0d0)) arrays, dimension
 *                  (M-1) if SIDE = 'L'
 *                  (N-1) if SIDE = 'R'
 *          c(k) and s(k) contain the cosine and sine that define the
@@ -2767,7 +2728,7 @@ c
 *          R( k ) = (  c( k )  s( k ) ).
 *                   ( -s( k )  c( k ) )
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          The m by n matrix A.  On exit, A is overwritten by P*A if
 *          SIDE = 'R' or by A*P' if SIDE = 'L'.
 *
@@ -2777,18 +2738,15 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, INFO, J
-      DOUBLE PRECISION   CTEMP, STEMP, TEMP
+      real(kind=kind(1.0d0))   CTEMP, STEMP, TEMP
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -3002,7 +2960,7 @@ c
       INTEGER            INFO, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * )
+      real(kind=kind(1.0d0))   D( * )
 *     ..
 *
 *  Purpose
@@ -3017,14 +2975,14 @@ c
 *  Arguments
 *  =========
 *
-*  ID      (input) CHARACTER*1
+*  ID      (input) character(len=1)
 *          = 'I': sort D in increasing order;
 *          = 'D': sort D in decreasing order.
 *
 *  N       (input) INTEGER
 *          The length of the array D.
 *
-*  D       (input/output) DOUBLE PRECISION array, dimension (N)
+*  D       (input/output) real(kind=kind(1.0d0)) array, dimension (N)
 *          On entry, the array to be sorted.
 *          On exit, D has been sorted into increasing order
 *          (D(1) <= ... <= D(N) ) or into decreasing order
@@ -3042,7 +3000,7 @@ c
 *     ..
 *     .. Local Scalars ..
       INTEGER            DIR, ENDD, I, J, START, STKPNT
-      DOUBLE PRECISION   D1, D2, D3, DMNMX, TMP
+      real(kind=kind(1.0d0))   D1, D2, D3, DMNMX, TMP
 *     ..
 *     .. Local Arrays ..
       INTEGER            STACK( 2, 32 )
@@ -3239,10 +3197,10 @@ c
 *
 *     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   SCALE, SUMSQ
+      real(kind=kind(1.0d0))   SCALE, SUMSQ
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   X( * )
+      real(kind=kind(1.0d0))   X( * )
 *     ..
 *
 *  Purpose
@@ -3268,7 +3226,7 @@ c
 *  N       (input) INTEGER
 *          The number of elements to be used from the vector X.
 *
-*  X       (input) DOUBLE PRECISION array, dimension (N)
+*  X       (input) real(kind=kind(1.0d0)) array, dimension (N)
 *          The vector for which a scaled sum of squares is computed.
 *             x( i )  = X( 1 + ( i - 1 )*INCX ), 1 <= i <= n.
 *
@@ -3276,12 +3234,12 @@ c
 *          The increment between successive values of the vector X.
 *          INCX > 0.
 *
-*  SCALE   (input/output) DOUBLE PRECISION
+*  SCALE   (input/output) real(kind=kind(1.0d0))
 *          On entry, the value  scale  in the equation above.
 *          On exit, SCALE is overwritten with  scl , the scaling factor
 *          for the sum of squares.
 *
-*  SUMSQ   (input/output) DOUBLE PRECISION
+*  SUMSQ   (input/output) real(kind=kind(1.0d0))
 *          On entry, the value  sumsq  in the equation above.
 *          On exit, SUMSQ is overwritten with  smsq , the basic sum of
 *          squares from which  scl  has been factored out.
@@ -3289,15 +3247,12 @@ c
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            IX
-      DOUBLE PRECISION   ABSXI
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS
+      real(kind=kind(1.0d0))   ABSXI
 *     ..
 *     .. Executable Statements ..
 *
@@ -3331,7 +3286,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -3346,7 +3301,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the matrix of column dimension N to which the row
 *          interchanges will be applied.
 *          On exit, the permuted matrix.
@@ -3381,7 +3336,7 @@ c
 *
 *     .. Local Scalars ..
       INTEGER            I, I1, I2, INC, IP, IX, IX0, J, K, N32
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
 *     ..
 *     .. Executable Statements ..
 *
@@ -3451,7 +3406,7 @@ c
       INTEGER            LDA, LDW, N, NB
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), E( * ), TAU( * ), W( LDW, * )
+      real(kind=kind(1.0d0)) A(LDA,*), E(*), TAU(*), W(LDW,*)
 *     ..
 *
 *  Purpose
@@ -3484,7 +3439,7 @@ c
 *  NB      (input) INTEGER
 *          The number of rows and columns to be reduced.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 *          n-by-n upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -3508,18 +3463,18 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= (1,N).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          If UPLO = 'U', E(n-nb:n-1) contains the superdiagonal
 *          elements of the last NB columns of the reduced matrix;
 *          if UPLO = 'L', E(1:nb) contains the subdiagonal elements of
 *          the first NB columns of the reduced matrix.
 *
-*  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+*  TAU     (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors, stored in
 *          TAU(n-nb:n-1) if UPLO = 'U', and in TAU(1:nb) if UPLO = 'L'.
 *          See Further Details.
 *
-*  W       (output) DOUBLE PRECISION array, dimension (LDW,NB)
+*  W       (output) real(kind=kind(1.0d0)) array, dimension (LDW,NB)
 *          The n-by-nb matrix W required to update the unreduced part
 *          of A.
 *
@@ -3578,22 +3533,19 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, HALF
+      real(kind=kind(1.0d0))   ZERO, ONE, HALF
       PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0, HALF = 0.5D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, IW
-      DOUBLE PRECISION   ALPHA
+      real(kind=kind(1.0d0))   ALPHA
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DAXPY, DGEMV, DLARFG, DSCAL, DSYMV
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DDOT
+      real(kind=kind(1.0d0))   DDOT
       EXTERNAL           DDOT
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -3697,11 +3649,11 @@ c
 *     End of DLATRD
 *
       END
-      DOUBLE PRECISION FUNCTION DNRM2 ( N, X, INCX )
+      real(kind=kind(1.0d0)) FUNCTION DNRM2 ( N, X, INCX )
 *     .. Scalar Arguments ..
       INTEGER                           INCX, N
 *     .. Array Arguments ..
-      DOUBLE PRECISION                  X( * )
+      real(kind=kind(1.0d0))                  X( * )
 *     ..
 *
 *  DNRM2 returns the euclidean norm of a vector via the function
@@ -3717,13 +3669,11 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION      ONE         , ZERO
+      real(kind=kind(1.0d0))      ONE         , ZERO
       PARAMETER           ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     .. Local Scalars ..
       INTEGER               IX
-      DOUBLE PRECISION      ABSXI, NORM, SCALE, SSQ
-*     .. Intrinsic Functions ..
-      INTRINSIC             ABS, SQRT
+      real(kind=kind(1.0d0))      ABSXI, NORM, SCALE, SSQ
 *     ..
 *     .. Executable Statements ..
       IF( N.LT.1 .OR. INCX.LT.1 )THEN
@@ -3768,7 +3718,7 @@ c
       INTEGER            INFO, K, LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -3795,7 +3745,7 @@ c
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the (n-k+i)-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by DGEQLF in the last k columns of its array
@@ -3805,11 +3755,11 @@ c
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (K)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by DGEQLF.
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (N)
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (N)
 *
 *  INFO    (output) INTEGER
 *          = 0: successful exit
@@ -3818,7 +3768,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -3826,9 +3776,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLARF, DSCAL, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -3896,7 +3843,7 @@ c
       INTEGER            INFO, K, LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -3923,7 +3870,7 @@ c
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the i-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by DGEQRF in the first k columns of its array
@@ -3933,11 +3880,11 @@ c
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (K)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by DGEQRF.
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (N)
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (N)
 *
 *  INFO    (output) INTEGER
 *          = 0: successful exit
@@ -3946,7 +3893,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -3954,9 +3901,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLARF, DSCAL, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4026,7 +3970,7 @@ c
       INTEGER            INFO, K, LDA, LWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -4053,7 +3997,7 @@ c
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the (n-k+i)-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by DGEQLF in the last k columns of its array
@@ -4063,11 +4007,11 @@ c
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (K)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by DGEQLF.
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -4087,7 +4031,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -4097,9 +4041,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLARFB, DLARFT, DORG2L, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -4240,7 +4181,7 @@ c
       INTEGER            INFO, K, LDA, LWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -4267,7 +4208,7 @@ c
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the i-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by DGEQRF in the first k columns of its array
@@ -4277,11 +4218,11 @@ c
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (K)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by DGEQRF.
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -4301,7 +4242,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -4311,9 +4252,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLARFB, DLARFT, DORG2R, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -4458,7 +4396,7 @@ c
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -4475,7 +4413,7 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U': Upper triangle of A contains elementary reflectors
 *                 from DSYTRD;
 *          = 'L': Lower triangle of A contains elementary reflectors
@@ -4484,7 +4422,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix Q. N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the vectors which define the elementary reflectors,
 *          as returned by DSYTRD.
 *          On exit, the N-by-N orthogonal matrix Q.
@@ -4492,11 +4430,11 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A. LDA >= max(1,N).
 *
-*  TAU     (input) DOUBLE PRECISION array, dimension (N-1)
+*  TAU     (input) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by DSYTRD.
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -4516,7 +4454,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D+0, ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -4529,9 +4467,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DORGQL, DORGQR, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4637,7 +4572,7 @@ c     jack dongarra, linpack, 3/11/78.
 c     modified 3/93 to return if incx .le. 0.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision da,dx(*)
+      real(kind=kind(1.0d0)) da,dx(*)
       integer i,incx,m,mp1,n,nincx
 c
       if( n.le.0 .or. incx.le.0 )return
@@ -4684,7 +4619,7 @@ c
       INTEGER            INFO, LDZ, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * ), WORK( * ), Z( LDZ, * )
+      real(kind=kind(1.0d0))   D( * ), E( * ), WORK( * ), Z( LDZ, * )
 *     ..
 *
 *  Purpose
@@ -4699,7 +4634,7 @@ c
 *  Arguments
 *  =========
 *
-*  COMPZ   (input) CHARACTER*1
+*  COMPZ   (input) character(len=1)
 *          = 'N':  Compute eigenvalues only.
 *          = 'V':  Compute eigenvalues and eigenvectors of the original
 *                  symmetric matrix.  On entry, Z must contain the
@@ -4712,16 +4647,16 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix.  N >= 0.
 *
-*  D       (input/output) DOUBLE PRECISION array, dimension (N)
+*  D       (input/output) real(kind=kind(1.0d0)) array, dimension (N)
 *          On entry, the diagonal elements of the tridiagonal matrix.
 *          On exit, if INFO = 0, the eigenvalues in ascending order.
 *
-*  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (input/output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          On entry, the (n-1) subdiagonal elements of the tridiagonal
 *          matrix.
 *          On exit, E has been destroyed.
 *
-*  Z       (input/output) DOUBLE PRECISION array, dimension (LDZ, N)
+*  Z       (input/output) real(kind=kind(1.0d0)) array, dimension (LDZ, N)
 *          On entry, if  COMPZ = 'V', then Z contains the orthogonal
 *          matrix used in the reduction to tridiagonal form.
 *          On exit, if INFO = 0, then if  COMPZ = 'V', Z contains the
@@ -4734,7 +4669,7 @@ c
 *          The leading dimension of the array Z.  LDZ >= 1, and if
 *          eigenvectors are desired, then  LDZ >= max(1,N).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (max(1,2*N-2))
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (max(1,2*N-2))
 *          If COMPZ = 'N', then WORK is not referenced.
 *
 *  INFO    (output) INTEGER
@@ -4750,7 +4685,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
+      real(kind=kind(1.0d0))   ZERO, ONE, TWO, THREE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0,
      $                   THREE = 3.0D0 )
       INTEGER            MAXIT
@@ -4760,19 +4695,16 @@ c
       INTEGER            I, ICOMPZ, II, ISCALE, J, JTOT, K, L, L1, LEND,
      $                   LENDM1, LENDP1, LENDSV, LM1, LSV, M, MM, MM1,
      $                   NM1, NMAXIT
-      DOUBLE PRECISION   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2,
-     $                   S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
+      real(kind=kind(1.0d0))   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1,
+     $                   RT2, S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      real(kind=kind(1.0d0))   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLAE2, DLAEV2, DLARTG, DLASCL, DLASET, DLASR,
      $                   DLASRT, DSWAP, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SIGN, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -5183,7 +5115,7 @@ c
       INTEGER            INFO, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
+      real(kind=kind(1.0d0))   D( * ), E( * )
 *     ..
 *
 *  Purpose
@@ -5198,11 +5130,11 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix.  N >= 0.
 *
-*  D       (input/output) DOUBLE PRECISION array, dimension (N)
+*  D       (input/output) real(kind=kind(1.0d0)) array, dimension (N)
 *          On entry, the n diagonal elements of the tridiagonal matrix.
 *          On exit, if INFO = 0, the eigenvalues in ascending order.
 *
-*  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (input/output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          On entry, the (n-1) subdiagonal elements of the tridiagonal
 *          matrix.
 *          On exit, E has been destroyed.
@@ -5217,7 +5149,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
+      real(kind=kind(1.0d0))   ZERO, ONE, TWO, THREE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0,
      $                   THREE = 3.0D0 )
       INTEGER            MAXIT
@@ -5226,19 +5158,16 @@ c
 *     .. Local Scalars ..
       INTEGER            I, ISCALE, JTOT, L, L1, LEND, LENDSV, LSV, M,
      $                   NMAXIT
-      DOUBLE PRECISION   ALPHA, ANORM, BB, C, EPS, EPS2, GAMMA, OLDC,
-     $                   OLDGAM, P, R, RT1, RT2, RTE, S, SAFMAX, SAFMIN,
-     $                   SIGMA, SSFMAX, SSFMIN
+      real(kind=kind(1.0d0))   ALPHA, ANORM, BB, C, EPS, EPS2, GAMMA
+      real(kind=kind(1.0d0))   OLDC, OLDGAM, P, R, RT1, RT2, RTE, S
+      real(kind=kind(1.0d0))   SAFMAX, SAFMIN, SIGMA, SSFMAX, SSFMIN
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      real(kind=kind(1.0d0))   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLAE2, DLASCL, DLASRT, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, SIGN, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -5544,7 +5473,7 @@ c     uses unrolled loops for increments equal one.
 c     jack dongarra, linpack, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision dx(*),dy(*),dtemp
+      real(kind=kind(1.0d0)) dx(*),dy(*),dtemp
       integer i,incx,incy,ix,iy,m,mp1,n
 c
       if(n.le.0)return
@@ -5605,7 +5534,7 @@ c
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), W( * ), WORK( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), W( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -5617,18 +5546,18 @@ c
 *  Arguments
 *  =========
 *
-*  JOBZ    (input) CHARACTER*1
+*  JOBZ    (input) character(len=1)
 *          = 'N':  Compute eigenvalues only;
 *          = 'V':  Compute eigenvalues and eigenvectors.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA, N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA, N)
 *          On entry, the symmetric matrix A.  If UPLO = 'U', the
 *          leading N-by-N upper triangular part of A contains the
 *          upper triangular part of the matrix A.  If UPLO = 'L',
@@ -5643,10 +5572,10 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  W       (output) DOUBLE PRECISION array, dimension (N)
+*  W       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          If INFO = 0, the eigenvalues in ascending order.
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -5669,27 +5598,24 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            LOWER, LQUERY, WANTZ
       INTEGER            IINFO, IMAX, INDE, INDTAU, INDWRK, ISCALE,
      $                   LLWORK, LOPT, LWKOPT, NB
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA,
-     $                   SMLNUM
+      real(kind=kind(1.0d0))   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN,
+     $                   SIGMA, SMLNUM
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
-      DOUBLE PRECISION   DLANSY
+      real(kind=kind(1.0d0))   DLANSY
       EXTERNAL           ILAENV, DLANSY
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLASCL, DORGTR, DSCAL, DSTEQR, DSTERF, DSYTRD,
      $                   XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -5817,7 +5743,7 @@ c
       INTEGER            INFO, LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), D( * ), E( * ), TAU( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), D( * ), E( * ), TAU( * )
 *     ..
 *
 *  Purpose
@@ -5829,7 +5755,7 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the upper or lower triangular part of the
 *          symmetric matrix A is stored:
 *          = 'U':  Upper triangular
@@ -5838,7 +5764,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 *          n-by-n upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -5860,15 +5786,15 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  D       (output) DOUBLE PRECISION array, dimension (N)
+*  D       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of the tridiagonal matrix T:
 *          D(i) = A(i,i).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The off-diagonal elements of the tridiagonal matrix T:
 *          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 *
-*  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+*  TAU     (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors (see Further
 *          Details).
 *
@@ -5922,24 +5848,21 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO, HALF
+      real(kind=kind(1.0d0))   ONE, ZERO, HALF
       PARAMETER          ( ONE = 1.0D0, ZERO = 0.0D0,
      $                   HALF = 1.0D0 / 2.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I
-      DOUBLE PRECISION   ALPHA, TAUI
+      real(kind=kind(1.0d0))   ALPHA, TAUI
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DAXPY, DLARFG, DSYMV, DSYR2, XERBLA
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DDOT
+      real(kind=kind(1.0d0))   DDOT
       EXTERNAL           DDOT
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -6065,7 +5988,7 @@ c
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), D( * ), E( * ), TAU( * ),
+      real(kind=kind(1.0d0))   A( LDA, * ), D( * ), E( * ), TAU( * ),
      $                   WORK( * )
 *     ..
 *
@@ -6079,14 +6002,14 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the symmetric matrix A.  If UPLO = 'U', the leading
 *          N-by-N upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -6108,19 +6031,19 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  D       (output) DOUBLE PRECISION array, dimension (N)
+*  D       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of the tridiagonal matrix T:
 *          D(i) = A(i,i).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The off-diagonal elements of the tridiagonal matrix T:
 *          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 *
-*  TAU     (output) DOUBLE PRECISION array, dimension (N-1)
+*  TAU     (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors (see Further
 *          Details).
 *
-*  WORK    (workspace/output) DOUBLE PRECISION array, dimension (LWORK)
+*  WORK    (workspace/output) real(kind=kind(1.0d0)) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -6183,7 +6106,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -6193,9 +6116,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLATRD, DSYR2K, DSYTD2, XERBLA
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -6347,11 +6267,11 @@ c
 *     End of DSYTRD
 *
       END
-      DOUBLE PRECISION FUNCTION DZNRM2( N, X, INCX )
+      real(kind=kind(1.0d0)) FUNCTION DZNRM2( N, X, INCX )
 *     .. Scalar Arguments ..
       INTEGER                           INCX, N
 *     .. Array Arguments ..
-      COMPLEX*16                        X( * )
+      complex(kind((1.0d0,1.0d0)))                        X( * )
 *     ..
 *
 *  DZNRM2 returns the euclidean norm of a vector via the function
@@ -6367,13 +6287,11 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION      ONE         , ZERO
+      real(kind=kind(1.0d0))      ONE         , ZERO
       PARAMETER           ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     .. Local Scalars ..
       INTEGER               IX
-      DOUBLE PRECISION      NORM, SCALE, SSQ, TEMP
-*     .. Intrinsic Functions ..
-      INTRINSIC             ABS, DIMAG, DBLE, SQRT
+      real(kind=kind(1.0d0))      NORM, SCALE, SSQ, TEMP
 *     ..
 *     .. Executable Statements ..
       IF( N.LT.1 .OR. INCX.LT.1 )THEN
@@ -6395,8 +6313,8 @@ c
                   SSQ   = SSQ   +     ( TEMP/SCALE )**2
                END IF
             END IF
-            IF( DIMAG( X( IX ) ).NE.ZERO )THEN
-               TEMP = ABS( DIMAG( X( IX ) ) )
+            IF( AIMAG( X( IX ) ).NE.ZERO )THEN
+               TEMP = ABS( AIMAG( X( IX ) ) )
                IF( SCALE.LT.TEMP )THEN
                   SSQ   = ONE   + SSQ*( SCALE/TEMP )**2
                   SCALE = TEMP
@@ -6421,7 +6339,7 @@ c     jack dongarra, linpack, 3/11/78.
 c     modified 3/93 to return if incx .le. 0.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision dx(*),dmax
+      real(kind=kind(1.0d0)) dx(*),dmax
       integer i,incx,ix,n
 c
       idamax = 0
@@ -6462,7 +6380,7 @@ c
 *     June 30, 1999
 *
 *     .. Scalar Arguments ..
-      CHARACTER*( * )    NAME, OPTS
+      character(len=*)    NAME, OPTS
       INTEGER            ISPEC, N1, N2, N3, N4
 *     ..
 *
@@ -6551,25 +6469,19 @@ c
 *
 *     .. Local Scalars ..
       LOGICAL            CNAME, SNAME
-      CHARACTER*1        C1
-      CHARACTER*2        C2, C4
-      CHARACTER*3        C3
-      CHARACTER*6        SUBNAM
+      character(len=1)        C1
+      character(len=2)        C2, C4
+      character(len=3)        C3
+      character(len=6)        SUBNAM
       INTEGER            I, IC, IZ, NB, NBMIN, NX
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          CHAR, ICHAR, INT, MIN, REAL
 *     ..
 *     .. Executable Statements ..
 *
-      GO TO ( 100, 100, 100, 400, 500, 600, 700 ) ISPEC
+*     GO TO ( 100, 100, 100, 400, 500, 600, 700 ) ISPEC
+      select case (ISPEC)
 *
-*     Invalid value for ISPEC
-*
-      ILAENV = -1
-      RETURN
-*
-  100 CONTINUE
+      case (1,2,3)
+* 100 CONTINUE
 *
 *     Convert NAME to upper case if the first character is lower case.
 *
@@ -6630,15 +6542,17 @@ c
       C3 = SUBNAM( 4:6 )
       C4 = C3( 2:3 )
 *
-      GO TO ( 110, 200, 300 ) ISPEC
+      select case (ISPEC)
+*     GO TO ( 110, 200, 300 ) ISPEC
 *
-  110 CONTINUE
+* 110 CONTINUE
+      case (1)
 *
 *     ISPEC = 1:  block size
 *
 *     In these examples, separate code is provided for setting NB for
 *     real and complex.  We assume that NB will take the same value in
-*     single or double precision.
+*     single or real(kind=kind(1.0d0)).
 *
       NB = 1
 *
@@ -6787,7 +6701,8 @@ c
       ILAENV = NB
       RETURN
 *
-  200 CONTINUE
+      case (2)
+* 200 CONTINUE
 *
 *     ISPEC = 2:  minimum block size
 *
@@ -6865,7 +6780,8 @@ c
       ILAENV = NBMIN
       RETURN
 *
-  300 CONTINUE
+      case (3)
+* 300 CONTINUE
 *
 *     ISPEC = 3:  crossover point
 *
@@ -6918,34 +6834,46 @@ c
       END IF
       ILAENV = NX
       RETURN
+      end select
 *
-  400 CONTINUE
+      case (4)
+* 400 CONTINUE
 *
 *     ISPEC = 4:  number of shifts (used by xHSEQR)
 *
       ILAENV = 6
       RETURN
 *
-  500 CONTINUE
+      case (5)
+* 500 CONTINUE
 *
 *     ISPEC = 5:  minimum column dimension (not used)
 *
       ILAENV = 2
       RETURN
 *
-  600 CONTINUE 
+      case (6)
+* 600 CONTINUE 
 *
 *     ISPEC = 6:  crossover point for SVD (used by xGELSS and xGESVD)
 *
       ILAENV = INT( REAL( MIN( N1, N2 ) )*1.6E0 )
       RETURN
 *
-  700 CONTINUE
+      case (7)
+* 700 CONTINUE
 *
 *     ISPEC = 7:  number of processors (not used)
 *
       ILAENV = 1
       RETURN
+*
+*     Invalid value for ISPEC
+*
+      case default
+      ILAENV = -1
+      RETURN
+      end select
 *
 *     End of ILAENV
 *
@@ -6956,7 +6884,7 @@ c     constant times a vector plus a vector.
 c     jack dongarra, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex zx(*),zy(*),za
+      complex(kind((1.0d0,1.0d0))) zx(*),zy(*),za
       integer i,incx,incy,ix,iy,n
       if(n.le.0)return
       if (abs(za) .eq. 0.0d0) return
@@ -6989,7 +6917,7 @@ c     copies a vector, x, to a vector, y.
 c     jack dongarra, linpack, 4/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex zx(*),zy(*)
+      complex(kind((1.0d0,1.0d0))) zx(*),zy(*)
       integer i,incx,incy,ix,iy,n
 c
       if(n.le.0)return
@@ -7016,13 +6944,13 @@ c
    30 continue
       return
       end
-      double complex function zdotc(n,zx,incx,zy,incy)
+      complex(kind((1.0d0,1.0d0))) function zdotc(n,zx,incx,zy,incy)
 c
 c     forms the dot product of a vector.
 c     jack dongarra, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex zx(*),zy(*),ztemp
+      complex(kind((1.0d0,1.0d0))) zx(*),zy(*),ztemp
       integer i,incx,incy,ix,iy,n
       ztemp = (0.0d0,0.0d0)
       zdotc = (0.0d0,0.0d0)
@@ -7037,7 +6965,7 @@ c
       if(incx.lt.0)ix = (-n+1)*incx + 1
       if(incy.lt.0)iy = (-n+1)*incy + 1
       do 10 i = 1,n
-        ztemp = ztemp + dconjg(zx(ix))*zy(iy)
+        ztemp = ztemp + conjg(zx(ix))*zy(iy)
         ix = ix + incx
         iy = iy + incy
    10 continue
@@ -7047,7 +6975,7 @@ c
 c        code for both increments equal to 1
 c
    20 do 30 i = 1,n
-        ztemp = ztemp + dconjg(zx(i))*zy(i)
+        ztemp = ztemp + conjg(zx(i))*zy(i)
    30 continue
       zdotc = ztemp
       return
@@ -7059,8 +6987,8 @@ c     jack dongarra, 3/11/78.
 c     modified 3/93 to return if incx .le. 0.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex zx(*)
-      double precision da
+      complex(kind((1.0d0,1.0d0))) zx(*)
+      real(kind=kind(1.0d0)) da
       integer i,incx,ix,n
 c
       if( n.le.0 .or. incx.le.0 )return
@@ -7070,7 +6998,7 @@ c        code for increment not equal to 1
 c
       ix = 1
       do 10 i = 1,n
-        zx(ix) = dcmplx(da,0.0d0)*zx(ix)
+        zx(ix) = cmplx(da,0.0d0,kind=kind(1.0d0))*zx(ix)
         ix = ix + incx
    10 continue
       return
@@ -7078,7 +7006,7 @@ c
 c        code for increment equal to 1
 c
    20 do 30 i = 1,n
-        zx(i) = dcmplx(da,0.0d0)*zx(i)
+        zx(i) = cmplx(da,0.0d0,kind=kind(1.0d0))*zx(i)
    30 continue
       return
       end
@@ -7095,8 +7023,8 @@ c
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   RWORK( * ), W( * )
-      COMPLEX*16         A( LDA, * ), WORK( * )
+      real(kind=kind(1.0d0))   RWORK( * ), W( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -7108,18 +7036,18 @@ c
 *  Arguments
 *  =========
 *
-*  JOBZ    (input) CHARACTER*1
+*  JOBZ    (input) character(len=1)
 *          = 'N':  Compute eigenvalues only;
 *          = 'V':  Compute eigenvalues and eigenvectors.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA, N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA, N)
 *          On entry, the Hermitian matrix A.  If UPLO = 'U', the
 *          leading N-by-N upper triangular part of A contains the
 *          upper triangular part of the matrix A.  If UPLO = 'L',
@@ -7134,10 +7062,10 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  W       (output) DOUBLE PRECISION array, dimension (N)
+*  W       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          If INFO = 0, the eigenvalues in ascending order.
 *
-*  WORK    (workspace/output) COMPLEX*16 array, dimension (LWORK)
+*  WORK    (workspace/output) complex(kind((1.0d0,1.0d0))) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -7150,7 +7078,7 @@ c
 *          this value as the first entry of the WORK array, and no error
 *          message related to LWORK is issued by XERBLA.
 *
-*  RWORK   (workspace) DOUBLE PRECISION array, dimension (max(1, 3*N-2))
+*  RWORK   (workspace) real(kind=kind(1.0d0)) array, dimension (max(1, 3*N-2))
 *
 *  INFO    (output) INTEGER
 *          = 0:  successful exit
@@ -7162,29 +7090,26 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
-      COMPLEX*16         CONE
+      complex(kind((1.0d0,1.0d0)))         CONE
       PARAMETER          ( CONE = ( 1.0D0, 0.0D0 ) )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            LOWER, LQUERY, WANTZ
       INTEGER            IINFO, IMAX, INDE, INDTAU, INDWRK, ISCALE,
      $                   LLWORK, LOPT, LWKOPT, NB
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA,
-     $                   SMLNUM
+      real(kind=kind(1.0d0))   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN,
+     $                   SIGMA, SMLNUM
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
-      DOUBLE PRECISION   ZLANHE
+      real(kind=kind(1.0d0))   ZLANHE
       EXTERNAL           ILAENV, ZLANHE
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DSCAL, DSTERF, XERBLA, ZHETRD, ZLASCL, ZSTEQR,
      $                   ZUNGTR
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -7313,8 +7238,8 @@ c
       INTEGER            INFO, LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      COMPLEX*16         A( LDA, * ), TAU( * )
+      real(kind=kind(1.0d0))   D( * ), E( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), TAU( * )
 *     ..
 *
 *  Purpose
@@ -7327,7 +7252,7 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the upper or lower triangular part of the
 *          Hermitian matrix A is stored:
 *          = 'U':  Upper triangular
@@ -7336,7 +7261,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 *          n-by-n upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -7358,15 +7283,15 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  D       (output) DOUBLE PRECISION array, dimension (N)
+*  D       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of the tridiagonal matrix T:
 *          D(i) = A(i,i).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The off-diagonal elements of the tridiagonal matrix T:
 *          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 *
-*  TAU     (output) COMPLEX*16 array, dimension (N-1)
+*  TAU     (output) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors (see Further
 *          Details).
 *
@@ -7420,7 +7345,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO, HALF
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO, HALF
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ),
      $                   HALF = ( 0.5D+0, 0.0D+0 ) )
@@ -7428,17 +7353,14 @@ c
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I
-      COMPLEX*16         ALPHA, TAUI
+      complex(kind((1.0d0,1.0d0)))         ALPHA, TAUI
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZAXPY, ZHEMV, ZHER2, ZLARFG
 *     ..
 *     .. External Functions ..
-      COMPLEX*16         ZDOTC
+      complex(kind((1.0d0,1.0d0)))         ZDOTC
       EXTERNAL           ZDOTC
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MAX, MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -7571,8 +7493,8 @@ c
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      real(kind=kind(1.0d0))   D( * ), E( * )
+      complex(kind((1.0d0,1.0d0)))  A( LDA, * ), TAU( * ), WORK( * )
 *     ..
 *
 *  Purpose
@@ -7585,14 +7507,14 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 *          N-by-N upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -7614,19 +7536,19 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  D       (output) DOUBLE PRECISION array, dimension (N)
+*  D       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of the tridiagonal matrix T:
 *          D(i) = A(i,i).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The off-diagonal elements of the tridiagonal matrix T:
 *          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 *
-*  TAU     (output) COMPLEX*16 array, dimension (N-1)
+*  TAU     (output) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors (see Further
 *          Details).
 *
-*  WORK    (workspace/output) COMPLEX*16 array, dimension (LWORK)
+*  WORK    (workspace/output) complex(kind((1.0d0,1.0d0))) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -7689,9 +7611,9 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
-      COMPLEX*16         CONE
+      complex(kind((1.0d0,1.0d0)))         CONE
       PARAMETER          ( CONE = ( 1.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
@@ -7701,9 +7623,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZHER2K, ZHETD2, ZLATRD
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -7868,8 +7787,8 @@ c
       INTEGER            INFO, LDZ, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   RWORK( * ), W( * )
-      COMPLEX*16         AP( * ), WORK( * ), Z( LDZ, * )
+      real(kind=kind(1.0d0))   RWORK( * ), W( * )
+      complex(kind((1.0d0,1.0d0))) AP(*), WORK(*), Z(LDZ,*)
 *     ..
 *
 *  Purpose
@@ -7881,18 +7800,18 @@ c
 *  Arguments
 *  =========
 *
-*  JOBZ    (input) CHARACTER*1
+*  JOBZ    (input) character(len=1)
 *          = 'N':  Compute eigenvalues only;
 *          = 'V':  Compute eigenvalues and eigenvectors.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  AP      (input/output) COMPLEX*16 array, dimension (N*(N+1)/2)
+*  AP      (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (N*(N+1)/2)
 *          On entry, the upper or lower triangle of the Hermitian matrix
 *          A, packed columnwise in a linear array.  The j-th column of A
 *          is stored in the array AP as follows:
@@ -7906,10 +7825,10 @@ c
 *          diagonal and first subdiagonal of T overwrite the
 *          corresponding elements of A.
 *
-*  W       (output) DOUBLE PRECISION array, dimension (N)
+*  W       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          If INFO = 0, the eigenvalues in ascending order.
 *
-*  Z       (output) COMPLEX*16 array, dimension (LDZ, N)
+*  Z       (output) complex(kind((1.0d0,1.0d0))) array, dimension (LDZ, N)
 *          If JOBZ = 'V', then if INFO = 0, Z contains the orthonormal
 *          eigenvectors of the matrix A, with the i-th column of Z
 *          holding the eigenvector associated with W(i).
@@ -7919,9 +7838,9 @@ c
 *          The leading dimension of the array Z.  LDZ >= 1, and if
 *          JOBZ = 'V', LDZ >= max(1,N).
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension (max(1, 2*N-1))
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension (max(1, 2*N-1))
 *
-*  RWORK   (workspace) DOUBLE PRECISION array, dimension (max(1, 3*N-2))
+*  RWORK   (workspace) real(kind=kind(1.0d0)) array, dimension (max(1, 3*N-2))
 *
 *  INFO    (output) INTEGER
 *          = 0:  successful exit.
@@ -7933,26 +7852,23 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            WANTZ
       INTEGER            IINFO, IMAX, INDE, INDRWK, INDTAU, INDWRK,
      $                   ISCALE
-      DOUBLE PRECISION   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN, SIGMA,
-     $                   SMLNUM
+      real(kind=kind(1.0d0))   ANRM, BIGNUM, EPS, RMAX, RMIN, SAFMIN,
+     $                   SIGMA, SMLNUM
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   ZLANHP
+      real(kind=kind(1.0d0))   ZLANHP
       EXTERNAL           ZLANHP
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DSCAL, DSTERF, XERBLA, ZDSCAL, ZHPTRD, ZSTEQR,
      $                   ZUPGTR
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -8062,8 +7978,8 @@ c
       INTEGER            INFO, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * )
-      COMPLEX*16         AP( * ), TAU( * )
+      real(kind=kind(1.0d0))   D( * ), E( * )
+      complex(kind((1.0d0,1.0d0)))         AP( * ), TAU( * )
 *     ..
 *
 *  Purpose
@@ -8076,14 +7992,14 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  Upper triangle of A is stored;
 *          = 'L':  Lower triangle of A is stored.
 *
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  AP      (input/output) COMPLEX*16 array, dimension (N*(N+1)/2)
+*  AP      (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (N*(N+1)/2)
 *          On entry, the upper or lower triangle of the Hermitian matrix
 *          A, packed columnwise in a linear array.  The j-th column of A
 *          is stored in the array AP as follows:
@@ -8100,15 +8016,15 @@ c
 *          the array TAU, represent the unitary matrix Q as a product
 *          of elementary reflectors. See Further Details.
 *
-*  D       (output) DOUBLE PRECISION array, dimension (N)
+*  D       (output) real(kind=kind(1.0d0)) array, dimension (N)
 *          The diagonal elements of the tridiagonal matrix T:
 *          D(i) = A(i,i).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          The off-diagonal elements of the tridiagonal matrix T:
 *          E(i) = A(i,i+1) if UPLO = 'U', E(i) = A(i+1,i) if UPLO = 'L'.
 *
-*  TAU     (output) COMPLEX*16 array, dimension (N-1)
+*  TAU     (output) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors (see Further
 *          Details).
 *
@@ -8148,7 +8064,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO, HALF
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO, HALF
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ),
      $                   HALF = ( 0.5D+0, 0.0D+0 ) )
@@ -8156,17 +8072,14 @@ c
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, I1, I1I1, II
-      COMPLEX*16         ALPHA, TAUI
+      complex(kind((1.0d0,1.0d0)))         ALPHA, TAUI
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZAXPY, ZHPMV, ZHPR2, ZLARFG
 *     ..
 *     .. External Functions ..
-      COMPLEX*16         ZDOTC
+      complex(kind((1.0d0,1.0d0)))         ZDOTC
       EXTERNAL           ZDOTC
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -8298,7 +8211,7 @@ c
       INTEGER            INCX, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         X( * )
+      complex(kind((1.0d0,1.0d0)))         X( * )
 *     ..
 *
 *  Purpose
@@ -8312,7 +8225,7 @@ c
 *  N       (input) INTEGER
 *          The length of the vector X.  N >= 0.
 *
-*  X       (input/output) COMPLEX*16 array, dimension
+*  X       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension
 *                         (1+(N-1)*abs(INCX))
 *          On entry, the vector of length N to be conjugated.
 *          On exit, X is overwritten with conjg(X).
@@ -8325,21 +8238,18 @@ c
 *     .. Local Scalars ..
       INTEGER            I, IOFF
 *     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG
-*     ..
 *     .. Executable Statements ..
 *
       IF( INCX.EQ.1 ) THEN
          DO 10 I = 1, N
-            X( I ) = DCONJG( X( I ) )
+            X( I ) = CONJG( X( I ) )
    10    CONTINUE
       ELSE
          IOFF = 1
          IF( INCX.LT.0 )
      $      IOFF = 1 - ( N-1 )*INCX
          DO 20 I = 1, N
-            X( IOFF ) = DCONJG( X( IOFF ) )
+            X( IOFF ) = CONJG( X( IOFF ) )
             IOFF = IOFF + INCX
    20    CONTINUE
       END IF
@@ -8348,7 +8258,7 @@ c
 *     End of ZLACGV
 *
       END
-      DOUBLE COMPLEX   FUNCTION ZLADIV( X, Y )
+      complex(kind((1.0d0,1.0d0)))   FUNCTION ZLADIV( X, Y )
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8356,7 +8266,7 @@ c
 *     October 31, 1992
 *
 *     .. Scalar Arguments ..
-      COMPLEX*16         X, Y
+      complex(kind((1.0d0,1.0d0)))         X, Y
 *     ..
 *
 *  Purpose
@@ -8369,33 +8279,30 @@ c
 *  Arguments
 *  =========
 *
-*  X       (input) COMPLEX*16
-*  Y       (input) COMPLEX*16
+*  X       (input) complex(kind((1.0d0,1.0d0)))
+*  Y       (input) complex(kind((1.0d0,1.0d0)))
 *          The complex scalars X and Y.
 *
 *  =====================================================================
 *
 *     .. Local Scalars ..
-      DOUBLE PRECISION   ZI, ZR
+      real(kind=kind(1.0d0))   ZI, ZR
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLADIV
 *     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, DCMPLX, DIMAG
-*     ..
 *     .. Executable Statements ..
 *
-      CALL DLADIV( DBLE( X ), DIMAG( X ), DBLE( Y ), DIMAG( Y ), ZR,
+      CALL DLADIV( DBLE( X ), AIMAG( X ), DBLE( Y ), AIMAG( Y ), ZR,
      $             ZI )
-      ZLADIV = DCMPLX( ZR, ZI )
+      ZLADIV = CMPLX( ZR, ZI ,kind=kind(1.0d0))
 *
       RETURN
 *
 *     End of ZLADIV
 *
       END
-      DOUBLE PRECISION FUNCTION ZLANHE( NORM, UPLO, N, A, LDA, WORK )
+      real(kind=kind(1.0d0)) FUNCTION ZLANHE(NORM,UPLO,N,A,LDA,WORK)
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8407,8 +8314,8 @@ c
       INTEGER            LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   WORK( * )
-      COMPLEX*16         A( LDA, * )
+      real(kind=kind(1.0d0))   WORK( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -8439,11 +8346,11 @@ c
 *  Arguments
 *  =========
 *
-*  NORM    (input) CHARACTER*1
+*  NORM    (input) character(len=1)
 *          Specifies the value to be returned in ZLANHE as described
 *          above.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the upper or lower triangular part of the
 *          hermitian matrix A is to be referenced.
 *          = 'U':  Upper triangular part of A is referenced
@@ -8453,7 +8360,7 @@ c
 *          The order of the matrix A.  N >= 0.  When N = 0, ZLANHE is
 *          set to zero.
 *
-*  A       (input) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          The hermitian matrix A.  If UPLO = 'U', the leading n by n
 *          upper triangular part of A contains the upper triangular part
 *          of the matrix A, and the strictly lower triangular part of A
@@ -8466,25 +8373,22 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(N,1).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (LWORK),
 *          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 *          WORK is not referenced.
 *
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, J
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      real(kind=kind(1.0d0))   ABSA, SCALE, SUM, VALUE
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZLASSQ
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -8578,7 +8482,7 @@ c
 *     End of ZLANHE
 *
       END
-      DOUBLE PRECISION FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK )
+      real(kind=kind(1.0d0)) FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK )
 *
 *  -- LAPACK auxiliary routine (version 3.0) --
 *     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8590,8 +8494,8 @@ c
       INTEGER            N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   WORK( * )
-      COMPLEX*16         AP( * )
+      real(kind=kind(1.0d0))   WORK( * )
+      complex(kind((1.0d0,1.0d0)))         AP( * )
 *     ..
 *
 *  Purpose
@@ -8622,11 +8526,11 @@ c
 *  Arguments
 *  =========
 *
-*  NORM    (input) CHARACTER*1
+*  NORM    (input) character(len=1)
 *          Specifies the value to be returned in ZLANHP as described
 *          above.
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the upper or lower triangular part of the
 *          hermitian matrix A is supplied.
 *          = 'U':  Upper triangular part of A is supplied
@@ -8636,7 +8540,7 @@ c
 *          The order of the matrix A.  N >= 0.  When N = 0, ZLANHP is
 *          set to zero.
 *
-*  AP      (input) COMPLEX*16 array, dimension (N*(N+1)/2)
+*  AP      (input) complex(kind((1.0d0,1.0d0))) array, dimension (N*(N+1)/2)
 *          The upper or lower triangle of the hermitian matrix A, packed
 *          columnwise in a linear array.  The j-th column of A is stored
 *          in the array AP as follows:
@@ -8645,25 +8549,22 @@ c
 *          Note that the  imaginary parts of the diagonal elements need
 *          not be set and are assumed to be zero.
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (LWORK),
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (LWORK),
 *          where LWORK >= N when NORM = 'I' or '1' or 'O'; otherwise,
 *          WORK is not referenced.
 *
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, J, K
-      DOUBLE PRECISION   ABSA, SCALE, SUM, VALUE
+      real(kind=kind(1.0d0))   ABSA, SCALE, SUM, VALUE
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZLASSQ
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, MAX, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -8788,8 +8689,8 @@ c
       INTEGER            K, LDC, LDT, LDV, LDWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         C( LDC, * ), T( LDT, * ), V( LDV, * ),
-     $                   WORK( LDWORK, * )
+      complex(kind((1.0d0,1.0d0))) C(LDC,*), T(LDT,*), V(LDV,*)
+      complex(kind((1.0d0,1.0d0))) WORK(LDWORK,*)
 *     ..
 *
 *  Purpose
@@ -8801,21 +8702,21 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          = 'L': apply H or H' from the Left
 *          = 'R': apply H or H' from the Right
 *
-*  TRANS   (input) CHARACTER*1
+*  TRANS   (input) character(len=1)
 *          = 'N': apply H (No transpose)
 *          = 'C': apply H' (Conjugate transpose)
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Indicates how H is formed from a product of elementary
 *          reflectors
 *          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 *          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 *
-*  STOREV  (input) CHARACTER*1
+*  STOREV  (input) character(len=1)
 *          Indicates how the vectors which define the elementary
 *          reflectors are stored:
 *          = 'C': Columnwise
@@ -8831,7 +8732,7 @@ c
 *          The order of the matrix T (= the number of elementary
 *          reflectors whose product defines the block reflector).
 *
-*  V       (input) COMPLEX*16 array, dimension
+*  V       (input) complex(kind((1.0d0,1.0d0))) array, dimension
 *                                (LDV,K) if STOREV = 'C'
 *                                (LDV,M) if STOREV = 'R' and SIDE = 'L'
 *                                (LDV,N) if STOREV = 'R' and SIDE = 'R'
@@ -8843,21 +8744,21 @@ c
 *          if STOREV = 'C' and SIDE = 'R', LDV >= max(1,N);
 *          if STOREV = 'R', LDV >= K.
 *
-*  T       (input) COMPLEX*16 array, dimension (LDT,K)
+*  T       (input) complex(kind((1.0d0,1.0d0))) array, dimension (LDT,K)
 *          The triangular K-by-K matrix T in the representation of the
 *          block reflector.
 *
 *  LDT     (input) INTEGER
 *          The leading dimension of the array T. LDT >= K.
 *
-*  C       (input/output) COMPLEX*16 array, dimension (LDC,N)
+*  C       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDC,N)
 *          On entry, the M-by-N matrix C.
 *          On exit, C is overwritten by H*C or H'*C or C*H or C*H'.
 *
 *  LDC     (input) INTEGER
 *          The leading dimension of the array C. LDC >= max(1,M).
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension (LDWORK,K)
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension (LDWORK,K)
 *
 *  LDWORK  (input) INTEGER
 *          The leading dimension of the array WORK.
@@ -8867,7 +8768,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
@@ -8876,9 +8777,6 @@ c
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZCOPY, ZGEMM, ZLACGV, ZTRMM
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG
 *     ..
 *     .. Executable Statements ..
 *
@@ -8953,7 +8851,7 @@ c
 *
                DO 30 J = 1, K
                   DO 20 I = 1, N
-                     C( J, I ) = C( J, I ) - DCONJG( WORK( I, J ) )
+                     C( J, I ) = C( J, I ) - CONJG( WORK( I, J ) )
    20             CONTINUE
    30          CONTINUE
 *
@@ -9072,7 +8970,7 @@ c
                DO 90 J = 1, K
                   DO 80 I = 1, N
                      C( M-K+J, I ) = C( M-K+J, I ) -
-     $                               DCONJG( WORK( I, J ) )
+     $                               CONJG( WORK( I, J ) )
    80             CONTINUE
    90          CONTINUE
 *
@@ -9193,7 +9091,7 @@ c
 *
                DO 150 J = 1, K
                   DO 140 I = 1, N
-                     C( J, I ) = C( J, I ) - DCONJG( WORK( I, J ) )
+                     C( J, I ) = C( J, I ) - CONJG( WORK( I, J ) )
   140             CONTINUE
   150          CONTINUE
 *
@@ -9312,7 +9210,7 @@ c
                DO 210 J = 1, K
                   DO 200 I = 1, N
                      C( M-K+J, I ) = C( M-K+J, I ) -
-     $                               DCONJG( WORK( I, J ) )
+     $                               CONJG( WORK( I, J ) )
   200             CONTINUE
   210          CONTINUE
 *
@@ -9390,10 +9288,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          SIDE
       INTEGER            INCV, LDC, M, N
-      COMPLEX*16         TAU
+      complex(kind((1.0d0,1.0d0)))         TAU
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         C( LDC, * ), V( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0)))    C(LDC,*), V(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -9415,7 +9313,7 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          = 'L': form  H * C
 *          = 'R': form  C * H
 *
@@ -9425,7 +9323,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix C.
 *
-*  V       (input) COMPLEX*16 array, dimension
+*  V       (input) complex(kind((1.0d0,1.0d0))) array, dimension
 *                     (1 + (M-1)*abs(INCV)) if SIDE = 'L'
 *                  or (1 + (N-1)*abs(INCV)) if SIDE = 'R'
 *          The vector v in the representation of H. V is not used if
@@ -9434,10 +9332,10 @@ c
 *  INCV    (input) INTEGER
 *          The increment between elements of v. INCV <> 0.
 *
-*  TAU     (input) COMPLEX*16
+*  TAU     (input) complex(kind((1.0d0,1.0d0)))
 *          The value tau in the representation of H.
 *
-*  C       (input/output) COMPLEX*16 array, dimension (LDC,N)
+*  C       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDC,N)
 *          On entry, the M-by-N matrix C.
 *          On exit, C is overwritten by the matrix H * C if SIDE = 'L',
 *          or C * H if SIDE = 'R'.
@@ -9445,14 +9343,14 @@ c
 *  LDC     (input) INTEGER
 *          The leading dimension of the array C. LDC >= max(1,M).
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension
 *                         (N) if SIDE = 'L'
 *                      or (M) if SIDE = 'R'
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
@@ -9506,10 +9404,10 @@ c
 *
 *     .. Scalar Arguments ..
       INTEGER            INCX, N
-      COMPLEX*16         ALPHA, TAU
+      complex(kind((1.0d0,1.0d0)))         ALPHA, TAU
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         X( * )
+      complex(kind((1.0d0,1.0d0)))         X( * )
 *     ..
 *
 *  Purpose
@@ -9541,11 +9439,11 @@ c
 *  N       (input) INTEGER
 *          The order of the elementary reflector.
 *
-*  ALPHA   (input/output) COMPLEX*16
+*  ALPHA   (input/output) complex(kind((1.0d0,1.0d0)))
 *          On entry, the value alpha.
 *          On exit, it is overwritten with the value beta.
 *
-*  X       (input/output) COMPLEX*16 array, dimension
+*  X       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension
 *                         (1+(N-2)*abs(INCX))
 *          On entry, the vector x.
 *          On exit, it is overwritten with the vector v.
@@ -9553,26 +9451,23 @@ c
 *  INCX    (input) INTEGER
 *          The increment between elements of X. INCX > 0.
 *
-*  TAU     (output) COMPLEX*16
+*  TAU     (output) complex(kind((1.0d0,1.0d0)))
 *          The value tau.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            J, KNT
-      DOUBLE PRECISION   ALPHI, ALPHR, BETA, RSAFMN, SAFMIN, XNORM
+      real(kind=kind(1.0d0))   ALPHI, ALPHR, BETA, RSAFMN, SAFMIN, XNORM
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DLAPY3, DZNRM2
-      COMPLEX*16         ZLADIV
+      real(kind=kind(1.0d0))   DLAPY3, DZNRM2
+      complex(kind((1.0d0,1.0d0)))         ZLADIV
       EXTERNAL           DLAPY3, DZNRM2, ZLADIV
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, DCMPLX, DIMAG, SIGN
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZDSCAL, ZSCAL
@@ -9586,7 +9481,7 @@ c
 *
       XNORM = DZNRM2( N-1, X, INCX )
       ALPHR = DBLE( ALPHA )
-      ALPHI = DIMAG( ALPHA )
+      ALPHI = AIMAG( ALPHA )
 *
       IF( XNORM.EQ.ZERO .AND. ALPHI.EQ.ZERO ) THEN
 *
@@ -9618,10 +9513,10 @@ c
 *           New BETA is at most 1, at least SAFMIN
 *
             XNORM = DZNRM2( N-1, X, INCX )
-            ALPHA = DCMPLX( ALPHR, ALPHI )
+            ALPHA = CMPLX( ALPHR, ALPHI ,kind=kind(1.0d0))
             BETA = -SIGN( DLAPY3( ALPHR, ALPHI, XNORM ), ALPHR )
-            TAU = DCMPLX( ( BETA-ALPHR ) / BETA, -ALPHI / BETA )
-            ALPHA = ZLADIV( DCMPLX( ONE ), ALPHA-BETA )
+            TAU = CMPLX((BETA-ALPHR)/BETA,-ALPHI/BETA,kind=kind(1.0d0))
+            ALPHA = ZLADIV(CMPLX(ONE,ZERO,kind=kind(1.0d0)),ALPHA-BETA)
             CALL ZSCAL( N-1, ALPHA, X, INCX )
 *
 *           If ALPHA is subnormal, it may lose relative accuracy
@@ -9631,8 +9526,8 @@ c
                ALPHA = ALPHA*SAFMIN
    20       CONTINUE
          ELSE
-            TAU = DCMPLX( ( BETA-ALPHR ) / BETA, -ALPHI / BETA )
-            ALPHA = ZLADIV( DCMPLX( ONE ), ALPHA-BETA )
+            TAU = CMPLX((BETA-ALPHR)/BETA,-ALPHI/BETA,kind=kind(1.0d0))
+            ALPHA = ZLADIV(CMPLX(ONE,ZERO,kind=kind(1.0d0)),ALPHA-BETA)
             CALL ZSCAL( N-1, ALPHA, X, INCX )
             ALPHA = BETA
          END IF
@@ -9655,7 +9550,7 @@ c
       INTEGER            K, LDT, LDV, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         T( LDT, * ), TAU( * ), V( LDV, * )
+      complex(kind((1.0d0,1.0d0))) T(LDT,*), TAU(*), V(LDV,*)
 *     ..
 *
 *  Purpose
@@ -9681,13 +9576,13 @@ c
 *  Arguments
 *  =========
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Specifies the order in which the elementary reflectors are
 *          multiplied to form the block reflector:
 *          = 'F': H = H(1) H(2) . . . H(k) (Forward)
 *          = 'B': H = H(k) . . . H(2) H(1) (Backward)
 *
-*  STOREV  (input) CHARACTER*1
+*  STOREV  (input) character(len=1)
 *          Specifies how the vectors which define the elementary
 *          reflectors are stored (see also Further Details):
 *          = 'C': columnwise
@@ -9700,7 +9595,7 @@ c
 *          The order of the triangular factor T (= the number of
 *          elementary reflectors). K >= 1.
 *
-*  V       (input/output) COMPLEX*16 array, dimension
+*  V       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension
 *                               (LDV,K) if STOREV = 'C'
 *                               (LDV,N) if STOREV = 'R'
 *          The matrix V. See further details.
@@ -9709,11 +9604,11 @@ c
 *          The leading dimension of the array V.
 *          If STOREV = 'C', LDV >= max(1,N); if STOREV = 'R', LDV >= K.
 *
-*  TAU     (input) COMPLEX*16 array, dimension (K)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i).
 *
-*  T       (output) COMPLEX*16 array, dimension (LDT,K)
+*  T       (output) complex(kind((1.0d0,1.0d0))) array, dimension (LDT,K)
 *          The k by k triangular factor T of the block reflector.
 *          If DIRECT = 'F', T is upper triangular; if DIRECT = 'B', T is
 *          lower triangular. The rest of the array is not used.
@@ -9749,13 +9644,13 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, J
-      COMPLEX*16         VII
+      complex(kind((1.0d0,1.0d0)))         VII
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZGEMV, ZLACGV, ZTRMV
@@ -9874,10 +9769,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          TYPE
       INTEGER            INFO, KL, KU, LDA, M, N
-      DOUBLE PRECISION   CFROM, CTO
+      real(kind=kind(1.0d0))   CFROM, CTO
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -9892,7 +9787,7 @@ c
 *  Arguments
 *  =========
 *
-*  TYPE    (input) CHARACTER*1
+*  TYPE    (input) character(len=1)
 *          TYPE indices the storage type of the input matrix.
 *          = 'G':  A is a full matrix.
 *          = 'L':  A is a lower triangular matrix.
@@ -9915,8 +9810,8 @@ c
 *          The upper bandwidth of A.  Referenced only if TYPE = 'B',
 *          'Q' or 'Z'.
 *
-*  CFROM   (input) DOUBLE PRECISION
-*  CTO     (input) DOUBLE PRECISION
+*  CFROM   (input) real(kind=kind(1.0d0))
+*  CTO     (input) real(kind=kind(1.0d0))
 *          The matrix A is multiplied by CTO/CFROM. A(I,J) is computed
 *          without over/underflow if the final result CTO*A(I,J)/CFROM
 *          can be represented without over/underflow.  CFROM must be
@@ -9928,7 +9823,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.  N >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,M)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,M)
 *          The matrix to be multiplied by CTO/CFROM.  See TYPE for the
 *          storage type.
 *
@@ -9942,16 +9837,14 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE
+      real(kind=kind(1.0d0))   ZERO, ONE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            DONE
       INTEGER            I, ITYPE, J, K1, K2, K3, K4
-      DOUBLE PRECISION   BIGNUM, CFROM1, CFROMC, CTO1, CTOC, MUL, SMLNUM
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, MIN
+      real(kind=kind(1.0d0))   BIGNUM, CFROM1, CFROMC
+      real(kind=kind(1.0d0))   CTO1, CTOC, MUL, SMLNUM
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -10137,10 +10030,10 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          UPLO
       INTEGER            LDA, M, N
-      COMPLEX*16         ALPHA, BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA, BETA
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -10152,7 +10045,7 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies the part of the matrix A to be set.
 *          = 'U':      Upper triangular part is set. The lower triangle
 *                      is unchanged.
@@ -10166,13 +10059,13 @@ c
 *  N       (input) INTEGER
 *          On entry, N specifies the number of columns of A.
 *
-*  ALPHA   (input) COMPLEX*16
+*  ALPHA   (input) complex(kind((1.0d0,1.0d0)))
 *          All the offdiagonal array elements are set to ALPHA.
 *
-*  BETA    (input) COMPLEX*16
+*  BETA    (input) complex(kind((1.0d0,1.0d0)))
 *          All the diagonal array elements are set to BETA.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the m by n matrix A.
 *          On exit, A(i,j) = ALPHA, 1 <= i <= m, 1 <= j <= n, i.ne.j;
 *                   A(i,i) = BETA , 1 <= i <= min(m,n)
@@ -10184,9 +10077,6 @@ c
 *
 *     .. Local Scalars ..
       INTEGER            I, J
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -10250,8 +10140,8 @@ c
       INTEGER            LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   C( * ), S( * )
-      COMPLEX*16         A( LDA, * )
+      real(kind=kind(1.0d0))   C( * ), S( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -10297,19 +10187,19 @@ c
 *  Arguments
 *  =========
 *
-*  SIDE    (input) CHARACTER*1
+*  SIDE    (input) character(len=1)
 *          Specifies whether the plane rotation matrix P is applied to
 *          A on the left or the right.
 *          = 'L':  Left, compute A := P*A
 *          = 'R':  Right, compute A:= A*P'
 *
-*  DIRECT  (input) CHARACTER*1
+*  DIRECT  (input) character(len=1)
 *          Specifies whether P is a forward or backward sequence of
 *          plane rotations.
 *          = 'F':  Forward, P = P( z - 1 )*...*P( 2 )*P( 1 )
 *          = 'B':  Backward, P = P( 1 )*P( 2 )*...*P( z - 1 )
 *
-*  PIVOT   (input) CHARACTER*1
+*  PIVOT   (input) character(len=1)
 *          Specifies the plane for which P(k) is a plane rotation
 *          matrix.
 *          = 'V':  Variable pivot, the plane (k,k+1)
@@ -10324,7 +10214,7 @@ c
 *          The number of columns of the matrix A.  If n <= 1, an
 *          immediate return is effected.
 *
-*  C, S    (input) DOUBLE PRECISION arrays, dimension
+*  C, S    (input) real(kind=kind(1.0d0)) arrays, dimension
 *                  (M-1) if SIDE = 'L'
 *                  (N-1) if SIDE = 'R'
 *          c(k) and s(k) contain the cosine and sine that define the
@@ -10333,7 +10223,7 @@ c
 *          R( k ) = (  c( k )  s( k ) ).
 *                   ( -s( k )  c( k ) )
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          The m by n matrix A.  On exit, A is overwritten by P*A if
 *          SIDE = 'R' or by A*P' if SIDE = 'L'.
 *
@@ -10343,16 +10233,13 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, INFO, J
-      DOUBLE PRECISION   CTEMP, STEMP
-      COMPLEX*16         TEMP
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      real(kind=kind(1.0d0))   CTEMP, STEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -10566,10 +10453,10 @@ c
 *
 *     .. Scalar Arguments ..
       INTEGER            INCX, N
-      DOUBLE PRECISION   SCALE, SUMSQ
+      real(kind=kind(1.0d0))   SCALE, SUMSQ
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         X( * )
+      complex(kind((1.0d0,1.0d0)))         X( * )
 *     ..
 *
 *  Purpose
@@ -10600,7 +10487,7 @@ c
 *  N       (input) INTEGER
 *          The number of elements to be used from the vector X.
 *
-*  X       (input) COMPLEX*16 array, dimension (N)
+*  X       (input) complex(kind((1.0d0,1.0d0))) array, dimension (N)
 *          The vector x as described above.
 *             x( i )  = X( 1 + ( i - 1 )*INCX ), 1 <= i <= n.
 *
@@ -10608,26 +10495,23 @@ c
 *          The increment between successive values of the vector X.
 *          INCX > 0.
 *
-*  SCALE   (input/output) DOUBLE PRECISION
+*  SCALE   (input/output) real(kind=kind(1.0d0))
 *          On entry, the value  scale  in the equation above.
 *          On exit, SCALE is overwritten with the value  scl .
 *
-*  SUMSQ   (input/output) DOUBLE PRECISION
+*  SUMSQ   (input/output) real(kind=kind(1.0d0))
 *          On entry, the value  sumsq  in the equation above.
 *          On exit, SUMSQ is overwritten with the value  ssq .
 *
 * =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
       INTEGER            IX
-      DOUBLE PRECISION   TEMP1
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, DBLE, DIMAG
+      real(kind=kind(1.0d0))   TEMP1
 *     ..
 *     .. Executable Statements ..
 *
@@ -10642,8 +10526,8 @@ c
                   SUMSQ = SUMSQ + ( TEMP1 / SCALE )**2
                END IF
             END IF
-            IF( DIMAG( X( IX ) ).NE.ZERO ) THEN
-               TEMP1 = ABS( DIMAG( X( IX ) ) )
+            IF( AIMAG( X( IX ) ).NE.ZERO ) THEN
+               TEMP1 = ABS( AIMAG( X( IX ) ) )
                IF( SCALE.LT.TEMP1 ) THEN
                   SUMSQ = 1 + SUMSQ*( SCALE / TEMP1 )**2
                   SCALE = TEMP1
@@ -10671,8 +10555,8 @@ c
       INTEGER            LDA, LDW, N, NB
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   E( * )
-      COMPLEX*16         A( LDA, * ), TAU( * ), W( LDW, * )
+      real(kind=kind(1.0d0))   E( * )
+      complex(kind((1.0d0,1.0d0)))  A(LDA,*), TAU(*), W(LDW,*)
 *     ..
 *
 *  Purpose
@@ -10705,7 +10589,7 @@ c
 *  NB      (input) INTEGER
 *          The number of rows and columns to be reduced.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the Hermitian matrix A.  If UPLO = 'U', the leading
 *          n-by-n upper triangular part of A contains the upper
 *          triangular part of the matrix A, and the strictly lower
@@ -10729,18 +10613,18 @@ c
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A.  LDA >= max(1,N).
 *
-*  E       (output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          If UPLO = 'U', E(n-nb:n-1) contains the superdiagonal
 *          elements of the last NB columns of the reduced matrix;
 *          if UPLO = 'L', E(1:nb) contains the subdiagonal elements of
 *          the first NB columns of the reduced matrix.
 *
-*  TAU     (output) COMPLEX*16 array, dimension (N-1)
+*  TAU     (output) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          The scalar factors of the elementary reflectors, stored in
 *          TAU(n-nb:n-1) if UPLO = 'U', and in TAU(1:nb) if UPLO = 'L'.
 *          See Further Details.
 *
-*  W       (output) COMPLEX*16 array, dimension (LDW,NB)
+*  W       (output) complex(kind((1.0d0,1.0d0))) array, dimension (LDW,NB)
 *          The n-by-nb matrix W required to update the unreduced part
 *          of A.
 *
@@ -10799,24 +10683,21 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO, ONE, HALF
+      complex(kind((1.0d0,1.0d0)))         ZERO, ONE, HALF
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ),
      $                   ONE = ( 1.0D+0, 0.0D+0 ),
      $                   HALF = ( 0.5D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
       INTEGER            I, IW
-      COMPLEX*16         ALPHA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           ZAXPY, ZGEMV, ZHEMV, ZLACGV, ZLARFG, ZSCAL
 *     ..
 *     .. External Functions ..
-      COMPLEX*16         ZDOTC
+      complex(kind((1.0d0,1.0d0)))         ZDOTC
       EXTERNAL           ZDOTC
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MIN
 *     ..
 *     .. Executable Statements ..
 *
@@ -10945,7 +10826,7 @@ c     jack dongarra, 3/11/78.
 c     modified 3/93 to return if incx .le. 0.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex za,zx(*)
+      complex(kind((1.0d0,1.0d0))) za,zx(*)
       integer i,incx,ix,n
 c
       if( n.le.0 .or. incx.le.0 )return
@@ -10979,8 +10860,8 @@ c
       INTEGER            INFO, LDZ, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   D( * ), E( * ), WORK( * )
-      COMPLEX*16         Z( LDZ, * )
+      real(kind=kind(1.0d0))   D( * ), E( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0)))         Z( LDZ, * )
 *     ..
 *
 *  Purpose
@@ -10995,7 +10876,7 @@ c
 *  Arguments
 *  =========
 *
-*  COMPZ   (input) CHARACTER*1
+*  COMPZ   (input) character(len=1)
 *          = 'N':  Compute eigenvalues only.
 *          = 'V':  Compute eigenvalues and eigenvectors of the original
 *                  Hermitian matrix.  On entry, Z must contain the
@@ -11008,16 +10889,16 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix.  N >= 0.
 *
-*  D       (input/output) DOUBLE PRECISION array, dimension (N)
+*  D       (input/output) real(kind=kind(1.0d0)) array, dimension (N)
 *          On entry, the diagonal elements of the tridiagonal matrix.
 *          On exit, if INFO = 0, the eigenvalues in ascending order.
 *
-*  E       (input/output) DOUBLE PRECISION array, dimension (N-1)
+*  E       (input/output) real(kind=kind(1.0d0)) array, dimension (N-1)
 *          On entry, the (n-1) subdiagonal elements of the tridiagonal
 *          matrix.
 *          On exit, E has been destroyed.
 *
-*  Z       (input/output) COMPLEX*16 array, dimension (LDZ, N)
+*  Z       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDZ, N)
 *          On entry, if  COMPZ = 'V', then Z contains the unitary
 *          matrix used in the reduction to tridiagonal form.
 *          On exit, if INFO = 0, then if COMPZ = 'V', Z contains the
@@ -11030,7 +10911,7 @@ c
 *          The leading dimension of the array Z.  LDZ >= 1, and if
 *          eigenvectors are desired, then  LDZ >= max(1,N).
 *
-*  WORK    (workspace) DOUBLE PRECISION array, dimension (max(1,2*N-2))
+*  WORK    (workspace) real(kind=kind(1.0d0)) array, dimension (max(1,2*N-2))
 *          If COMPZ = 'N', then WORK is not referenced.
 *
 *  INFO    (output) INTEGER
@@ -11046,10 +10927,10 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO, ONE, TWO, THREE
+      real(kind=kind(1.0d0))   ZERO, ONE, TWO, THREE
       PARAMETER          ( ZERO = 0.0D0, ONE = 1.0D0, TWO = 2.0D0,
      $                   THREE = 3.0D0 )
-      COMPLEX*16         CZERO, CONE
+      complex(kind((1.0d0,1.0d0)))         CZERO, CONE
       PARAMETER          ( CZERO = ( 0.0D0, 0.0D0 ),
      $                   CONE = ( 1.0D0, 0.0D0 ) )
       INTEGER            MAXIT
@@ -11059,19 +10940,16 @@ c
       INTEGER            I, ICOMPZ, II, ISCALE, J, JTOT, K, L, L1, LEND,
      $                   LENDM1, LENDP1, LENDSV, LM1, LSV, M, MM, MM1,
      $                   NM1, NMAXIT
-      DOUBLE PRECISION   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1, RT2,
-     $                   S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
+      real(kind=kind(1.0d0))   ANORM, B, C, EPS, EPS2, F, G, P, R, RT1,
+     $                   RT2, S, SAFMAX, SAFMIN, SSFMAX, SSFMIN, TST
 *     ..
 *     .. External Functions ..
-      DOUBLE PRECISION   DLANST, DLAPY2
+      real(kind=kind(1.0d0))   DLANST, DLAPY2
       EXTERNAL           DLANST, DLAPY2
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DLAE2, DLAEV2, DLARTG, DLASCL, DLASRT, XERBLA,
      $                   ZLASET, ZLASR, ZSWAP
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          ABS, MAX, SIGN, SQRT
 *     ..
 *     .. Executable Statements ..
 *
@@ -11476,7 +11354,7 @@ c     interchanges two vectors.
 c     jack dongarra, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double complex zx(*),zy(*),ztemp
+      complex(kind((1.0d0,1.0d0))) zx(*),zy(*),ztemp
       integer i,incx,incy,ix,iy,n
 c
       if(n.le.0)return
@@ -11517,7 +11395,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, K, LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0)))   A(LDA,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -11544,7 +11422,7 @@ c       code for both increments equal to 1
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the (n-k+i)-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by ZGEQLF in the last k columns of its array
@@ -11554,11 +11432,11 @@ c       code for both increments equal to 1
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) COMPLEX*16 array, dimension (K)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZGEQLF.
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension (N)
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension (N)
 *
 *  INFO    (output) INTEGER
 *          = 0: successful exit
@@ -11567,7 +11445,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
@@ -11576,9 +11454,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARF, ZSCAL
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -11646,7 +11521,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, K, LDA, M, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0))) A(LDA,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -11673,7 +11548,7 @@ c       code for both increments equal to 1
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the i-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by ZGEQRF in the first k columns of its array
@@ -11683,11 +11558,11 @@ c       code for both increments equal to 1
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) COMPLEX*16 array, dimension (K)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZGEQRF.
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension (N)
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension (N)
 *
 *  INFO    (output) INTEGER
 *          = 0: successful exit
@@ -11696,7 +11571,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE, ZERO
+      complex(kind((1.0d0,1.0d0)))         ONE, ZERO
       PARAMETER          ( ONE = ( 1.0D+0, 0.0D+0 ),
      $                   ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
@@ -11705,9 +11580,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARF, ZSCAL
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -11777,7 +11649,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, K, LDA, LWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0))) A(LDA,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -11804,7 +11676,7 @@ c       code for both increments equal to 1
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the (n-k+i)-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by ZGEQLF in the last k columns of its array
@@ -11814,11 +11686,11 @@ c       code for both increments equal to 1
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) COMPLEX*16 array, dimension (K)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZGEQLF.
 *
-*  WORK    (workspace/output) COMPLEX*16 array, dimension (LWORK)
+*  WORK    (workspace/output) complex(kind((1.0d0,1.0d0))) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -11838,7 +11710,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
@@ -11848,9 +11720,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARFB, ZLARFT, ZUNG2L
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -11991,7 +11860,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, K, LDA, LWORK, M, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0))) A(LDA,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -12018,7 +11887,7 @@ c       code for both increments equal to 1
 *          The number of elementary reflectors whose product defines the
 *          matrix Q. N >= K >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the i-th column must contain the vector which
 *          defines the elementary reflector H(i), for i = 1,2,...,k, as
 *          returned by ZGEQRF in the first k columns of its array
@@ -12028,11 +11897,11 @@ c       code for both increments equal to 1
 *  LDA     (input) INTEGER
 *          The first dimension of the array A. LDA >= max(1,M).
 *
-*  TAU     (input) COMPLEX*16 array, dimension (K)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (K)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZGEQRF.
 *
-*  WORK    (workspace/output) COMPLEX*16 array, dimension (LWORK)
+*  WORK    (workspace/output) complex(kind((1.0d0,1.0d0))) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -12052,7 +11921,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Local Scalars ..
@@ -12062,9 +11931,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZLARFB, ZLARFT, ZUNG2R
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX, MIN
 *     ..
 *     .. External Functions ..
       INTEGER            ILAENV
@@ -12209,7 +12075,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, LDA, LWORK, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0)))  A(LDA,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -12226,7 +12092,7 @@ c       code for both increments equal to 1
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U': Upper triangle of A contains elementary reflectors
 *                 from ZHETRD;
 *          = 'L': Lower triangle of A contains elementary reflectors
@@ -12235,7 +12101,7 @@ c       code for both increments equal to 1
 *  N       (input) INTEGER
 *          The order of the matrix Q. N >= 0.
 *
-*  A       (input/output) COMPLEX*16 array, dimension (LDA,N)
+*  A       (input/output) complex(kind((1.0d0,1.0d0))) array, dimension (LDA,N)
 *          On entry, the vectors which define the elementary reflectors,
 *          as returned by ZHETRD.
 *          On exit, the N-by-N unitary matrix Q.
@@ -12243,11 +12109,11 @@ c       code for both increments equal to 1
 *  LDA     (input) INTEGER
 *          The leading dimension of the array A. LDA >= N.
 *
-*  TAU     (input) COMPLEX*16 array, dimension (N-1)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZHETRD.
 *
-*  WORK    (workspace/output) COMPLEX*16 array, dimension (LWORK)
+*  WORK    (workspace/output) complex(kind((1.0d0,1.0d0))) array, dimension (LWORK)
 *          On exit, if INFO = 0, WORK(1) returns the optimal LWORK.
 *
 *  LWORK   (input) INTEGER
@@ -12267,7 +12133,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO, ONE
+      complex(kind((1.0d0,1.0d0)))         ZERO, ONE
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ),
      $                   ONE = ( 1.0D+0, 0.0D+0 ) )
 *     ..
@@ -12281,9 +12147,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZUNGQL, ZUNGQR
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -12393,7 +12256,7 @@ c       code for both increments equal to 1
       INTEGER            INFO, LDQ, N
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         AP( * ), Q( LDQ, * ), TAU( * ), WORK( * )
+      complex(kind((1.0d0,1.0d0))) AP(*), Q(LDQ,*), TAU(*), WORK(*)
 *     ..
 *
 *  Purpose
@@ -12410,7 +12273,7 @@ c       code for both increments equal to 1
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U': Upper triangular packed storage used in previous
 *                 call to ZHPTRD;
 *          = 'L': Lower triangular packed storage used in previous
@@ -12419,21 +12282,21 @@ c       code for both increments equal to 1
 *  N       (input) INTEGER
 *          The order of the matrix Q. N >= 0.
 *
-*  AP      (input) COMPLEX*16 array, dimension (N*(N+1)/2)
+*  AP      (input) complex(kind((1.0d0,1.0d0))) array, dimension (N*(N+1)/2)
 *          The vectors which define the elementary reflectors, as
 *          returned by ZHPTRD.
 *
-*  TAU     (input) COMPLEX*16 array, dimension (N-1)
+*  TAU     (input) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *          TAU(i) must contain the scalar factor of the elementary
 *          reflector H(i), as returned by ZHPTRD.
 *
-*  Q       (output) COMPLEX*16 array, dimension (LDQ,N)
+*  Q       (output) complex(kind((1.0d0,1.0d0))) array, dimension (LDQ,N)
 *          The N-by-N unitary matrix Q.
 *
 *  LDQ     (input) INTEGER
 *          The leading dimension of the array Q. LDQ >= max(1,N).
 *
-*  WORK    (workspace) COMPLEX*16 array, dimension (N-1)
+*  WORK    (workspace) complex(kind((1.0d0,1.0d0))) array, dimension (N-1)
 *
 *  INFO    (output) INTEGER
 *          = 0:  successful exit
@@ -12442,7 +12305,7 @@ c       code for both increments equal to 1
 *  =====================================================================
 *
 *     .. Parameters ..
-      COMPLEX*16         CZERO, CONE
+      complex(kind((1.0d0,1.0d0)))         CZERO, CONE
       PARAMETER          ( CZERO = ( 0.0D+0, 0.0D+0 ),
      $                   CONE = ( 1.0D+0, 0.0D+0 ) )
 *     ..
@@ -12452,9 +12315,6 @@ c       code for both increments equal to 1
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           XERBLA, ZUNG2L, ZUNG2R
-*     ..
-*     .. Intrinsic Functions ..
-      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *

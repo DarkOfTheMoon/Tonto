@@ -5,7 +5,7 @@ c     uses unrolled loops for increments equal to one.
 c     jack dongarra, linpack, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision dx(*),dy(*),da
+      real(kind=kind(1.0d0)) dx(*),dy(*),da
       integer i,incx,incy,ix,iy,m,mp1,n
 c
       if(n.le.0)return
@@ -53,7 +53,7 @@ c     uses unrolled loops for increments equal to one.
 c     jack dongarra, linpack, 3/11/78.
 c     modified 12/3/93, array(1) declarations changed to array(*)
 c
-      double precision dx(*),dy(*)
+      real(kind=kind(1.0d0)) dx(*),dy(*)
       integer i,incx,incy,ix,iy,m,mp1,n
 c
       if(n.le.0)return
@@ -101,9 +101,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
-      DOUBLE PRECISION   ALPHA, BETA
+      real(kind=kind(1.0d0))   ALPHA, BETA
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * ), C( LDC, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * ), C( LDC, * )
 *     ..
 *
 *  Purpose
@@ -164,11 +164,11 @@ c
 *           be at least  zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, ka ), where ka is
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANSA = 'N' or 'n',  and is  m  otherwise.
 *           Before entry with  TRANSA = 'N' or 'n',  the leading  m by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -183,7 +183,7 @@ c
 *           least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - DOUBLE PRECISION array of DIMENSION ( LDB, kb ), where kb is
+*  B      - real(kind=kind(1.0d0)) array of DIMENSION ( LDB, kb ), where kb is
 *           n  when  TRANSB = 'N' or 'n',  and is  k  otherwise.
 *           Before entry with  TRANSB = 'N' or 'n',  the leading  k by n
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -198,12 +198,12 @@ c
 *           least  max( 1, n ).
 *           Unchanged on exit.
 *
-*  BETA   - DOUBLE PRECISION.
+*  BETA   - real(kind=kind(1.0d0)).
 *           On entry,  BETA  specifies the scalar  beta.  When  BETA  is
 *           supplied as zero then C need not be set on input.
 *           Unchanged on exit.
 *
-*  C      - DOUBLE PRECISION array of DIMENSION ( LDC, n ).
+*  C      - real(kind=kind(1.0d0)) array of DIMENSION ( LDC, n ).
 *           Before entry, the leading  m by n  part of the array  C must
 *           contain the matrix  C,  except when  beta  is zero, in which
 *           case C need not be set on entry.
@@ -233,9 +233,9 @@ c
 *     .. Local Scalars ..
       LOGICAL            NOTA, NOTB
       INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Executable Statements ..
@@ -409,11 +409,11 @@ c
       SUBROUTINE DGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA, BETA
+      real(kind=kind(1.0d0))   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
       character(len=1)        TRANS
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -451,11 +451,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients.
 *           Unchanged on exit.
@@ -466,7 +466,7 @@ c
 *           max( 1, m ).
 *           Unchanged on exit.
 *
-*  X      - DOUBLE PRECISION array of DIMENSION at least
+*  X      - real(kind=kind(1.0d0)) array of DIMENSION at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
@@ -479,12 +479,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - DOUBLE PRECISION.
+*  BETA   - real(kind=kind(1.0d0)).
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - DOUBLE PRECISION array of DIMENSION at least
+*  Y      - real(kind=kind(1.0d0)) array of DIMENSION at least
 *           ( 1 + ( m - 1 )*abs( INCY ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ) otherwise.
@@ -508,10 +508,10 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -666,10 +666,10 @@ c
       END
       SUBROUTINE DGER  ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA
+      real(kind=kind(1.0d0))   ALPHA
       INTEGER            INCX, INCY, LDA, M, N
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -695,11 +695,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - DOUBLE PRECISION array of dimension at least
+*  X      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the m
 *           element vector x.
@@ -710,7 +710,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - DOUBLE PRECISION array of dimension at least
+*  Y      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -721,7 +721,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients. On exit, A is
 *           overwritten by the updated matrix.
@@ -743,10 +743,10 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER        ( ZERO = 0.0D+0 )
 *     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
       INTEGER            I, INFO, IX, J, JY, KX
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -833,7 +833,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -859,7 +859,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the m by n matrix to be factored.
 *          On exit, the factors L and U from the factorization
 *          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -882,7 +882,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -968,7 +968,7 @@ c
 *     ..
 *     .. Array Arguments ..
       INTEGER            IPIV( * )
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -994,7 +994,7 @@ c
 *  N       (input) INTEGER
 *          The number of columns of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the M-by-N matrix to be factored.
 *          On exit, the factors L and U from the factorization
 *          A = P*L*U; the unit diagonal elements of L are not stored.
@@ -1017,7 +1017,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -1124,7 +1124,7 @@ c
 *     September 30, 1994
 *
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   CS, F, G, R, SN
+      real(kind=kind(1.0d0))   CS, F, G, R, SN
 *     ..
 *
 *  Purpose
@@ -1148,35 +1148,36 @@ c
 *  Arguments
 *  =========
 *
-*  F       (input) DOUBLE PRECISION
+*  F       (input) real(kind=kind(1.0d0))
 *          The first component of vector to be rotated.
 *
-*  G       (input) DOUBLE PRECISION
+*  G       (input) real(kind=kind(1.0d0))
 *          The second component of vector to be rotated.
 *
-*  CS      (output) DOUBLE PRECISION
+*  CS      (output) real(kind=kind(1.0d0))
 *          The cosine of the rotation.
 *
-*  SN      (output) DOUBLE PRECISION
+*  SN      (output) real(kind=kind(1.0d0))
 *          The sine of the rotation.
 *
-*  R       (output) DOUBLE PRECISION
+*  R       (output) real(kind=kind(1.0d0))
 *          The nonzero component of the rotated vector.
 *
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER          ( ZERO = 0.0D0 )
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D0 )
-      DOUBLE PRECISION   TWO
+      real(kind=kind(1.0d0))   TWO
       PARAMETER          ( TWO = 2.0D0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            FIRST
       INTEGER            COUNT, I
-      DOUBLE PRECISION   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE, RAD
+      real(kind=kind(1.0d0))   EPS, F1, G1, SAFMIN
+      real(kind=kind(1.0d0))   SAFMN2, SAFMX2, SCALE, RAD
 *     ..
 *     .. Intrinsic Functions ..
       INTRINSIC          ABS, INT, LOG, MAX, SQRT
@@ -1258,11 +1259,11 @@ c
       SUBROUTINE DSYMV ( UPLO, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA, BETA
+      real(kind=kind(1.0d0))   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -1296,11 +1297,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the symmetric matrix and the strictly
@@ -1317,7 +1318,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - DOUBLE PRECISION array of dimension at least
+*  X      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -1328,12 +1329,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - DOUBLE PRECISION.
+*  BETA   - real(kind=kind(1.0d0)).
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - DOUBLE PRECISION array of dimension at least
+*  Y      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y. On exit, Y is overwritten by the updated
@@ -1355,10 +1356,10 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP1, TEMP2
+      real(kind=kind(1.0d0))   TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -1516,11 +1517,11 @@ c
       END
       SUBROUTINE DSYR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      DOUBLE PRECISION   ALPHA
+      real(kind=kind(1.0d0))   ALPHA
       INTEGER            INCX, INCY, LDA, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -1554,11 +1555,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - DOUBLE PRECISION array of dimension at least
+*  X      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -1569,7 +1570,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - DOUBLE PRECISION array of dimension at least
+*  Y      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -1580,7 +1581,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the symmetric matrix and the strictly
@@ -1611,10 +1612,10 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER        ( ZERO = 0.0D+0 )
 *     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP1, TEMP2
+      real(kind=kind(1.0d0))   TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
@@ -1746,9 +1747,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        UPLO, TRANS
       INTEGER            N, K, LDA, LDB, LDC
-      DOUBLE PRECISION   ALPHA, BETA
+      real(kind=kind(1.0d0))   ALPHA, BETA
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * ), C( LDC, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * ), C( LDC, * )
 *     ..
 *
 *  Purpose
@@ -1809,11 +1810,11 @@ c
 *           of rows of the matrices  A and B.  K must be at least  zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, ka ), where ka is
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -1828,7 +1829,7 @@ c
 *           be at least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - DOUBLE PRECISION array of DIMENSION ( LDB, kb ), where kb is
+*  B      - real(kind=kind(1.0d0)) array of DIMENSION ( LDB, kb ), where kb is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -1843,11 +1844,11 @@ c
 *           be at least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  BETA   - DOUBLE PRECISION.
+*  BETA   - real(kind=kind(1.0d0)).
 *           On entry, BETA specifies the scalar beta.
 *           Unchanged on exit.
 *
-*  C      - DOUBLE PRECISION array of DIMENSION ( LDC, n ).
+*  C      - real(kind=kind(1.0d0)) array of DIMENSION ( LDC, n ).
 *           Before entry  with  UPLO = 'U' or 'u',  the leading  n by n
 *           upper triangular part of the array C must contain the upper
 *           triangular part  of the  symmetric matrix  and the strictly
@@ -1884,9 +1885,9 @@ c
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, INFO, J, L, NROWA
-      DOUBLE PRECISION   TEMP1, TEMP2
+      real(kind=kind(1.0d0))   TEMP1, TEMP2
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Executable Statements ..
@@ -2069,9 +2070,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      DOUBLE PRECISION   ALPHA
+      real(kind=kind(1.0d0))   ALPHA
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -2142,13 +2143,13 @@ c
 *           at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 *           zero then  A is not referenced and  B need not be set before
 *           entry.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, k ), where k is m
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, k ), where k is m
 *           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 *           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 *           upper triangular part of the array  A must contain the upper
@@ -2169,7 +2170,7 @@ c
 *           then LDA must be at least max( 1, n ).
 *           Unchanged on exit.
 *
-*  B      - DOUBLE PRECISION array of DIMENSION ( LDB, n ).
+*  B      - real(kind=kind(1.0d0)) array of DIMENSION ( LDB, n ).
 *           Before entry,  the leading  m by n part of the array  B must
 *           contain the matrix  B,  and  on exit  is overwritten  by the
 *           transformed matrix.
@@ -2196,9 +2197,9 @@ c
 *     .. Local Scalars ..
       LOGICAL            LSIDE, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Executable Statements ..
@@ -2420,7 +2421,7 @@ c
       INTEGER            INCX, LDA, N
       character(len=1)        DIAG, TRANS, UPLO
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), X( * )
+      real(kind=kind(1.0d0))   A( LDA, * ), X( * )
 *     ..
 *
 *  Purpose
@@ -2474,7 +2475,7 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, n ).
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular matrix and the strictly lower triangular part of
@@ -2493,7 +2494,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - DOUBLE PRECISION array of dimension at least
+*  X      - real(kind=kind(1.0d0)) array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x. On exit, X is overwritten with the
@@ -2515,10 +2516,10 @@ c
 *
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ZERO
+      real(kind=kind(1.0d0))   ZERO
       PARAMETER        ( ZERO = 0.0D+0 )
 *     .. Local Scalars ..
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
       INTEGER            I, INFO, IX, J, JX, KX
       LOGICAL            NOUNIT
 *     .. External Subroutines ..
@@ -2703,9 +2704,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      DOUBLE PRECISION   ALPHA
+      real(kind=kind(1.0d0))   ALPHA
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * ), B( LDB, * )
+      real(kind=kind(1.0d0))   A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -2778,13 +2779,13 @@ c
 *           at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - DOUBLE PRECISION.
+*  ALPHA  - real(kind=kind(1.0d0)).
 *           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 *           zero then  A is not referenced and  B need not be set before
 *           entry.
 *           Unchanged on exit.
 *
-*  A      - DOUBLE PRECISION array of DIMENSION ( LDA, k ), where k is m
+*  A      - real(kind=kind(1.0d0)) array of DIMENSION ( LDA, k ), where k is m
 *           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 *           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 *           upper triangular part of the array  A must contain the upper
@@ -2805,7 +2806,7 @@ c
 *           then LDA must be at least max( 1, n ).
 *           Unchanged on exit.
 *
-*  B      - DOUBLE PRECISION array of DIMENSION ( LDB, n ).
+*  B      - real(kind=kind(1.0d0)) array of DIMENSION ( LDB, n ).
 *           Before entry,  the leading  m by n part of the array  B must
 *           contain  the  right-hand  side  matrix  B,  and  on exit  is
 *           overwritten by the solution matrix  X.
@@ -2833,9 +2834,9 @@ c
 *     .. Local Scalars ..
       LOGICAL            LSIDE, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      DOUBLE PRECISION   TEMP
+      real(kind=kind(1.0d0))   TEMP
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE         , ZERO
+      real(kind=kind(1.0d0))   ONE         , ZERO
       PARAMETER        ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Executable Statements ..
@@ -3084,7 +3085,7 @@ c
       INTEGER            INFO, LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -3111,7 +3112,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the triangular matrix A.  If UPLO = 'U', the
 *          leading n by n upper triangular part of the array A contains
 *          the upper triangular matrix, and the strictly lower
@@ -3135,13 +3136,13 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
 *     ..
 *     .. Local Scalars ..
       LOGICAL            NOUNIT, UPPER
       INTEGER            J
-      DOUBLE PRECISION   AJJ
+      real(kind=kind(1.0d0))   AJJ
 *     ..
 *     .. External Subroutines ..
       EXTERNAL           DSCAL, DTRMV, XERBLA
@@ -3227,7 +3228,7 @@ c
       INTEGER            INFO, LDA, N
 *     ..
 *     .. Array Arguments ..
-      DOUBLE PRECISION   A( LDA, * )
+      real(kind=kind(1.0d0))   A( LDA, * )
 *     ..
 *
 *  Purpose
@@ -3252,7 +3253,7 @@ c
 *  N       (input) INTEGER
 *          The order of the matrix A.  N >= 0.
 *
-*  A       (input/output) DOUBLE PRECISION array, dimension (LDA,N)
+*  A       (input/output) real(kind=kind(1.0d0)) array, dimension (LDA,N)
 *          On entry, the triangular matrix A.  If UPLO = 'U', the
 *          leading N-by-N upper triangular part of the array A contains
 *          the upper triangular matrix, and the strictly lower
@@ -3277,7 +3278,7 @@ c
 *  =====================================================================
 *
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE, ZERO
+      real(kind=kind(1.0d0))   ONE, ZERO
       PARAMETER          ( ONE = 1.0D+0, ZERO = 0.0D+0 )
 *     ..
 *     .. Local Scalars ..
@@ -3399,7 +3400,7 @@ c
 *     September 30, 1994
 *
 *     .. Scalar Arguments ..
-      CHARACTER*6        SRNAME
+      character(len=6)   SRNAME
       INTEGER            INFO
 *     ..
 *
@@ -3442,9 +3443,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
-      double complex         ALPHA, BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA, BETA
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      complex(kind((1.0d0,1.0d0)))  A(LDA,*), B(LDB,*), C(LDC,*)
 *     ..
 *
 *  Purpose
@@ -3505,11 +3506,11 @@ c
 *           be at least  zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, ka ), where ka is
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANSA = 'N' or 'n',  and is  m  otherwise.
 *           Before entry with  TRANSA = 'N' or 'n',  the leading  m by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -3524,7 +3525,7 @@ c
 *           least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - double complex       array of DIMENSION ( LDB, kb ), where kb is
+*  B      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDB, kb ), where kb is
 *           n  when  TRANSB = 'N' or 'n',  and is  k  otherwise.
 *           Before entry with  TRANSB = 'N' or 'n',  the leading  k by n
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -3539,12 +3540,12 @@ c
 *           least  max( 1, n ).
 *           Unchanged on exit.
 *
-*  BETA   - double complex      .
+*  BETA   - complex(kind((1.0d0,1.0d0)))      .
 *           On entry,  BETA  specifies the scalar  beta.  When  BETA  is
 *           supplied as zero then C need not be set on input.
 *           Unchanged on exit.
 *
-*  C      - double complex       array of DIMENSION ( LDC, n ).
+*  C      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDC, n ).
 *           Before entry, the leading  m by n  part of the array  C must
 *           contain the matrix  C,  except when  beta  is zero, in which
 *           case C need not be set on entry.
@@ -3569,15 +3570,15 @@ c
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      INTRINSIC          CONJG, MAX
 *     .. Local Scalars ..
       LOGICAL            CONJA, CONJB, NOTA, NOTB
       INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
-      double complex         TEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
 *     .. Parameters ..
-      double complex         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -3851,11 +3852,11 @@ c
       SUBROUTINE ZGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      double complex         ALPHA, BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
       character(len=1)        TRANS
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -3895,11 +3896,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, n ).
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients.
 *           Unchanged on exit.
@@ -3910,7 +3911,7 @@ c
 *           max( 1, m ).
 *           Unchanged on exit.
 *
-*  X      - double complex       array of DIMENSION at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
@@ -3923,12 +3924,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - double complex      .
+*  BETA   - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of DIMENSION at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION at least
 *           ( 1 + ( m - 1 )*abs( INCY ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ) otherwise.
@@ -3952,18 +3953,18 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
       LOGICAL            NOCONJ
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      INTRINSIC          CONJG, MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4128,10 +4129,10 @@ c
       END
       SUBROUTINE ZGERC ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      double complex         ALPHA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
       INTEGER            INCX, INCY, LDA, M, N
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4157,11 +4158,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the m
 *           element vector x.
@@ -4172,7 +4173,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of dimension at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -4183,7 +4184,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, n ).
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients. On exit, A is
 *           overwritten by the updated matrix.
@@ -4205,15 +4206,15 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
       INTEGER            I, INFO, IX, J, JY, KX
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      INTRINSIC          CONJG, MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4286,11 +4287,11 @@ c
       SUBROUTINE ZHEMV ( UPLO, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      double complex         ALPHA, BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4324,11 +4325,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, n ).
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the hermitian matrix and the strictly
@@ -4347,7 +4348,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -4358,12 +4359,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - double complex      .
+*  BETA   - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of dimension at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y. On exit, Y is overwritten by the updated
@@ -4385,17 +4386,17 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP1, TEMP2
+      complex(kind((1.0d0,1.0d0)))         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX, DBLE
+      INTRINSIC          CONJG, MAX, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -4548,11 +4549,11 @@ c
       END
       SUBROUTINE ZHER2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      double complex         ALPHA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
       INTEGER            INCX, INCY, LDA, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4586,11 +4587,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -4601,7 +4602,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of dimension at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -4612,7 +4613,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, n ).
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the hermitian matrix and the strictly
@@ -4646,15 +4647,15 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP1, TEMP2
+      complex(kind((1.0d0,1.0d0)))         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX, DBLE
+      INTRINSIC          CONJG, MAX, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -4797,11 +4798,11 @@ c
 *     .. Scalar Arguments ..
       CHARACTER          TRANS, UPLO
       INTEGER            K, LDA, LDB, LDC, N
-      DOUBLE PRECISION   BETA
-      double complex         ALPHA
+      real(kind=kind(1.0d0))   BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
 *     ..
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      complex(kind((1.0d0,1.0d0)))         A(LDA,*), B(LDB,*), C(LDC,*)
 *     ..
 *
 *  Purpose
@@ -4861,11 +4862,11 @@ c
 *           matrices  A and B.  K must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex         .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))         .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, ka ), where ka is
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -4880,7 +4881,7 @@ c
 *           be at least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - double complex       array of DIMENSION ( LDB, kb ), where kb is
+*  B      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDB, kb ), where kb is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -4895,11 +4896,11 @@ c
 *           be at least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  BETA   - DOUBLE PRECISION            .
+*  BETA   - real(kind=kind(1.0d0))            .
 *           On entry, BETA specifies the scalar beta.
 *           Unchanged on exit.
 *
-*  C      - double complex          array of DIMENSION ( LDC, n ).
+*  C      - complex(kind((1.0d0,1.0d0)))          array of DIMENSION ( LDC, n ).
 *           Before entry  with  UPLO = 'U' or 'u',  the leading  n by n
 *           upper triangular part of the array C must contain the upper
 *           triangular part  of the  hermitian matrix  and the strictly
@@ -4938,17 +4939,17 @@ c
       EXTERNAL           XERBLA
 *     ..
 *     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, MAX
+      INTRINSIC          DBLE, CONJG, MAX
 *     ..
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, INFO, J, L, NROWA
-      double complex         TEMP1, TEMP2
+      complex(kind((1.0d0,1.0d0)))         TEMP1, TEMP2
 *     ..
 *     .. Parameters ..
-      DOUBLE PRECISION   ONE
+      real(kind=kind(1.0d0))   ONE
       PARAMETER          ( ONE = 1.0D+0 )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -5161,11 +5162,11 @@ c
       END
       SUBROUTINE ZHPMV ( UPLO, N, ALPHA, AP, X, INCX, BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      double complex         ALPHA, BETA
+      complex(kind((1.0d0,1.0d0)))         ALPHA, BETA
       INTEGER            INCX, INCY, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      double complex         AP( * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         AP( * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -5199,11 +5200,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  AP     - double complex       array of DIMENSION at least
+*  AP     - complex(kind((1.0d0,1.0d0)))       array of DIMENSION at least
 *           ( ( n*( n + 1 ) )/2 ).
 *           Before entry with UPLO = 'U' or 'u', the array AP must
 *           contain the upper triangular part of the hermitian matrix
@@ -5219,7 +5220,7 @@ c
 *           not be set and are assumed to be zero.
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -5230,12 +5231,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - double complex      .
+*  BETA   - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of dimension at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y. On exit, Y is overwritten by the updated
@@ -5257,17 +5258,17 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP1, TEMP2
+      complex(kind((1.0d0,1.0d0)))         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
+      INTRINSIC          CONJG, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -5428,11 +5429,11 @@ c
       END
       SUBROUTINE ZHPR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, AP )
 *     .. Scalar Arguments ..
-      double complex         ALPHA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
       INTEGER            INCX, INCY, N
       character(len=1)        UPLO
 *     .. Array Arguments ..
-      double complex         AP( * ), X( * ), Y( * )
+      complex(kind((1.0d0,1.0d0)))         AP( * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -5466,11 +5467,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -5481,7 +5482,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - double complex       array of dimension at least
+*  Y      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -5492,7 +5493,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  AP     - double complex       array of DIMENSION at least
+*  AP     - complex(kind((1.0d0,1.0d0)))       array of DIMENSION at least
 *           ( ( n*( n + 1 ) )/2 ).
 *           Before entry with  UPLO = 'U' or 'u', the array AP must
 *           contain the upper triangular part of the hermitian matrix
@@ -5523,15 +5524,15 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP1, TEMP2
+      complex(kind((1.0d0,1.0d0)))         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DBLE
+      INTRINSIC          CONJG, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -5679,9 +5680,9 @@ c
 *     .. Scalar Arguments ..
       character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      double complex         ALPHA
+      complex(kind((1.0d0,1.0d0)))         ALPHA
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), B( LDB, * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -5752,13 +5753,13 @@ c
 *           at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - double complex      .
+*  ALPHA  - complex(kind((1.0d0,1.0d0)))      .
 *           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 *           zero then  A is not referenced and  B need not be set before
 *           entry.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, k ), where k is m
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, k ), where k is m
 *           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 *           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 *           upper triangular part of the array  A must contain the upper
@@ -5779,7 +5780,7 @@ c
 *           then LDA must be at least max( 1, n ).
 *           Unchanged on exit.
 *
-*  B      - double complex       array of DIMENSION ( LDB, n ).
+*  B      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDB, n ).
 *           Before entry,  the leading  m by n part of the array  B must
 *           contain the matrix  B,  and  on exit  is overwritten  by the
 *           transformed matrix.
@@ -5802,15 +5803,15 @@ c
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      INTRINSIC          CONJG, MAX
 *     .. Local Scalars ..
       LOGICAL            LSIDE, NOCONJ, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      double complex         TEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
 *     .. Parameters ..
-      double complex         ONE
+      complex(kind((1.0d0,1.0d0)))         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -6067,7 +6068,7 @@ c
       INTEGER            INCX, LDA, N
       character(len=1)        DIAG, TRANS, UPLO
 *     .. Array Arguments ..
-      double complex         A( LDA, * ), X( * )
+      complex(kind((1.0d0,1.0d0)))         A( LDA, * ), X( * )
 *     ..
 *
 *  Purpose
@@ -6121,7 +6122,7 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  A      - double complex       array of DIMENSION ( LDA, n ).
+*  A      - complex(kind((1.0d0,1.0d0)))       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular matrix and the strictly lower triangular part of
@@ -6140,7 +6141,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - double complex       array of dimension at least
+*  X      - complex(kind((1.0d0,1.0d0)))       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x. On exit, X is overwritten with the
@@ -6162,16 +6163,16 @@ c
 *
 *
 *     .. Parameters ..
-      double complex         ZERO
+      complex(kind((1.0d0,1.0d0)))         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      double complex         TEMP
+      complex(kind((1.0d0,1.0d0)))         TEMP
       INTEGER            I, INFO, IX, J, JX, KX
       LOGICAL            NOCONJ, NOUNIT
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          MAX
+      INTRINSIC          CONJG, MAX
 *     ..
 *     .. Executable Statements ..
 *
