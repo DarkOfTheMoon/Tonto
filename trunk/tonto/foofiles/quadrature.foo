@@ -8,11 +8,22 @@
 ! quadratures are based on the Numerical Recipes, pp. 144-149.
 !
 ! The following Gauss quadratures are available, with weight function W(x):
-! . Gauss-Legendre:  W(x) = 1,                     -1 < x < 1
-! . Guass-Chebyshev: W(x) = (1-x^2)^{-1/2},        -1 < x < 1
-! . Guass-Laguerre:  W(x) = x^alpha e^-x,           0 < x < infinity
-! . Guass-Hermite:   W(x) = e^-x^2,         -infinity < x < infinity
-! . Guass-Jacobi:    W(x) = (1-x)^alpa(1-x)^beta,  -1 < x < 1
+! . Gauss-Legendre:             W(x) = 1,                     -1 < x < 1
+! . Gauss-Chebyshev (1st kind): W(x) = (1-x^2)^{-1/2},        -1 < x < 1
+! . Gauss-Chebyshev (2nd kind): W(x) = (1-x^2)^{+1/2},        -1 < x < 1
+! . Gauss-Laguerre:             W(x) = x^alpha e^-x,           0 < x < inf
+! . Gauss-Hermite:              W(x) = e^-x^2,              -inf < x < inf
+! . Gauss-Jacobi:               W(x) = (1-x)^alpha(1-x)^beta, -1 < x < 1
+!
+! This module also implements adaptive quadratures which don't require any roots
+! or weights to be evaluated. The following adaptive quadratures are available
+! in 1 dimension
+! . Adaptive trapezoid with Simpson's rule acceleration at the end
+! . Adaptive Simpson's rule
+!
+! The following adaptive quadratures are available in 3 dimensions
+! . Adaptive trapezoid (1st order method)
+! . Adaptive Ewing's rule (3rd order method)
 !
 ! Copyright (C) Dylan Jayatilaka, 2004
 !
@@ -45,7 +56,7 @@ module QUADRATURE
 !   ! Identifier for the kind of quadrature
 !
 !   n_points :: INT  DEFAULT(0)
-!   ! No of quadrature points
+!   ! No of quadrature points, or the order of the quadrature
 !
 !   lower_limit :: REAL  DEFAULT(-ONE)
 !   ! Lower integration limit (if appropriate)
@@ -70,6 +81,124 @@ module QUADRATURE
 !
 !   end
 
+!  ********************************************
+!  These are for adaptive trapezoid integration
+!  ********************************************
+
+   ! Points of a 3x3x3 cube in standard order
+   cube3 :: MAT{INT}(3,27), private
+   data cube3(1:3,1:27)/            &
+      -1,-1,-1,  0,-1,-1,  1,-1,-1, &
+      -1, 0,-1,  0, 0,-1,  1, 0,-1, &
+      -1, 1,-1,  0, 1,-1,  1, 1,-1, &
+      -1,-1, 0,  0,-1, 0,  1,-1, 0, &
+      -1, 0, 0,  0, 0, 0,  1, 0, 0, & ! Point 14 is the center
+      -1, 1, 0,  0, 1, 0,  1, 1, 0, &
+      -1,-1, 1,  0,-1, 1,  1,-1, 1, &
+      -1, 0, 1,  0, 0, 1,  1, 0, 1, &
+      -1, 1, 1,  0, 1, 1,  1, 1, 1  /
+
+   ! The corner indices of cube3
+   corners :: VEC{INT}(8), private
+   data corners(1:8)/1,3,7,9,19,21,25,27/
+
+   ! Everything except the corner indices of cube3
+   non_corners :: VEC{INT}(19), private
+   data non_corners(1:19)/2,4,5,6,8,10,11,12,13,14,15,16,17,18,20,22,23,24,26/
+
+   ! The indices of the 8 subcubes of a cube3
+   subcube :: MAT{INT}(8,8), private
+   data subcube(1:8,1:8)/      &
+       1, 2, 4, 5,10,11,13,14, &
+       2, 3, 5, 6,11,12,14,15, &
+       4, 5, 7, 8,13,14,16,17, &
+       5, 6, 8, 9,14,15,17,18, &
+      10,11,13,14,19,20,22,23, &
+      11,12,14,15,20,21,23,24, &
+      13,14,16,17,22,23,25,26, &
+      14,15,17,18,23,24,26,27  /
+
+   ! Body centered points of a 5x5x5 cube in standard order
+   bcc3 :: MAT{INT}(3,35), private
+   data bcc3(1:3,1:35)/             &
+      -2,-2,-2,  0,-2,-2,  2,-2,-2, &
+      -2, 0,-2,  0, 0,-2,  2, 0,-2, &
+      -2, 2,-2,  0, 2,-2,  2, 2,-2, &
+      -2,-2, 0,  0,-2, 0,  2,-2, 0, &
+      -2, 0, 0,  0, 0, 0,  2, 0, 0, & ! Point 14 is the center
+      -2, 2, 0,  0, 2, 0,  2, 2, 0, &
+      -2,-2, 2,  0,-2, 2,  2,-2, 2, &
+      -2, 0, 2,  0, 0, 2,  2, 0, 2, &
+      -2, 2, 2,  0, 2, 2,  2, 2, 2, & ! Now follows the subcube bcc points 
+      -1,-1,-1,  1,-1,-1, -1, 1,-1,  1, 1,-1, &
+      -1,-1, 1,  1,-1, 1, -1, 1, 1,  1, 1, 1  /
+
+   ! The indices of a body centered cube in a bcc3
+   ! The body centered point is the last
+   bcc :: VEC{INT}(9), private
+   data bcc(1:9)/1,3,7,9,19,21,25,27,14/
+
+   ! Everything except the body centered points of a bcc3
+   non_bcc :: VEC{INT}(26), private
+   data non_bcc(1:26)/2,4,5,6,8,10,11,12,13,15,16,17,18,20,22,23,24,26, &
+                      28,29,30,31,32,33,34,35/
+
+   ! The indices of the 8 sub-bcc cubes of a bcc3
+   ! The body centered point is the last in each row
+   subbcc :: MAT{INT}(9,8), private
+   data subbcc(1:9,1:8)/          &
+       1, 2, 4, 5,10,11,13,14,28, &
+       2, 3, 5, 6,11,12,14,15,29, &
+       4, 5, 7, 8,13,14,16,17,30, &
+       5, 6, 8, 9,14,15,17,18,31, &
+      10,11,13,14,19,20,22,23,32, &
+      11,12,14,15,20,21,23,24,33, &
+      13,14,16,17,22,23,25,26,34, &
+      14,15,17,18,23,24,26,27,35  /
+
+   ! Origin point
+   e0 :: VEC{INT}(3), private = [0,0,0]
+
+   ! Fully symmetric e1 points
+   e1_fs :: MAT{INT}(3,6), private 
+   data e1_fs(1:3,1:6)/ &
+      -1, 0, 0, &
+       1, 0, 0, &
+       0,-1, 0, &
+       0, 1, 0, &
+       0, 0,-1, &
+       0, 0, 1  /
+
+   ! Fully symmetric e2 points
+   e2_fs :: MAT{INT}(3,12), private 
+   data e2_fs(1:3,1:12)/ &
+      -1,-1, 0, &
+       1,-1, 0, &
+      -1, 1, 0, &
+       1, 1, 0, &
+      -1, 0,-1, &
+       1, 0,-1, &
+      -1, 0, 1, &
+       1, 0, 1, &
+       0,-1,-1, &
+       0, 1,-1, &
+       0,-1, 1, &
+       0, 1, 1  /
+
+   ! Fully symmetric e3 points
+   e3_fs :: MAT{INT}(3,8), private 
+   data e3_fs(1:3,1:8)/ &
+      -1,-1,-1, &
+       1,-1,-1, &
+      -1, 1,-1, &
+       1, 1,-1, &
+      -1,-1, 1, &
+       1,-1, 1, &
+      -1, 1, 1, &
+       1, 1, 1  /
+
+
+
 contains
 
    create ::: get_from(OBJECT), leaky
@@ -83,12 +212,14 @@ contains
      self :: PTR
    end
 
-   copy(c) ::: leaky
-   ! Copy the contents of "c" to self.
-     c :: QUADRATURE, IN
-     self = c
-     if (c.root.created)   .root.create_copy(c.root)
-     if (c.weight.created) .weight.create_copy(c.weight)
+   copy(q) ::: leaky
+   ! Copy the contents of "q" to self.
+     q :: QUADRATURE, IN
+     self = q
+     if (q.root.created)            .root.create_copy(q.root)
+     if (q.weight.created)          .weight.create_copy(q.weight)
+     if (q.embedded_weight.created) .embedded_weight.create_copy(q.embedded_weight)
+     if (q.point.created)           .point.create_copy(q.point)
    end
 
    destroy ::: get_from(OBJECT), leaky
@@ -100,12 +231,16 @@ contains
    ! Nullify the pointer parts
       nullify(.root)
       nullify(.weight)
+      nullify(.embedded_weight)
+      nullify(.point)
    end
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts
       .root.destroy
       .weight.destroy
+      .embedded_weight.destroy
+      .point.destroy
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -179,73 +314,81 @@ contains
 
    read_accuracy
    ! Read the accuracy of integration. Used only for adaptive integration methods.
-      stdin.read(.accuracy)
+      accuracy :: REAL
+      stdin.read(accuracy)
+      .set_accuracy(accuracy)
    end
 
    read_eps
    ! Read the relative accuracy needed for the roots. Used only for Gauss
    ! quadrature methods.
-      stdin.read(.eps)
+      eps :: REAL
+      stdin.read(eps)
+      .set_eps(eps)
    end
 
    read_maxit
    ! Read the maximum number of iterations to use when solving for ythe roots.
    ! Used only for Gauss quadrature methods.
-      stdin.read(.maxit)
+      maxit :: INT
+      stdin.read(maxit)
+      .set_maxit(maxit)
    end
 
    read_kind
    ! Read the kind of interpolation to use.
-      stdin.read(.quad_kind)
-      .quad_kind.to_lower_case
-      select case (.quad_kind)
-         case ("adaptive_trapezoid")                
-         case ("adaptive_simpson  ")                
-         case ("gauss_legendre    ")                
-         case ("gauss_chebyshev   ")     
-         case ("gauss_laguerre    ") 
-         case ("gauss_hermite     ")
-         case ("gauss_jacobi      ")
-         case default; UNKNOWN(.quad_kind)
-      end
+      quad_kind :: STR
+      stdin.read(quad_kind)
+      .set_kind(quad_kind)
    end
 
    read_n_points
    ! Read in the number of quadrature points wanted
-      stdin.read(.n_points)
+      n_points :: INT
+      stdin.read(n_points)
+      .set_n_points(n_points)
    end
 
    read_limits
    ! Read in the limits of integration
       limits :: VEC{REAL}(2)
       stdin.read(limits)
-      .lower_limit = limits(1)
-      .upper_limit = limits(2)
+      .set_limits(limits)
    end
 
    read_lower_limit
    ! Read in the lower limit of integration
-      stdin.read(.lower_limit)
+      lower :: REAL
+      stdin.read(lower)
+      .set_lower_limit(lower)
    end
 
    read_upper_limit
    ! Read in the upper limit of integration
-      stdin.read(.upper_limit)
+      upper :: REAL
+      stdin.read(upper)
+      .set_upper_limit(upper)
    end
    
    read_gauss_laguerre_alpha
    ! Read in the Gauss-Laguerre alpha parameter
-      stdin.read(.gauss_laguerre_alpha)
+      alpha :: REAL
+      stdin.read(alpha)
+      .set_gauss_laguerre_alpha(alpha)
    end
 
    read_gauss_jacobi_alpha
    ! Read in the Gauss-Jacobi alpha parameter
-      stdin.read(.gauss_jacobi_alpha)
+      alpha :: REAL
+      stdin.read(alpha)
+      .set_gauss_jacobi_alpha(alpha)
    end
 
    read_gauss_jacobi_beta
    ! Read in the Gauss-Jacobi beta parameter
-      stdin.read(.gauss_jacobi_beta)
+      beta :: REAL
+      stdin.read(beta)
+      .set_gauss_jacobi_beta(beta)
    end
 
    finalise ::: leaky
@@ -290,13 +433,18 @@ contains
       .quad_kind = kind
       .quad_kind.to_lower_case
       select case (.quad_kind)
-         case ("adaptive_trapezoid")                
-         case ("adaptive_simpson  ")                
-         case ("gauss_legendre    ")                
-         case ("gauss_chebyshev   ")     
-         case ("gauss_laguerre    ") 
-         case ("gauss_hermite     ")
-         case ("gauss_jacobi      ")
+         case ("adaptive_ewing_41        ")                
+         case ("adaptive_genz_malik_80   ")             
+         case ("adaptive_hammer_stroud_58")             
+         case ("adaptive_trapezoid       ")                
+         case ("adaptive_tyler_53        ")                
+         case ("adaptive_simpson         ")                
+         case ("gauss_legendre           ")                
+         case ("gauss_chebyshev_1st      ")     
+         case ("gauss_chebyshev_2nd      ")     
+         case ("gauss_laguerre           ") 
+         case ("gauss_hermite            ")
+         case ("gauss_jacobi             ")
          case default; UNKNOWN(.quad_kind)
       end
    end
@@ -311,6 +459,7 @@ contains
    set_limits(limits)
    ! Read in the limits of integration
       limits :: VEC{REAL}(2)
+   ENSURE(limits(1)<=limits(2),"lower limit must be smaller than upper limit")
       .lower_limit = limits(1)
       .upper_limit = limits(2)
    end
@@ -318,12 +467,14 @@ contains
    set_lower_limit(limit)
    ! Set the lower limit of integration
       limit :: REAL
+   ENSURE(limit<=.lower_limit,"lower limit must be smaller than upper")
       .lower_limit = limit
    end
 
    set_upper_limit(limit)
    ! Set the upper limit of integration
       limit :: REAL
+   ENSURE(limit>=.lower_limit,"upper limit must be bigger than lower")
       .upper_limit = limit
    end
    
@@ -358,16 +509,19 @@ contains
       .weight.destroy
       .weight.create(.n_points)
       select case (.quad_kind)
-         case ("gauss_chebyshev   "); .set_gauss_chebyshev_weights
-         case ("gauss_legendre    "); .set_gauss_legendre_weights
-         case ("gauss_laguerre    "); .set_gauss_laguerre_weights
-         case ("gauss_hermite     "); .set_gauss_hermite_weights
-         case ("gauss_jacobi      "); .set_gauss_jacobi_weights
+         case ("gauss_chebyshev_1st"); .set_gauss_chebyshev_1st
+         case ("gauss_chebyshev_2nd"); .set_gauss_chebyshev_2nd
+         case ("gauss_legendre     "); .set_gauss_legendre
+         case ("gauss_laguerre     "); .set_gauss_laguerre
+         case ("gauss_hermite      "); .set_gauss_hermite
+         case ("gauss_jacobi       "); .set_gauss_jacobi
          case default; UNKNOWN(.quad_kind)
       end
    end
 
-   set_gauss_chebyshev_weights ::: private
+! 1D
+
+   set_gauss_chebyshev_1st ::: private
    ! Set the Gauss-Legendre roots and weights
       i :: INT
       pi_n :: REAL
@@ -378,7 +532,19 @@ contains
       end
    end
 
-   set_gauss_legendre_weights ::: private
+   set_gauss_chebyshev_2nd ::: private
+   ! Set the Gauss-Legendre roots and weights
+      i :: INT
+      pi_n,c :: REAL
+      pi_n = PI/(.n_points+1)
+      do i = 1,.n_points
+         c = cos(i*pi_n)
+         .root(i) = c
+         .weight(i) = pi_n * (ONE-c*c) 
+      end
+   end
+
+   set_gauss_legendre ::: private
    ! Set the Gauss-Legendre roots and weights
       i,j,n,m,it :: INT
       p1,p2,p3,pp,x1,x2,xl,xm,z,z1 :: REAL
@@ -413,7 +579,7 @@ contains
       end
    end
 
-   set_gauss_laguerre_weights ::: private
+   set_gauss_laguerre ::: private
    ! Set the Gauss-Laguerre roots and weights
       i,j,n,i2,it :: INT
       a,p1,p2,p3,pp,z,z1,g1,g2 :: REAL
@@ -449,7 +615,7 @@ contains
       end
    end
 
-   set_gauss_hermite_weights ::: private
+   set_gauss_hermite ::: private
    ! Set the Gauss-Hermite roots and weights
       i,j,n,m,it :: INT
       pim4,p1,p2,p3,pp,z,z1 :: REAL
@@ -458,7 +624,7 @@ contains
       m = (n+1)/2
       do i = 1,m
          select case (i)
-            case (1);     z = sqrt(float(2*n+1)) - 1.85575*(2*n+1)**(-.16667)
+            case (1);     z = sqrt(float(2*n+1)) - 1.85575d0*(2*n+1)**(-.16667)
             case (2);     z = z - 1.14*n**.426/z
             case (3);     z = 1.86*z - 0.86*.root(1)
             case (4);     z = 1.91*z - 0.91*.root(2)
@@ -487,8 +653,8 @@ contains
       end
    end
 
-   set_gauss_jacobi_weights ::: private
-   ! Set the Gauss-Hermite roots and weights
+   set_gauss_jacobi ::: private
+   ! Set the Gauss-Jacobi roots and weights
       i,j,n,it :: INT
       al,be,albe,an,bn,a,b,c,r1,r2,r3,p1,p2,p3,pp,z,z1,tmp,g1,g2,g3,g4 :: REAL
       al = .gauss_jacobi_alpha
@@ -555,6 +721,110 @@ contains
       end
    end
 
+! 3D
+
+   set_tyler_53 ::: leaky, private
+   ! Set the Tyler cubature and weights.
+   ! Data taken from the free HIntLib of Rudolf Schurer.
+   ! Original ref: G.W. Tyler (1953), Numerical Integration of functions of
+   ! several variables, Can. J. Math. 5, p. 393
+      i,n_pt,n,m :: INT
+      n_pt = e1_fs.dim2
+      .point.destroy
+      .point.create(3,n_pt)
+      .weight.destroy
+      .weight.create(n_pt)
+      n = 0
+      m = e1_fs.dim2
+      .point(:,n+1:n+m) = ONE*e1_fs            ! e1_fs points
+      .weight(n+1:n+m)  = SIXTH
+   end
+
+   set_hammer_stroud_58 ::: leaky, private
+   ! Set the Hammer-Stroud cubature points and weights.
+   ! Data taken from the free HIntLib of Rudolf Schurer.
+   ! Original ref: P.C. Hammer and A.H. Stroud (1958), Mathematical Tables and
+   ! Other Aids to Computation 12, p. 272
+      i,d,n_pt,n,m :: INT
+      w0,w1,w2, l1,l2 :: REAL
+      d = 3                                     ! The dimension
+      w0 = ONE*(25*d*d - 115*d + 162)/162
+      w1 = ONE*(70 - 25*d)/162
+      w2 = ONE*(25)/324
+      l1 = sqrt(ONE*(3)/5)                     ! Point scales
+      l2 = sqrt(ONE*(3)/5)
+      n_pt = 1 + e1_fs.dim2 + e2_fs.dim2
+      .point.destroy
+      .point.create(3,n_pt)
+      .weight.destroy
+      .weight.create(n_pt)
+      n = 0
+      m = 1
+      .point(:,n+1) = ONE*e0                    ! Origin
+      .weight(n+1)  = w0
+      n = n + m
+      m = e1_fs.dim2
+      .point(:,n+1:n+m) = l1*e1_fs              ! e1_fs points
+      .weight(n+1:n+m)  = w1
+      n = n + m
+      m = e2_fs.dim2
+      .point(:,n+1:n+m) = l2*e2_fs              ! e2_fs points
+      .weight(n+1:n+m)  = w2
+   end
+
+   set_genz_malik_80 ::: leaky, private
+   ! Set the Genz-Malik cubature points and weights.
+   ! Data taken from the free HIntLib of Rudolf Schurer.
+   ! Original ref: A.C. Genz and A.A. Malik (1980) J. Comp. App. Math. 6 p. 295-302
+      i,d,n_pt,n,m :: INT
+      w1,w2,w3,w4,w5, e1,e2,e3,e4, l2,l3,l4,l5 :: REAL
+      d = 3                                     ! The dimension
+      w1 = ONE*(12824 - 9120*d + 400*d*d)/19683 ! The 7th order weights
+      w2 = ONE*(980)/6561
+      w3 = ONE*( 1820 -  400*d)/19683
+      w4 = ONE*(200)/19683
+      w5 = ONE*( 6859)/19683/EIGHT 
+      e1 = ONE*(  729 -  950*d +  50*d*d)/729   ! Embedded 5th order weights
+      e2 = ONE*(245)/486
+      e3 = ONE*(  265 -  100*d)/1458
+      e4 = ONE*(25)/729
+      l2 = sqrt(ONE*(9)/70)                     ! Point scales
+      l3 = sqrt(ONE*(9)/10)
+      l4 = sqrt(ONE*(9)/10)
+      l5 = sqrt(ONE*(9)/19)
+      n_pt = 1 + 2*e1_fs.dim2 + e2_fs.dim2 + e3_fs.dim2
+      .point.destroy
+      .point.create(3,n_pt)
+      .weight.destroy
+      .weight.create(n_pt)
+      .embedded_weight.destroy
+      .embedded_weight.create(n_pt-e3_fs.dim2)
+      n = 0
+      m = 1
+      .point(:,n+1) = ONE*e0                    ! Origin
+      .weight(n+1)  = w1
+      .embedded_weight(n+1) = e1
+      n = n + m
+      m = e1_fs.dim2
+      .point(:,n+1:n+m) = l2*e1_fs              ! e1_fs points
+      .weight(n+1:n+m)  = w2
+      .embedded_weight(n+1:n+m) = e2
+      n = n + m
+      m = e1_fs.dim2
+      .point(:,n+1:n+m) = l3*e1_fs              ! e1_fs points
+      .weight(n+1:n+m)  = w3
+      .embedded_weight(n+1:n+m) = e3
+      n = n + m
+      m = e2_fs.dim2
+      .point(:,n+1:n+m) = l4*e2_fs              ! e2_fs points
+      .weight(n+1:n+m)  = w4
+      .embedded_weight(n+1:n+m) = e4
+      n = n + m
+      m = e3_fs.dim2
+      .point(:,n+1:n+m) = l5*e3_fs              ! e3_fs points
+      .weight(n+1:n+m)  = w5
+   end
+
 !  ******************
 !  Quadrature methods
 !  ******************
@@ -587,8 +857,12 @@ contains
       f.destroy
    end
 
-   integrate(func) result(res)
-   ! Quadrate the function "func".
+!  *******************
+!  Adaptive quadrature
+!  *******************
+
+   adaptive_integrate(func) result(res)
+   ! Adaptively integrate the function "func".
       interface
          func(x) result(res)
             x :: REAL, IN
@@ -603,73 +877,577 @@ contains
       end
    end
 
-   adaptive_trapezoid_integrate(func,a,b,accuracy) result(res) ::: recursive, private
+   adaptive_trapezoid_integrate(func) result(res) ::: private
    ! Integrate the function "func" using adaptive trapezoidal rule with Simpsons
-   ! approximation acceleration.  If present, "a" and "b" are the limits of
-   ! integrations and "accuracy" is the required accuracy of the integral.
+   ! approximation acceleration on the final step. 
       interface
          func(x) result(res)
             x :: REAL, IN
             res :: REAL
          end
       end
-      a,b :: REAL, optional, IN
-      accuracy :: REAL, optional, IN
       res :: REAL
-      tol,h,xa,xb,xm,fa,fb,fm,one_trap,two_trap,left,right :: REAL
-      xa = .lower_limit; if (present(a)) xa = a
-      xb = .upper_limit; if (present(b)) xb = b
-      tol = .accuracy;   if (present(accuracy)) tol = accuracy
-      h  = xb-xa
-      xm = (xa+xb)/TWO
-      fa = func(xa)
-      fb = func(xb)
-      fm = func(xm)
-      one_trap = h*(fa+fb)/TWO
-      two_trap = h*(fa+TWO*fm+fb)/FOUR
-      if (abs(one_trap-two_trap)<THREE*tol) then
-         res = (FOUR*two_trap - one_trap)/THREE
+      a,b,fa,fb,trap :: REAL
+      a  = .lower_limit
+      b  = .upper_limit
+      fa = func(a)
+      fb = func(b)
+      trap = HALF*(b-a)*(fa+fb)
+      res = .adaptive_trapezoid_integrate(func,a,b,fa,fb,trap,.accuracy)
+   end
+
+   adaptive_trapezoid_integrate(func,a,b,fa,fb,trap,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using adaptive trapezoidal rule with Simpsons
+   ! approximation acceleration on the final step. "a" and "b" are the limits of
+   ! integrations, "fa" and "fb" are the corresponding function values, "trap"
+   ! is the value of the trapezoid approximation on the interval, and "accuracy"
+   ! is the required accuracy of the integral.
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b,fa,fb,trap,accuracy :: REAL, IN
+      res :: REAL
+      h,h4,m,fm,trap1,trap2,trapL,trapR,left,right,acc2 :: REAL
+      m = HALF*(a+b)
+      fm = func(m)
+      h  = b-a
+      h4 = QUARTER*h
+      trap1 = trap
+      trapL = h4*(fa+fm)
+      trapR = h4*(fm+fb)
+      trap2 = trapL + trapR
+      if (abs(trap1-trap2)<THREE*accuracy) then
+         res = (FOUR*trap2 - trap1)/THREE
       else
-         left  = .adaptive_trapezoid_integrate(func,xa,xm,tol/TWO)
-         right = .adaptive_trapezoid_integrate(func,xm,xb,tol/TWO)
+         acc2  = HALF*accuracy
+         left  = .adaptive_trapezoid_integrate(func,a,m,fa,fm,trapL,acc2)
+         right = .adaptive_trapezoid_integrate(func,m,b,fm,fb,trapR,acc2)
          res = left + right
       end
    end
 
-   adaptive_simpson_integrate(func,a,b,accuracy) result(res) ::: recursive, private
+   adaptive_simpson_integrate(func) result(res) ::: private
    ! Integrate the function "func" using adaptive Simpson rule with
-   ! acceleration.  If present, "a" and "b" are the limits of integration and
-   ! "accuracy" is the required accuracy of the integral.
+   ! acceleration.
       interface
          func(x) result(res)
             x :: REAL, IN
             res :: REAL
          end
       end
-      a,b :: REAL, optional, IN
-      accuracy :: REAL, optional, IN
       res :: REAL
-      tol,h,xa,xb,m1,m2,m3,fa,fb,f1,f2,f3,s1,s2,left,right :: REAL
-      xa = .lower_limit; if (present(a)) xa = a
-      xb = .upper_limit; if (present(b)) xb = b
-      tol = .accuracy;   if (present(accuracy)) tol = accuracy
-      h   = (xb-xa)/TWO
-      m1  = (THREE*xa+xb)/FOUR
-      m2  = (xa+xb)/TWO
-      m3  = (xa+THREE*xb)/FOUR
-      fa = func(xa)
-      fb = func(xb)
+      a,m,b,h,fa,fm,fb,simp :: REAL
+      a  = .lower_limit
+      b  = .upper_limit
+      m  = HALF*(a+b)
+      h  = (b-a)
+      fa = func(a)
+      fm = func(m)
+      fb = func(b)
+      simp = THIRD*h*(fa+FOUR*fm+fb)
+      res = .adaptive_simpson_integrate(func,a,m,b,fa,fm,fb,simp,.accuracy)
+   end
+
+   adaptive_simpson_integrate(func,a,m,b,fa,fm,fb,simp,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using adaptive Simpson rule with
+   ! acceleration. "a", "m" and "b" are the lower, midpoint, and upper limits of
+   ! integration, while "fa", "fm" and "fb" are the corresponding function
+   ! values. "simp" is the Simpsons approximation for the integral over [a,b],
+   ! and "accuracy" is the required accuracy of the integral.
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,m,b,fa,fm,fb,simp,accuracy :: REAL, IN
+      res :: REAL
+      h,h6,m0,m1,m2,m3,m4,f0,f1,f2,f3,f4,s1,sl,sr,s2,left,right,acc2 :: REAL
+      h  = HALF*(b-a)
+      h6 = SIXTH*h
+      m0 = a
+      m1 = HALF*(a+m)
+      m2 = m
+      m3 = HALF*(m+b)
+      m4 = b
+      f0 = fa
       f1 = func(m1)
-      f2 = func(m2)
+      f2 = fm
       f3 = func(m3)
-      s1 = h*(fa+FOUR*f2+fb)/THREE
-      s2 = h*(fa+FOUR*f1+TWO*f2+FOUR*f3+fb)/SIX
-      if (abs(s1-s2)<15.0d0*tol) then
+      f4 = fb
+      s1 = simp
+      sl = h6*(f0+FOUR*f1+f2)
+      sr = h6*(f2+FOUR*f3+f4)
+      s2 = sl + sr
+      if (abs(s1-s2)<15.0d0*accuracy) then
          res = (16.0d0*s2 - s1)/15.0d0
       else
-         left  = .adaptive_simpson_integrate(func,xa,m2,tol/TWO)
-         right = .adaptive_simpson_integrate(func,m2,xb,tol/TWO)
+         acc2  = HALF*accuracy
+         left  = .adaptive_simpson_integrate(func,m0,m1,m2,f0,f1,f2,sl,acc2)
+         right = .adaptive_simpson_integrate(func,m2,m3,m4,f2,f3,f4,sr,acc2)
          res = left + right
+      end
+   end
+
+! 3D
+
+   adaptive_integrate(func) result (res)
+   ! Adaptively integrate the 3D function "func".
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      select case (.quad_kind)
+         case ("adaptive_ewing_41        "); res = .adaptive_E41_integrate(func)
+         case ("adaptive_genz_malik_80   "); res = .adaptive_GM80_integrate(func)
+         case ("adaptive_hammer_stroud_58"); res = .adaptive_HS58_integrate(func)
+         case ("adaptive_trapezoid       "); res = .adaptive_trapezoid_integrate(func)
+         case ("adaptive_tyler_53        "); res = .adaptive_T53_integrate(func)
+         case default; UNKNOWN(.quad_kind)
+      end
+   end
+
+   adaptive_trapezoid_integrate(func) result(res) ::: private
+   ! Integrate the 3D function "func" using adaptive (1st order) trapezoidal
+   ! rule.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      c2 :: MAT{REAL}(3,8)
+      v2 :: VEC{REAL}(8)
+      m  :: VEC{REAL}(3)
+      a,b,h,h2,trap :: REAL
+      a  = .lower_limit   ! Integrate over a cube with these limits
+      b  = .upper_limit
+      h  = (b-a)
+      m = HALF*(a+b)
+      h2 = HALF*h
+    ! c2 = h2*cube2 + spread(m,dim=2,ncopies=8)
+      c2 = h2*cube3(:,corners) + spread(m,dim=2,ncopies=8)
+      call func(c2,v2)    ! calculate the values on them
+      .n_points = 8
+      trap = EIGHTH*h*h*h*sum(v2)
+      res = .adaptive_trapezoid_integrate(func,c2,v2,h,trap,.accuracy)
+   end
+
+   adaptive_trapezoid_integrate(func,c2,v2,h,trap,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using adaptive (1st order) trapezoidal rule.
+   ! "c2" are the positions of the 2x2x2 corner points in standard order (see
+   ! the "cube3" and "corners" parameters). "v2" are the corresponding function
+   ! values. "trap" is the value of the trapezoid approximation on the cube, "h"
+   ! is the width of the cube which will be divided, and "accuracy" is the
+   ! required accuracy of the integral.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      c2 :: MAT{REAL}(3,8)
+      v2 :: VEC{REAL}(8)
+      h,trap,accuracy :: REAL
+      res :: REAL
+      c3  :: MAT{REAL}(3,27)
+      sc3 :: MAT{REAL}(3,8)
+      v3 :: VEC{REAL}(27)
+      w2 :: VEC{REAL}(19)
+      sv3,subtrap :: VEC{REAL}(8)
+      m  :: VEC{REAL}(3)
+      i :: INT
+      h2,fac,trap8,acc,acc8 :: REAL
+      c3(:,corners) = c2                  ! Copy the corner points
+      v3(corners)   = v2                  ! Copy the corner values
+      h2 = HALF*h                         ! New subcube side length
+      m = EIGHTH*sum(c2,dim=2)            ! Midpoint of cube of points "c3"
+      c3(:,non_corners) = &               ! Calculate the new edge points
+         h2*cube3(:,non_corners) &        
+         + spread(m,dim=2,ncopies=19) 
+      call func(c3(:,non_corners),w2)     ! Calculate the edge values
+      .n_points = .n_points + 19
+      v3(non_corners) = w2
+      fac = EIGHTH*h2*h2*h2               ! Get the 8 trapezoid values
+      do i = 1,8
+         sv3 = v3(subcube(:,i))
+         subtrap(i) = fac*sum(sv3)
+      end
+      trap8 = sum(subtrap)                ! Sum them up ...
+      acc = THREE*accuracy
+      if (abs(trap-trap8)<acc) then       ! Good enough approximation?
+         res = trap8
+      else                                ! Not good enough: divide again
+         acc8 = EIGHTH*accuracy
+         res = ZERO
+         do i = 1,8
+            sc3 = c3(:,subcube(:,i))
+            sv3 = v3(subcube(:,i))
+            res = res + .adaptive_trapezoid_integrate(func,sc3,sv3,h2,subtrap(i),acc8)
+         end
+      end
+   end
+
+   adaptive_E41_integrate(func) result(res) ::: private
+   ! Integrate the 3D function "func" using adaptive (3rd order) Ewing's rule.
+   ! Original ref: G.M. Ewing (1941), Am. Math. Monthly 48, p.134
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      b2 :: MAT{REAL}(3,9)
+      v2 :: VEC{REAL}(9)
+      m  :: VEC{REAL}(3)
+      a,b,h,h2,h4,vol,fac1,fac2,ewe :: REAL
+      a  = .lower_limit   ! Integrate over a cube with these limits
+      b  = .upper_limit
+      h  = (b-a)
+      m = HALF*(a+b)
+      h2 = HALF*h
+      h4 = QUARTER*h
+      b2 = h4*bcc3(:,bcc) + spread(m,dim=2,ncopies=9)
+      call func(b2,v2)    ! Calculate the values on the points
+      .n_points = 9       ! There were 8 evaluations
+      vol = h2*h2*h2
+      fac1 = THIRD*EIGHTH*vol
+      fac2 = TWOTHIRD*vol
+      ewe = fac1*sum(v2(1:8)) + fac2*v2(9)
+      res = .adaptive_E41_integrate(func,b2,v2,h,ewe,.accuracy)
+   end
+
+   adaptive_E41_integrate(func,b2,v2,h,ewe,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using an adaptive (3rd order) Ewing's rule.
+   ! "b2" are the positions of the body centered points in standard order (see
+   ! the "bcc" and "bcc3" parameters). "v2" are the corresponding function
+   ! values. "ewe" is the value of the Ewing approximant on the cube, "h" is the
+   ! width of the cube to be divided, and "accuracy" is the required accuracy of
+   ! the integral.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      b2 :: MAT{REAL}(3,9)
+      v2 :: VEC{REAL}(9)
+      h,ewe,accuracy :: REAL
+      res :: REAL
+      b3  :: MAT{REAL}(3,35)
+      sb3 :: MAT{REAL}(3,9)
+      v3  :: VEC{REAL}(35)
+      w2  :: VEC{REAL}(26)
+      sv3 :: VEC{REAL}(9)
+      subewe :: VEC{REAL}(8)
+      m  :: VEC{REAL}(3)
+      i :: INT
+      h2,h4,vol,fac1,fac2,ewe8,acc,acc8 :: REAL
+      b3(:,bcc) = b2                      ! Copy the BCC points
+      v3(bcc)   = v2                      ! Copy the BCC values
+      h2 = HALF*h
+      h4 = QUARTER*h                      ! New subcube side length
+      m = b2(:,9)                         ! Midpoint of cube
+      b3(:,non_bcc) = &                   ! Calculate the new BCC points
+         h4*bcc3(:,non_bcc) &
+         + spread(m,dim=2,ncopies=26) 
+      call func(b3(:,non_bcc),w2)         ! Calculate function values
+      .n_points = .n_points + 26          ! It cost 26 evaluations
+      v3(non_bcc) = w2
+      vol = h2*h2*h2
+      fac1 = THIRD*EIGHTH*vol
+      fac2 = TWOTHIRD*vol
+      do i = 1,8
+         sv3 = v3(subbcc(:,i))
+         subewe(i) = fac1*sum(sv3(1:8)) + fac2*sv3(9)
+      end
+      ewe8 = sum(subewe)                  ! The sum of the 8 Ewing subcubes
+      acc = accuracy   
+      if (abs(ewe-ewe8)<acc) then         ! If it is good enough, exit
+         res = ewe8
+      else                                ! Not good enough: divide again
+         acc8 = EIGHTH*accuracy
+         res = ZERO
+         do i = 1,8
+            sb3 = b3(:,subbcc(:,i))
+            sv3 = v3(subbcc(:,i))
+            res = res + .adaptive_E41_integrate(func,sb3,sv3,h2,subewe(i),acc8)
+         end
+      end
+   end
+
+   adaptive_T53_integrate(func) result(res) ::: leaky, private
+   ! Integrate 3D function "func" using an adaptive (3rd order) Tyler rule.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      pts :: MAT{REAL}(3,.point.dim2)
+      val :: VEC{REAL}(.point.dim2)
+      m :: VEC{REAL}(3)
+      n :: INT
+      a,b,h,h2,ty :: REAL
+      .set_tyler_53         ! Set points & weights (leaky)
+      a  = .lower_limit     ! Integrate over a cube with these limits
+      b  = .upper_limit
+      h  = (b-a)            ! Cube width
+      m = HALF*(a+b)        ! Cube midpoint
+      n = .point.dim2
+      h2 = HALF*h
+      pts = h2*.point + spread(m,dim=2,ncopies=n)
+      call func(pts,val)    ! Calculate function values
+      .n_points = n
+      ty = h*h*h*sum(.weight*val)
+      res = .adaptive_T53_integrate(func,m,h,ty,.accuracy)
+   end
+
+   adaptive_T53_integrate(func,m,h,ty,accuracy) result(res) ::: recursive, private
+   ! Integrate function "func" using an adaptive (3rd order) Tyler rule.
+   ! "m" is the midpoint of the cube, "h" is its width, "ty" is the Tyler
+   ! approximation for the integral over the cube, and "accuracy" is the
+   ! required accuracy of the integral.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      m :: VEC{REAL}(3)
+      h,ty,accuracy :: REAL
+      res  :: REAL
+      pts  :: MAT{REAL}(3,8*.point.dim2)
+      val  :: VEC{REAL}(8*.point.dim2)
+      m8   :: MAT{REAL}(3,8)
+      sub8 :: VEC{REAL}(8)
+      h2,h4,vol,ty8,acc,acc8 :: REAL
+      n,i,k :: INT
+      n  = .point.dim2
+      h2 = HALF*h
+      h4 = QUARTER*h
+      m8 = h4*bcc3(:,28:35) + spread(m,dim=2,ncopies=8)
+      k = 0
+      do i = 1,8                           ! 8 subcubes of T53 points
+         pts(:,k+1:k+n) = h4*.point + spread(m8(:,i),dim=2,ncopies=n)
+         k = k + n
+      end
+      call func(pts,val)                   ! Calculate function values
+      .n_points = .n_points + 8*n          ! This is the # of function evals
+      vol = h2*h2*h2
+      k = 0
+      do i = 1,8
+         sub8(i) = vol*sum(.weight*val(k+1:k+n))
+         k = k + n
+      end
+      ty8 = sum(sub8)
+      acc = accuracy                     
+      if (abs(ty-ty8)<acc) then            ! If it is good enough, exit
+         res = ty8
+      else                                 ! Not good enough: divide again
+         acc8 = EIGHTH*accuracy
+         res = ZERO
+         do i = 1,8
+            res = res + .adaptive_T53_integrate(func,m8(:,i),h2,sub8(i),acc8)
+         end
+      end
+   end
+
+   adaptive_HS58_integrate(func) result(res) ::: leaky, private
+   ! Integrate 3D function "func" using an adaptive (5th order) Hammer-Stroud rule.
+   ! Original ref: P.C. Hammer and A.H. Stroud (1958), Mathematical Tables and
+   ! Other Aids to Computation 12, p. 272
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      pts :: MAT{REAL}(3,.point.dim2)
+      val :: VEC{REAL}(.point.dim2)
+      m :: VEC{REAL}(3)
+      n :: INT
+      a,b,h,h2,hs :: REAL
+      .set_hammer_stroud_58 ! Set points & weights (leaky)
+      a  = .lower_limit     ! Integrate over a cube with these limits
+      b  = .upper_limit
+      h  = (b-a)            ! Cube width
+      m = HALF*(a+b)        ! Cube midpoint
+      n = .point.dim2
+      h2 = HALF*h
+      pts = h2*.point + spread(m,dim=2,ncopies=n)
+      call func(pts,val)    ! Calculate function values
+      .n_points = n
+      hs = h*h*h*sum(.weight*val)
+      res = .adaptive_HS58_integrate(func,m,h,hs,.accuracy)
+   end
+
+   adaptive_HS58_integrate(func,m,h,hs,accuracy) result(res) ::: recursive, private
+   ! Integrate function "func" using an adaptive (5th order) Hammer-Stroud rule.
+   ! "m" is the midpoint of the cube, "h" is its width, "hs" is the
+   ! Hammer-Stroud approximation for the integral over the cube, and "accuracy"
+   ! is the required accuracy of the integral.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      m :: VEC{REAL}(3)
+      h,hs,accuracy :: REAL
+      res  :: REAL
+      pts  :: MAT{REAL}(3,8*.point.dim2)
+      val  :: VEC{REAL}(8*.point.dim2)
+      m8   :: MAT{REAL}(3,8)
+      sub8 :: VEC{REAL}(8)
+      h2,h4,vol,hs8,acc,acc8 :: REAL
+      n,i,k :: INT
+      n  = .point.dim2
+      h2 = HALF*h
+      h4 = QUARTER*h
+      m8 = h4*bcc3(:,28:35) + spread(m,dim=2,ncopies=8)
+      k = 0
+      do i = 1,8                           ! 8 subcubes of HS58 points
+         pts(:,k+1:k+n) = h4*.point + spread(m8(:,i),dim=2,ncopies=n)
+         k = k + n
+      end
+      call func(pts,val)                   ! Calculate function values
+      .n_points = .n_points + 8*n          ! This is the # of function evals
+      vol = h2*h2*h2
+      k = 0
+      do i = 1,8
+         sub8(i) = vol*sum(.weight*val(k+1:k+n))
+         k = k + n
+      end
+      hs8 = sum(sub8)
+      acc = accuracy                     
+      if (abs(hs-hs8)<acc) then            ! If it is good enough, exit
+         res = hs8
+      else                                 ! Not good enough: divide again
+         acc8 = EIGHTH*accuracy
+         res = ZERO
+         do i = 1,8
+            res = res + .adaptive_HS58_integrate(func,m8(:,i),h2,sub8(i),acc8)
+         end
+      end
+   end
+
+   adaptive_GM80_integrate(func) result(res) ::: leaky, private
+   ! Integrate 3D function "func" using an adaptive (7th order) Genz-Malik rule.
+   ! Original ref: A.C. Genz and A.A. Malik (1980) J. Comp. App. Math. 6 p. 295-302
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      res :: REAL
+      m :: VEC{REAL}(3)
+      a,b,h :: REAL
+      .set_genz_malik_80  ! Set points & weights (leaky)
+      a  = .lower_limit   ! Integrate over a cube with these limits
+      b  = .upper_limit
+      h  = (b-a)          ! Cube width
+      m = HALF*(a+b)      ! Cube midpoint
+      .n_points = 0
+      res = .adaptive_GM80_integrate(func,m,h,.accuracy)
+   end
+
+   adaptive_GM80_integrate(func,m,h,accuracy) result(res) ::: recursive, private
+   ! Integrate function "func" using an adaptive (7th order) Genz-Malik rule.
+   ! "m" is the midpoint of the cube, "h" is its width, and "accuracy" is the
+   ! required accuracy of the integral.
+      interface
+         func(x,res)
+            x :: MAT{REAL}, IN
+            res :: VEC{REAL}, OUT
+         end
+      end
+      m :: VEC{REAL}(3)
+      h,accuracy :: REAL
+      res :: REAL
+      pts :: MAT{REAL}(3,.point.dim2)
+      val :: VEC{REAL}(.point.dim2)
+      m8  :: MAT{REAL}(3,8)
+      h2,h4,vol,gm7,gm5,acc,acc8 :: REAL
+      n,ne,i :: INT
+      n  = .point.dim2
+      ne = .embedded_weight.dim
+      h2 = HALF*h
+      pts = h2*.point + spread(m,dim=2,ncopies=n)
+      call func(pts,val)                   ! Calculate function values
+      .n_points = .n_points + n            ! This is the # of function evals
+      vol = h*h*h
+      gm7 = vol*sum(.weight*val)
+      gm5 = vol*sum(.embedded_weight*val(1:ne))
+      acc = accuracy                     
+      if (abs(gm7-gm5)<acc) then           ! If it is good enough, exit
+         res = gm7
+      else                                 ! Not good enough: divide again
+         acc8 = EIGHTH*accuracy
+         h4 = QUARTER*h
+         m8 = h4*bcc3(:,28:35) + spread(m,dim=2,ncopies=8)
+         res = ZERO
+         do i = 1,8
+            res = res + .adaptive_GM80_integrate(func,m8(:,i),h2,acc8)
+         end
+      end
+   end
+
+!  **************
+!  Test functions
+!  **************
+
+   test_sin(x) result (res) ::: selfless, public
+   ! Sine function for integrating
+      x :: REAL, IN
+      res :: REAL
+      res = sin(x)
+   end
+
+   test_x2(x) result (res) ::: selfless, public
+   ! Sine function for integrating
+      x :: REAL, IN
+      res :: REAL
+      res = x*x
+   end
+
+   test_x3(x) result (res) ::: selfless, public
+   ! Sine function for integrating
+      x :: REAL, IN
+      res :: REAL
+      res = x*x*X
+   end
+
+   test_x4(x) result (res) ::: selfless, public
+   ! Sine function for integrating
+      x :: REAL, IN
+      res :: REAL
+      res = x*x*x*x
+   end
+
+   test_gauss(x,res) ::: selfless, public
+   ! Sine function for integrating
+      x :: MAT{REAL}, IN
+      res :: VEC{REAL}, OUT
+   ENSURE(x.dim2==res.dim,"incompatible arrays")
+      v :: VEC{REAL}(3)
+      r :: REAL
+      i :: INT
+      do i = 1,res.dim
+         v = x(:,i)
+         r = sqrt(dot_product(v,v))
+         res(i) = exp(-r*r*r)
       end
    end
 

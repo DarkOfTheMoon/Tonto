@@ -2054,10 +2054,13 @@ sub Parse
     }
 
     # if a base file, run any initialisation functions
-    if($include_level == 0) {
+  # changed: dylan
+  # if($include_level == 0) {
+    {
 	my $func;
 	foreach $func (@OpenInputFuncs) { $func->(); }
     }
+  # }
     
     # parse each line of file
     $_ = GetNextLine();
@@ -2155,10 +2158,13 @@ sub Parse
     if($lastparse eq "" && $iflevel > 0) { Warning("Unterminated if block"); }
 
     # run any close functions
-    if($include_level == 0) {
+  # changed: dylan
+  # if($include_level == 0) {
+    {
 	my $func;
 	foreach $func (@CloseInputFuncs) { $func->(); }
     }
+  # }
 
     # close file
     close(INPUT);
