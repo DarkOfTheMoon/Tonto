@@ -22,8 +22,8 @@ $long    = $ARGV[1];                 # long routine name
 $short   = $ARGV[2];                 # short routine name
 
 open(FOOFILE,$foofile) or die "$FOOFILE does not exist,";
-open(LONG,">".$long);
-open(SHORT,">".$short);
+open(LONG,">".$long) or die "error creating file $long";
+open(SHORT,">".$short) or die "error creating file $short";
 
 print LONG '<html>';
 print LONG "<head>";
