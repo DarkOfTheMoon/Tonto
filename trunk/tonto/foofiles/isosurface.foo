@@ -411,10 +411,10 @@ contains
 
    read_interpolator
    ! Read in dummy interpolator information; this is not to be used for
-   ! specifying interpolation information, it is only used to specify
-   ! interpolation methods, interpolation table lengths, interpolation table
-   ! spacing, and interpolation tolerances.
-      .interpolator.create
+   ! specifying an interpolation table, it is only used to specify interpolation
+   ! methods, interpolation table lengths, interpolation table spacing, and
+   ! interpolation tolerances.
+      if (.interpolator.destroyed) .interpolator.create
       .interpolator.read_keywords
    end
 
@@ -626,6 +626,8 @@ contains
 
    cubify(func) ::: leaky
    ! Generate the isosurface using the marching cube algorithm.
+   ! NOTE: Recently, only the recursive marching cube routine
+   ! has been exhaustively tested.
       interface
          func(values,pt) 
             values :: VEC{REAL}, OUT
@@ -635,8 +637,8 @@ contains
       .prepare_grid
       .put
       select case (.triangulation_method)
-         case("marching_cube          "); .nonrecursively_cubify(func)
-         case("recursive_marching_cube"); .recursively_cubify(func)
+         case("marching_cube          "); .cubify_nonrecursively(func) !  Warning: see note
+         case("recursive_marching_cube"); .cubify_recursively(func)
          case default;        UNKNOWN(.triangulation_method)
       end
       .put
@@ -656,7 +658,7 @@ contains
          case("recursive_marching_cube")
             ENSURE(.grid.width.are_all_equal,"grid widths must be all equal")
             if (.minimum_scan_division.equals(ZERO)) then
-               if (.grid.plot_kind=="stockholder_density") then
+               if (.iso_kind=="stockholder_density") then
                   .minimum_scan_division = TWO*ISOSURFACE_MINIMUM_SCAN_DIVISION
                else 
                   .minimum_scan_division = ISOSURFACE_MINIMUM_SCAN_DIVISION
@@ -679,21 +681,29 @@ contains
             .scan_level  = -log(.minimum_scan_division/.grid.width(1))/log(TWO)
             .scan_level  = min(.final_level,.scan_level)
             .scan_level  = max(.scan_level,.minimum_scan_level)
-            ! We have the right level, now adjust the # of points
+            ! We have the right level, now adjust the # of points to be a power
+            ! of two (plus one to be odd), in order to apply the telescoping
+            ! cubes algorithm.  Any points outside the grid required for
+            ! gradients or hessians are calculated explicitly; this grid is
+            ! really the true bounding region of the isosurface plot.
             WARN("Adjusting grid points higher to the nearest power of 2")
             .grid.n_x = 2**.final_level + 1     
-            ! Set the box width so that we get exactly the desired separation
+            .grid.set_points_widths_origin
+            ! If requested, adjust the bounding box width to be larger so that
+            ! we get *exactly* the desired separation. Otherwise, the grid
+            ! separation will be the smallest that can be used with the current
+            ! bounding box to achieve *at least* the number of user requested points.
             if (.grid.desired_separation>ZERO) then
                scale = .grid.desired_separation/.grid.del
                .grid.width = .grid.width*scale
+               .grid.set_points_widths_origin
             end
-            .grid.set_points_widths_origin
             .del = .grid.width(1)
          case default;        UNKNOWN(.triangulation_method)
       end
    end 
 
-   nonrecursively_cubify(func) ::: leaky, private
+   cubify_nonrecursively(func) ::: leaky, private
    ! Generate the isosurface using the standard marching cube algorithm
    ! *without* any recursion.
       interface
@@ -745,8 +755,6 @@ contains
          end
          end
       end
-      .set_area
-      .set_volume
       info.destroy
       f.destroy
       .point.shrink_columns(.n_pt)
@@ -755,6 +763,8 @@ contains
       .point_gaussian_curvature.shrink(.n_pt)
       .face.shrink_columns(.n_face)
       .rotate_gradients
+      .set_area
+      .set_volume
    end 
 
    set_isosurface_info_arrays ::: leaky, private
@@ -869,16 +879,14 @@ contains
    ! axes may not be the same as the natural x-y-z axes.
       axes :: MAT{REAL}(3,3)
       old :: MAT{REAL}*
-      axes(:,1) = .grid.x_axis
-      axes(:,2) = .grid.y_axis
-      axes(:,3) = .grid.z_axis
+      axes = .grid.plot_axes
       old.create(3,.n_pt)
       old = .point_gradient
       .point_gradient = matmul(axes,old)
       old.destroy
    end
 
-   recursively_cubify(func) ::: leaky, private
+   cubify_recursively(func) ::: leaky, private
    ! Generate the isosurface using the recursive marching cube algorithm.
    ! Multiple isosurface values are merged into one isosurface.
       interface
@@ -894,7 +902,7 @@ contains
          isosurface.create_copy(self)
          do i = 1,.iso_values.dim
             isosurface.iso_value = isosurface.iso_values(i)
-            isosurface.recursively_cubify_this(func)
+            isosurface.cubify_recursively_this(func)
             isosurface.surface_iso_values.create(isosurface.n_pt)
             isosurface.surface_iso_values = isosurface.iso_value
             self.merge_with(isosurface)
@@ -902,11 +910,11 @@ contains
          end
          isosurface.destroy
       else
-            .recursively_cubify_this(func)         
+            .cubify_recursively_this(func)         
       end
    end 
 
-   recursively_cubify_this(func) ::: leaky, private
+   cubify_recursively_this(func) ::: leaky, private
    ! Generate the isosurface using the recursive marching cube algorithm.
       interface
          func(values,pt) 
@@ -922,7 +930,7 @@ contains
       .set_default_cube(parent_cube)
       .volume_min = ZERO
       .volume_max = ZERO
-      .n_skip = 0
+      .n_skip = (.grid.n_x+2)**3 ! including edges
       .level = 0
       .hash.create(256,3,12)
       .hash.set_reverse_search(TRUE)
@@ -1007,10 +1015,6 @@ contains
             cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
                                    f3(x:x+1,y:y+1,z:z+1))
             cube.set_case_info
-            if (cube.is_inside_surface) then
-               .volume_min = .volume_min + vol
-               .volume_max = .volume_max + vol
-            end
           ! del_iso = (0.50d0/.final_level)*(bit+1)
           ! del_iso = max(0.10d0,del_iso) ! should be adjustable ?
           ! do_divide = &
@@ -1029,8 +1033,12 @@ contains
                .y = ibclr(.y,bit)
                .z = ibclr(.z,bit)
             else
-               l = 2**bit - 1
-               .n_skip = .n_skip + l*l*l + 3*l*l
+             ! l = 2**bit - 1
+             ! .n_skip = .n_skip + l*l*l + 3*l*l
+               if (cube.is_inside_surface) then
+                  .volume_min = .volume_min + vol
+                  .volume_max = .volume_max + vol
+               end
             end
          end
          end
@@ -1042,7 +1050,7 @@ contains
          .make_3_cube_of_values(f5(1:3,1:3,1:3),func,p5(:,1:3,1:3,1:3),parent_cube)
          .set_default_cube(cube)
          eval = FALSE          ! First evaluate only the needed function points
-         skip = TRUE
+         skip = TRUE           ! ... for the kube's which won't be skipped ...
          ix = 0; iy = 0; iz = 0
          k = 0
          do z = 0,1
@@ -1058,11 +1066,11 @@ contains
             .x = .x + x                                      ! Set cube coords
             .y = .y + y
             .z = .z + z
-            skip(k) = FALSE                                  
+            skip(k) = FALSE                                  ! This cube is on the surface
             cube.skip_bit_string = 0
             cube.set_triangulation_info                      
           ! if (x>0 OR .x>0) cube.set_left_skip_bit_string 
-            if (cube.has_left_face_on_surface) then
+            if (cube.has_left_face_on_surface) then          ! We triangulated some faces already?
                if ( x>0 OR &
                   (.x>0 AND .hash.has_key([.x-1,.y,.z],index=ix(k)))) &
                   cube.set_left_skip_bit_string              ! Previous left cube exists
@@ -1079,17 +1087,17 @@ contains
                   (.z>0 AND .hash.has_key([.x,.y,.z-1],index=iz(k)))) &
                   cube.set_below_skip_bit_string             ! Previous lower cube exists
             end
-            cube.set_cube_bit_string
+            cube.set_cube_bit_string                         ! Now we know which edges to do
             cube.set_hessian_eval_array(eval,x,y,z)          ! "eval" has the needed points
-            kube(k) = cube                                   ! store for later ...
+            kube(k) = cube                                   ! store the cube for later ...
             .x = .x - x                                      ! Clear the cube coords
             .y = .y - y
             .z = .z - z
          end
          end
          end
-         eval(2:4,2:4,2:4) = FALSE                           ! <<< Evaluate only the
-         .make_5_cube_of_values(f5,func,p5,eval)             ! <<< required points .....
+         eval(2:4,2:4,2:4) = FALSE                           ! <<< Evaluate only the needed
+         .make_5_cube_of_values(f5,func,p5,eval)             ! <<< points for the gradient ...
          k = 0                
          do z = 0,1            ! Now to the actual marching cube triangle interpolation
          do y = 0,1
@@ -1125,7 +1133,7 @@ contains
             cube.interpolate_faces                           ! Interpolate the rest ...
             .append_new_face_info(cube)
             .hash.append_pair([.x,.y,.z],cube.edge_vertex_index)
-            kube(k) = cube
+            kube(k) = cube                                   ! We may still need it later ...
             .x = .x - x                                      ! Clear the cube coords
             .y = .y - y
             .z = .z - z
@@ -1151,6 +1159,7 @@ contains
       end
       values :: VEC{REAL}(8)
       call func(values,transpose(reshape(p,[3,8]))) ! Evaluate the function at pt
+      .n_skip = .n_skip - 8                         ! Remove 8 evaluations for this
       f = reshape(values,[2,2,2])                   ! Put the values into a cube
    end
 
@@ -1177,6 +1186,7 @@ contains
       q = reshape(p,[3,27])    
       pt = transpose(q(:,edge))                 ! Skip edge points
       call func(vals,pt)                        ! Evaluate the function at pt
+      .n_skip = .n_skip - 19                    ! Remove 19=27-8 evaluations for this
       values(edge) = vals                       ! Store values in full 3^3 array
       f = reshape(values,[3,3,3])               ! Put the values into a cube
       f(0,0,0) = parent_cube.value_at_vertex(0) ! Get the parent cube values
@@ -1198,9 +1208,9 @@ contains
       p :: MAT4{REAL}(3,0:4,0:4,0:4)
       eval :: MAT3{BIN}(5,5,5)
       interface
-   func(values,pt) 
-      values :: VEC{REAL}, OUT
-      pt :: MAT{REAL}, IN
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
          end
       end
       values :: VEC{REAL}(125)
@@ -1215,6 +1225,473 @@ contains
             [n_pt,3])
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       call func(values(1:n_pt),pt(1:n_pt,:))
+      .n_skip = .n_skip - n_pt                      
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      f = unpack(values,eval,f)
+   end
+
+!  *************************
+!  Zero flux surface methods
+!  *************************
+
+   zero_flux_cubify(func) ::: leaky
+   ! Generate the zero flux isosurface using the marching cube algorithm.
+   ! NOTE: Only the recursive marching cube routine is implemented so far.
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      .prepare_grid
+      stdout.flush
+      stdout.text("BEFORE isosurface calculation ....................")
+      .put
+      select case (.triangulation_method)
+         case("marching_cube          "); DIE("not implemented yet")
+         case("recursive_marching_cube"); .zero_flux_cubify_recursively(func)
+         case default;        UNKNOWN(.triangulation_method)
+      end
+      stdout.flush
+      stdout.text("AFTER isosurface calculation .....................")
+      .put
+   end 
+
+   zero_flux_cubify_recursively(func) ::: leaky, private
+   ! Generate the zero flux isosurface using the recursive marching cube algorithm.
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+   ENSURE(.grid.width.are_all_equal,"grid widths must be all equal")
+      parent_cube :: MARCHINGCUBE
+      p2 :: MAT4{REAL}(3,0:1,0:1,0:1)
+      f2 :: MAT3{REAL}(0:1,0:1,0:1)
+      g2 :: MAT4{REAL}(3,0:1,0:1,0:1)
+      h2 :: MAT5{REAL}(3,3,0:1,0:1,0:1)
+      .set_isosurface_info_arrays 
+      .set_default_cube(parent_cube)
+      .volume_min = ZERO
+      .volume_max = ZERO
+      .n_skip = (.grid.n_x+2)**3 ! including edges
+      .level = 0
+      .hash.create(256,3,12)
+      .hash.set_reverse_search(TRUE)
+      .x = 0; .y = 0; .z = 0
+      .grid.make_cube_of_points(p2,0,1,.del,0,0,0) 
+      .make_2_cube_of_values(f2,g2,h2,func,p2)
+      parent_cube.set_vertex_info(p2,f2,g2,h2)
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      .zero_flux_divide(func,parent_cube) ! <<< do the work here
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      .point.shrink_columns(.n_pt)
+      .point_gradient.shrink_columns(.n_pt)
+      .point_mean_curvature.shrink(.n_pt)
+      .point_gaussian_curvature.shrink(.n_pt)
+      .face.shrink_columns(.n_face)
+    ! .rotate_gradients ! gradients are in the normal frame here ...
+      .hash.destroy
+   end 
+
+   zero_flux_divide(func,parent_cube) ::: recursive, private, leaky
+   ! Generate the isosurface for "func" using a recursive marching cube
+   ! algorithm. "parent_cube" is the enclosing parent marching cube from which
+   ! the current cube was generated by a bisection method. We keep the
+   ! "parent_cube" to save on function evaluations on the corners.
+      interface
+         func(values,d_values,d2_values,pt)    ! The function whose isosurface we make
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      parent_cube :: MARCHINGCUBE, IN          ! Parent cube; importantly, has corner values
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
+      kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
+      p3 :: MAT4{REAL}(3,0:2,0:2,0:2)          ! The points of all child "cubes"
+      p5 :: MAT4{REAL}(3,0:4,0:4,0:4)          ! The interior and surrounds of the final 8-"kube"
+      f3 :: MAT3{REAL}(0:2,0:2,0:2)            ! The interior values used to make all child "cubes"
+      g3 :: MAT4{REAL}(3,0:2,0:2,0:2)          ! The interior gradients of all child  "cubes"
+      h3 :: MAT5{REAL}(3,3,0:2,0:2,0:2)        ! The interior hessians of all child  "cubes"
+      f5 :: MAT3{REAL}(0:4,0:4,0:4)            ! The interior and surrounding values of the final 8-"kube"
+      skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
+      eval :: MAT3{BIN}(5,5,5)                 ! Tells which of the "p5" points need to be 
+                                               ! evaluated using "func".
+      left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
+      front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
+      below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
+      ix,iy,iz :: VEC{INT}(8)
+      bit,x,y,z,k, l,f,b :: INT
+      vol :: REAL
+      do_divide :: BIN
+      ! Testing here
+      tol :: REAL
+      dx,dy,dz :: VEC{REAL}(3)
+      f5p :: MAT3{REAL}(0:4,0:4,0:4)      
+      f5m :: MAT3{REAL}(0:4,0:4,0:4)      
+      p5p :: MAT4{REAL}(3,0:4,0:4,0:4)
+      p5m :: MAT4{REAL}(3,0:4,0:4,0:4)
+      p3p :: MAT4{REAL}(3,0:2,0:2,0:2)     
+      p3m :: MAT4{REAL}(3,0:2,0:2,0:2)     
+      g3n :: MAT4{REAL}(3,0:2,0:2,0:2) 
+      g3p :: MAT4{REAL}(3,0:2,0:2,0:2) 
+      g3m :: MAT4{REAL}(3,0:2,0:2,0:2) 
+      h3n :: MAT5{REAL}(3,3,0:2,0:2,0:2) 
+      i,j,k :: INT
+      .level = .level + 1
+      bit = .final_level - .level
+      .del = .del/TWO
+      vol = .del**3
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then ! Divide into 8 cubes and do again
+         .grid.make_cube_of_points(p3,0,2,.del,.x,.y,.z) 
+         .make_3_cube_of_values(f3,g3,h3,func,p3,parent_cube)
+     ! eval = TRUE
+     ! .grid.make_cube_of_points(p5,-1,3,.del,.x,.y,.z) 
+     ! .make_5_cube_of_values(f5,func,p5,eval)             
+         cube.set_defaults
+         cube.set_side_length(.del)
+         do z = 0,1
+         do y = 0,1
+         do x = 0,1
+     !    cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2),f5(x+1:x+2,y+1:y+2,z+1:z+2))
+     !    cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+     !    stdout.text("Two cubes; cube 1:")
+     !    cube.put
+            cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1),f3(x:x+1,y:y+1,z:z+1), &
+                                 g3(:,x:x+1,y:y+1,z:z+1),h3(:,:,x:x+1,y:y+1,z:z+1))
+     !    stdout.text("cube 2:")
+     !    cube.put
+            cube.interpolate_zero_flux_edges(.grid.plot_axes)
+            cube.set_edge_bit_string
+            do_divide = (.level<.scan_level) OR cube.is_on_surface
+            if (do_divide) then 
+               .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
+               .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
+               .z = ibclr(.z,bit); if (z==1) .z = ibset(.z,bit)
+               .zero_flux_divide(func,cube)                     ! <<<<<< recursive here
+               .x = ibclr(.x,bit)                               ! Clear the cube coords
+               .y = ibclr(.y,bit)
+               .z = ibclr(.z,bit)
+            end
+         end
+         end
+         end
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else                     ! Divide by 8 the last time, and triangulate
+
+     ! eval = TRUE
+     ! .grid.make_cube_of_points(p5,-1,3,.del,.x,.y,.z) 
+     ! .make_5_cube_of_values(f5,func,p5,eval)             
+     !   tol = TOL(6)
+     !   dx = [tol,ZERO,ZERO]
+     !   dy = [ZERO,tol,ZERO]
+     !   dz = [ZERO,ZERO,tol]
+       ! do i = 0,4
+       ! do j = 0,4
+       ! do k = 0,4
+       !    p5p(:,i,j,k) = p5(:,i,j,k)+dx
+       !    p5m(:,i,j,k) = p5(:,i,j,k)-dx
+       ! end
+       ! end
+       ! end
+     !   do i = 0,2
+     !   do j = 0,2
+     !   do k = 0,2
+     !      p3p(:,i,j,k) = p3(:,i,j,k)+dx
+     !      p3m(:,i,j,k) = p3(:,i,j,k)-dx
+     !    ! p5p(:,i,j,k) = p5(:,i,j,k)+dx
+     !    ! p5m(:,i,j,k) = p5(:,i,j,k)-dx
+     !   end
+     !   end
+     !   end
+     ! .make_all3_cube_of_values(f3,g3p,h3,func,p3p,parent_cube)
+     ! .make_all3_cube_of_values(f3,g3m,h3,func,p3m,parent_cube)
+     ! .make_5_cube_of_values(f5p,func,p5p,eval)             
+     ! .make_5_cube_of_values(f5m,func,p5m,eval)             
+     !   do i = 1,3
+     !   do j = 1,3
+     !   do k = 1,3
+     !    ! g3n(2,i-1,j-1,k-1) = (f5p(i,j,k)-f5m(i,j,k))/(TWO*tol)
+     !      h3n(:,1,i-1,j-1,k-1) = (g3p(:,i-1,j-1,k-1)-g3m(:,i-1,j-1,k-1))/(TWO*tol)
+     !   end
+     !   end
+     !   end
+     !   do i = 0,2
+     !   do j = 0,2
+     !   do k = 0,2
+     !      p3p(:,i,j,k) = p3(:,i,j,k)+dy
+     !      p3m(:,i,j,k) = p3(:,i,j,k)-dy
+     !    ! p5p(:,i,j,k) = p5(:,i,j,k)+dy
+     !    ! p5m(:,i,j,k) = p5(:,i,j,k)-dy
+     !   end
+     !   end
+     !   end
+     ! .make_all3_cube_of_values(f3,g3p,h3,func,p3p,parent_cube)
+     ! .make_all3_cube_of_values(f3,g3m,h3,func,p3m,parent_cube)
+     ! .make_5_cube_of_values(f5p,func,p5p,eval)             
+     ! .make_5_cube_of_values(f5m,func,p5m,eval)             
+     !   do i = 1,3
+     !   do j = 1,3
+     !   do k = 1,3
+     !    ! g3n(2,i-1,j-1,k-1) = (f5p(i,j,k)-f5m(i,j,k))/(TWO*tol)
+     !      h3n(:,2,i-1,j-1,k-1) = (g3p(:,i-1,j-1,k-1)-g3m(:,i-1,j-1,k-1))/(TWO*tol)
+     !   end
+     !   end
+     !   end
+     !   do i = 0,2
+     !   do j = 0,2
+     !   do k = 0,2
+     !      p3p(:,i,j,k) = p3(:,i,j,k)+dz
+     !      p3m(:,i,j,k) = p3(:,i,j,k)-dz
+     !    ! p5p(:,i,j,k) = p5(:,i,j,k)+dz
+     !    ! p5m(:,i,j,k) = p5(:,i,j,k)-dz
+     !   end
+     !   end
+     !   end
+     ! .make_all3_cube_of_values(f3,g3p,h3,func,p3p,parent_cube)
+     ! .make_all3_cube_of_values(f3,g3m,h3,func,p3m,parent_cube)
+     ! .make_5_cube_of_values(f5p,func,p5p,eval)             
+     ! .make_5_cube_of_values(f5m,func,p5m,eval)             
+     !   do i = 1,3
+     !   do j = 1,3
+     !   do k = 1,3
+     !    ! g3n(3,i-1,j-1,k-1) = (f5p(i,j,k)-f5m(i,j,k))/(TWO*tol)
+     !      h3n(:,3,i-1,j-1,k-1) = (g3p(:,i-1,j-1,k-1)-g3m(:,i-1,j-1,k-1))/(TWO*tol)
+     !   end
+     !   end
+     !   end
+        ! stdout.text("Two functions:")
+        ! stdout.put(f3(:,:,:))
+        ! stdout.text("Two functions:")
+        ! stdout.put(f5(1:3,1:3,1:3))
+        ! stdout.text("Two gradients:")
+        ! stdout.put(g3(:,:,:,:))
+        ! stdout.text("Two gradients:")
+        ! stdout.put(g3n(:,:,:,:))
+        ! stdout.text("Two hessians:")
+        ! stdout.put(h3(:,:,:,:,:))
+        ! stdout.text("Two hessians:")
+        ! stdout.put(h3n(:,:,:,:,:))
+
+         .grid.make_cube_of_points(p3,0,2,.del,.x,.y,.z) 
+         .make_3_cube_of_values(f3,g3,h3,func,p3,parent_cube)
+         cube.set_defaults
+         cube.set_side_length(.del)
+         k = 0                
+         do z = 0,1            ! Now to the actual marching cube triangle interpolation
+         do y = 0,1
+         do x = 0,1
+            k = k + 1
+     !    cube.cube_bit_string = 2**8-1
+     !    cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2),f5(x+1:x+2,y+1:y+2,z+1:z+2))
+     !    cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
+     !    stdout.text("Two cubes; cube 1:")
+     !    cube.put
+            cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1),f3(x:x+1,y:y+1,z:z+1), &
+                                 g3(:,x:x+1,y:y+1,z:z+1),h3(:,:,x:x+1,y:y+1,z:z+1))
+     !    stdout.text("cube 2:")
+     !    cube.put
+            .x = .x + x                                      ! Set cube coords
+            .y = .y + y
+            .z = .z + z
+            cube.skip_bit_string = 0
+            ! Use previously triangulated cubes if possible
+          ! l = left(k); f = front(k); b = below(k)
+          ! if (cube.has_left_face_on_surface) then
+          !    if      ( x>0)    then; cube.set_left_info(kube(l).edge_vertex_index)
+          !  ! else if (.x>0)    then; cube.set_left_info(.hash.value_for_key([.x-1,.y,.z]))
+          !    end
+          ! end
+          ! if (cube.has_front_face_on_surface) then
+          !    if      ( y>0)    then; cube.set_front_info(kube(f).edge_vertex_index)
+          !  ! else if (.y>0)    then; cube.set_front_info(.hash.value_for_key([.x,.y-1,.z]))
+          !    end
+          ! end
+          ! if (cube.has_lower_face_on_surface) then
+          !    if      ( z>0)    then; cube.set_below_info(kube(b).edge_vertex_index)
+          !  ! else if (.z>0)    then; cube.set_below_info(.hash.value_for_key([.x,.y,.z-1]))
+          !    end
+          ! end
+            cube.set_n_pt(.n_pt)                             ! All known edge vertices resolved
+            cube.interpolate_zero_flux_faces(.grid.plot_axes)
+            .append_new_face_info(cube)
+            .hash.append_pair([.x,.y,.z],cube.edge_vertex_index)
+            kube(k) = cube                                   ! We may still need it later ...
+            .x = .x - x                                      ! Clear the cube coords
+            .y = .y - y
+            .z = .z - z
+         end
+         end
+         end
+      end
+      .del = TWO*.del
+      .level = .level - 1
+   end
+
+   make_2_cube_of_values(f,g,h,func,p) ::: private
+   ! Evaluate a cube of values "f", gradients "g" and hessians "h" with two
+   ! points per side of the cube (starting at point 0). The values in "f" are
+   ! those of the "func" function evaluated at positions "p" which are supposed
+   ! to be the cube corners.
+      f :: MAT3{REAL}(0:1,0:1,0:1)
+      g :: MAT4{REAL}(3,0:1,0:1,0:1)
+      h :: MAT5{REAL}(3,3,0:1,0:1,0:1)
+      p :: MAT4{REAL}(3,0:1,0:1,0:1)
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      vals :: VEC{REAL}(8)
+      d_vals :: MAT{REAL}(3,8)
+      d2_vals :: MAT3{REAL}(3,3,8)
+      call func(vals,d_vals,d2_vals,transpose(reshape(p,[3,8]))) ! Evaluate at pt
+      .n_skip = .n_skip - 8                         ! Remove 8 evaluations for this
+      f = reshape(vals,[2,2,2])                     ! Put the values into a cube
+      g = reshape(d_vals,[3,2,2,2])                 ! Put the values into a cube
+      h = reshape(d2_vals,[3,3,2,2,2])              ! Put the values into a cube
+   end
+
+   make_3_cube_of_values(f,g,h,func,p,parent_cube) ::: private
+   ! Evaluate a cube of values "f", gradients "g", and hesians "h" with three
+   ! points per side (starting at point 0). The values in "f" aidn "g" are those
+   ! of the "func" function evaluated at cube point positions "p". The cube
+   ! points are assumed to be ordered along firstly the x-grid axis, then
+   ! y-axis, then z-axis. The corner positions are not evaluated but taken from
+   ! the "parent_cube" corner vertex values.
+      f :: MAT3{REAL}(0:2,0:2,0:2), OUT
+      g :: MAT4{REAL}(3,0:2,0:2,0:2), OUT
+      h :: MAT5{REAL}(3,3,0:2,0:2,0:2), OUT
+      p :: MAT4{REAL}(3,0:2,0:2,0:2), IN
+      parent_cube :: MARCHINGCUBE, IN
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      values :: VEC{REAL}(27)
+      vals   :: VEC{REAL}(19)
+      d_values :: MAT{REAL}(3,27)
+      d_vals   :: MAT{REAL}(3,19)
+      d2_values :: MAT3{REAL}(3,3,27)
+      d2_vals   :: MAT3{REAL}(3,3,19)
+      q  :: MAT{REAL}(3,27)
+      pt :: MAT{REAL}(19,3)
+      edge :: VEC{INT}(19) = [2,4,5,6,8,10,11,12,13,14,15,16,17,18,20,22,23,24,26]
+      q = reshape(p,[3,27])    
+      pt = transpose(q(:,edge))                 ! Skip edge points
+      call func(vals,d_vals,d2_vals,pt)         ! Evaluate the function at pt
+      .n_skip = .n_skip - 19                    ! Remove 19=27-8 evaluations for this
+      values(edge) = vals                       ! Store values in full 3^3 array
+      d_values(:,edge) = d_vals                 ! Store values in full 3^3 array
+      d2_values(:,:,edge) = d2_vals             ! Store values in full 3^3 array
+      f = reshape(values,[3,3,3])               ! Put the values into a cube
+      f(0,0,0) = parent_cube.value_at_vertex(0) ! Get the parent cube values
+      f(2,0,0) = parent_cube.value_at_vertex(1)
+      f(2,2,0) = parent_cube.value_at_vertex(2)
+      f(0,2,0) = parent_cube.value_at_vertex(3)
+      f(0,0,2) = parent_cube.value_at_vertex(4)
+      f(2,0,2) = parent_cube.value_at_vertex(5)
+      f(2,2,2) = parent_cube.value_at_vertex(6)
+      f(0,2,2) = parent_cube.value_at_vertex(7)
+      g = reshape(d_values,[3,3,3,3])           ! Put the values into a cube
+      g(:,0,0,0) = parent_cube.vertex_gradient(:,0) ! Get the parent cube values
+      g(:,2,0,0) = parent_cube.vertex_gradient(:,1)
+      g(:,2,2,0) = parent_cube.vertex_gradient(:,2)
+      g(:,0,2,0) = parent_cube.vertex_gradient(:,3)
+      g(:,0,0,2) = parent_cube.vertex_gradient(:,4)
+      g(:,2,0,2) = parent_cube.vertex_gradient(:,5)
+      g(:,2,2,2) = parent_cube.vertex_gradient(:,6)
+      g(:,0,2,2) = parent_cube.vertex_gradient(:,7)
+      h = reshape(d2_values,[3,3,3,3,3])           ! Put the values into a cube
+      h(:,:,0,0,0) = parent_cube.vertex_hessian(:,:,0) ! Get the parent cube values
+      h(:,:,2,0,0) = parent_cube.vertex_hessian(:,:,1)
+      h(:,:,2,2,0) = parent_cube.vertex_hessian(:,:,2)
+      h(:,:,0,2,0) = parent_cube.vertex_hessian(:,:,3)
+      h(:,:,0,0,2) = parent_cube.vertex_hessian(:,:,4)
+      h(:,:,2,0,2) = parent_cube.vertex_hessian(:,:,5)
+      h(:,:,2,2,2) = parent_cube.vertex_hessian(:,:,6)
+      h(:,:,0,2,2) = parent_cube.vertex_hessian(:,:,7)
+   end
+
+   make_all3_cube_of_values(f,g,h,func,p,parent_cube) ::: private
+   ! Evaluate a cube of values "f", gradients "g", and hesians "h" with three
+   ! points per side (starting at point 0). The values in "f" aidn "g" are those
+   ! of the "func" function evaluated at cube point positions "p". The cube
+   ! points are assumed to be ordered along firstly the x-grid axis, then
+   ! y-axis, then z-axis. The corner positions are not evaluated but taken from
+   ! the "parent_cube" corner vertex values.
+      f :: MAT3{REAL}(0:2,0:2,0:2), OUT
+      g :: MAT4{REAL}(3,0:2,0:2,0:2), OUT
+      h :: MAT5{REAL}(3,3,0:2,0:2,0:2), OUT
+      p :: MAT4{REAL}(3,0:2,0:2,0:2), IN
+      parent_cube :: MARCHINGCUBE, IN
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      values :: VEC{REAL}(27)
+      d_values :: MAT{REAL}(3,27)
+      d2_values :: MAT3{REAL}(3,3,27)
+      q  :: MAT{REAL}(3,27)
+      pt :: MAT{REAL}(27,3)
+      q = reshape(p,[3,27])    
+      pt = transpose(q)                      
+      call func(values,d_values,d2_values,pt)
+      f = reshape(values,[3,3,3])               ! Put the values into a cube
+      g = reshape(d_values,[3,3,3,3])           ! Put the values into a cube
+      h = reshape(d2_values,[3,3,3,3,3])        ! Put the values into a cube
+   end
+
+   make_5_cube_of_values(f,func,p,eval) ::: private
+   ! Evaluate a 5 cube of values "f", with five points per side (starting at
+   ! point 0). The values in "f" are those of the "func" function evaluated at
+   ! cube point positions "p", except that only the points corresponding to the
+   ! mask "eval" being TRUE are evaluated.
+      f :: MAT3{REAL}(0:4,0:4,0:4)
+      p :: MAT4{REAL}(3,0:4,0:4,0:4)
+      eval :: MAT3{BIN}(5,5,5)
+      interface
+         func(values,d_values,d2_values,pt) 
+            values :: VEC{REAL}, OUT
+            d_values :: MAT{REAL}, OUT
+            d2_values :: MAT3{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      values :: VEC{REAL}(125)
+      d_values :: MAT{REAL}(3,125)
+      d2_values :: MAT3{REAL}(3,3,125)
+      pt :: MAT{REAL}(125,3)
+      n_pt :: INT
+      n_pt = count(eval)
+      pt(1:n_pt,:) = &
+         reshape( &
+            pack( &
+               transpose(reshape(p,[3,125])), &
+               spread(reshape(eval,[125]),dim=2,ncopies=3)), &
+            [n_pt,3])
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      call func(values(1:n_pt),d_values(:,1:n_pt),d2_values(:,:,1:n_pt),pt(1:n_pt,:))
+      .n_skip = .n_skip - n_pt                      
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       f = unpack(values,eval,f)
    end
@@ -1792,7 +2269,7 @@ contains
       a = .point(:,.face(2,face)) - .point(:,.face(1,face))
       b = .point(:,.face(3,face)) - .point(:,.face(1,face))
       c = a.cross(b)
-      res = c.norm
+      res = HALF*c.norm
    end
 
    face_normal(face) result (res) 
@@ -1874,7 +2351,7 @@ contains
    ENSURE(.n_face>0,"no isosurface faces")
       i :: INT
       .area = ZERO
-      do i = 1,.face.dim
+      do i = 1,.n_face
          .area = .area + .face_area(i)
       end
    end
@@ -1891,7 +2368,7 @@ contains
       base,height,h1,h2,h3 :: REAL
       .volume = ZERO
       .an_volume = ZERO
-      do f = 1,.face.dim
+      do f = 1,.n_face
          i1 = .face(1,f)
          i2 = .face(2,f)
          i3 = .face(3,f)
@@ -1931,12 +2408,25 @@ contains
    ENSURE(.n_pt>0,"no isosurface points")
    ENSURE(C.dim==.n_pt,"wrong size, C")
       k1,k2 :: VEC{REAL}*
-      fac :: REAL
+      fac,small :: REAL
+      i :: INT
       k1.create(.n_pt)
       k2.create(.n_pt)
       .get_principal_curvatures(k1,k2)
+      ! First we need to set zero values to something small
+      ! I choose to set them to the smallest non-zero value
+      C = sqrt((k1*k1+k2*k2)/TWO)
+      small = huge(ONE)
+      do i = 1,.n_pt
+         if (C(i)==ZERO) cycle
+         if (C(i)<small) small = C(i)
+      end
+      do i = 1,.n_pt
+         if (C(i)/=ZERO) cycle
+         C(i) = small
+      end
       fac = TWO/PI
-      C = fac*log(sqrt((k1*k1+k2*k2)/TWO))
+      C = fac*log(C)
       k2.destroy
       k1.destroy
    end
@@ -2012,30 +2502,54 @@ contains
 
    put
    ! Put the isosurface data
+      mean_vol :: REAL
+      n :: INT
       stdout.flush
       stdout.text("ISOSURFACE data:")
       stdout.flush
       stdout.show("Kind of surface          =",.iso_kind) 
       stdout.show("Triangulation method     =",.triangulation_method)
       stdout.show("Iso value                =",.iso_value) 
-      stdout.show("No. of points            =",.n_pt) 
-      stdout.show("No. of faces             =",.n_face) 
+      stdout.show("No. of isosurface points =",.n_pt) 
+      stdout.show("No. of isosurface faces  =",.n_face) 
       stdout.show("Use interpolator?        =",.use_interpolator)
-      stdout.show("Surface area             =",.area) 
-      stdout.show("Interior volume          =",.volume) 
-      stdout.show("Average normal volume    =",.an_volume) 
-      stdout.show("Volume lower bound       =",.volume_min) 
-      stdout.show("Volume upper bound       =",.volume_max) 
-      stdout.show("Average of volume bounds =",HALF*(.volume_min+.volume_max))
       stdout.show("Big interior?            =",.big_interior) 
       stdout.show("Reverse surface normals? =",.big_interior) 
+      if (.triangulation_method=="recursive_marching_cube") then
+      ! These statistics include the points used for gradient
+      ! and hessian evaluation just outside the grid perimeter.
+      n = (.grid.n_x+2)**3 
+      stdout.flush
       stdout.show("Minimum scan division    =",.minimum_scan_division)
       stdout.show("Minimum scan level       =",.minimum_scan_level) 
       stdout.show("Voxel proximity factor   =",.voxel_proximity_factor)
       stdout.show("# of divisions           =",.final_level) 
       stdout.show("# of scan divisions      =",.scan_level) 
+      stdout.show("# of func. evals         =",n-.n_skip) 
       stdout.show("# of func. evals skipped =",.n_skip) 
-      stdout.show("% skipped                =",(1.0d2*.n_skip)/.grid.n_pt)
+      stdout.show("% skipped                =",(1.0d2*.n_skip)/n)
+      end
+      if (.n_pt>0) then
+      mean_vol = HALF*(.volume_min+.volume_max)
+      stdout.flush
+      stdout.text("Volumes and areas ...")
+      stdout.flush
+      stdout.show("Surface area             =",.area) 
+      stdout.show("Interior volume          =",.volume) 
+      stdout.show("Average normal volume    =",.an_volume) 
+      stdout.show("Volume lower bound       =",.volume_min) 
+      stdout.show("Volume upper bound       =",.volume_max) 
+      stdout.show("Average of volume bounds =",mean_vol)
+      stdout.flush
+      stdout.text("Volumes and areas in Angstrom units ...")
+      stdout.flush
+      stdout.show("Surface area             =",.area.to_units("angstrom^2")) 
+      stdout.show("Interior volume          =",.volume.to_units("angstrom^3")) 
+      stdout.show("Average normal volume    =",.an_volume.to_units("angstrom^3")) 
+      stdout.show("Volume lower bound       =",.volume_min.to_units("angstrom^3")) 
+      stdout.show("Volume upper bound       =",.volume_max.to_units("angstrom^3")) 
+      stdout.show("Average of volume bounds =",mean_vol.to_units("angstrom^3"))
+      end
       .put_grid
    end
 
@@ -2100,21 +2614,29 @@ contains
    put_vertex_properties
    ! Put out lists of vertex surface curvature properties.
    ENSURE(.n_pt>0,"There are no vertex points") 
-      use_labels :: BIN
+      use_labels,has_surface_property,has_curvatures :: BIN
       n :: INT
-      n = 5
-      if (.surface_property/=" ") n = n + 2
-      if (.surface_iso_values.created) n = n + 1
+      has_surface_property = .surface_property/=" " AND .surface_property_values.created
+      has_curvatures = .point_mean_curvature.created AND .point_gaussian_curvature.created
+      n = 0
+      if (has_curvatures) n = n + 5
+      if (has_surface_property) then
+         n = n + 2
+         if (.surface_iso_values.created) n = n + 1
+      end
       use_labels = stdout.use_labels
       stdout.set_use_labels(FALSE)
       stdout.flush
       stdout.show("begin vertex_properties "//n.to_str.trim,.n_pt)
-      if (.surface_property/=" ") .put_surface_property_values
-      .put_vertex_shape_index
-      .put_vertex_curvedness
-      .put_vertex_RMS_curvature
-      .put_vertex_mean_curvatures
-      .put_vertex_gaussian_curvatures
+      if (has_surface_property) &
+         .put_surface_property_values
+      if (has_curvatures) then
+         .put_vertex_shape_index
+         .put_vertex_curvedness
+         .put_vertex_RMS_curvature
+         .put_vertex_mean_curvatures
+         .put_vertex_gaussian_curvatures
+      end
       stdout.text("end vertex_properties")
       stdout.set_use_labels(use_labels)
    end
@@ -2545,10 +3067,10 @@ contains
    ENSURE(minval(out)>0,"out atoms out of range")
       stdout.flush
       stdout.text("begin surface " // label.trim)
-      .put_points(angstrom=TRUE)
+      .put_points(angstrom=FALSE)
       .put_faces
       .put_vertex_normals
-      .put_vertex_properties
+      if (.n_pt>0) .put_vertex_properties
       .put_nearest_internal_atom_RGBs(in)
       .put_nearest_external_atom_RGBs(out)
       .put_binned_d_i_d_e_RGBs(in,out)
