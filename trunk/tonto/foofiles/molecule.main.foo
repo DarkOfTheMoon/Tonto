@@ -4184,15 +4184,15 @@ contains
    ! NOTE: this is normally called on a .saved fragment
      charges :: VEC{REAL}, target
      positions :: MAT{REAL}, target
+   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.n_atom,"charges has wrong size")
    ENSURE(charges.dim==positions.dim2,"position and charges arrays are incorrect")
    ENSURE(positions.dim1==3,"dimensions of position array are incorrect")
    ENSURE(.atom.created,"Need a list of atoms")
    ENSURE(.dftgrid.created,"no DFT grid")
-   ENSURE(charges.dim==(.dftgrid.n_pts+1)*.n_atom,"charges has wrong size")
      ch,wt,rho,deficit :: VEC{REAL}*
      pt :: MAT{REAL}*
      shift,pos3 :: VEC{REAL}(3)
-     n_pt,n,f,l,i,i1 :: INT
+     n_pt,n,i,f,l,ff,ll :: INT
      Z,val :: REAL
      ! Make the effective electronic charges "ch" and positions "pt"
      n_pt = .dftgrid.n_pts*.n_atom
@@ -4202,9 +4202,13 @@ contains
      .make_density_grid(rho,pt)
      ch = -rho*wt
      rho.destroy; wt.destroy
-     ! Assign the charges to the full "charges" and "positions" arrays, including
-     ! the atomic charges. Assign the atomic charge to balance the electronic
-     ! charge in case the DFT integration grid is poor.
+   ! stdout.set_real_style("e")
+   ! stdout.text("charges:")
+   ! stdout.put(ch,"column")
+   ! stdout.text("pt:")
+   ! stdout.put(pt)
+     ! First get the atomic charges, which are assigned to balance the
+     ! electronic charge in case the DFT integration grid is poor.
      deficit.create(.n_atom)
      n_pt = .dftgrid.n_pts
      l = 0
@@ -4212,20 +4216,26 @@ contains
         f = l + 1
         l = l + n_pt
         Z = ZERO
-        i1 = f + n - 1 
         do i = f,l
-           val = ch(i)
-           Z = Z + val
-           i1 = i1 + 1
-           charges(i1) = val
-           positions(1,i1) = pt(i,1)
-           positions(2,i1) = pt(i,2)
-           positions(3,i1) = pt(i,3)
+           Z = Z + ch(i)
         end
-        i1 = f + n - 1 
-        charges(i1) = -Z ! ensure neutral atom
-        positions(:,i1) = .atom(n).pos
-        deficit(n) = .atom(n).atomic_number + Z
+        deficit(n) = -Z
+     end
+     ! Now set the full "charges" and "positions" arrays, including the
+     ! (corrected) atomic charges, at the end of the list
+     l = 0
+     ll = 0
+     do n = 1,.n_atom
+        f  = l  + 1
+        l  = l  + n_pt
+        ff = ll + 1
+        ll = ll + n_pt
+        charges(f:l) = ch(ff:ll)
+        positions(:,f:l) = transpose(pt(ff:ll,:))
+        l = l + 1
+        charges(l) = deficit(n)  
+        deficit(n) = .atom(n).atomic_number - deficit(n)
+        positions(:,l) = .atom(n).pos
      end
      stdout.set_real_style("e")
      stdout.flush
@@ -4234,14 +4244,14 @@ contains
      stdout.show("sum of deficit charges =",sum(deficit))
      stdout.show("sum of charges         =",sum(charges))
      deficit.destroy
-     stdout.flush
-     stdout.text("Charges:")
-     stdout.flush
-     stdout.put(charges,"column")
-     stdout.flush
-     stdout.text("Positions:")
-     stdout.flush
-     stdout.put(positions,"transpose")
+   ! stdout.flush
+   ! stdout.text("Charges:")
+   ! stdout.flush
+   ! stdout.put(charges,"column")
+   ! stdout.flush
+   ! stdout.text("Positions:")
+   ! stdout.flush
+   ! stdout.put(positions,"transpose")
      stdout.set_real_style("f")
      pt.destroy; ch.destroy
    end
@@ -4355,7 +4365,7 @@ contains
    ENSURE(.saved.dftgrid.created,"Need saved DFT grid")
    ENSURE(.saved.molecular_orbitals.created,"Need saved molecular orbitals")
       fmm :: PERIODIC_FMM_LEVEL*
-      charges :: VEC{REAL}*
+      values,charges :: VEC{REAL}*
       positions :: MAT{REAL}*
       level_max,l_max,n_pts,n_charges :: INT
       main :: MOLECULE.MAIN*
@@ -4363,64 +4373,63 @@ contains
       fmm.create(self)
       level_max = fmm.level_max
       fmm.destroy
-      ! Create the hierarchy of crystal multipoles and determine the maximum
-      ! multipole order l_max
-      .periodic_fmm_level.create(0,level_max,self)
-      .periodic_fmm_level.set_l_max
-      l_max = maxval(.periodic_fmm_level(:).l_max)
-      .periodic_fmm_level.put
-      ! Assign the natural orbitals ready to evaluate charges
+      ! Assign the natural orbitals ready to evaluate charges, then make the
+      ! effective charges
       .saved.assign_natural_orbitals
-      ! Make the effective charges
       main => .saved
       n_charges = (.saved.dftgrid.n_pts+1)*.saved.n_atom
+      values.create(n_charges)
       charges.create(n_charges)
       positions.create(3,n_charges)
       main.make_effective_charges(charges,positions)
-      .periodic_fmm_level.make_positions_and_charges(charges,positions)
-    ! positions.destroy; charges.destroy
-      .periodic_fmm_level.make_initial_subbox_multipoles(l_max) 
-      .periodic_fmm_level.make_all_subbox_multipoles
+      ! Create the hierarchy of crystal multipoles and determine the maximum
+      ! multipole order l_max
+      .periodic_fmm_level.create(0,level_max,self,charges,positions)
+      .periodic_fmm_level.make_positions_and_charges
+      .periodic_fmm_level.make_box_charges
+      .periodic_fmm_level.set_l_max
+      l_max = maxval(.periodic_fmm_level(:).l_max)
+    ! .periodic_fmm_level.put
+      ! Now make the multipoles
+      .periodic_fmm_level.make_box_multipoles(l_max)
       .periodic_fmm_level.put
-      .periodic_fmm_level.make_potential(charges,positions)
-      positions.destroy; charges.destroy
+      .periodic_fmm_level.make_potential(values)
    end
 
-   periodic_fmm_potential(values,points)
-   ! Make the the "values" of the potential at "points" in the unit cell, coming
-   ! from the set of subbox multipoles at this level. If present TRUE,
-   ! "adjust_surface_dipoles" causes most of the dipoles on the surface of this
-   ! level to be reversed, to simulate the neutralisation of the surface charge,
-   ! in order to get a potential close to the Ewald potential.
+   periodic_fmm_potential(values)
+   ! Make the the "values" of the potential at the positions of the effective
+   ! charges describing the initial fragment. If "adjust_surface_dipoles" is
+   ! present and TRUE, most of the dipoles on the surface of the outer level are
+   ! reversed, to simulate the neutralisation of the surface charge, in order to
+   ! get a potential close to the Ewald potential.
       values :: VEC{REAL}
-      points :: MAT{REAL}
-   ENSURE(values.dim==points.dim2,"inconsistent values and points arrays")
-   ENSURE(points.dim1==3,"wrong 1st dim, points")
-   ENSURE(.periodic_fmm_level.created,"no periodic FMM levels")
-      .periodic_fmm_level.make_potential(values,points)
+      .periodic_fmm_level.make_potential(values)
    end
 
    make_periodic_fmm_J_matrix(J)
    ! Calculate the periodic fmm J matrix
-      self :: target
       J :: MAT{REAL}
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
+   ENSURE(.periodic_fmm_level.created, "need to define periodic_fmm_level")
+      V  :: VEC{REAL}*
       JJ :: MAT{REAL}*
       sh :: SHELL2
-      arch :: ARCHIVE
       q,fa,la,fb,lb :: INT
+      V.create(.dftgrid.n_pts*.n_atom)
+      .periodic_fmm_level.make_potential(V)
       J = ZERO
       do q = 1,.n_shell_pairs
          .get_shell_pair(sh,q,fa,la,fb,lb)
          JJ.create(sh.a.n_comp,sh.b.n_comp)
-         .dftgrid.make_matrix_elements_of(MOLECULE.MAIN:periodic_fmm_potential,self,sh,JJ)
+         .dftgrid.make_matrix_elements_of(V,self,sh,JJ)
          J(fa:la,fb:lb) = J(fa:la,fb:lb) + JJ
          JJ.destroy
          sh.destroy_ptr_part
       end
       J.symmetric_reflect
+      V.destroy
    end
 
 end
