@@ -367,6 +367,13 @@ LINE: while (<FOOFILE>) {
 
 	    &analyse_rout_name($inp);
 
+	    if ($is_private) {                              # Use head name
+                $routine_pvt{$name} = "private";
+            }
+            else {
+                $routine_pvt{$name} = "public";
+            }
+
 	    if (&overloaded($name)) {                       # Overloaded routine
 		$routine_cnt{$name}++;
 		$name = "$name" . "_" . "$routine_cnt{$name}" ;
@@ -505,7 +512,8 @@ if (lc($long_module_name) ne '') {
 
     foreach $rout (keys %routine_cnt) {
 	$cnt = $routine_cnt{$rout};
-	print INTFILE "   public ${rout}_; interface ${rout}_";
+	$pvt = $routine_pvt{$rout};
+	print INTFILE "   $pvt ${rout}_; interface ${rout}_";
 	print INTFILE "      module procedure ${rout}";
 	for ($i = 1; $i <= $cnt; $i++) {
 	print INTFILE "      module procedure ${rout}_$i";
@@ -528,8 +536,10 @@ sub analyse_rout_name {
 
     $is_function = 0;
     if ($inp =~ / result[ ]*[(]/ )        { $is_function = 1; }
+    $is_private = 0;
+    if ($inp =~ s/ \[private]// )         { $is_private = 1; }
     $is_selfless = 0;
-    if ($inp =~ s/ \[selfless]// )        { $is_selfless = 1; }
+    if ($inp =~ s/ \[selfless]// )        { $is_selfless = 1; $is_private = 1}
     $is_functional = 0;
     if ($inp =~ s/ \[functional]// )      { $is_functional = 1; }
     $is_routinal = 0;
