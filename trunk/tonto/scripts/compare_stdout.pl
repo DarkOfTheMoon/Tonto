@@ -1,7 +1,14 @@
 #!/usr/bin/perl
+#*******************************************************************************
 # This script compares two stdout files.
-# It ignores predefined differences, such as times printed out, version number,
-# and platform identifier.
+# It ignores predefined differences, such as date/time, version number, and
+# platform identifier.
+#
+# (c) Daniel Grimwood, University of Western Australia, 2004.
+#
+# $Id$
+# 
+#*******************************************************************************
 use strict;
 
 my $filenamea = shift;
