@@ -23,6 +23,7 @@ module SHELL4
   use MAT4
   use OUTPUT
   use SHELL1
+  use SHELL2
   use RYS
   use GAUSSIAN4
 
@@ -322,33 +323,69 @@ contains
   get_eri(abcd)
   ! The main routine to produce the block (ab|cd)
   ! (uses the transfer equation to make (ab|cd) from (es|fs))
+  ! The routines are now all specialised, they will break if you use the wrong
+  ! one.  Best to just use this main routine.
     IN :: self
     MAT4, INOUT :: abcd
     MAT3, PTR :: escd
     MAT, PTR :: esfs
+    VEC, PTR :: ssfs,esss
+    SHELL2, PTR :: sh
     INT :: n_e,n_f,eub,fub
 
     n_e = .a%l + .b%l
     n_f = .c%l + .d%l
-    eub = n_e.n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
-    fub = n_f.n_comp_sum - (max(.c%l,.d%l)-1).n_comp_sum
 
-    nullify(esfs)
-    nullify(escd)
-    esfs.create(eub,fub)
     if (n_e==0 AND n_f==0) then
-      .make_esfs_00(esfs)
-    else if (n_e==0 OR n_f==0) then
-      .make_esfs_0(esfs)
+      .make_ssss_eri(abcd)
     else
-      .make_esfs(esfs)
+      nullify(esfs)
+      nullify(escd)
+      if (n_e==0) then
+        if (n_f==1) then
+          ssfs.create(3)
+          .make_ssps(ssfs)
+          if (.c%l == 1) abcd(1,1,:,1) = ssfs
+          if (.d%l == 1) abcd(1,1,1,:) = ssfs ! really an else statement.
+          ssfs.destroy
+        else
+          fub = n_f.n_comp_sum - (max(.c%l,.d%l)-1).n_comp_sum
+          ssfs.create(fub)
+          .make_ssfs(ssfs)
+          sh.create(.c,.d)
+          sh.transfer(ssfs,abcd(1,1,:,:))
+          sh.destroy
+          ssfs.destroy
+        end
+      else if (n_f==0) then
+        if (n_e==1) then
+          esss.create(3)
+          .make_psss(esss)
+          if (.a%l == 1) abcd(:,1,1,1) = esss
+          if (.b%l == 1) abcd(1,:,1,1) = esss
+          esss.destroy
+        else
+          eub = n_e.n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
+          esss.create(eub)
+          .make_esss(esss)
+          sh.create(.a,.b)
+          sh.transfer(esss,abcd(:,:,1,1))
+          sh.destroy
+          ssfs.destroy
+        end
+      else
+        eub = n_e.n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
+        fub = n_f.n_comp_sum - (max(.c%l,.d%l)-1).n_comp_sum
+        esfs.create(eub,fub)
+        .make_esfs(esfs)
+        escd.create(eub, .c%n_comp, .d%n_comp)
+        .transfer(esfs,escd)
+        .transfer(escd,abcd)
+        escd.destroy
+        esfs.destroy
+      end
+      .to_normalize(abcd)
     end
-    escd.create(eub, .c%n_comp, .d%n_comp)
-    .transfer(esfs,escd)
-    .transfer(escd,abcd)
-    escd.destroy
-    esfs.destroy
-    .to_normalize(abcd)
   end
 
   make_esfs(esfs)
@@ -360,18 +397,20 @@ contains
     RYS, PTR :: rysa
     VEC(3) :: P,Q,PAi,QCi,QPi,ara,crc,AB,CD,C_tmp,A_tmp
     DBL :: QP2,a,b,c,d,zeta,kab,eta,kcd,xx,r2ab,r2cd
-    INT :: ag,bg,cg,dg,nroots,eub,fub,dim1,dim2,i,n_cc
-    DBL :: norma,normb,normc,zinvi,rhoi,einvi
+    INT :: ag,bg,cg,dg,nroots,eub,fub,dim1,dim2,i,n_cc,n_e,n_f
+    DBL :: norma,normb,normc,zinvi,rhoi,einvi,norm
     IVEC, PTR :: e_x,e_y,e_z,f_x,f_y,f_z
-    VEC, PTR :: norm,rho,zinv,einv
+    VEC, PTR :: rho,zinv,einv
     MAT, PTR :: weights,roots,PA,QC,QP
 
     n_cc = .a%n_cc * .b%n_cc * .c%n_cc * .d%n_cc
-    eub = size(esfs,1)
-    fub = size(esfs,2)
+    n_e = .a%l + .b%l
+    n_f = .c%l + .d%l
+    eub = n_e.n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
+    fub = n_f.n_comp_sum - (max(.c%l,.d%l)-1).n_comp_sum
 
-    dim1 = .a%l + .b%l + 1
-    dim2 = .c%l + .d%l + 1
+    dim1 = n_e + 1
+    dim2 = n_f + 1
     nroots = (dim1+dim2)/2
 
     AB = .a%pos - .b%pos
@@ -389,8 +428,6 @@ contains
       C_tmp = .d%pos
     end
 
-    rysa.create(nroots)
-    norm.create(n_cc)
     weights.create(n_cc,nroots)
     roots.create(n_cc,nroots)
     rho.create(n_cc)
@@ -400,16 +437,17 @@ contains
     QC.create(3,n_cc)
     QP.create(3,n_cc)
 
+    rysa.create(nroots)
     i = 1
     do ag = 1, .a%n_cc
       a     = .a%ex(ag) 
-      norma = .a%cc(ag)
+      norma = TWOPI5ON2 * .a%cc(ag)
       ara   = a* .a%pos
       do bg = 1, .b%n_cc
         b       = .b%ex(bg)
         zeta    = a + b
         zinvi   = ONE / zeta
-        kab     = TWOPI5ON2 * (zinvi**1.5) * exp(-a * b * r2ab * zinvi)
+        kab     = sqrt(zinvi) * zinvi * exp(-a * b * r2ab * zinvi)
         normb   = norma * .b%cc(bg) * kab
         P       = (ara + b* .b%pos) * zinvi
         PAi     = P - A_tmp
@@ -429,8 +467,8 @@ contains
             rhoi  = zeta * eta / (zeta + eta)
             xx    = rhoi * QP2
             rysa.get_weights(xx)
-            norm(i) = normc* .d%cc(dg)*sqrt(rhoi*einvi)*einvi*kcd
-            weights(i,:) = rysa%w
+            norm  = normc* .d%cc(dg)*sqrt(rhoi*einvi)*einvi*kcd
+            weights(i,:) = rysa%w * norm
             roots(i,:) = rysa%r
             rho(i)  = rhoi
             einv(i) = einvi
@@ -443,12 +481,13 @@ contains
         end
       end
     end
+    rysa.destroy
 
     Ix.create(n_cc,nroots,dim1,dim2)
     Iy.create(n_cc,nroots,dim1,dim2)
     Iz.create(n_cc,nroots,dim1,dim2)
     .form_2d_ints(Ix,Iy,Iz,nroots,roots,rho,zinv,einv,PA,QC,QP,n_cc)
-    .form_esfs(Ix,Iy,Iz,weights,esfs,eub,fub,nroots,dim1,dim2,n_cc,norm)
+    .form_esfs(Ix,Iy,Iz,weights,esfs,eub,fub,nroots,dim1,dim2,n_cc)
     Iz.destroy
     Iy.destroy
     Ix.destroy
@@ -461,8 +500,6 @@ contains
     rho.destroy
     roots.destroy
     weights.destroy
-    norm.destroy
-    rysa.destroy
   end
 
   form_2d_ints(Ix,Iy,Iz,nroots,t2,rho,zinv,einv,PA,QC,QP,n_cc)
@@ -784,32 +821,59 @@ contains
     end
   end
 
-  form_esfs(Ix,Iy,Iz,W,esfs,eub,fub,nroots,dim1,dim2,n_cc,norm)
+  form_esfs(Ix,Iy,Iz,W,esfs,eub,fub,nroots,dime,dimf,n_cc)
   ! Forms (es|fs) from the two dimensional integrals for a single
   ! set of primitives
     IN :: self
     MAT4, target :: Ix,Iy,Iz
-    MAT, IN :: W
+    MAT, INOUT :: W
     MAT, OUT :: esfs
-    INT, IN :: eub,fub,nroots,dim1,dim2,n_cc
-    VEC, IN :: norm
+    INT, IN :: eub,fub,nroots,dime,dimf,n_cc
     IVEC, PTR :: e_x,e_y,e_z,f_x,f_y,f_z
-    MAT, PTR :: Ixef,Iyef,Izef
-    IMAT, allocatable, target :: e_powers,f_powers
-    INT :: e,f,ub1,ub2,n,i
+    IMAT, PTR :: e_powers,f_powers
+    MAT, PTR :: Ixef,Iyef,Izef,Ieeff
+    INT :: e,f,ub1,ub2,n,i,n_e,n_f,zf,yf,ze,ye,dime1,dimf1
     DBL :: temp
+    MAT3, PTR :: Iff
+    DBL, dimension(:,:,:,:,:), PTR :: Iyzyz
 
-    allocate(e_powers(3,eub))
-    allocate(f_powers(3,fub))
-    e_powers.make_cartesian_components(max(.a%l,.b%l), .a%l+.b%l)
-    f_powers.make_cartesian_components(max(.c%l,.d%l), .c%l+.d%l)
-    e_powers = e_powers+1
-    f_powers = f_powers+1
-    e_x => e_powers(1,:); e_y => e_powers(2,:); e_z => e_powers(3,:)
-    f_x => f_powers(1,:); f_y => f_powers(2,:); f_z => f_powers(3,:)
+    e_powers.create(eub,3)
+    f_powers.create(fub,3)
+    n_e = .a%l + .b%l
+    n_f = .c%l + .d%l
+    e_x => e_powers(:,1); e_y => e_powers(:,2); e_z => e_powers(:,3)
+    f_x => f_powers(:,1); f_y => f_powers(:,2); f_z => f_powers(:,3)
+    max(.a%l,.b%l).make_gaussian_xyz_indices(e_x,e_y,e_z,n_e)
+    max(.c%l,.d%l).make_gaussian_xyz_indices(f_x,f_y,f_z,n_f)
 
-    do f=1,dim2
-      do e=1,dim1
+!    ! Apply the reduced multiplication scheme to merge the Iy and Iz 2d
+!    ! integrals into a single matrix (upper triangle).  Also merge the weights.
+!    allocate(Iyzyz(nroots,dime,dime,dimf,dimf))
+!    dime1=dime+1
+!    dimf1=dimf+1
+!    do zf=1,dimf
+!      do yf=1,dimf1-zf
+!        Iff => Iyzyz(:,:,:,yf,zf)
+!        do ze=1,dime
+!          do ye=1,dime1-ze
+!            Iff(:,ye,ze) = W(i,:) * Iy(i,:,ye,yf) * Iz(i,:,ze,zf)
+!          end
+!        end
+!      end
+!    end
+!    do f=1,fub
+!      do e=1,eub
+!        Ixef => Ix(:,:,e_x(e),f_x(f))
+!        Ieeff => Iff(:,:,e_y(e),e_z(e),f_y(f),f_z(f))
+!        do i=1,n_cc
+!          esfs(e,f) = norm(i) * sum(Ixef(i,:) * Ieeff(i,:))
+!        end
+!      end
+!    end
+!    deallocate(Iyzyz)
+
+    do f=1,dimf
+      do e=1,dime
         Izef => Iz(:,:,e,f)
         do n=1,nroots
           do i=1,n_cc
@@ -819,255 +883,420 @@ contains
       end
     end
 
-    esfs=ZERO
     do f=1,fub
       do e=1,eub
         Ixef => Ix(:,:,e_x(e),f_x(f))
         Iyef => Iy(:,:,e_y(e),f_y(f))
         Izef => Iz(:,:,e_z(e),f_z(f))
-        temp = esfs(e,f)
+        temp = ZERO
         do i=1,n_cc
-          temp = temp + norm(i) * sum(Ixef(i,:) * Iyef(i,:) * Izef(i,:))
+          temp = temp + sum(Ixef(i,:) * Iyef(i,:) * Izef(i,:))
         end
         esfs(e,f) = temp
       end
     end
 
-    deallocate(f_powers)
-    deallocate(e_powers)
+    f_powers.destroy
+    e_powers.destroy
   end
 
-  make_esfs_0(esfs)
-  ! Creates the initial (es|fs) integrals, summed over the primitives, where
-  ! e = 0 or f = 0.
+  make_esss(esss)
+  ! Creates the initial (es|ss) integrals, summed over the primitives.
+  ! Don't use this if .a%l + .b%l + .c%l + .d%l < 2.  Use the special routines.
     IN :: self
-    MAT, INOUT:: esfs
-    VEC, PTR :: esfsadd
+    VEC, OUT:: esss
+    VEC, PTR :: esssadd
     MAT, PTR :: Ix,Iy,Iz
+    MAT3, PTR :: Iyz
     RYS, PTR :: rysa
-    VEC(3) :: P,Q,PA,QC,QP,ara,crc,AB,CD,A_tmp,C_tmp
+    VEC(3) :: P,Q,PA,QP,ara,crc,AB,CD,A_tmp,C_tmp
     DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
-    INT :: ag,bg,cg,dg,n_e,n_f,nroots,ub
+    INT :: ag,bg,cg,dg,n_e,nroots,eub,maxl,dim
     DBL :: norma,normb,normc,norm
-    IMAT, PTR :: powers
+    IMAT, PTR :: e_powers
     IVEC, PTR :: x,y,z
 
     n_e = .a%l + .b%l
-    n_f = .c%l + .d%l
+    maxl = max(.a%l,.b%l)
+    dim = n_e+1
+    eub = n_e.n_comp_sum - (maxl-1).n_comp_sum
 
-    if (n_e==0) then
-      nroots = (n_f+2)/2
-      rysa.create(nroots)
-      Ix.create(nroots,n_f+1)
-      Iy.create(nroots,n_f+1)
-      Iz.create(nroots,n_f+1)
-      ub = size(esfs,2)
-      esfsadd.create(ub)
+    nroots = (n_e + 2) / 2
+    rysa.create(nroots)
+    Ix.create(nroots,dim)
+    Iy.create(nroots,dim)
+    Iz.create(nroots,dim)
+    Iyz.create(nroots,dim,dim)
+    esssadd.create(eub)
 
-      powers.create(3,ub)
-      powers.make_cartesian_components(max(.c%l,.d%l), n_f)
-      powers = powers+1
-      x => powers(1,:)
-      y => powers(2,:)
-      z => powers(3,:)
+    e_powers.create(eub,3)
+    x => e_powers(:,1); y => e_powers(:,2); z => e_powers(:,3)
+    maxl.make_gaussian_xyz_indices(x,y,z,n_e)
 
-      esfs=ZERO
-      AB = .a%pos - .b%pos
-      CD = .c%pos - .d%pos
-      r2ab=dot_product(AB,AB)
-      r2cd=dot_product(CD,CD)
-      if (.c%l > .d%l) then
-        C_tmp = .c%pos
-      else
-        C_tmp = .d%pos
-      end
-
-      do ag = 1, .a%n_cc
-        a     = .a%ex(ag) 
-        norma = .a%cc(ag)
-        ara   = a * .a%pos
-        do bg = 1, .b%n_cc
-          b     = .b%ex(bg)
-          zeta  = a + b
-          zinv  = ONE / zeta
-          kab   = TWOPI5ON2 * (zinv**1.5) * exp(-a * b * r2ab * zinv)
-          normb = norma * .b%cc(bg) * kab
-          P     = (ara + b * .b%pos) * zinv
-          do cg = 1, .c%n_cc
-            normc = normb * .c%cc(cg)
-            c     = .c%ex(cg)
-            crc   = c * .c%pos
-            do dg = 1, .d%n_cc
-              d    = .d%ex(dg)
-              eta  = c + d
-              einv = ONE / eta
-              kcd  = exp(-c * d * r2cd * einv)
-              Q    = (crc + d * .d%pos) * einv
-              QC   = Q - C_tmp
-              QP   = Q - P
-              QP2  = dot_product(QP,QP)
-              rho  = zeta * eta / (zeta + eta)
-              norm = normc * .d%cc(dg) * sqrt(rho) * kcd * (einv**1.5)
-              xx   = rho * QP2
-              rysa.get_weights(xx)
-              .form_2d_ints_0(Ix,Iy,Iz,nroots,rysa%r,rho,einv,QC,QP,n_f)
-              .form_esfs_0(Ix,Iy,Iz,rysa%w,esfsadd,x,y,z,ub)
-              esfs(1,:) = esfs(1,:) + norm * esfsadd
-            end
-          end
-        end
-      end
-      powers.destroy
-      esfsadd.destroy
-      Iz.destroy
-      Iy.destroy
-      Ix.destroy
-      rysa.destroy
+    AB   = .a%pos - .b%pos
+    CD   = .c%pos - .d%pos
+    r2ab = dot_product(AB,AB)
+    r2cd = dot_product(CD,CD)
+    if (.a%l > .b%l) then
+      A_tmp = .a%pos
     else
-      nroots = (n_e + 2) / 2
-      rysa.create(nroots)
-      Ix.create(nroots,n_e+1)
-      Iy.create(nroots,n_e+1)
-      Iz.create(nroots,n_e+1)
-      ub=size(esfs,1)
-      esfsadd.create(ub)
+      A_tmp = .b%pos
+    end
 
-      powers.create(3,ub)
-      powers.make_cartesian_components(max(.a%l,.b%l), n_e)
-      powers = powers+1
-      x => powers(1,:)
-      y => powers(2,:)
-      z => powers(3,:)
-
-      esfs = ZERO
-      AB   = .a%pos - .b%pos
-      CD   = .c%pos - .d%pos
-      r2ab = dot_product(AB,AB)
-      r2cd = dot_product(CD,CD)
-      if (.a%l > .b%l) then
-        A_tmp = .a%pos
-      else
-        A_tmp = .b%pos
-      end
-
-      do ag = 1, .a%n_cc
-        a     = .a%ex(ag)
-        norma = .a%cc(ag)
-        ara   = a * .a%pos
-        do bg = 1, .b%n_cc
-          b     = .b%ex(bg)
-          zeta  = a + b
-          zinv  = ONE / zeta
-          kab   = TWOPI5ON2 * (zinv**1.5) * exp(-a * b * r2ab * zinv)
-          normb = norma * .b%cc(bg) * kab
-          P     = (ara + b * .b%pos) * zinv
-          PA    = P - A_tmp
-          do cg = 1, .c%n_cc
-            normc = normb * .c%cc(cg)
-            c     = .c%ex(cg)
-            crc   = c * .c%pos
-            do dg = 1, .d%n_cc
-              d    = .d%ex(dg)
-              eta  = c + d
-              einv = ONE / eta
-              kcd  = exp(-c * d * r2cd * einv)
-              Q    = (crc + d * .d%pos) * einv
-              QP   = Q - P
-              QP2  = dot_product(QP,QP)
-              rho  = zeta * eta / (zeta + eta)
-              norm = normc * .d%cc(dg) * sqrt(rho) * kcd * (einv**1.5)
-              xx   = rho*QP2
-              rysa.get_weights(xx)
-              .form_2d_ints_0(Ix,Iy,Iz,nroots,rysa%r,rho,zinv,PA,-QP,n_e)
-              .form_esfs_0(Ix,Iy,Iz,rysa%w,esfsadd,x,y,z,ub)
-              esfs(:,1) = esfs(:,1) + norm * esfsadd
-            end
+    esss = ZERO
+    do ag = 1, .a%n_cc
+      a     = .a%ex(ag)
+      norma = TWOPI5ON2 * .a%cc(ag)
+      ara   = a * .a%pos
+      do bg = 1, .b%n_cc
+        b     = .b%ex(bg)
+        zeta  = a + b
+        zinv  = ONE / zeta
+        kab   = sqrt(zinv) * zinv * exp(-a * b * r2ab * zinv)
+        normb = norma * .b%cc(bg) * kab
+        P     = (ara + b * .b%pos) * zinv
+        PA    = P - A_tmp
+        do cg = 1, .c%n_cc
+          normc = normb * .c%cc(cg)
+          c     = .c%ex(cg)
+          crc   = c * .c%pos
+          do dg = 1, .d%n_cc
+            d    = .d%ex(dg)
+            eta  = c + d
+            einv = ONE / eta
+            kcd  = exp(-c * d * r2cd * einv)
+            Q    = (crc + d * .d%pos) * einv
+            QP   = Q - P
+            QP2  = dot_product(QP,QP)
+            rho  = zeta * eta / (zeta + eta)
+            norm = normc * .d%cc(dg) * sqrt(rho*einv) * kcd * einv
+            xx   = rho*QP2
+            rysa.get_weights(xx)
+            rysa%w = rysa%w * norm
+            .form_2d_ints_0(Ix,Iy,Iz,nroots,rysa%r,rho,zinv,PA,-QP,n_e)
+            .form_esfs_0(Ix,Iy,Iz,Iyz,rysa%w,esssadd,x,y,z,dim,eub,nroots)
+            esss = esss + esssadd
           end
         end
       end
-      powers.destroy
-      esfsadd.destroy
-      Iz.destroy
-      Iy.destroy
-      Ix.destroy
-      rysa.destroy
     end
+    e_powers.destroy
+    esssadd.destroy
+    Iyz.destroy
+    Iz.destroy
+    Iy.destroy
+    Ix.destroy
+    rysa.destroy
   end
 
-  form_2d_ints_0(Ix,Iy,Iz,nroots,t2,rho,einv,QC,QP,n_f) [pure]
-  ! Forms the two dimentional integrals, where e = 0 or f = 0.
+  make_ssfs(ssfs)
+  ! Creates the (ss|fs) integrals, summed over the primitives.
+  ! Don't use this if .a%l + .b%l + .c%l + .d%l < 2.  Use the special routines.
     IN :: self
-    MAT, OUT :: Ix,Iy,Iz
+    VEC, OUT:: ssfs
+    VEC, PTR :: ssfsadd
+    MAT, PTR :: Ix,Iy,Iz
+    MAT3, PTR :: Iyz
+    RYS, PTR :: rysa
+    VEC(3) :: P,Q,QC,QP,ara,crc,AB,CD,A_tmp,C_tmp
+    DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
+    INT :: ag,bg,cg,dg,n_f,nroots,fub,maxl,dim
+    DBL :: norma,normb,normc,norm
+    IMAT, PTR :: f_powers
+    IVEC, PTR :: x,y,z
+
+    n_f = .c%l + .d%l
+    maxl = max(.c%l,.d%l)
+    dim = n_f+1
+    fub = n_f.n_comp_sum - (maxl-1).n_comp_sum
+
+    nroots = (n_f+2)/2
+    rysa.create(nroots)
+    Ix.create(nroots,dim)
+    Iy.create(nroots,dim)
+    Iz.create(nroots,dim)
+    Iyz.create(nroots,dim,dim)
+    ssfsadd.create(fub)
+
+    f_powers.create(fub,3)
+    x => f_powers(:,1); y => f_powers(:,2); z => f_powers(:,3)
+    maxl.make_gaussian_xyz_indices(x,y,z,n_f)
+
+    AB = .a%pos - .b%pos
+    CD = .c%pos - .d%pos
+    r2ab=dot_product(AB,AB)
+    r2cd=dot_product(CD,CD)
+    if (.c%l > .d%l) then
+      C_tmp = .c%pos
+    else
+      C_tmp = .d%pos
+    end
+
+    ssfs=ZERO
+    do ag = 1, .a%n_cc
+      a     = .a%ex(ag) 
+      norma = TWOPI5ON2 * .a%cc(ag)
+      ara   = a * .a%pos
+      do bg = 1, .b%n_cc
+        b     = .b%ex(bg)
+        zeta  = a + b
+        zinv  = ONE / zeta
+        kab   = sqrt(zinv) * zinv * exp(-a * b * r2ab * zinv)
+        normb = norma * .b%cc(bg) * kab
+        P     = (ara + b * .b%pos) * zinv
+        do cg = 1, .c%n_cc
+          normc = normb * .c%cc(cg)
+          c     = .c%ex(cg)
+          crc   = c * .c%pos
+          do dg = 1, .d%n_cc
+            d    = .d%ex(dg)
+            eta  = c + d
+            einv = ONE / eta
+            kcd  = exp(-c * d * r2cd * einv)
+            Q    = (crc + d * .d%pos) * einv
+            QC   = Q - C_tmp
+            QP   = Q - P
+            QP2  = dot_product(QP,QP)
+            rho  = zeta * eta / (zeta + eta)
+            norm = normc * .d%cc(dg) * sqrt(rho*einv) * kcd * einv
+            xx   = rho * QP2
+            rysa.get_weights(xx)
+            rysa%w = rysa%w * norm
+            .form_2d_ints_0(Ix,Iy,Iz,nroots,rysa%r,rho,einv,QC,QP,n_f)
+            .form_esfs_0(Ix,Iy,Iz,Iyz,rysa%w,ssfsadd,x,y,z,dim,fub,nroots)
+            ssfs = ssfs + ssfsadd
+          end
+        end
+      end
+    end
+    f_powers.destroy
+    ssfsadd.destroy
+    Iyz.destroy
+    Iz.destroy
+    Iy.destroy
+    Ix.destroy
+    rysa.destroy
+  end
+
+  form_2d_ints_0(Ix,Iy,Iz,nroots,t2,rho,einv,QC,QP,n_f)
+  ! Forms the two dimentional integrals, where e = 0 or f = 0.
+  ! Don't use this if .a%l + .b%l + .c%l + .d%l < 2.  Use the special routines.
+    IN :: self
+    MAT, target, OUT :: Ix,Iy,Iz
     VEC, IN :: t2
     DBL, IN :: rho,einv
     INT, IN :: n_f,nroots
     VEC(3), IN :: QC,QP
     VEC(nroots) :: c
-    DBL :: ret,cf1
+    DBL :: ret,cf1,tmp,tmp2
     INT :: f,f1,fp1,n
-    Ix(:,1) = ONE
-    Iy(:,1) = ONE
-    Iz(:,1) = ONE
-    select case (n_f)
-      case (0)
-      case (1)
-        do n=1,nroots
-          ret     = rho * t2(n) * einv
-          Ix(n,2) = QC(1) - ret * QP(1)
-          Iy(n,2) = QC(2) - ret * QP(2)
-          Iz(n,2) = QC(3) - ret * QP(3)
-        end
-      case default
-        do n=1,nroots
-          ret     = rho * t2(n) * einv
-          Ix(n,2) = QC(1) - ret * QP(1)
-          Iy(n,2) = QC(2) - ret * QP(2)
-          Iz(n,2) = QC(3) - ret * QP(3)
-          c(n) = (ONE - ret) * HALF * einv
-        end
-        do f = 2, n_f
-          f1  = f - 1
-          fp1 = f + 1
-          do n=1, nroots
-            cf1 = f1 * c(n)
-            Ix(n,fp1) = Ix(n,2) * Ix(n,f) + cf1 * Ix(n,f1)
-            Iy(n,fp1) = Iy(n,2) * Iy(n,f) + cf1 * Iy(n,f1)
-            Iz(n,fp1) = Iz(n,2) * Iz(n,f) + cf1 * Iz(n,f1)
-          end
-        end
+    VEC, PTR :: Ix2,Iy2,Iz2
+
+    tmp  = rho*einv
+    tmp2 = HALF*einv
+    Ix2 => Ix(:,2); Iy2 => Iy(:,2); Iz2 => Iz(:,2)
+    do n=1,nroots
+      ret     = t2(n) * tmp
+      Ix(n,1) = ONE
+      Iy(n,1) = ONE
+      Iz(n,1) = ONE
+      Ix2(n) = QC(1) - ret * QP(1)
+      Iy2(n) = QC(2) - ret * QP(2)
+      Iz2(n) = QC(3) - ret * QP(3)
+      c(n) = (ONE - ret) * tmp2
+    end
+    do f = 2, n_f
+      f1  = f - 1
+      fp1 = f + 1
+      do n=1, nroots
+        cf1 = f1 * c(n)
+        Ix(n,fp1) = Ix2(n) * Ix(n,f) + cf1 * Ix(n,f1)
+        Iy(n,fp1) = Iy2(n) * Iy(n,f) + cf1 * Iy(n,f1)
+        Iz(n,fp1) = Iz2(n) * Iz(n,f) + cf1 * Iz(n,f1)
+      end
     end
   end
 
-  form_esfs_0(Ix,Iy,Iz,W,esfsadd,f_x,f_y,f_z,fub)
+  form_esfs_0(Ix,Iy,Iz,Iyz,weights,esfsadd,fx,fy,fz,dim,fub,nroots)
   ! Forms (es|fs) from the two dimensional integrals for a single
   ! set of primitives, where e = 0 or f = 0.
     IN :: self
-    MAT, IN :: Ix,Iy,Iz
-    VEC, IN :: W
+    MAT, IN :: Ix,Iz
+    MAT, PTR :: Iy
+    MAT3, INOUT :: Iyz
+    VEC, IN :: weights
     VEC, OUT :: esfsadd
-    IVEC, IN :: f_x,f_y,f_z
-    INT :: f,fub
+    IVEC, IN :: fx,fy,fz
+    INT, IN :: dim,fub,nroots
+    INT :: f,y,z,n
+    DBL :: w,Iz_w
+
+    ! Apply the reduced multiplication scheme to merge the Iy and Iz 2d
+    ! integrals into a single matrix (upper triangle).  Also merge the weights.
+    do n=1,nroots
+      w = weights(n)
+      do z=1,dim
+        Iz_w = Iz(n,z) * w
+        do y=1,dim+1-z
+          Iyz(n,y,z) = Iz_w*Iy(n,y)
+        end
+      end
+    end
 
     do f=1,fub
-      esfsadd(f)=sum(Ix(:,f_x(f)) * Iy(:,f_y(f)) * Iz(:,f_z(f)) * W)
+      esfsadd(f)=sum(Ix(:,fx(f)) * Iyz(:,fy(f),fz(f)))
     end
   end
 
-  make_esfs_00(esfs)
-  ! Creates the initial (es|fs) integrals, summed over the primitives, where
-  ! e = f = 0.
+  make_psss(psss)
+  ! Creates the initial (ps|ss) or (sp|ss) integrals, summed over the
+  ! primitives.
     IN :: self
-    MAT, INOUT:: esfs
+    VEC, OUT:: psss
+    RYS, PTR :: rysa
+    VEC(3) :: P,Q,PA,QP,ara,crc,AB,CD,A_tmp,C_tmp,psssadd
+    DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
+    INT :: ag,bg,cg,dg
+    DBL :: norma,normb,normc,norm,rho_zinv,rzt,Ix,Iy,Iz
+
+    rysa.create(1)
+
+    AB   = .a%pos - .b%pos
+    CD   = .c%pos - .d%pos
+    r2ab = dot_product(AB,AB)
+    r2cd = dot_product(CD,CD)
+    if (.a%l > .b%l) then
+      A_tmp = .a%pos
+    else
+      A_tmp = .b%pos
+    end
+
+    psss = ZERO
+    do ag = 1, .a%n_cc
+      a     = .a%ex(ag)
+      norma = TWOPI5ON2 * .a%cc(ag)
+      ara   = a * .a%pos
+      do bg = 1, .b%n_cc
+        b     = .b%ex(bg)
+        zeta  = a + b
+        zinv  = ONE / zeta
+        kab   = sqrt(zinv) * zinv * exp(-a * b * r2ab * zinv)
+        normb = norma * .b%cc(bg) * kab
+        P     = (ara + b * .b%pos) * zinv
+        PA    = P - A_tmp
+        do cg = 1, .c%n_cc
+          normc = normb * .c%cc(cg)
+          c     = .c%ex(cg)
+          crc   = c * .c%pos
+          do dg = 1, .d%n_cc
+            d    = .d%ex(dg)
+            eta  = c + d
+            einv = ONE / eta
+            kcd  = exp(-c * d * r2cd * einv)
+            Q    = (crc + d * .d%pos) * einv
+            QP   = Q - P
+            QP2  = dot_product(QP,QP)
+            rho  = zeta * eta / (zeta + eta)
+            norm = normc * .d%cc(dg) * sqrt(rho*einv) * kcd * einv
+            xx   = rho*QP2
+            rysa.get_weights(xx)
+            rho_zinv = rho*zinv
+            rzt = rysa%r(1) * rho_zinv
+            Ix  = PA(1) + rzt * QP(1)
+            Iy  = PA(2) + rzt * QP(2)
+            Iz  = PA(3) + rzt * QP(3)
+            psssadd(1) = Ix * rysa%w(1)
+            psssadd(2) = Iy * rysa%w(1)
+            psssadd(3) = Iz * rysa%w(1)
+            psss = psss + norm * psssadd
+          end
+        end
+      end
+    end
+    rysa.destroy
+  end
+
+  make_ssps(ssps)
+  ! Creates the (ss|ps) or (ss|sp) integrals, summed over the primitives.
+    IN :: self
+    VEC, OUT:: ssps
+    RYS, PTR :: rysa
+    VEC(3) :: P,Q,QC,QP,ara,crc,AB,CD,A_tmp,C_tmp,sspsadd
+    DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
+    INT :: ag,bg,cg,dg
+    DBL :: norma,normb,normc,norm,ret,rho_einv,Ix,Iy,Iz
+
+    rysa.create(1)
+
+    AB = .a%pos - .b%pos
+    CD = .c%pos - .d%pos
+    r2ab=dot_product(AB,AB)
+    r2cd=dot_product(CD,CD)
+    if (.c%l > .d%l) then
+      C_tmp = .c%pos
+    else
+      C_tmp = .d%pos
+    end
+
+    ssps=ZERO
+    do ag = 1, .a%n_cc
+      a     = .a%ex(ag) 
+      norma = TWOPI5ON2 * .a%cc(ag)
+      ara   = a * .a%pos
+      do bg = 1, .b%n_cc
+        b     = .b%ex(bg)
+        zeta  = a + b
+        zinv  = ONE / zeta
+        kab   = sqrt(zinv) * zinv * exp(-a * b * r2ab * zinv)
+        normb = norma * .b%cc(bg) * kab
+        P     = (ara + b * .b%pos) * zinv
+        do cg = 1, .c%n_cc
+          normc = normb * .c%cc(cg)
+          c     = .c%ex(cg)
+          crc   = c * .c%pos
+          do dg = 1, .d%n_cc
+            d    = .d%ex(dg)
+            eta  = c + d
+            einv = ONE / eta
+            kcd  = exp(-c * d * r2cd * einv)
+            Q    = (crc + d * .d%pos) * einv
+            QC   = Q - C_tmp
+            QP   = Q - P
+            QP2  = dot_product(QP,QP)
+            rho  = zeta * eta / (zeta + eta)
+            norm = normc * .d%cc(dg) * sqrt(rho*einv) * kcd * einv
+            xx   = rho * QP2
+            rysa.get_weights(xx)
+            rho_einv = rho*einv
+            ret = rysa%r(1) * rho_einv
+            Ix  = QC(1) - ret * QP(1)
+            Iy  = QC(2) - ret * QP(2)
+            Iz  = QC(3) - ret * QP(3)
+            sspsadd(1) = Ix * rysa%w(1)
+            sspsadd(2) = Iy * rysa%w(1)
+            sspsadd(3) = Iz * rysa%w(1)
+            ssps = ssps + norm * sspsadd
+          end
+        end
+      end
+    end
+    rysa.destroy
+  end
+
+  make_ssss_eri(ssss)
+  ! Creates the (ss|ss) integrals, summed over the primitives.
+    IN :: self
+    MAT4, OUT:: ssss
     RYS, PTR :: rysa
     VEC(3) :: P,Q,QP,ara,crc,AB,CD
     DBL :: QP2,a,b,c,d,zeta,zinv,kab,eta,einv,kcd,rho,xx,r2ab,r2cd
     INT :: ag,bg,cg,dg
     DBL :: norma,normb,normc,norm
-    DBL :: esfsadd
+    DBL :: ssssadd
 
     rysa.create(1)
 
-    esfsadd = ZERO
+    ssssadd = ZERO
     AB   = .a%pos - .b%pos
     CD   = .c%pos - .d%pos
     r2ab = dot_product(AB,AB)
@@ -1075,13 +1304,13 @@ contains
 
     do ag = 1, .a%n_cc
       a     = .a%ex(ag) 
-      norma = .a%cc(ag)
+      norma = TWOPI5ON2 * .a%cc(ag)
       ara   = a * .a%pos
       do bg = 1, .b%n_cc
         b     = .b%ex(bg)
         zeta  = a + b
         zinv  = ONE / zeta
-        kab   = TWOPI5ON2 * (zinv**1.5) * exp(-a * b * r2ab * zinv)
+        kab   = sqrt(zinv) * zinv * exp(-a * b * r2ab * zinv)
         normb = norma * .b%cc(bg) * kab
         P     = (ara + b * .b%pos) * zinv
         do cg = 1, .c%n_cc
@@ -1100,13 +1329,13 @@ contains
             norm = normc * .d%cc(dg) * sqrt(rho*einv) * kcd * einv
             xx   = rho*QP2
             rysa.get_weights(xx)
-            esfsadd = esfsadd + norm * sum(rysa%w)
+            ssssadd = ssssadd + norm * rysa%w(1)
           end
         end
       end
     end
     rysa.destroy
-    esfs=esfsadd
+    ssss(1,1,1,1)=ssssadd
   end
 
   transfer(esfs,escd) [pure]
@@ -1144,7 +1373,7 @@ contains
     IVEC(3) :: d_momenta,c_momenta
     VEC(3) :: CD
     INT :: c,d,ld,ld1_n_comp_sum,ld2_n_comp_sum,c1,d1,cub,dub
-    INT :: z,n_f,fadd,e,eub
+    INT :: z,n_f,fadd,e,eub,tmp
     DBL :: CDi
 
     select case (.d%l)
@@ -1153,13 +1382,13 @@ contains
 
       case (1)
         fadd = (.c%l-1).n_comp_sum
-        eub  = size(esfs,1)
+        eub = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
         CD   = .c%pos - .d%pos
         n_f  = .c%l + .d%l
         cub  = (n_f-1).n_comp_sum - fadd
 
         allocate(momenta(3, n_f.n_comp_sum))
-        momenta.make_cartesian_components(0,n_f)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_f)
         allocate(index(0:n_f,0:n_f,0:n_f))
         index.make_index_of_components(momenta)
 
@@ -1180,13 +1409,13 @@ contains
 
       case default
         fadd = (.c%l-1).n_comp_sum
-        eub  = size(esfs,1)
+        eub = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
         CD   = .c%pos - .d%pos
         n_f  = .c%l + .d%l
         cub  = (n_f-1).n_comp_sum - fadd
 
         allocate(momenta(3, n_f.n_comp_sum))
-        momenta.make_cartesian_components(0,n_f)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_f)
         allocate(index(0:n_f,0:n_f,0:n_f))
         index.make_index_of_components(momenta)
 
@@ -1267,7 +1496,7 @@ contains
     IVEC(3) :: d_momenta,c_momenta
     VEC(3) :: CD
     INT :: c,d,lc,lc1_n_comp_sum,lc2_n_comp_sum,c1,d1,cub,dub
-    INT :: z,n_f,fadd,e,eub
+    INT :: z,n_f,fadd,e,eub,tmp
     DBL :: DCi
 
     select case (.c%l)
@@ -1276,13 +1505,13 @@ contains
 
       case (1)
         fadd = (.d%l-1).n_comp_sum
-        eub  = size(esfs,1)
+        eub = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
         CD   = .c%pos - .d%pos
         n_f  = .c%l + .d%l
         dub  = (n_f-1).n_comp_sum - fadd
 
         allocate(momenta(3, n_f.n_comp_sum))
-        momenta.make_cartesian_components(0,n_f)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_f)
         allocate(index(0:n_f,0:n_f,0:n_f))
         index.make_index_of_components(momenta)
 
@@ -1303,13 +1532,13 @@ contains
 
       case default
         fadd = (.d%l-1).n_comp_sum
-        eub  = size(esfs,1)
+        eub = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
         CD   = .c%pos - .d%pos
         n_f  = .c%l + .d%l
         dub  = (n_f-1).n_comp_sum - fadd
 
         allocate(momenta(3, n_f.n_comp_sum))
-        momenta.make_cartesian_components(0,n_f)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_f)
         allocate(index(0:n_f,0:n_f,0:n_f))
         index.make_index_of_components(momenta)
 
@@ -1389,7 +1618,7 @@ contains
     IVEC(3) :: a_momenta,b_momenta
     VEC(3) :: AB
     INT :: a1,b1,lb1_n_comp_sum,lb2_n_comp_sum,a,b,c,d,lb,aub,bub
-    INT :: z,n_e,eadd,cub,dub
+    INT :: z,n_e,eadd,cub,dub,tmp
     DBL :: ABi
 
     select case (.b%l)
@@ -1405,7 +1634,7 @@ contains
         dub  = .d%n_comp
 
         allocate(momenta(3, n_e.n_comp_sum))
-        momenta.make_cartesian_components(0,n_e)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_e)
         allocate(index(0:n_e,0:n_e,0:n_e))
         index.make_index_of_components(momenta)
 
@@ -1434,7 +1663,7 @@ contains
         dub  = .d%n_comp
 
         allocate(momenta(3, n_e.n_comp_sum))
-        momenta.make_cartesian_components(0,n_e)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_e)
         allocate(index(0:n_e,0:n_e,0:n_e))
         index.make_index_of_components(momenta)
 
@@ -1515,7 +1744,7 @@ contains
     IVEC(3) :: a_momenta,b_momenta
     VEC(3) :: AB
     INT :: a1,b1,la1_n_comp_sum,la2_n_comp_sum,a,b,c,d,la,aub,bub
-    INT :: z,n_e,eadd,cub,dub
+    INT :: z,n_e,eadd,cub,dub,tmp
     DBL :: BAi
 
     select case (.a%l)
@@ -1531,7 +1760,7 @@ contains
         dub  = .d%n_comp
 
         allocate(momenta(3, n_e.n_comp_sum))
-        momenta.make_cartesian_components(0,n_e)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_e)
         allocate(index(0:n_e,0:n_e,0:n_e))
         index.make_index_of_components(momenta)
 
@@ -1560,7 +1789,7 @@ contains
         dub  = .d%n_comp
 
         allocate(momenta(3, n_e.n_comp_sum))
-        momenta.make_cartesian_components(0,n_e)
+        tmp=0; tmp.make_gaussian_xyz_powers(momenta,n_e)
         allocate(index(0:n_e,0:n_e,0:n_e))
         index.make_index_of_components(momenta)
 
