@@ -395,13 +395,13 @@ contains
      atom_pair :: ATOMVEC(2)
      old_geom,new_geom,big_cluster :: REALMAT*
      hkl_op,symop_list :: INTMAT*
-     fragment_atom_for :: INTVEC*
+     cell_atom_for :: INTVEC*
      this_atom_added :: BINVEC*
      cell_length,max_dist,fragment_length,cell_a,cell_b,cell_c :: REAL
      i,n,h,h1,k,k1,l,l1,s,cell_atom,first,last :: INT
      h_max,k_max,l_max,n_cells,n_cell_atoms,max_n_atoms :: INT
      n_trial_atoms,this_atom,this_parent :: INT
-     start_with_fragment :: BIN
+     start_with_fragment,tmpbin :: BIN
      ENSURE(.crystal.created,"no crystal")
      ENSURE(.crystal.cluster_symop.created,"no crystal cluster symops")
      ENSURE(.fragment_geometry.created,"no fragment geometry")
@@ -428,7 +428,6 @@ contains
 !     max_dist = max_dist + cell_length
 
      old_geom => .crystal.unit_cell_geometry
-     first = 1 ! Index of current atom.
      cell_a = .crystal.unit_cell_length(1)
      cell_b = .crystal.unit_cell_length(2)
      cell_c = .crystal.unit_cell_length(3)
@@ -443,53 +442,33 @@ contains
      ! The loop structure creates a cube of unit cells around the origin.  A
      ! sphere is better than a cube, but requires a little more programming.
      big_cluster.create(3,max_n_atoms)
+     big_cluster = ZERO
      symop_list.create(4,max_n_atoms)
-     fragment_atom_for.create(max_n_atoms)
+     cell_atom_for.create(max_n_atoms)
 
      if (.defragment) then
        this_atom_added.create(max_n_atoms)
        this_atom_added = FALSE
      end
 
-     ! We may want to force the fragment to be part of the outputted cluster.
-     if (start_with_fragment) then
-       do i = 1, .n_fragment_atoms
-         n_trial_atoms = n_trial_atoms + 1
-         symop = (/1,0,0,0/)
-         pos = .fragment_geometry(:,i)
-         .add_new_atom(pos,symop,i)
-         symop_list(:,first) = symop
-         big_cluster(:,first) = pos
-         first = first + 1
-         fragment_atom_for(i) = i
-         if (.defragment) this_atom_added(i) = TRUE
-       end
-     end
-
      ! Loop over all lattice vectors consistent with max_dist. 
      ! Loop order is [0,0,0], [0,0,-1], [0,0,1], [0,0,-2], [0,0,2], [0,-1,0] etc.
+     first = 1 ! Index of current atom.
+     last  = n_cell_atoms
      do h1 = 0,2*h_max
-       if (mod(h1,2)==0) then
-         h = h1 / 2
-       else
-         h = - (h1 + 1) / 2
+       if (mod(h1,2)==0) then; h = h1 / 2
+       else;                   h = - (h1 + 1) / 2
        end
        k_max = ceiling((max_dist-abs(h)*cell_a) / cell_b)+1
        do k1 = 0,2*k_max
-         if (mod(k1,2)==0) then
-           k = k1 / 2
-         else
-           k = - (k1 + 1) / 2
+         if (mod(k1,2)==0) then; k = k1 / 2
+         else;                   k = - (k1 + 1) / 2
          end
          k_max = ceiling((max_dist-abs(h)*cell_a-abs(k)*cell_b) / cell_c)+1
          do l1 = 0,2*l_max
-           if (mod(l1,2)==0) then
-             l = l1 / 2
-           else
-             l = - (l1 + 1) / 2
+           if (mod(l1,2)==0) then; l = l1 / 2
+           else;                   l = - (l1 + 1) / 2
            end
-
-           last = first + n_cell_atoms - 1
            ! hkl is the displacement to shift the atoms.
            hkl = real((/h,k,l/),kind=REAL_KIND)
            ! The unit cell atom corresponding to this atom.
@@ -498,12 +477,25 @@ contains
              n_trial_atoms = n_trial_atoms + 1
              big_cluster(:,i) = old_geom(:,cell_atom) + hkl
              symop_list(:,i) = (/.crystal.symop_for_unit_cell_atom(cell_atom),h,k,l/)
-             fragment_atom_for(i) = .crystal.fragment_atom_for(cell_atom)
+             cell_atom_for(i) = .crystal.fragment_atom_for(cell_atom)
              cell_atom = cell_atom + 1
            end
-
            first = first + n_cell_atoms
+           last  = last  + n_cell_atoms 
          end
+       end
+     end
+
+     ! We may want to force the fragment to be part of the outputted cluster.
+     if (start_with_fragment) then
+       do i = 1, .n_fragment_atoms
+         n_trial_atoms = n_trial_atoms + 1
+         pos = .fragment_geometry(:,i)
+         tmpbin = big_cluster.has_column(pos,col=n)
+         ENSURE(tmpbin,"position of fragment atom not found in large cluster")
+         symop = symop_list(:,n)
+         .add_new_atom(pos,symop,cell_atom_for(n))
+         if (.defragment) this_atom_added(n) = TRUE
        end
      end
 
@@ -513,15 +505,13 @@ contains
        symop = symop_list(:,i)
        pos = big_cluster(:,i)
        if (.is_new_atom(pos,symop)) then
-         .add_new_atom(pos,symop,fragment_atom_for(i))
+         .add_new_atom(pos,symop,cell_atom_for(i))
          if (.defragment) this_atom_added(i) = TRUE
        end
      end
 
      ! Add in bonded atoms if appropriate.
      if (.defragment) then
-       stdout.show("n_atoms = ",.n_atoms)
-       stdout.show("n_trial_atoms = ",n_trial_atoms)
        direct_cell_matrix = .crystal.direct_cell_matrix
        this_atom = 0
        do n=1,n_trial_atoms ! worst case is to add one atom at a time.
@@ -535,97 +525,95 @@ contains
 
          do i=1,n_trial_atoms
            if (this_atom_added(i)) cycle
-           atom_pair(2) = .cell_atom(fragment_atom_for(i))
+           atom_pair(2) = .cell_atom(cell_atom_for(i))
            pos = big_cluster(:,i)
            atom_pair(2).pos = matmul(direct_cell_matrix,pos)
            if (atom_pair.bonded(1,2)) then
              this_atom_added(i) = TRUE
              symop = symop_list(:,i)
-             .add_new_atom(pos,symop,fragment_atom_for(i))
+             .add_new_atom(pos,symop,cell_atom_for(i))
            end
          end
        end
        this_atom_added.destroy
      end
 
-     fragment_atom_for.destroy
+     cell_atom_for.destroy
      symop_list.destroy
      big_cluster.destroy
    end
 
-  is_new_atom(pos,symop) result (res)
-  ! Return TRUE only if "pos" array is to be added to .geometry.
-    pos :: REALVEC(3), IN
-    symop :: INTVEC(4)
-    res :: BIN
-    i :: INT
-    res = FALSE
-    if (NOT .geometry(:,1:.n_atoms).has_column(pos)) then
-      select case (.add_criteria)
-        ! Add only those atoms proximate to the fragment
-        case("within_radius         ")
-                res = .minimum_distance_to(pos)<=.radius
-        ! Add only those atoms in the first unit cell
-        case("unit_cell             ")
-                res = .is_in_unit_cell(pos)
-        ! Add only those atoms in the initial fragment
-        case("fragment              ")
-                res = .minimum_distance_to(pos)<= TOL(10)
-        ! Add only those atoms in the first unit cell or initial fragment
-        case("unit_cell_and_fragment")
-                res = .minimum_distance_to(pos)<= TOL(10) OR .is_in_unit_cell(pos)
-        ! Add only those atoms bonded to the existing cluster
-        case default;    UNKNOWN(.add_criteria)
-      end
-    end
-  end
+   is_new_atom(pos,symop) result (res)
+   ! Return TRUE only if "pos" array is to be added to .geometry.
+     pos :: REALVEC(3), IN
+     symop :: INTVEC(4)
+     res :: BIN
+     i :: INT
+     res = FALSE
+     if (NOT .geometry(:,1:.n_atoms).has_column(pos)) then
+       select case (.add_criteria)
+         ! Add only those atoms proximate to the fragment
+         case("within_radius         ")
+                 res = .minimum_distance_to(pos)<=.radius
+         ! Add only those atoms in the first unit cell
+         case("unit_cell             ")
+                 res = .is_in_unit_cell(pos)
+         ! Add only those atoms in the initial fragment
+         case("fragment              ")
+                 res = .minimum_distance_to(pos)<= TOL(10)
+         ! Add only those atoms in the first unit cell or initial fragment
+         case("unit_cell_and_fragment")
+                 res = .minimum_distance_to(pos)<= TOL(10) OR .is_in_unit_cell(pos)
+         ! Add only those atoms bonded to the existing cluster
+         case default;    UNKNOWN(.add_criteria)
+       end
+     end
+   end
 
-   add_new_atom(pos,symop,fragment_atom) ::: leaky, private
-   ! Add any new atoms in the geometry of the transformed fragment "pos" into
-   ! the cluster .geometry, and update all the related information. "h" is the
-   ! symmetry operation that generated "pos". "fragment_atom" is the atom in the
-   ! fragment that this is symmetrically equivalent to.
+   add_new_atom(pos,symop,cell_atom) ::: leaky, private
+   ! Add a new atom with position "pos" into the cluster ".geometry" array, and
+   ! update all the related information. "symop" is the symmetry operation that
+   ! generated "pos". "cell_atom" is the index of the atom in the asymmetric
+   ! unit cell fragment which is symmetrically equivalent to this atom with
+   ! position "pos".
    ! NOTE: this routine should only be called if .any_new_atoms_in(pos) is TRUE.
      pos :: REALVEC(3)
      symop :: INTVEC(4)
+     cell_atom :: INT
      new :: REALVEC(3)
-     q,i,j,n,closest,n_col,fragment_atom,parent :: INT
+     q,i,j,n,closest,n_col,parent :: INT
      add_atom,symop_added :: BIN
      dist :: REAL
-     symop_added = .symop.has_column(symop,col=q) ! get symop "q" if there
-     if (NOT .geometry(:,1:.n_atoms).has_column(pos,eps=TOL(2))) then
-        if (NOT symop_added) then    ! Add symop to .symop table if reqd.
-           n_col = .symop.dim2 
-           if ((.n_symop+1)>n_col) then ! Expand .symop table if reqd.
-              .symop.expand_columns(2*n_col)
-              .atom_for_cell_atom.expand_columns(2*n_col)
-           end
-           q = .n_symop + 1
-           .n_symop = q
-           .symop(:,q) = symop
-           symop_added = TRUE
+     if (.geometry(:,1:.n_atoms).has_column(pos,eps=TOL(2))) return
+     symop_added = .symop.has_column(symop,col=q) ! get symop index "q" if there
+     if (NOT symop_added) then    ! Add symop to .symop table if reqd.
+        n_col = .symop.dim2 
+        if ((.n_symop+1)>n_col) then ! Expand .symop table if reqd.
+           .symop.expand_columns(2*n_col)
+           .atom_for_cell_atom.expand_columns(2*n_col)
         end
-        n_col = .geometry.dim2
-        if ((.n_atoms+1)>n_col) then ! Expand info arrays if reqd.
-           .geometry.expand_columns(2*n_col)
-           .symop_for_atom.expand(2*n_col)
-           .parent_for_atom.expand(2*n_col)
-           .minimum_distance_to_atom.expand(2*n_col)
-           .closest_fragment_atom_to_atom.expand(2*n_col)
-        end
-        n = .n_atoms + 1
-        .geometry(:,n) = pos
-        .symop_for_atom(n) = q
-!        parent = .crystal.fragment_atom_for(fragment_atom)
-!        .parent_for_atom(n) = parent
-        .parent_for_atom(n) = fragment_atom
-!        .atom_for_cell_atom(parent,q) = n
-        .atom_for_cell_atom(fragment_atom,q) = n
-        dist = .minimum_distance_to(pos,closest)
-        .minimum_distance_to_atom(n) = dist
-        .closest_fragment_atom_to_atom(n) = closest
-        .n_atoms = n
+        q = .n_symop + 1
+        .n_symop = q
+        .symop(:,q) = symop
+        symop_added = TRUE
      end
+     n_col = .geometry.dim2
+     if ((.n_atoms+1)>n_col) then ! Expand info arrays if reqd.
+        .geometry.expand_columns(2*n_col)
+        .symop_for_atom.expand(2*n_col)
+        .parent_for_atom.expand(2*n_col)
+        .minimum_distance_to_atom.expand(2*n_col)
+        .closest_fragment_atom_to_atom.expand(2*n_col)
+     end
+     n = .n_atoms + 1
+     .geometry(:,n) = pos
+     .symop_for_atom(n) = q
+     .parent_for_atom(n) = cell_atom
+     .atom_for_cell_atom(cell_atom,q) = n
+     dist = .minimum_distance_to(pos,closest)
+     .minimum_distance_to_atom(n) = dist
+     .closest_fragment_atom_to_atom(n) = closest
+     .n_atoms = n
    end
 
    is_bonded_to(pos,p) result (res) ::: private
@@ -1039,9 +1027,9 @@ contains
       stdout.flush
       stdout.text("Cluster atoms are ordered by "//trim(order))
       stdout.flush
-      stdout.dash(int_fields=4,dbl_fields=4,width=12)
+      stdout.dash(int_fields=4,real_fields=4,width=12)
       stdout.put("Atom",int_width=TRUE)
-      stdout.tab(dbl_fields=3)
+      stdout.tab(real_fields=3)
       stdout.put("Closest",int_width=TRUE)
       stdout.put("Minimum")
       stdout.put("Parent",int_width=TRUE)
@@ -1061,7 +1049,7 @@ contains
       stdout.put("k",width=3)
       stdout.put("l",width=3)
       stdout.flush
-      stdout.dash(int_fields=4,dbl_fields=4,width=12)
+      stdout.dash(int_fields=4,real_fields=4,width=12)
       stdout.flush
       do b = 1,.n_atoms
          a = list(b)
@@ -1076,7 +1064,7 @@ contains
          end
        ! do i = 1,size(.parent_for_atom(a).element)
        !    if (i>1) &
-       !    stdout.tab(int_fields=4,dbl_fields=4)
+       !    stdout.tab(int_fields=4,real_fields=4)
             stdout.put(.parent_for_atom(a))
             q = .symop_for_atom(a)
             stdout.put(q)
@@ -1087,7 +1075,7 @@ contains
             stdout.flush
        ! end
       end
-      stdout.dash(int_fields=4,dbl_fields=4,width=12)
+      stdout.dash(int_fields=4,real_fields=4,width=12)
       list.destroy
    end
 
