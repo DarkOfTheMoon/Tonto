@@ -27,14 +27,7 @@ module COPPENSORBITAL
 
    implicit none
 
-#  undef ENSURE
-#  ifndef NOGENERIC
-#  define ENSURE(X,Y)       call ensure_(tonto,X,Y)
-#  else
-#  define ENSURE(X,Y)       call SYSTEM_ensure(tonto,X,Y)
-#  endif
-
-   keys :: STRVEC*, private DEFAULT_NULL
+   keys :: VEC{STR}*, private DEFAULT_NULL
 
    values_cutoff :: REAL, private = COPPENSORBITAL_VALUES_CUTOFF
 
@@ -91,11 +84,11 @@ contains
 
    copy(c) ::: leaky
    ! Create a copy of c
-       c :: SELF_TYPE
+       c :: COPPENSORBITAL
        self = c
-       .n.create_copy(c.n)
-       .c.create_copy(c.c)
-       .z.create_copy(c.z)
+       if (c.n.created) .n.create_copy(c.n)
+       if (c.c.created) .c.create_copy(c.c)
+       if (c.z.created) .z.create_copy(c.z)
    end
 
    ex(i) result(res)
@@ -124,7 +117,7 @@ contains
    ! Process command "keyword". Data is inputted from "stdin", unless "keyword"
    ! is a sequence of blank separated strings.  In this case, the sequence is
    ! processed as if it were a separate file.
-     keyword :: STR(*), IN
+     keyword :: STR, IN
      word :: STR
      word = keyword
      word.to_lower_case
@@ -196,9 +189,9 @@ contains
 
    read_n_c_z ::: leaky
    ! Read in the "n", "c" and "z" vectors. NOTE: .n_fun must previously have been inputted.
+   ENSURE(.n_fun>0,"n_fun is negative; use n_fun= before this command")
       i :: INT
       val :: REAL
-   ENSURE(.n_fun>0,"n_fun is negative; use n_fun= before this command")
       .n.destroy; .c.destroy; .z.destroy
       .n.create(.n_fun)
       .c.create(.n_fun)
@@ -215,7 +208,7 @@ contains
    read_n_c_z_ptr ::: leaky
    ! Read in the "n", "c" and "z" vectors. NOTE: it is not necessary to read in
    ! n_fun, it will be defined from the vector length.
-      tmp :: REALVEC*
+      tmp :: VEC{REAL}*
       i,k :: INT
       stdin.read(tmp)
       ENSURE(mod(tmp.dim,3)==0,"number of data not divisible by three")
@@ -232,6 +225,7 @@ contains
          .z(k) = tmp(k+2)
          k = k + 3
       end
+      tmp.destroy
    end
 
    read_kind_occ_num_n_c_z ::: leaky
@@ -267,7 +261,7 @@ contains
 
    set_keys(the_keys) ::: get_from(OBJECT)
    ! This is for setting the "keys" externally.
-     the_keys :: STRVEC(len=*,:)
+     the_keys :: VEC{STR}
    end
 
    clear_keys ::: get_from(OBJECT)
@@ -310,11 +304,12 @@ contains
    table_width result (res)
    ! Return how wide a table is, based on "keys".  Note that not all keywords
    ! need to contribute to the banner - any unrecognised keyword is skipped.
+     res :: INT
      word :: STR
-     res,int_dash,real_dash,k :: INT
+     int_dash,real_dash,k :: INT
      int_dash = 0
      real_dash = 0
-   ENSURE(keys.created,"no keywords")
+     ENSURE(keys.created,"no keywords")
      do k = 1,size(keys)
        word = keys(k)
        word.to_lower_case
@@ -337,37 +332,109 @@ contains
    same_as(b) result(res)
    ! Return TRUE if "self" is the same as "b".
       self :: IN
-      b :: SELF_TYPE, IN
+      b :: COPPENSORBITAL, IN
       res :: BIN
       res = .kind == b.kind AND .occupancy == b.occupancy &
             AND .n.same_as(b.n) AND .c.same_as(b.c) AND .z.same_as(b.z)
+   end
+
+   density_at_radius(R) result(res)
+   ! Returns the value of the coppens orbital at radius "R".
+      R :: REAL, IN
+      res :: REAL
+      res = .value_at_radius(R)
+      res = .occupancy*res*res
+   end
+
+   densities_at_radii(R) result(res)
+   ! Returns the values of the coppens density at all the radii "R".
+      R :: VEC{REAL}, IN
+      res :: VEC{REAL}(R.dim)
+      res = .values_at_radii(R)
+      res = .occupancy*res*res
    end
 
    value_at_radius(R) result(res)
    ! Returns the value of the coppens orbital at radius "R".
       R :: REAL, IN
       res :: REAL
-      i,n2 :: INT
+      nm1 :: VEC{INT}*
       res = ZERO
-      do i = 1,.n_fun
-         n2 = 2*.n(i)
-         res = res + .c(i) * (TWO*.z(i)*R)**.n(i) * exp(-.z(i)*R) * &
-                  sqrt(TWO*.z(i)/n2.factorial)
-      end
-      res = res / R
+      nm1.create(.n.dim)
+      nm1 = .n - 1
+      res = sum(.c * R**nm1 * exp(-.z*R))
+      nm1.destroy
    end
 
-   make_values_at(pt,pos,grid)
+   values_at_radii(R) result(res)
+   ! Returns the values of the coppens orbital at all the radii "R".
+      R :: VEC{REAL}, IN
+      res :: VEC{REAL}(R.dim)
+      nm1 :: VEC{INT}*
+      i :: INT
+      nm1.create(.n.dim)
+      nm1 = .n - 1
+      do i = 1,R.dim
+         res(i) = sum(.c * R(i)**nm1 * exp(-.z*R(i)) )
+      end
+      nm1.destroy
+   end
+
+   unnormalise 
+   ! Set the value of the coefficient to correspond to un-normalised Slater
+   ! functions -- assuming they are normalised. This saves in computation time.
+      i,n2 :: INT
+      do i = 1,.n_fun
+        n2 = 2*.n(i)
+        .c(i) = .c(i) * sqrt(TWO*.z(i)/n2.factorial) * (TWO*.z(i))**.n(i)
+      end
+   end
+
+   renormalise 
+   ! Set the value of the coefficient to correspond to normalised slater
+   ! functions --- assuming they are w.r.t. unnormalised functions. 
+      i,n2 :: INT
+      do i = 1,.n_fun
+        n2 = 2*.n(i)
+        .c(i) = .c(i) / (sqrt(TWO*.z(i)/n2.factorial) * (TWO*.z(i))**.n(i))
+      end
+   end
+
+   values_at_points(pt,pos) result(res)
+   ! Make the orbital values on the series of points specified in "pt", assuming
+   ! the orbital is at point "pos"; and put the results in "res".
+      pt :: MAT{REAL}, IN
+      pos :: VEC{REAL}(3), IN
+      res :: VEC{REAL}(pt.dim1)
+   ENSURE(pt.dim2==3,"incorrect second dimension, pt array")
+      R :: VEC{REAL}*
+      x,y,z  :: REAL
+      n,n_pt :: INT
+      n_pt = pt.dim1
+      R.create(n_pt)
+      do n = 1,n_pt
+         x = pt(n,1) - pos(1)
+         y = pt(n,2) - pos(2)
+         z = pt(n,3) - pos(3)
+         R(n) = sqrt(x*x + y*y + z*z)
+      end
+      res = .values_at_radii(R)
+      R.destroy
+   end
+
+   make_values_at_opt(pt,pos,grid)
    ! Make the orbital values on the series of points specified in "pt", assuming
    ! the orbital is at point "pos"; and put the results in the array "grid".
-      pt :: REALMAT, IN
-      pos :: REALVEC(3), IN
-      grid :: REALVEC, OUT
-      tmp,n_val :: REALVEC*
+   ! This is an optimised version.
+      self :: IN
+      pt :: MAT{REAL}, IN
+      pos :: VEC{REAL}(3), IN
+      grid :: VEC{REAL}, OUT
+   ENSURE(grid.dim==pt.dim1,"grid size wrong!")
+      tmp,n_val :: VEC{REAL}*
       x,y,z,R,R2,pos1,pos2,pos3 :: REAL
       cutoff,cutoff1,cutoff2,cutoff3,cutoff4,minz,maxn1divminz :: REAL
       n,n_pt,i,n2,maxn1 :: INT
-      ENSURE(grid.dim==pt.dim1,"grid size wrong!")
 
       ! The cutoff of the orbital value.  Values smaller than this are set to
       ! zero.
@@ -449,7 +516,6 @@ contains
 
    put
    ! Put the orbital information to "stdout"
-      i :: INT
       stdout.flush
       stdout.show("Kind        = ",.kind)
       stdout.show("Occupancy   = ",.occupancy)

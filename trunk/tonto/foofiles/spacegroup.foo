@@ -38,13 +38,6 @@ module SPACEGROUP
 
    implicit none
 
-#  undef ENSURE
-#  ifndef NOGENERIC
-#  define ENSURE(X,Y)       call ensure_(tonto,X,Y)
-#  else
-#  define ENSURE(X,Y)       call SYSTEM_ensure(tonto,X,Y)
-#  endif
-
 !  ***************
 !  Data statements
 !  ***************
@@ -71,7 +64,7 @@ module SPACEGROUP
    ! should be set to 1.  See tables A1.4.2.4, A1.4.2.5, and A1.4.2.6 in the
    ! International Tables of Crystallography.
 
-   NN :: REALMAT4(3,3,3,8), private
+   NN :: MAT4{REAL}(3,3,3,8), private
 
    data NN/ &
     1, 0, 0, 0, 1, 0, 0, 0, 1, & ! N1(:,:,x,1)
@@ -105,7 +98,7 @@ module SPACEGROUP
    ! numerical symbols are not stored, they can be calculated from the subscript
    ! index and the order. (See second column of the table mentioned).
 
-   T_alpha :: REALMAT(3,8), private
+   T_alpha :: MAT{REAL}(3,8), private
 
    data T_alpha/ &
       HALF,    ZERO,    ZERO, &  ! "a" translation
@@ -123,11 +116,11 @@ module SPACEGROUP
    ! of these is stored in "n_implied_translations" below). The third index is
    ! the index of the lattice type.
 
-   n_implied_translations :: INTVEC(8), private
+   n_implied_translations :: VEC{INT}(8), private
 
    data n_implied_translations/ 1, 2, 2, 2, 2, 3, 3, 4/
 
-   T_implied :: REALMAT3(3,4,8), private
+   T_implied :: MAT3{REAL}(3,4,8), private
 
    data T_implied/ &
        ZERO,     ZERO,     ZERO, &  ! "P" lattice
@@ -171,7 +164,7 @@ module SPACEGROUP
    ! which provides a unique spacegroup specification that distinuishes all
    ! possible settings.
 
-   spacegroup_conversion_table :: STRMAT(len=14,4,593), private
+   spacegroup_conversion_table :: MAT{STR}(len=14,4,593), private
 
    data spacegroup_conversion_table(1:4,  1: 30)/ &
      "1             ", "c1^1          ", "p 1           ", "p 1           ", & ! deprecated Hall symbols
@@ -829,7 +822,7 @@ contains
 
    create_copy(object) ::: get_from(OBJECT), leaky
    ! Create a copy of object
-     object :: SELF_TYPE
+     object :: SPACEGROUP
      self :: PTR
    end
 
@@ -852,12 +845,14 @@ contains
       .Hall_symbol        = "?"
       .HM_symbol          = "?"
       .Schoenflies_symbol = "?"
+      .lattice_symbol     = "?"
+      .lattice_type       = "?"
       .analysed = FALSE
    end
 
    set_IT_symbol(IT_symbol)
    ! Set the international table symbol to be "IT_symbol"
-      IT_symbol :: STR(*)
+      IT_symbol :: STR
       symbol :: STR
       ind,pos :: INT
       symbol = IT_symbol
@@ -886,7 +881,7 @@ contains
 
    set_HM_symbol(HM_symbol)
    ! Set the Herman-Mauguin symbol to be "HM_symbol"
-      HM_symbol :: STR(*)
+      HM_symbol :: STR
       symbol :: STR
       ind,pos :: INT
       .HM_symbol = HM_symbol.trim_blanks_from_start
@@ -925,7 +920,7 @@ contains
 
    set_Hall_symbol(Hall_symbol)
    ! Set the Hall symbol to be "Hall_symbol"
-      Hall_symbol :: STR(*)
+      Hall_symbol :: STR
       symbol :: STR
       ind,pos :: INT
       .Hall_symbol = Hall_symbol.trim_blanks_from_start
@@ -958,8 +953,8 @@ contains
 
    read_keywords ::: recursive, leaky
    ! Read data from "stdin" using keyword style input.
+   ENSURE(stdin.next_item=="{","expecting an open bracket symbol, {")
       word :: STR
-      ENSURE(stdin.next_item=="{","expecting an open bracket symbol, {")
       stdin.read(word)
       read_loop: do             ! Loop over keywords
          stdin.read(word)
@@ -974,7 +969,7 @@ contains
    ! Process a command "keyword". Data is inputted from "stdin", unless
    ! "word" is a sequence of blank separated strings. In this case,
    ! the sequence is processed as if it were a separate file.
-      keyword :: STR(*)
+      keyword :: STR
       word :: STR
       word = keyword
       word.to_lower_case
@@ -1022,21 +1017,30 @@ contains
       cif :: CIF
       found :: BIN
       symbol :: STR
-      jf_symbols,itemvec :: STRVEC*
-      mat :: REALMAT3*
+      jf_symbols,itemvec :: VEC{STR}*
+      mat :: MAT3{REAL}*
       .Hall_symbol = " "
       .HM_symbol = " "
       cif.find_item("_symmetry_space_group_name_Hall",found)
       if (found) then     ! Read the Hall symbol
          cif.read_item("_symmetry_space_group_name_Hall",symbol,itemvec)
-         .set_Hall_symbol(symbol)
-         ENSURE(itemvec.destroyed,"multi-line Hall symbol")
-      else                ! Read HM symbol, only if no Hall
+         if (symbol(1:1)/="?") then
+            .set_Hall_symbol(symbol)
+            ENSURE(itemvec.destroyed,"multi-line Hall symbol")
+         else             ! "?" is not a valid symbol
+            found = FALSE
+         end
+      end
+      if (NOT found) then ! OK, look for a HM symbol only if Hall not there ...
          cif.find_item("_symmetry_space_group_name_H-M",found)
          if (found) then  ! Read the Hermann-Mauguin symbol
             cif.read_item("_symmetry_space_group_name_H-M",symbol,itemvec)
-            .set_HM_symbol(symbol)
-            ENSURE(itemvec.destroyed,"multi-line HM symbol")
+            if (symbol(1:1)/="?") then
+               .set_HM_symbol(symbol)
+               ENSURE(itemvec.destroyed,"multi-line HM symbol")
+            else
+               found = FALSE
+            end
          end
       end
       nullify(jf_symbols)
@@ -1045,15 +1049,14 @@ contains
          cif.read_looped_item("_symmetry_equiv_pos_as_xyz",jf_symbols)
          mat.create(4,4,size(jf_symbols))
          .decode_Jones_Faithful_symbols(jf_symbols,mat)
+         jf_symbols.destroy
       end
       ! Analyse
-      if (.Hall_symbol/=" ") then
-         .set_Hall_symbol(.Hall_symbol); .analyse
-         if (mat.created) ENSURE(.seitz_same_as(mat),"inconsistent seitz matrices")
-         mat.destroy
-      else if (.HM_symbol/=" ") then
-         .set_HM_symbol(.HM_symbol); .analyse
-         if (mat.created) ENSURE(.seitz_same_as(mat),"inconsistent seitz matrices")
+      if (.Hall_symbol/=" " OR .HM_symbol/=" ") then
+         .analyse
+         if (mat.created) then
+           ENSURE(.seitz_same_as(mat),"inconsistent seitz matrices")
+         end
          mat.destroy
       else if (mat.created) then
          .seitz => mat
@@ -1061,7 +1064,6 @@ contains
       else
          DIE("Can't find spacegroup information")
       end
-      jf_symbols.destroy
    end
 
 !  ***********************
@@ -1089,9 +1091,12 @@ contains
       buffer :: BUFFER
       axis,i :: INT
       gen,latt :: STR(1)
-      lattice,generator,as :: STR
+      symbol,lattice,generator,as :: STR
       impossible,alpha_used :: BIN
-      buffer.set(.Hall_symbol)
+      symbol = .Hall_symbol
+      symbol.to_lower_case
+      buffer.set(symbol)
+      buffer.string.to_lower_case
       ! Look for lattice symbol, and (possible) inversion
       buffer.get_item(lattice)
       if (lattice(1:1)==bar_symbol) then; .centrosymmetric = TRUE
@@ -1172,13 +1177,13 @@ contains
    set_lattice_type
    ! Set the lattice type name
    ENSURE(.axis_order.all_in_range([1,6]),"wrong axis orders")
-      if (.axis_order(1)==1) then;                            .lattice_type = "Triclinic"
-      else if (.axis_order(1)==2 AND .axis_order(2)==1) then; .lattice_type = "Monoclinic"
-      else if (.axis_order(1)==2 AND .axis_order(2)==2) then; .lattice_type = "Orthorhombic"
+      if (.axis_order(3)==3) then;                            .lattice_type = "Cubic"
       else if (.axis_order(1)==4 AND .axis_order(3)/=3) then; .lattice_type = "Tetragonal"
-      else if (.axis_order(1)==3) then;                       .lattice_type = "Trigonal"
+      else if (.axis_order(1)==2 AND .axis_order(2)==2) then; .lattice_type = "Orthorhombic"
+      else if (.axis_order(1)==2 AND .axis_order(2)==1) then; .lattice_type = "Monoclinic"
       else if (.axis_order(1)==6) then;                       .lattice_type = "Hexagonal"
-      else if (.axis_order(3)==3) then;                       .lattice_type = "Cubic"
+      else if (.axis_order(1)==3) then;                       .lattice_type = "Trigonal"
+      else if (.axis_order(1)==1) then;                       .lattice_type = "Triclinic"
       end
    end
 
@@ -1213,8 +1218,8 @@ contains
 
    set_spacegroup_order
    ! Work out the spacegroup orders.
-      axis :: INT
    ENSURE(.lattice_symbol_index.is_in_range([1,8]),"wrong lattice index")
+      axis :: INT
       .nL = n_implied_translations(.lattice_symbol_index)
       if (.centrosymmetric) .nL = 2*.nL   ! No. of translations
       .n_seitz = .nL*product(.axis_order) ! No. of seitz matrices
@@ -1246,7 +1251,7 @@ contains
 
    form_S_seitz
    ! Add the rotational seitz matrices to the generator list
-      t :: REALVEC(3)
+      t :: VEC{REAL}(3)
       axis,N,i,v,ax,isign :: INT
       alpha_used :: BIN
       .nR = 0
@@ -1328,7 +1333,7 @@ contains
 
    shift_origin
    ! Shift the origin of the Seitz matrices, by doing a similarity transform
-      V :: REALMAT(4,4)
+      V :: MAT{REAL}(4,4)
       if (.origin_shift.same_as([0,0,0])) return
       V.to_unit_matrix
       V(1:3,4) = .origin_shift
@@ -1341,8 +1346,8 @@ contains
 
    decode_Jones_Faithful_symbols(symbols,mat)
    ! Decode a series of Jones-Faithful symbols and place in the Seitz matrices "mat".
-      symbols :: STRVEC(len=*,:)
-      mat :: REALMAT3(4,4,size(symbols))
+      symbols :: VEC{STR}
+      mat :: MAT3{REAL}(4,4,size(symbols))
       i :: INT
       do i = 1,size(symbols)
          .decode_Jones_Faithful_symbol(symbols(i),mat(:,:,i))
@@ -1352,11 +1357,11 @@ contains
    decode_Jones_Faithful_symbol(symbol,mat)
    ! Decode a single Jones-Faithful symbol, e.g. "x-y+z+1/2,y,z-x",
    ! and place in the Seitz matrix in "mat".
-      symbol :: STR(*)
-      mat :: REALMAT(4,4)
+      symbol :: STR
+      mat :: MAT{REAL}(4,4)
       buffer :: BUFFER
       word,item :: STR
-      pos,comma,row,sign :: INT
+      pos,comma,row :: INT
       t :: REAL
       mat      = ZERO
       mat(4,4) = ONE
@@ -1370,32 +1375,30 @@ contains
             ENSURE(word/=" ","empty row, "//row.to_str.trim)
             pos = pos + comma
          end
-         word.separate_all_characters
-         word.replace("/ ","/")
-         word.replace("1 2","12")
+         word.to_lower_case
+
+         word.remove_blanks
+         word.separate_before("+-") ! Separate out the entities in the string.
+
          buffer.set(word)
-         sign = 1
          do              ! Extract all the symbols
             if (buffer.exhausted) exit
             buffer.get(item)
             select case (item)
-               case ("-") ;  sign = -1
-               case ("+") ;  sign =  1
-               case ("x") ;  mat(row,1) = sign; sign = 1
-               case ("y") ;  mat(row,2) = sign; sign = 1
-               case ("z") ;  mat(row,3) = sign; sign = 1
-               case ("1") ;  t = 1*sign; sign = 1
-               case ("2") ;  t = 2*sign; sign = 1
-               case ("3") ;  t = 3*sign; sign = 1
-               case ("4") ;  t = 4*sign; sign = 1
-               case ("5") ;  t = 5*sign; sign = 1
-               case ("6") ;  t = 6*sign; sign = 1
-               case ("/2");  t = t/2;  mat(row,4) = t
-               case ("/3");  t = t/3;  mat(row,4) = t
-               case ("/4");  t = t/4;  mat(row,4) = t
-               case ("/6");  t = t/6;  mat(row,4) = t
-               case ("/12"); t = t/12; mat(row,4) = t
-               case default; DIE("unknown item, "//item.trim)
+               case ("x","+x") ;  mat(row,1) = 1
+               case ("y","+y") ;  mat(row,2) = 1
+               case ("z","+z") ;  mat(row,3) = 1
+               case ("-x")     ;  mat(row,1) = -1
+               case ("-y")     ;  mat(row,2) = -1
+               case ("-z")     ;  mat(row,3) = -1
+               case default
+                 if (item.includes("/")) then ! should be a fraction
+                   t = item.frac_to_real
+                   t = modulo(t,ONE) ! translate to first unit cell.
+                   mat(row,4) = mat(row,4) + t
+                 else
+                   DIE("unknown item, "//item.trim)
+                 end
             end
          end
       end
@@ -1404,13 +1407,13 @@ contains
    seitz_same_as(mat) result (res)
    ! Determine if the Seitz matrices are the same as those in "mat", except
    ! for a rearrangement of order.
-      mat :: REALMAT3
+      mat :: MAT3{REAL}
       res :: BIN
-      found :: BINVEC(.n_seitz)
-      tmp :: REALMAT(4,4)
-      i,j :: INT
    ENSURE(mat.dim1==4,"wrong 1st dimension, mat")
    ENSURE(mat.dim2==4,"wrong 1st dimension, mat")
+      found :: VEC{BIN}(.n_seitz)
+      tmp :: MAT{REAL}(4,4)
+      i,j :: INT
       if (mat.dim3/=.n_seitz) then
          res = FALSE
          return
@@ -1453,10 +1456,10 @@ contains
    put_geometry_to_unit_cell(g)
    ! Transform the geometry "g" in fractional coordinates into the
    ! (1,1,1) unit cell
-       g :: REALMAT
-      n,n_atom :: INT
+       g :: MAT{REAL}
    ENSURE(.seitz.created,"No Seitz matrices!")
    ENSURE(g.dim1==3,"incorrect size for array g")
+      n,n_atom :: INT
       n_atom = size(g,2)
       do n = 1,n_atom
          .put_position_to_unit_cell(g(:,n))
@@ -1466,7 +1469,7 @@ contains
    put_position_to_unit_cell(p)
    ! Transform the position "p" in fractional coordinates into the
    ! (1,1,1) unit cell
-       p :: REALVEC(3)
+       p :: VEC{REAL}(3)
    ENSURE(size(p)==3,"position p must have size 3")
       p(:) = mod(p(:)+TWO,ONE)
    end
@@ -1477,10 +1480,10 @@ contains
    ! each atom in a structure factor calculation.  If present, the "full"
    ! geometry in fractional coordinates will be returned, where all possible
    ! symmetry distinct atom positions in the unit cell have been generated.
-      geometry :: REALMAT
-      pfac :: REALVEC
-      full :: REALMAT*, optional
-      pa,pb :: REALVEC(3)
+      geometry :: MAT{REAL}
+      pfac :: VEC{REAL}
+      full :: MAT{REAL}*, optional
+      pa,pb :: VEC{REAL}(3)
       a,b,n,n_atom,n_same :: INT
       same :: BIN
       n_atom = size(geometry,2)
@@ -1508,10 +1511,10 @@ contains
    get_full_geometry(full,geometry,pfac) ::: leaky
    ! Get the "full" set of distinct atom positions in the unit cell, given a
    ! (possibly) partial "geometry", and a set of partition factors "pfac".
-      full :: REALMAT*
-      geometry :: REALMAT
-      pfac :: REALVEC
-      pa,pb :: REALVEC(3)
+      full :: MAT{REAL}*
+      geometry :: MAT{REAL}
+      pfac :: VEC{REAL}
+      pa,pb :: VEC{REAL}(3)
       a,b,n,n_atom,n_full :: INT
       same :: BIN
       n_atom = size(geometry,2)
@@ -1547,13 +1550,13 @@ contains
    transform_geometry(g,op)
    ! Transform the geometry "g" in fractional coordinates with the
    ! Seitz operator with index "op"
-       g :: REALMAT
+       g :: MAT{REAL}
       op :: INT
-      n,n_atom :: INT
    ENSURE(.seitz.created,"Seitz matrices not initialised")
    ENSURE(g.dim1==3,"incorrect size for array g")
    ENSURE(op>0,         "operator index out of bounds")
    ENSURE(op<=.n_seitz, "operator index out of bounds")
+      n,n_atom :: INT
       n_atom = size(g,2)
       do n = 1,n_atom
          .transform_position(g(:,n),op)
@@ -1563,7 +1566,7 @@ contains
    transform_position(p,op)
    ! Transform the position "p" in fractional coordinates with the
    ! Seitz operator with index "op"
-       p :: REALVEC(3)
+       p :: VEC{REAL}(3)
       op :: INT
    ENSURE( .seitz.created, "Seitz matrices not initialised")
    ENSURE( op>0,         "operator index out of bounds")
@@ -1574,12 +1577,12 @@ contains
    is_same_geometry(geom_i,geom_j) result(res)
    ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
    ! coordinates are the same, to within *traslational* symmetry
-      geom_i,geom_j :: REALMAT
+      geom_i,geom_j :: MAT{REAL}
       res :: BIN
-      gi,gj :: REALMAT*
+      gi,gj :: MAT{REAL}*
       i,j,n_atom :: INT
       same :: BIN
-      skip :: BINVEC*
+      skip :: VEC{BIN}*
       n_atom = size(geom_i,2)
    ENSURE(.seitz.created, "Seitz matrices not initialised")
    ENSURE(geom_i.dim1==3, "incorrect size for array geom_i")
@@ -1615,12 +1618,12 @@ contains
    ! translation, or to "-j" if equivalent by inversion. ".unique_symop(j)"
    ! is the first unique Seitz operator in the list. ".n_unique" is set
    ! to the number of unique symmetry operations.
-      geometry :: REALMAT
-      gi,gu :: REALMAT*
-      unique_symop :: INTVEC*
+      geometry :: MAT{REAL}
+   ENSURE(.seitz.created, "Seitz matrices not initialised")
+      gi,gu :: MAT{REAL}*
+      unique_symop :: VEC{INT}*
       n_atom,i,j,u, n :: INT
       same,inverted :: BIN
-   ENSURE(.seitz.created, "Seitz matrices not initialised")
       n_atom = size(geometry,2)
       gi.create(3,n_atom)
       gu.create(3,n_atom)
@@ -1659,7 +1662,7 @@ contains
    unique_symop_mat(u) result (res)
    ! Return the "u"-th unique symop matrix in the unique list made by routine
    ! ".make_unique_symops".
-      res :: REALMAT(3,3)
+      res :: MAT{REAL}(3,3)
        u :: INT
    ENSURE(.unique_symop.created,"No unique symops")
    ENSURE(u<=.n_unique,"symop index out of range")
@@ -1673,14 +1676,22 @@ contains
 
    put
    ! Put out the spacegroup information
-      n,order,axis_symbol_indices :: INT
-      axis_symbol,subscripts,HM_symbol,Hall_symbol :: STR
-      sub :: STRMAT(len=1,3,3)
-   ENSURE(.analysed,"spacegroup not analysed")
-      HM_symbol   = .HM_symbol;    HM_symbol(1:1).to_upper_case
-      Hall_symbol = .Hall_symbol;  Hall_symbol(1:1).to_upper_case
+   ENSURE(.analysed OR .seitz.created OR .unique_symop.created,"no info")
       stdout.flush
       stdout.put_text("SPACEGROUP output:",flush=2)
+      if (.analysed) .put_spacegroup_name_info
+      if (.seitz.created) .put_seitz
+      if (.unique_symop.created) .put_unique_symop
+   end
+
+   put_spacegroup_name_info
+   ! Put out the spacegroup name information (not the seitz matrices)
+   ENSURE(.analysed,"spacegroup not analysed")
+      order,axis_symbol_indices :: INT
+      axis_symbol,subscripts,HM_symbol,Hall_symbol :: STR
+      sub :: MAT{STR}(len=1,3,3)
+      HM_symbol   = .HM_symbol;    HM_symbol(1:1).to_upper_case
+      Hall_symbol = .Hall_symbol;  Hall_symbol(1:1).to_upper_case
       stdout.put_text("Information about crystal cell symmetry",flush=2)
       stdout.show("International Table no. = ",.IT_group_number,real_width=TRUE)
       stdout.show("IT symbol               = ",trim(.IT_symbol))
@@ -1711,17 +1722,16 @@ contains
       stdout.show("No of R generators      = ",.nR,real_width=TRUE)
       stdout.show("No of Generators        = ",.nG,real_width=TRUE)
       stdout.show("Origin shift            = ",.origin_shift(1),.origin_shift(2),.origin_shift(3))
-      .put_seitz
-      if (associated(.unique_symop)) .put_unique_symop
    end
 
    put_seitz(mat)
    ! Put out the spacegroup seitz matrices.
+      mat :: MAT3{REAL}, target, optional
       n :: INT
-      mat :: REALMAT3*, optional
-      seitz :: REALMAT3*
+      seitz :: MAT3{REAL}*
       seitz => .seitz
       if (present(mat)) seitz => mat
+      ENSURE(seitz.created,"no seitz matrices")
       stdout.flush
       stdout.text("Seitz matrices :")
       do n = 1,.n_seitz
@@ -1731,11 +1741,40 @@ contains
       end
    end
 
+   put_unique_symop
+   ! Put out information about unique symops (those not related by translation
+   ! or inversion to other symops).
+     n,nu,k :: INT
+     stdout.flush
+     stdout.put_text("SPACEGROUP unique symop list output:",flush=2)
+     stdout.dash(int_fields=2,real_fields=1)
+     stdout.put("Symop", int_width=TRUE)
+     stdout.put("Symop Type")
+     stdout.put("Unique #", int_width=TRUE)
+     stdout.flush
+     stdout.dash(int_fields=2,real_fields=1)
+     k = 1
+     do n = 1,.n_seitz
+       stdout.put(n)
+       nu = .map_to_unique(n)
+       if (nu==k) then
+         stdout.put("Unique symop")
+         k = k+1
+       else if (nu<0) then
+         stdout.put("Inversion of")
+       else
+         stdout.put("Translation of")
+       end
+       stdout.put(nu,flush=1)
+     end
+     stdout.dash(int_fields=2,real_fields=1)
+   end
+
    put_matching_IT_symbols(symbol)
    ! Put out all the IT symbols which match "symbol".
-      symbol :: STR(*)
-      mask :: BINVEC*
-      IT,HM,Hall :: STRVEC*
+      symbol :: STR
+      mask :: VEC{BIN}*
+      IT,HM,Hall :: VEC{STR}*
       n,i :: INT
       mask.create(593)
       mask = spacegroup_conversion_table(1,:).includes(trim(symbol),at_start=TRUE)
@@ -1765,9 +1804,9 @@ contains
 
    put_matching_HM_symbols(symbol)
    ! Put out all the HM symbols which match "symbol".
-      symbol :: STR(*)
-      mask :: BINVEC*
-      IT,HM,Hall :: STRVEC*
+      symbol :: STR
+      mask :: VEC{BIN}*
+      IT,HM,Hall :: VEC{STR}*
       n,i :: INT
       mask.create(593)
       mask = spacegroup_conversion_table(3,:).includes(trim(symbol),at_start=TRUE)
@@ -1793,34 +1832,6 @@ contains
       HM.destroy
       IT.destroy
       mask.destroy
-   end
-
-   put_unique_symop
-   !
-     n,nu,k :: INT
-     stdout.flush
-     stdout.put_text("SPACEGROUP unique symop list output:",flush=2)
-     stdout.dash(int_fields=2,real_fields=1)
-     stdout.put("Symop", int_width=TRUE)
-     stdout.put("Symop Type")
-     stdout.put("Unique #", int_width=TRUE)
-     stdout.flush
-     stdout.dash(int_fields=2,real_fields=1)
-     k = 1
-     do n = 1,.n_seitz
-       stdout.put(n)
-       nu = .map_to_unique(n)
-       if (nu==k) then
-         stdout.put("Unique symop")
-         k = k+1
-       else if (nu<0) then
-         stdout.put("Inversion of")
-       else
-         stdout.put("Translation of")
-       end
-       stdout.put(nu,flush=1)
-     end
-     stdout.dash(int_fields=2,real_fields=1)
    end
 
 end
