@@ -73,6 +73,12 @@ module SCFDATA
 !
 !   DBL :: lambda_step
 !   ! The value to step the lambda value between lambda cycles in an x-ray SCF calc
+!   DBL :: fit_value
+!   ! The value of E + lambda * chi2 in an x-ray SCF calc
+!
+!   DBL :: old_fit_value
+!   ! The value of E + lambda * chi2 of the previous SCF iteration in an x-ray
+!   ! SCF calc
 !
 !   DBL :: F_chi2
 !   ! Chi^2 agreement statistic for an x-ray SCF calc
@@ -100,6 +106,12 @@ module SCFDATA
 !
 !   VECDIIS :: diis
 !   ! For (fock matrix) diis extrapolation
+!
+!   DBL :: diis_error
+!   ! The DIIS error
+!
+!   DBL :: old_diis_error
+!   ! The DIIS error of the previous iteration
 !
 !   INT :: damp_finish
 !   ! Iteration when density matrix damping is turned off
@@ -246,6 +258,8 @@ contains
     .lambda_max         = 0
     .lambda_step        = 1
     .lambda_iteration   = 0
+    .fit_value            = ZERO
+    .old_fit_value        = ZERO
     .F_chi2               = ZERO
     .F_gof                = ZERO
     .F_r_factor           = ZERO
@@ -253,6 +267,8 @@ contains
     .test               = FALSE
     .direct             = FALSE
     .using_diis         = TRUE
+    .diis_error         = ZERO
+    .old_diis_error     = ZERO
     .diis.set_default
     .using_damping      = TRUE
     .damp_finish        = DIIS_START
@@ -279,38 +295,42 @@ contains
     .using_camp_king = FALSE
   end
  
-  set(nuclear_energy,energy,kinetic_energy)
+  set(nuclear_energy,energy,kinetic_energy,crystal)
   ! Set various parts of the scfdata type.
     DBL, IN, optional :: nuclear_energy,energy,kinetic_energy
+    CRYSTAL, IN, optional :: crystal
     if (present(nuclear_energy))    .nuclear_energy = nuclear_energy
-    if (present(energy))            .update_energy(energy)
+    if (present(crystal)) then
+      .F_chi2 = crystal.F_chi2
+      .F_gof = crystal.F_goodness_of_fit
+      .F_r_factor = crystal.F_r_factor
+      .F_weighted_r_factor = crystal.F_weighted_r_factor
+    end
+    if (present(energy)) then
+      .energy = energy 
+      if (.fitting) .fit_value = energy + .lambda * .F_chi2
+    end
     if (present(kinetic_energy))    .kinetic_energy = kinetic_energy 
   end
 
-  set_stats(crystal)
-  ! Set various statistical parts of the scfdata type from a "crystal" object
-    CRYSTAL, IN :: crystal
-    .F_chi2 = crystal.F_chi2
-    .F_gof = crystal.F_goodness_of_fit
-    .F_r_factor = crystal.F_r_factor
-    .F_weighted_r_factor = crystal.F_weighted_r_factor
-  end
-
-  reset(nuclear_energy,energy,kinetic_energy)
+  reset(nuclear_energy,energy,kinetic_energy,crystal)
   ! Reset SCF energy and iteration data , but don't change 
   ! nuclear_energy, convergence, direct, or max_it options
      DBL, IN, optional :: nuclear_energy,energy,kinetic_energy
+     CRYSTAL, IN, optional :: crystal
     .energy               = ZERO
+    .fit_value            = ZERO
+    .old_fit_value        = ZERO
     .kinetic_energy       = ZERO
     .old_energy           = ZERO
-    .difference           = ZERO
     .iteration            = 0
     .F_chi2               = ZERO
     .F_gof                = ZERO
     .F_r_factor           = ZERO
     .F_weighted_r_factor  = ZERO
-    .set(nuclear_energy,energy,kinetic_energy)
+    .set(nuclear_energy,energy,kinetic_energy,crystal)
     if (present(energy)) .difference = energy
+    if (present(crystal)) .old_fit_value = ZERO
   end
 
   update_lambda
@@ -320,33 +340,22 @@ contains
     .iteration      = 0
   end
 
-  update(energy,kinetic_energy)
+  update(energy,kinetic_energy,crystal)
   ! Update the SCF energy and/or chi2 and increment iteration.
     DBL, IN, optional :: energy,kinetic_energy
-    .set(energy=energy,kinetic_energy=kinetic_energy)
+    CRYSTAL, IN, optional :: crystal
+    .old_fit_value = .fit_value
+    .old_energy = .energy
+    .set(energy=energy,kinetic_energy=kinetic_energy,crystal=crystal)
     .iteration = .iteration+1
-  end
-
-  update_energy(energy)
-  ! Update the current SCF energy and increment iteration.
-    DBL, IN :: energy
-    .old_energy = .energy
-    .energy = energy 
     .difference = .energy - .old_energy
   end
 
-  set_initial_energy(energy)
-  ! Set the current SCF energy
-    DBL, IN :: energy
-    .old_energy = .energy
-    .energy = energy
-    .difference = .energy - .old_energy
-  end
- 
   set_diis_error(err)
   ! Set the DIIS error
     DBL, IN :: err
-    .diis.error_length = err
+    .old_diis_error = .diis_error
+    .diis_error = err
   end
 
   spinorbital_kind(scf_kind) result(res)
@@ -584,12 +593,6 @@ contains
       res = abs(.diis_error) < .diis_convergence
    end
 
-   diis_error result(res)
-   ! Return a numerical measure of the diis error
-      DBL :: res
-      res = .diis.error_length
-   end
-
    exceeded_max_it result(res)
    ! Return TRUE if the SCFDATA has exceeded the maximum iterations
       BIN :: res
@@ -643,13 +646,6 @@ contains
       end
    end
 
-   diis_not_used result(res)
-   ! Return TRUE if DIIS extrapolation has NOT really been used this iteration
-   ! (The first time doesn't really count)
-      BIN :: res
-      res = NOT .diis_used
-   end
-
    apply_diis result(res)
    ! Return TRUE if DIIS extrapolation must be, or has been applied this
    ! iteration
@@ -662,7 +658,7 @@ contains
    apply_camp_king result(res)
    ! Return TRUE if Camp-King converger is to be used this iteration
      BIN :: res
-!     res = .using_camp_king AND (NOT .apply_damping)
+!     res = .using_camp_king AND (.diis_error > .old_diis_error)
      res = .using_camp_king
    end
 
@@ -796,7 +792,11 @@ contains
       stdout.put("F_chi2")
     end
     stdout.put("Energy")
-    stdout.put("Difference")
+    if (.fitting) then
+      stdout.put("d(E+l*chi2)")
+    else
+      stdout.put("difference")
+    end
     stdout.put("Gradient/DIIS")
     stdout.flush
     stdout.dash(dbl_fields=fields,int_fields=1)
@@ -831,7 +831,11 @@ contains
     end
     ! This is the important info ...
     stdout.put(.energy)
-    stdout.put(.difference)
+    if (.fitting) then
+      stdout.put(.fit_value-.old_fit_value)
+    else
+      stdout.put(.difference)
+    end
     stdout.put(.diis_error)
     ! Margin notes ...
     if (.scf_not_done) then
@@ -889,28 +893,18 @@ contains
     else;                 stdout.text("* * * SCF has not converged * * *",flush=1)
     end
     stdout.dash(dbl_fields=fields,int_fields=1)
-    .put_energy
-    .put_kinetic_energy
+    stdout.show("SCF Energy               = ", .energy)
+    stdout.show("Kinetic Energy           = ", .kinetic_energy)
     if (.fitting) .put_crystal
     stdout.dash(dbl_fields=fields,int_fields=1)
   end
 
-  put_energy
-  ! Prints out the SCF energy.
-    stdout.show("SCF Energy               = ", .energy)
-  end
-
-  put_kinetic_energy
-  ! Prints out the kinetic energy.
-    stdout.show("Kinetic Energy           = ", .kinetic_energy)
-  end
-
   put_crystal
   ! Prints out the crystal structure factor statistics.
-    stdout.show("Chi^2 in F               = ", .F_chi2)
-    stdout.show("Goodness of fit in F     = ", .F_gof)
-    stdout.show("R factor in F            = ", .F_r_factor)
-    stdout.show("Weighted R factor in F   = ", .F_weighted_r_factor)
+    stdout.show("Chi^2 in F                = ", .F_chi2)
+    stdout.show("Goodness of fit in F      = ", .F_gof)
+    stdout.show("R factor in F             = ", .F_r_factor)
+    stdout.show("Weighted R factor in F    = ", .F_weighted_r_factor)
   end
 
 end 
