@@ -4455,14 +4455,26 @@ sub dots_to_fortran {
           # add to use list.
           $arg_type = $local_var_info{$arg}{full_type_name};
           if (defined $arg_type) {
-             if (defined $sub_mod_name) { $arg_type = $arg_type . '.' . $sub_mod_name; }
-             $fortran_type_name = $local_var_info{$arg}{fortran_type_name}; 
-             $fortran_mod_name  = $local_var_info{$arg}{fortran_mod_name}; 
+             if (defined $sub_mod_name) {         # arg wont be a local_var
+                $arg_type = $arg_type . '.' . $sub_mod_name; 
+                my %info = &analyse_type_name($arg_type);
+                $fortran_type_name = $info{fortran_type_name}; 
+                $fortran_mod_name  = $info{fortran_mod_name}; 
+             } else {
+                $fortran_type_name = $local_var_info{$arg}{fortran_type_name}; 
+                $fortran_mod_name  = $local_var_info{$arg}{fortran_mod_name}; 
+             }
           } else {
              $arg_type = &type_of_this($arg);
-             if (defined $sub_mod_name) { $arg_type = $arg_type . '.' . $sub_mod_name; }
-             $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
-             $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
+             if (defined $sub_mod_name) {         # arg wont be a tonto_type
+                $arg_type = $arg_type . '.' . $sub_mod_name; 
+                my %info = &analyse_type_name($arg_type);
+                $fortran_type_name = $info{fortran_type_name}; 
+                $fortran_mod_name  = $info{fortran_mod_name}; 
+             } else {
+                $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
+                $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
+             }
           }
           if (! defined $fortran_mod_name) {
              &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
