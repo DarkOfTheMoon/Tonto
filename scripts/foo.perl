@@ -404,16 +404,6 @@ LINE: while (<FOOFILE>) {
 	    # }
 	}
 
-	############################################ ENSURE & DIE subs #########
-
-	$inp =~ s/ENSURE[(][^\"]*, *\"/$&$module_name:$real_routine_name ... /;
-	$inp =~ s/DIE_IF[(][^\"]*, *\"/$&$module_name:$real_routine_name ... /;
-	$inp =~ s/WARN_IF[(][^\"]*, *\"/$&$module_name:$real_routine_name ... /;
-
-	$inp =~ s/DIE[(] *\"/$&$module_name:$real_routine_name ... /;
-	$inp =~ s/WARN[(] *\"/$&$module_name:$real_routine_name ... /;
-
-	########################################################################
 	################################# lines that contain a dot. ############
 	if ($inp =~ '.[.].') {
 	########################################################################
@@ -459,9 +449,6 @@ LINE: while (<FOOFILE>) {
 	if ($first_active_line == 0 && 
             $inp =~ /^[ ]*[a-zA-Z]/ && 
             $inp !~ /::/            && 
-            $inp !~ / ENSURE/       &&
-	    $inp !~ / DIE_IF/       && 
-            $inp !~ / WARN_IF/      && 
             $inp !~ / function/     &&
 	    $inp !~ / subroutine/   &&
 	    $inp !~ / interface/    &&
