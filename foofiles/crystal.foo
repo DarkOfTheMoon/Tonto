@@ -12,8 +12,7 @@ module CRYSTAL
    use SYSTEM
    use STR
    use BUFFER
-   use INPUT
-   use OUTPUT
+   use TEXTFILE
    use STR
    use DBL
    use VEC
@@ -28,6 +27,7 @@ module CRYSTAL
    use CMAT5
    use ATOMVEC
    use ARCHIVE
+   use SPACEGROUP
 
    implicit none
 
@@ -123,9 +123,6 @@ module CRYSTAL
 !   VEC, PTR :: F_calc DEFAULT_NULL
 !   ! Calculated structure factors
 !
-!   VEC, PTR :: F_to_add DEFAULT_NULL
-!   ! Structure factors to add onto F_calc
-!
 !   DBL :: chi2
 !   ! Chi^2 agreement statistic
 !
@@ -147,9 +144,6 @@ module CRYSTAL
 !   BIN :: F_calc_scaled
 !   ! True if F_calc is has been scaled by scale_factor
 !
-!   BIN :: F_to_add
-!   ! Structure factors to add onto F_calc
-!
 !   DBL :: sf_multiplier
 !   ! Arbitrary scale factor.  (F_calc/F_exp)
 !
@@ -165,6 +159,21 @@ module CRYSTAL
 !   DBL :: wavelength
 !   ! Experiment wavelength
 !
+!   INT :: Z
+!   ! Number of molecules in the unitcell
+!
+!   INT :: n_inverted_symops
+!   ! Number of symmetry operations related by inversion
+!
+!   IVEC, PTR :: unique_atom
+!   ! Contains the asymmetric unit atoms.
+!
+!   IVEC, PTR :: unique_atom_for
+!   ! Maps the atoms onto the asymmetric unit atoms.
+!   end
+!
+!   IVEC, PTR :: fragment_atom_for
+!   ! Maps a position in the unitcell onto one in the fragment.
 !   end
 
 contains
@@ -184,7 +193,6 @@ contains
       .r_factor = ZERO
       .weighted_r_factor = ZERO
       .chi2 = ZERO
-      .chi2_in_F2 = ZERO
       .gof = ZERO
       .n_param = 0
       .scale_factor = ONE
@@ -214,7 +222,6 @@ contains
       nullify(.F_exp)
       nullify(.sigma)
       nullify(.F_calc)
-      nullify(.F_to_add)
    end
 
    destroy_ptr_part
@@ -232,7 +239,6 @@ contains
          .r_factor = ZERO
          .weighted_r_factor = ZERO
          .chi2 = ZERO
-         .chi2_in_F2 = ZERO
          .gof = ZERO
          .n_param = 0
          .scale_factor = ONE
@@ -243,7 +249,6 @@ contains
             .F_exp.destroy
             .sigma.destroy
          end
-         if (.F_to_add.created) .F_to_add.destroy
       end
    end
 
@@ -263,16 +268,17 @@ contains
 
    set_default
    ! Set up a default crystal object
+      BIN :: err
       .spacegroup.set_default
       .unit_cell_angle = (/90.0d0,90.0d0,90.0d0/)
-      .unit_cell_angle.convert_from("degree")
+      .unit_cell_angle.convert_from("degree",err)
+      DIE_IF(err,"error converting angle from degrees")
       .unit_cell_length = (/10.0d0,10.0d0,10.0d0/)
       .make_cell_matrices
       .n_refl = 0
       .r_factor = ZERO
       .weighted_r_factor = ZERO
       .chi2 = ZERO
-      .chi2_in_F2 = ZERO
       .gof = ZERO
       .n_param = 0
       .scale_factor = ONE
@@ -300,26 +306,26 @@ contains
    make_cell_volume
    ! Calculate the cell volume
       DBL :: a,b,c,ca,cb,cg,sb
-      a = .length(1)
-      b = .length(2)
-      c = .length(3)
-      ca = cos(.angle(1))
-      cb = cos(.angle(2))
-      cg = cos(.angle(3))
-      sb = sin(.angle(2))
+      a = .unit_cell_length(1)
+      b = .unit_cell_length(2)
+      c = .unit_cell_length(3)
+      ca = cos(.unit_cell_angle(1))
+      cb = cos(.unit_cell_angle(2))
+      cg = cos(.unit_cell_angle(3))
+      sb = sin(.unit_cell_angle(2))
       .unit_cell_volume = a*b*c*sqrt(ONE-ca**2-cb**2-cg**2+TWO*ca*cb*cg)
    end
 
    make_direct_cell_matrix
    ! Calculate the direct cell matrices, in units of BOHRS.
       DBL :: v,a,b,c,ca,cb,cg,sb
-      a = .length(1)
-      b = .length(2)
-      c = .length(3)
-      ca = cos(.angle(1))
-      cb = cos(.angle(2))
-      cg = cos(.angle(3))
-      sb = sin(.angle(2))
+      a = .unit_cell_length(1)
+      b = .unit_cell_length(2)
+      c = .unit_cell_length(3)
+      ca = cos(.unit_cell_angle(1))
+      cb = cos(.unit_cell_angle(2))
+      cg = cos(.unit_cell_angle(3))
+      sb = sin(.unit_cell_angle(2))
       v = .unit_cell_volume
       ! Direct cell matrix
       .direct_cell_matrix(1,1) = a
@@ -336,13 +342,13 @@ contains
    make_reciprocal_cell_matrix
    ! Calculate the reciprocal cell matrices in units of 1/BOHRS.
       DBL :: v,a,b,c,ca,cb,cg,sb
-      a = .length(1)
-      b = .length(2)
-      c = .length(3)
-      ca = cos(.angle(1))
-      cb = cos(.angle(2))
-      cg = cos(.angle(3))
-      sb = sin(.angle(2))
+      a = .unit_cell_length(1)
+      b = .unit_cell_length(2)
+      c = .unit_cell_length(3)
+      ca = cos(.unit_cell_angle(1))
+      cb = cos(.unit_cell_angle(2))
+      cg = cos(.unit_cell_angle(3))
+      sb = sin(.unit_cell_angle(2))
       v = .unit_cell_volume
       ! Reciprocal cell matrix
       .reciprocal_cell_matrix(1,1) = ONE/a
@@ -419,7 +425,7 @@ contains
 
    read(in) [leaky]
    ! Read an XTAL object from file "in"
-      INPUT :: in
+      TEXTFILE :: in
       STR :: word
       .set_default
       read_loop : do
@@ -444,8 +450,8 @@ contains
             case("sf_multiplier");           in.read(.sf_multiplier)
             case("scale_fc");                .scale_Fc
             case("update_gof_parameters");   .update_gof_parameters
-            case("erase_spacegroup");        .spacegroup.destroy
-            case("destroy_spacegroup");      .spacegroup.destroy
+            case("erase_spacegroup");        .spacegroup.destroy_ptr_part
+            case("destroy_spacegroup");      .spacegroup.destroy_ptr_part
             case("erase_reflection_data");   .destroy_reflection_data
             case("destroy_reflection_data"); .destroy_reflection_data
             case("correct_extinction");      in.read( .correct_extinction )
@@ -465,7 +471,7 @@ contains
 
    read_reflection_data(in) [leaky]
    ! Read the reflection data from the input
-      INPUT :: in
+      TEXTFILE :: in
       INT :: i
       STR :: word
       DIE_IF(.reflection_data_exists, "hkl data already exists")
@@ -509,49 +515,6 @@ contains
       ENSURE(trim(word) == "end", 'expecting "end" keyword')
    end
 
-  read_F_to_add(in) [leaky]
-  ! Read the reflection data from the input
-    INPUT :: in
-    INT :: i,h,k,l
-    STR :: word
-    ENSURE(.n_refl>0, "no reflections to read")
-
-    ENSURE( .reflection_data_exists, "reflection data must be present first.")
-
-    .F_to_add.create(.n_refl); .F_to_add = ZERO
-
-    do i = 1,.n_refl
-      in.read(h)
-      in.read(k)
-      in.read(l)
-      ENSURE(h==.h(i), "reflection index mismatch")
-      ENSURE(k==.k(i), "reflection index mismatch")
-      ENSURE(l==.l(i), "reflection index mismatch")
-      in.read(.F_to_add(i))
-    end
-    in.read(word)                            !  Expecting the end keyword
-    word.to_lower_case
-    ENSURE(trim(word) == "end", 'expecting "end" keyword')
-  end
-
-  add_F_to_add
-  ! Add the structure factors in .F_to_add to those in .F_calc if present.
-  ! Usefull for adding the structure factors from one molecule fragment to those
-  ! of another.
-    INT :: i,calc_size,add_size,n_refl
-    ENSURE( .F_calc_exists, "no calculated structure factors")
-    if (.F_to_add_exists) then
-      calc_size = size(.F_calc)
-      add_size = size(.F_to_add)
-      n_refl = .n_refl
-      ENSURE(calc_size == n_refl, "structure factor array incorrect size")
-      ENSURE(add_size == n_refl, "structure factor array incorrect size")
-      do i=1,n_refl
-        .F_calc(i) = .F_calc(i) + .F_to_add(i)
-      end
-    end
-  end
-
   sigma_is_sqrt_of_f [leaky]
   ! Set the experimental error to be the square root of the structure factor.
     INT :: n
@@ -566,7 +529,7 @@ contains
   ! Make the goodnes of fit parameters, "chi2", "R_factor", "gof",
   ! "scale_factor".  Structure factors are not scaled in calculating the
   ! gof parameters.
-    DBL :: top1,top2,top3,bot1,bot2
+    DBL :: top1,top2,bot1,bot2
     DIE_IF( .no_F_exp, "no experimental structure factors")
     DIE_IF( .no_F_calc, "no calculated structure factors")
     top1 = ZERO; top2 = ZERO
@@ -575,7 +538,6 @@ contains
       case ("x-ray","xray")
         top1 = sum( abs(.F_calc - sign(.F_exp,.F_calc)) )
         top2 = sum( ((.F_calc - sign(.F_exp,.F_calc)) / .sigma)**2 )
-        top3 = sum( ((.F_calc*.F_calc - .F_exp * .F_exp)/.sigma * .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
       case ("neutron")
@@ -583,23 +545,22 @@ contains
         top2 = sum( ((.F_calc - .F_exp) / .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
-      case default; DIE("XTAL:update_gof_parameters: crystal_kind not defined.")
+      case default; DIE("crystal_kind not defined.")
     end
     .r_factor = top1/bot1
     .weighted_r_factor = sqrt(top2/bot2)
     .chi2 = top2/max(.n_refl - .n_param,1)
-    .chi2_in_F2 = top3/max(.n_refl - .n_param,1)
     .gof = sqrt(.chi2)
   end
 
   update_scaled_gof_parameters
   ! Make the goodnes of fit parameters, "chi2", "R_factor", "gof",
   ! "scale_factor".
-    DBL :: top1,top2,top3,bot1,bot2
+    DBL :: top1,top2,bot1,bot2
     VEC, PTR :: Fc
     DIE_IF( .no_F_exp, "no experimental structure factors")
     DIE_IF( .no_F_calc, "no calculated structure factors")
-    top1 = ZERO; top2 = ZERO; top3 = ZERO
+    top1 = ZERO; top2 = ZERO
     bot1 = ZERO; bot2 = ZERO
     Fc.create( .n_refl )
     Fc = .scaled_Fc
@@ -607,13 +568,11 @@ contains
       case ("x-ray","xray")
         top1 = sum( abs(Fc - sign(.F_exp,Fc)) )
         top2 = sum( ((Fc - sign(.F_exp,Fc)) / .sigma)**2 )
-        top3 = sum( ((Fc*Fc - .F_exp * .F_exp)/.sigma * .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
       case ("neutron")
         top1 = sum( abs(Fc - .F_exp) )
         top2 = sum( ((Fc - .F_exp) / .sigma)**2 )
-        top3 = sum( ((Fc*Fc - .F_exp * .F_exp)/.sigma * .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
       case default; DIE("data kind not defined.")
@@ -622,7 +581,6 @@ contains
     .r_factor = top1/bot1
     .weighted_r_factor = sqrt(top2/bot2)
     .chi2 = top2/max(.n_refl - .n_param,1)
-    .chi2_in_F2 = top3/max(.n_refl - .n_param,1)
     .gof = sqrt(.chi2)
   end
 
@@ -831,7 +789,7 @@ contains
   unique_k_pts_size result(res) [pure]
     IN :: self
     IMAT(2,2) :: res
-    res(1,:) = (/1, .spacegroup.n_reduced_symops * .n_refl/)
+    res(1,:) = (/1, .n_reduced_symops * .n_refl/)
     res(2,:) = (/1,3/)
   end
 
@@ -843,7 +801,7 @@ contains
       INT :: p,u,n,n_unique
       MAT(3,3) :: b,rcm
       p = 0
-      n_unique = .spacegroup.n_reduced_symops
+      n_unique = .n_reduced_symops
       rcm = 2*PI*.reciprocal_cell_matrix
       do u = 1,n_unique
          b = matmul(rcm,.reduced_symop_mat(u))
@@ -864,8 +822,9 @@ contains
    ! Return the sum of the "phase" shifts for each (hkl) reflection from each
    ! glide vector for all symops which are equivalent to the "u"-th
    ! reduced symmetry operation, as determined by the mask array.
-      INT :: u
-      CVEC :: phase
+      INT, IN :: u
+      CVEC, OUT :: phase
+      IVEC, IN :: mask
       DBL :: pi2,tx,ty,tz
       INT :: s
       BIN :: analysis
@@ -1181,21 +1140,21 @@ contains
     ENSURE(size(list) == n_seitz, "symop list not correct size")
     n_atom=size(atomvec)
     atomvec_frac.create_copy(atomvec)
-    atomvec_frac.convert_to_crystal(.inverse_cell_matrix) ! Put into fractionals
+    atomvec_frac.convert_to_crystal(self) ! Put into fractionals
     atomvec1.create(n_atom)
     atomvec2.create(n_atom)
 
     do s1=1,n_seitz
       atomvec1.copy(atomvec_frac)
       atomvec1.seitz_multiply( transpose( .spacegroup.seitz(:,:,s1)))
-      atomvec1.convert_from_crystal(.direct_cell_matrix)
-      atomvec1.ensure_in_unitcell(.unitcell)
+      atomvec1.convert_from_crystal(self)
+      atomvec1.ensure_in_unitcell(self)
       same = FALSE
       do s2=1,s1-1
         atomvec2.copy(atomvec_frac)
         atomvec2.seitz_multiply( transpose( .spacegroup.seitz(:,:,s2)))
-        atomvec2.convert_from_crystal(.direct_cell_matrix)
-        atomvec2.ensure_in_unitcell(.inverse_cell_matrix)
+        atomvec2.convert_from_crystal(self)
+        atomvec2.ensure_in_unitcell(self)
         same = atomvec1.same_as(atomvec2)
         if (same) exit
       end
@@ -1464,6 +1423,7 @@ contains
    ! for each "atom" in the fragment.
       ATOMVEC :: atom
       DBL :: res
+      INT :: u,n,a,f
       ENSURE(.reduced_symop.created,"no reduced_symop array")
       ENSURE(.fragment_atom_for.created,"no reduced_symop array")
       u = 0
@@ -1541,14 +1501,15 @@ contains
    ! Determine which of the unique symops can generate geometries from
    ! ".fragment cell_geometry" which are related by translation, (including
    ! translation by the zero vector), but not inversion
-      MAT, PTR :: gi,gj
+      MAT, PTR :: gi,gj,gu
       INT :: n_atom,i,ii,j,jj
-      BIN :: traslated
-      VEC(3) :: pos_i,pos_j
+      BIN :: translated
+      VEC(3) :: pos_i,pos_j,pos_u
       ENSURE(.inverted_symop.created,"no inverted_symop array")
       n_atom = size(.fragment_geometry,2)
       gi.create(3,n_atom)
       gj.create(3,n_atom)
+      gu.create(3,n_atom)
       .translated_symop.create(.spacegroup.n_seitz)
       .translated_symop = 0
       do i = 2,.n_reduced_symops
@@ -1571,18 +1532,21 @@ contains
             end
          end
       end
+      gu.destroy
+      gj.destroy
+      gi.destroy
    end
 
    is_same_geometry(geom_i,geom_j) result(res)
-   ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional coordinates are
-   ! the same, exactly.
+   ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
+   ! coordinates are the same, exactly.
       MAT :: geom_i,geom_j
       BIN :: res
       INT :: i,j,n_atom
       BIN :: same
       BINVEC, PTR :: skip
       n_atom = size(geom_i,2)
-      ENSURE( .seitz.created, "Seitz matrices not initialised")
+      ENSURE(.spacegroup.seitz.created, "Seitz matrices not initialised")
       ENSURE(size(geom_i,1)==3, "incorrect size for array geom_i")
       ENSURE(size(geom_j,1)==3, "incorrect size for array geom_j")
       ENSURE(n_atom==size(geom_j,2), "incompatible sizes for geom_i, geom_j")
@@ -1648,7 +1612,7 @@ contains
          do s = 1,.spacegroup.n_seitz
             pa = .fragment_geometry(:,a)
             .transform_position(pa,s,to_unit_cell=TRUE)
-            found = .unit_cell_geometry.has_column(pa,TOL(3),col)
+            found = .unit_cell_geometry.has_column(pa,TOL(3))
             if (NOT found) then
                n = n + 1
                .fragment_atom_for.expand(n)
@@ -1664,8 +1628,8 @@ contains
    make_repetition_factors [leaky]
    ! The number of times an atom with index "a" in mapped into itself under
    ! the reduced group is the ".repetition_factor(a)". It is used to correct
-   ! structure factors for fragment geometries which are "oversampled" relative to
-   ! the asymmetric cell geometry.
+   ! structure factors for fragment geometries which are "oversampled" relative
+   ! to the asymmetric cell geometry.
       VEC(3)  :: pa,pb
       INT :: a,b,n,u,n_same
       BIN :: same
@@ -1718,12 +1682,14 @@ contains
       BIN :: ignore,to_cell
       INT :: n,n_seitz
       n_seitz = .spacegroup.n_seitz
-      ENSURE( op>0,         "operator index out of bounds")
-      ENSURE( op<=.n_seitz, "operator index out of bounds")
+      ENSURE( op>0,        "operator index out of bounds")
+      ENSURE( op<=n_seitz, "operator index out of bounds")
       ignore = FALSE
       if (present(ignore_glide)) ignore = ignore_glide
-      if (ignore) then; p = matmul(p,.seitz(1:3,1:3,op))
-      else;             p = matmul(p,.seitz(1:3,1:3,op)) + .seitz(4,1:3,op)
+      if (ignore) then
+        p = matmul(p,.spacegroup.seitz(1:3,1:3,op))
+      else
+        p = matmul(p,.spacegroup.seitz(1:3,1:3,op)) + .spacegroup.seitz(4,1:3,op)
       end
       to_cell = FALSE
       if (present(to_unit_cell)) to_cell = to_unit_cell
@@ -1761,7 +1727,7 @@ contains
       ENSURE( analysis,"Unique symop analysis not yet done")
       ENSURE( u<=.n_reduced_symops,"symop index out of range")
       ENSURE( u>0,         "symop index out of range")
-      res = .seitz(1:3,1:3,.reduced_symop(u))
+      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(u))
    end
 
 !  **************
@@ -1770,20 +1736,20 @@ contains
 
    put(out)
    ! Put out the crystal data to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       if (.F_calc_exists AND .F_exp_exists) .update_gof_parameters
       out.flush
       out.text("CRYSTAL information:")
       out.show("kind                        =", .kind)
       .put_unitcell_data(out)
-      if (.spacegroup_exists)      .spacegroup.put(out)
+      .spacegroup.put(out)
       if (.fragment_data_exists)   .put_fragment_data(out)
       if (.reflection_data_exists) .put_reflection_data(out)
    end
 
    put_unitcell_data(out)
    ! Put unitcell information to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       out.flush
       out.text("Crystal unitcell information:",flush=2)
       out.show("alpha angle(rad)       = ",.unit_cell_angle(1))
@@ -1805,157 +1771,160 @@ contains
    put_fragment_data(out,atom)
    ! Put fragment information to file "out". Optional "atom" list may
    ! be used to enhace output.
-      OUTPUT :: out
+      TEXTFILE :: out
       ATOMVEC, optional :: atom
-      .out.flush
-      .out.text("Crystal cell-fragment data:")
-      .out.flush
-      .out.show("No. of inputted atoms         = ",.n_fragment_atoms)
-      .out.show("No. of unit cell atoms        = ",.n_unit_cell_atoms)
-      .out.show("No. of unique unit cell atoms = ",.n_unique_unit_cell_atoms)
-      .out.show("Z factor                      = ",.Z)
-      out.put_fragment_geometry(atom)
-      out.put_asymmetric_unit_geometry(atom)
-      out.put_unit_cell_geometry(atom)
-      out.put_repetition_factors(atom)
+      out.flush
+      out.text("Crystal cell-fragment data:")
+      out.flush
+      out.show("No. of inputted atoms         = ",.n_fragment_atoms)
+      out.show("No. of unit cell atoms        = ",.n_unit_cell_atoms)
+      out.show("No. of unique unit cell atoms = ",.n_unique_unit_cell_atoms)
+      out.show("Z factor                      = ",.Z)
+      .put_fragment_geometry(out,atom)
+      .put_asymmetric_unit_geometry(out,atom)
+      .put_unit_cell_geometry(out,atom)
+      .put_repetition_factors(out,atom)
    end
 
-   put_fragment_geometry(atom)
+   put_fragment_geometry(out,atom)
    ! Put out the cell geometry information
+      TEXTFILE :: out
       ATOMVEC :: atom
       INT :: n,u
       STR :: symbol
-      ENSURE(.fragment_geometry.create,"no fragment_geometry array")
-      ENSURE(.unique_atoms.create,"no unique_atoms array")
-      .out.flush
-      .out.text("Crystal fragment cell geometry:")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
-      .out.put("Fragment",int_width=TRUE)
-      .out.put("Unique",int_width=TRUE)
-      .out.flush
-      .out.put("Atom",int_width=TRUE)
-      .out.put("Atom",int_width=TRUE)
-      .out.put("x")
-      .out.put("y")
-      .out.put("z")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
+      ENSURE(.fragment_geometry.created,"no fragment_geometry array")
+      ENSURE(.unique_atom.created,"no unique_atoms array")
+      out.flush
+      out.text("Crystal fragment cell geometry:")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
+      out.put("Fragment",int_width=TRUE)
+      out.put("Unique",int_width=TRUE)
+      out.flush
+      out.put("Atom",int_width=TRUE)
+      out.put("Atom",int_width=TRUE)
+      out.put("x")
+      out.put("y")
+      out.put("z")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
       do n = 1,.n_fragment_atoms
-         .out.put(n)
+         out.put(n)
          u = .unique_atom_for(n)
          symbol = atom(u).chemical_symbol.trim // " (" // u.to_str.trim // ")"
-         .out.put(symbol,int_width=TRUE)
-         .out.put(.fragment_geometry(1,n))
-         .out.put(.fragment_geometry(2,n))
-         .out.put(.fragment_geometry(3,n))
-         .out.flush
+         out.put(symbol,int_width=TRUE)
+         out.put(.fragment_geometry(1,n))
+         out.put(.fragment_geometry(2,n))
+         out.put(.fragment_geometry(3,n))
+         out.flush
       end
-      .out.dash(int_fields=2,dbl_fields=3)
+      out.dash(int_fields=2,dbl_fields=3)
    end
 
-   put_asymmetric_unit_geometry(atom)
+   put_asymmetric_unit_geometry(out,atom)
    ! Put out the asymmetric unit cell geometry information
+      TEXTFILE :: out
       ATOMVEC :: atom
       INT :: n,u
       STR :: symbol
-      ENSURE(.fragment_geometry.create,"no fragment_geometry array")
-      ENSURE(.unique_atoms.create,"no unique_atoms array")
-      .out.flush
-      .out.text("Crystal asymmetric unit geometry:")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
-      .out.put("Unique",int_width=TRUE)
-      .out.put("Fragment",int_width=TRUE)
-      .out.flush
-      .out.put("Atom",int_width=TRUE)
-      .out.put("Atom",int_width=TRUE)
-      .out.put("x")
-      .out.put("y")
-      .out.put("z")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
+      ENSURE(.fragment_geometry.created,"no fragment geometry")
+      ENSURE(.unique_atom.created,"no unique_atoms array")
+      out.flush
+      out.text("Crystal asymmetric unit geometry:")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
+      out.put("Unique",int_width=TRUE)
+      out.put("Fragment",int_width=TRUE)
+      out.flush
+      out.put("Atom",int_width=TRUE)
+      out.put("Atom",int_width=TRUE)
+      out.put("x")
+      out.put("y")
+      out.put("z")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
       do u = 1,.n_unique_unit_cell_atoms
-         .out.put(u)
+         out.put(u)
          n = .unique_atom(n)
          symbol = atom(n).chemical_symbol.trim // " (" // n.to_str.trim // ")"
-         .out.put(symbol,int_width=TRUE)
-         .out.put(.fragment_geometry(1,n))
-         .out.put(.fragment_geometry(2,n))
-         .out.put(.fragment_geometry(3,n))
-         .out.flush
+         out.put(symbol,int_width=TRUE)
+         out.put(.fragment_geometry(1,n))
+         out.put(.fragment_geometry(2,n))
+         out.put(.fragment_geometry(3,n))
+         out.flush
       end
-      .out.dash(int_fields=2,dbl_fields=3)
+      out.dash(int_fields=2,dbl_fields=3)
    end
 
-   put_unit_cell_geometry(atom)
+   put_unit_cell_geometry(out,atom)
    ! Put out the full unit cell geometry information
+      TEXTFILE :: out
       ATOMVEC :: atom
       INT :: n,f
       STR :: symbol
-      .out.dash(int_fields=2)
-      .out.flush
-      .out.text("Full unit cell geometry:")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
-      .out.put("Cell ",int_width=TRUE)
-      .out.put("Fragment",int_width=TRUE)
-      .out.flush
-      .out.put("Atom",int_width=TRUE)
-      .out.put("Atom",int_width=TRUE)
-      .out.put("x")
-      .out.put("y")
-      .out.put("z")
-      .out.flush
-      .out.dash(int_fields=2,dbl_fields=3)
+      out.dash(int_fields=2)
+      out.flush
+      out.text("Full unit cell geometry:")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
+      out.put("Cell ",int_width=TRUE)
+      out.put("Fragment",int_width=TRUE)
+      out.flush
+      out.put("Atom",int_width=TRUE)
+      out.put("Atom",int_width=TRUE)
+      out.put("x")
+      out.put("y")
+      out.put("z")
+      out.flush
+      out.dash(int_fields=2,dbl_fields=3)
       do n = 1,.n_unit_cell_atoms
-         .out.put(n)
+         out.put(n)
          f = .fragment_atom_for(n)
          symbol = atom(f).chemical_symbol.trim // " (" // f.to_str.trim // ")"
-         .out.put(symbol,int_width=TRUE)
-         .out.put(.unit_cell_geometry(1,n))
-         .out.put(.unit_cell_geometry(2,n))
-         .out.put(.unit_cell_geometry(3,n))
-         .out.flush
+         out.put(symbol,int_width=TRUE)
+         out.put(.unit_cell_geometry(1,n))
+         out.put(.unit_cell_geometry(2,n))
+         out.put(.unit_cell_geometry(3,n))
+         out.flush
       end
-      .out.dash(int_fields=2,dbl_fields=3)
+      out.dash(int_fields=2,dbl_fields=3)
    end
 
-   put_repetition_factors(atom)
+   put_repetition_factors(out,atom)
    ! Put out the repetition factors
+      TEXTFILE :: out
       ATOMVEC :: atom
       INT :: n,rf
       STR :: symbol
-      .out.flush
-      .out.text("Crystal fragment atom repetition factors:")
-      .out.flush
-      .out.dash(int_fields=2)
-      .out.put("Fragment",int_width=TRUE)
-      .out.put("Rep.",int_width=TRUE)
-      .out.flush
-      .out.put("Atom",int_width=TRUE)
-      .out.put("Factor",int_width=TRUE)
-      .out.flush
-      .out.dash(int_fields=2)
+      out.flush
+      out.text("Crystal fragment atom repetition factors:")
+      out.flush
+      out.dash(int_fields=2)
+      out.put("Fragment",int_width=TRUE)
+      out.put("Rep.",int_width=TRUE)
+      out.flush
+      out.put("Atom",int_width=TRUE)
+      out.put("Factor",int_width=TRUE)
+      out.flush
+      out.dash(int_fields=2)
       do n = 1,.n_fragment_atoms
          symbol = atom(n).chemical_symbol.trim // " (" // n.to_str.trim // ")"
-         .out.put(symbol,int_width=TRUE)
+         out.put(symbol,int_width=TRUE)
          rf = .repetition_factor(n)
-         .out.put(rf)
-         .out.flush
+         out.put(rf)
+         out.flush
       end
    end
 
    put_gof_data(out)
    ! Output the goodness of fit data to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       out.flush
       out.text("Goodness of fit parameters:",flush=2)
       out.show("R factor                    =", .r_factor)
       out.show("Weighted R factor           =", .weighted_r_factor)
       out.show("chi**2                      =", .chi2)
       out.show("Goodness of fit             =", .gof)
-      out.show("chi**2 in F^2               =", .chi2_in_F2)
       out.show("Scale factor                =", .scale_factor)
       if (.correct_extinction) then
       out.show("Secondary extinction factor =", .ext_factor)
@@ -1969,7 +1938,7 @@ contains
 
    put_reflection_data(out)
    ! Output the reflection data to file "out"
-      OUTPUT :: out
+      TEXTFILE :: out
       INT :: n
       BIN :: skip
       skip = .no_reflection_data
@@ -2039,7 +2008,7 @@ contains
 
   put_F_calc(out)
   ! Output F_calc so it can be read in as F_to_add.
-    OUTPUT :: out
+    TEXTFILE :: out
     INT :: i
     ENSURE(.F_calc_exists, "no calculated structure factors")
     out.flush
@@ -2106,18 +2075,6 @@ contains
 !  Tests for existence
 !  *******************
 
-   no_spacegroup result(res)
-   ! Return TRUE if no spacegroup exists
-      BIN :: res
-      res = NOT associated(.spacegroup)
-   end
-
-   spacegroup_exists result(res)
-   ! Return TRUE if a spacegroup exists
-      BIN :: res
-      res = associated(.spacegroup)
-   end
-
    fragment_data_exists result(res)
    ! Return TRUE if a fragment information exists
       BIN :: res
@@ -2164,12 +2121,6 @@ contains
    ! Return TRUE if calculated structure factors exist
       BIN :: res
       res = associated(.F_calc)
-   end
-
-   F_to_add_exists result(res)
-   ! Return TRUE if structure factors to add to F_calc exist
-      BIN :: res
-      res = associated(.F_to_add)
    end
 
 end

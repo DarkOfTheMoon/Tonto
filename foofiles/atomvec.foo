@@ -25,6 +25,7 @@ module ATOMVEC
 
    use SHELL
    use SHELL1
+   use BASIS
    use ATOM
 
    implicit none
@@ -137,19 +138,19 @@ contains
       CRYSTAL, optional :: crystal
       INT :: line,n_atom,a
       STR :: word
-      BIN :: angstrom,crystal
+      BIN :: angstrom,cryst
       ENSURE(.destroyed,"atom vector already created")
       line = in.line_number+1               ! Store line of atom list
       n_atom = 0
       angstrom=FALSE
-      crystal=FALSE
+      cryst=FALSE
       do                                ! Read for angstrom or fractional units
          if (in.buffer.exhausted) exit
          in.read(word); word.to_lower_case
          select case (word)
             case("angstrom");   angstrom=TRUE
-            case("crystal");    crystal=TRUE
-            case("fractional"); crystal=TRUE
+            case("crystal");    cryst=TRUE
+            case("fractional"); cryst=TRUE
             case default;       DIE("unrecognised option: "// word.trim )
          end
       end
@@ -171,7 +172,7 @@ contains
       in.read(word)
       DIE_IF(word/="end","end keyword wrongly positioned")
       if (angstrom) .convert_from_angstrom
-      if (crystal) then
+      if (cryst) then
         DIE_IF(NOT present(crystal),"Crystal unitcell input needed before atoms")
         .convert_from_crystal(crystal)
       end
@@ -232,7 +233,7 @@ contains
           in.read(word)
           DIE_IF(word=="end","end keyword wrongly positioned")
           in.move_to_previous_item
-          self(a).read_thermal_tensor(in,use_crystal,crystal)
+          self(a).read_thermal_tensor(in,crystal)
         end
       else                           ! This one we use default coordinates,
         do a = 1,.n_atom             ! as specified in atom module.
@@ -263,7 +264,6 @@ contains
    put_coordinates(out)
    ! Output the atom coordinate information
       TEXTFILE :: out
-      BIN :: bases_labeled
       if (.bases_are_all_labeled) then
         .put_coords_with_basis_label(out)
       else
@@ -285,7 +285,7 @@ contains
       out.put("x")
       out.put("y")
       out.put("z")
-      if (bases_labeled) out.put("Basis")
+      if (.bases_are_all_labeled) out.put("Basis")
       out.flush
       out.put_dash(int_fields=3,dbl_fields=4,flush=1)
       do i = 1,.n_atom
@@ -515,6 +515,7 @@ contains
   ! Output the thermal tensors if they exist.
      TEXTFILE :: out
      CRYSTAL :: crystal
+     BIN :: err
      INT :: i
      out.flush
      out.text("Thermal tensors in cartesian coordinates/(bohr^2):")
@@ -550,11 +551,13 @@ contains
      out.dash(int_fields=1,dbl_fields=6)
      do i = 1,.n_atom
        self(i).change_thermal_tensor_axes_to("crystal",crystal)
-       self(i).thermal_tensor.convert_to("angstrom^2")
+       self(i).thermal_tensor.convert_to("angstrom^2",err)
+       DIE_IF(err,"error converting units")
        out.put(i)
        self(i).put_thermal_tensor(out)
        out.flush
-       self(i).thermal_tensor.convert_from("angstrom^2")
+       self(i).thermal_tensor.convert_from("angstrom^2",err)
+       DIE_IF(err,"error converting units")
        self(i).change_thermal_tensor_axes_to("cartesian",crystal)
      end
      out.dash(int_fields=1,dbl_fields=6)
@@ -580,16 +583,16 @@ contains
       end
    end
 
-   convert_from_crystal(direct_cell_matrix)
+   convert_from_crystal(crystal)
    ! Convert atom positions to A.U. from fractional crystal coordinates
-      MAT :: direct_cell_matrix
-      .rotate(direct_cell_matrix)
+      CRYSTAL :: crystal
+      .rotate(crystal.direct_cell_matrix)
    end
 
-   convert_to_crystal(inverse_cell_matrix)
+   convert_to_crystal(crystal)
    ! Convert atom positions to fractional crystal coordinates from A.U.
-      MAT :: inverse_cell_matrixl
-      .rotate(inverse_cell_matrix)
+      CRYSTAL :: crystal
+      .rotate(crystal.inverse_cell_matrix)
    end
 
    get_coordinates(coord)
@@ -1018,7 +1021,7 @@ contains
       INT :: aa,sa
       aa = .atom_for_shell(a)
       sa = .atom_shell_for_shell(a)
-      sh.set( self(aa).basis.shell(sa) )
+      sh.set( self(aa).basis%shell(sa) )
    end
 
    get_shell(index,sh,pos)
@@ -1029,7 +1032,7 @@ contains
       INT :: aa,sa
       aa = .atom_for_shell(index)
       sa = .atom_shell_for_shell(index)
-      sh => self(aa).basis.shell(sa)
+      sh => self(aa).basis%shell(sa)
       pos = self(aa).pos
    end
 
@@ -1045,10 +1048,10 @@ contains
       if (atom_a/=aa) then
          atom_a = aa
          sh_a = sa
-         sh.set(shell=self(aa).basis.shell(sa),pos=self(aa).pos)
+         sh.set(shell=self(aa).basis%shell(sa),pos=self(aa).pos)
       else if (sh_a/=sa) then
          sh_a = sa
-         sh.set(shell=self(aa).basis.shell(sa))
+         sh.set(shell=self(aa).basis%shell(sa))
       end
    end
 
@@ -1063,11 +1066,11 @@ contains
       INT :: a,as,n,ss
       ss = 0; last = 0
       atom_loop: do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          do as = 1,n
             ss = ss + 1
             first = last+1
-            last  = first + self(a).basis.shell(as).n_comp - 1
+            last  = first + self(a).basis%shell(as)%n_comp - 1
             if (s==ss) exit atom_loop
          end
       end do atom_loop
@@ -1082,11 +1085,11 @@ contains
       nullify(last);  last.create( .no_of_shells)
       ss = 0; l = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          do as = 1,n
             ss = ss + 1
             f = l + 1
-            l = f + self(a).basis.shell(as).n_comp - 1
+            l = f + self(a).basis%shell(as)%n_comp - 1
             first(ss) = f
             last(ss)  = l
          end
@@ -1101,10 +1104,10 @@ contains
       nullify(last);  last.create( .n_atom)
       l = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          first(a) = l + 1
          do as = 1,n
-            l = l + self(a).basis.shell(as).n_comp
+            l = l + self(a).basis%shell(as)%n_comp
          end
          last(a) = l
       end
@@ -1121,7 +1124,7 @@ contains
       INT :: ss,n
       ss = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          ss = ss + n
          if (s<=ss) exit
       end
@@ -1135,7 +1138,7 @@ contains
       nullify(res); res.create( .no_of_shells)
       ss = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          res(ss+1:ss+n) = a
          ss = ss + n
       end
@@ -1148,7 +1151,7 @@ contains
       INT :: a,ss,n
       ss = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          ss = ss + n
          if (s<=ss) exit
       end
@@ -1163,7 +1166,7 @@ contains
       nullify(res); res.create( .no_of_shells)
       ss = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          do as = 1,n
             res(ss+as) = as
          end
@@ -1177,7 +1180,7 @@ contains
       INT :: at,n
       res = 1
       do at = 1,(a-1)
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          res = res + n
       end
    end
@@ -1189,7 +1192,7 @@ contains
       nullify(res); res.create( .n_atom)
       ss = 0
       do a = 1,.n_atom
-         n = self(a).basis.n_shell
+         n = self(a).basis%n_shell
          res(a) = ss + 1
          ss = ss + n
       end
@@ -1382,7 +1385,7 @@ contains
       INT :: a
       res = 0
       do a = 1,size(self)
-         res = res + self(a).basis.n_shell
+         res = res + self(a).basis%n_shell
       end
    end
 
@@ -1392,7 +1395,7 @@ contains
       IN :: self
       INT, IN :: i
       INT :: res
-      res = self(i).basis.n_shell
+      res = self(i).basis%n_shell
    end
 
    no_of_shell_pairs result(res) [pure]
@@ -1420,7 +1423,7 @@ contains
       INT :: a
       res = 0
       do a = 1,size(self)
-         res = res + self(a).basis.n_bf
+         res = res + self(a).basis%n_bf
       end
    end
 
@@ -1430,7 +1433,7 @@ contains
       IN :: self
       INT, IN :: i
       INT :: res
-      res = self(i).basis.n_bf
+      res = self(i).basis%n_bf
    end
 
    n_prim result (res) [pure]
@@ -1449,7 +1452,7 @@ contains
       INT :: a
       res = 0
       do a = 1,size(self)
-         res = res + self(a).basis.n_prim
+         res = res + self(a).basis%n_prim
       end
    end
 
@@ -1516,7 +1519,7 @@ contains
       else
          res = FALSE
          do a = 1,.n_atom
-            if (NOT associated(self(a).basis.shell)) then
+            if (NOT associated(self(a).basis%shell)) then
                res = TRUE
                exit
             end
@@ -1533,7 +1536,7 @@ contains
       else
          res = TRUE
          do a = 1,.n_atom
-            if (NOT associated(self(a).basis.shell)) then
+            if (NOT associated(self(a).basis%shell)) then
                res = FALSE
                exit
             end
@@ -1755,24 +1758,24 @@ contains
     end
   end
 
-  thermal_tensor_to_cartesian(crystal)
+  thermal_tensor_from_crystal(crystal)
   ! Convert all thermal tensors from crystal coordinates to cartesians.
     CRYSTAL, IN :: crystal
     INT :: n
     do n=1,size(self)
-      self(n).thermal_tensor_to_cartesian(crystal)
+      self(n).thermal_tensor_from_crystal(crystal)
     end
   end
 
-  ensure_in_unitcell(inverse_cell_matrix)
+  ensure_in_unitcell(crystal)
   ! Translate the position of self to be in the unitcell.
     INOUT :: self
-    MAT :: inverse_cell_matrix
+    CRYSTAL, IN :: crystal
     VEC(3) :: translation,coa_cart,coa_frac,trans_int
     coa_cart = .centre_of_atoms
-    coa_frac = matmul(inverse_cell_matrix,coa_cart)   ! fractionals
+    coa_frac = matmul(crystal.inverse_cell_matrix,coa_cart)   ! fractionals
     trans_int = floor(coa_frac + TOL(6))              ! round to lattice vector
-    translation = matmul(inverse_cell_matrix,translation) !cartesians
+    translation = matmul(crystal.inverse_cell_matrix,translation) !cartesians
     .translate( - translation )
   end
 
