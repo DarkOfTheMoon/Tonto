@@ -213,6 +213,8 @@ my $module_type_name;        # The type of the last module type declaration
 my $html_synopsis_found = 0;
 my $html_GNU_found = 0;
 
+my $debug = 0;
+
 ## -----------------------------------------------------------------------------
 ## Hack some function return values. This should be done properly by writing
 ## this kind of info to file, as the foo code is processed.
@@ -1404,6 +1406,10 @@ sub analyse_foo_line {
       if ( defined $current_rout_name && $routine{$current_rout_name}{inherited}
        && ! $routine{$current_rout_name}{being_inherited}) { 
          $inherit_string .= $input_inh . "\n";
+         if ($input_inh =~ /^\s*\./) {
+            &report_error("in inherited routine $current_rout_name, ".
+                   "there appears to be active code :\n\n$input_line");
+         }
       }
    }
 
@@ -1800,11 +1806,13 @@ sub check_for_first_active_line {
 
    my $name = $current_rout_name;
 
+   return if (! defined $name);
+   return if (! defined $routine{$name});
    return if (! &scope_has_routine);
    return if ($scopeunit    eq 'interface'); # Skip interface bodies
    return if ($oldscopeunit eq 'interface'); 
-   return if (! defined $name);
-   return if (! defined $routine{$name});
+
+   # Now we are in a routine scope
 
       $routine{$name}{first_local_var_decl} = undef;
    
@@ -1824,6 +1832,7 @@ sub check_for_first_active_line {
              $routine{$name}{first_active_line} = 1;  
              $routine{$name}{in_routine_body} = 1;  
       }
+
 }
 
 
@@ -2395,27 +2404,29 @@ sub fortran_process_return {
   # found a "return" #######################
   if ($fortran_out =~ '.return') {
 
+    my $unstk = "UNSTACK(\"$module_full_name:${routine{$name}{real_name}}\")";
+    my $check = "CHECK(\"$module_full_name:${routine{$name}{real_name}}\")";
     if ($do_timer eq 1 && $do_stack eq 1) {
       if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
         if    (defined $routine{$name}{pure})  { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; return; end if/o; }
-        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; UNSTACK; return; end if/o; }
-        else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; CHECK; return; end if/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; $unstk; return; end if/o; }
+        else                                   { $fortran_out =~ s/[)] *return */) then; STOP_TIMER; $check; return; end if/o; }
       }
       elsif ($fortran_out =~ '(?:^|;) *return *' ) {
         if    (defined $routine{$name}{pure})  { $fortran_out =~ s/return/STOP_TIMER; return/o; }
-        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; UNSTACK; return/o; }
-        else                                   { $fortran_out =~ s/return/STOP_TIMER; CHECK; return/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/STOP_TIMER; $unstk; return/o; }
+        else                                   { $fortran_out =~ s/return/STOP_TIMER; $check; return/o; }
       }
     } elsif ($do_stack eq 1) {
       if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
         if    (defined $routine{$name}{pure})  {  }
-        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; UNSTACK; return; end if/o; }
-        else                                   { $fortran_out =~ s/[)] *return */) then; CHECK; return; end if/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/[)] *return */) then; $unstk; return; end if/o; }
+        else                                   { $fortran_out =~ s/[)] *return */) then; $check; return; end if/o; }
       }
       elsif ($fortran_out =~ '(?:^|;) *return *' ) {
         if    (defined $routine{$name}{pure})  {  }
-        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/UNSTACK; return/o; }
-        else                                   { $fortran_out =~ s/return/CHECK; return/o; }
+        elsif (defined $routine{$name}{leaky}) { $fortran_out =~ s/return/$unstk; return/o; }
+        else                                   { $fortran_out =~ s/return/$check; return/o; }
       }
     } elsif ($do_timer eq 1) {
       if ($fortran_out =~ '[)] *return *(?:!|$)' ) {
@@ -3099,26 +3110,28 @@ sub fortran_do_new_end_scope {
      if ($routine{$current_rout_name}{template}) {
         $skip_fortran_out = 1; return;
      }
+     my $unstk = "UNSTACK(\"$module_full_name:${routine{$name}{real_name}}\")";
+     my $check = "CHECK(\"$module_full_name:${routine{$name}{real_name}}\")";
      if ($do_timer eq 1 && $do_stack eq 1) {
         if    (defined $routine{$name}{pure})  { 
            # $fortran_out =~ s/end */end $oldscopeunit/; 
            $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
         }
         elsif (defined $routine{$name}{leaky}) { 
-           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1UNSTACK\n$1end $oldscopeunit/; 
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1$unstk\n$1end $oldscopeunit/; 
         }
         else                                     { 
-           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1CHECK\n$1end $oldscopeunit/; 
+           $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1$check\n$1end $oldscopeunit/; 
         }
      } elsif ($do_stack eq 1) {
         if    (defined $routine{$name}{pure})  { 
            $fortran_out =~ s/end */end $oldscopeunit/; 
         }
         elsif (defined $routine{$name}{leaky}) { 
-           $fortran_out =~ s/(\s*)end */$1UNSTACK\n$1end $oldscopeunit/; 
+           $fortran_out =~ s/(\s*)end */$1$unstk\n$1end $oldscopeunit/; 
         }
         else                                     { 
-           $fortran_out =~ s/(\s*)end */$1CHECK\n$1end $oldscopeunit/; 
+           $fortran_out =~ s/(\s*)end */$1$check\n$1end $oldscopeunit/; 
         }
      } elsif ($do_timer eq 1) {
            $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
