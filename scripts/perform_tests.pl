@@ -1,4 +1,20 @@
 #!/usr/bin/perl
+#*******************************************************************************
+# This script runs all the tests in a test directory.
+#
+# All command line arguments are compulsory - run the script without them to get
+# the usage message.
+#
+# It expects that the input for the program is the file "stdin", and the output
+# file is "stdout".  Files in the test directory should be matched pairs, with
+# the first part of their name being "stdin" or "stdout", and the rest being
+# identical.  Files that are not matched pairs like this are skipped.
+#
+# (c) Daniel Grimwood, University of Western Australia, 2004.
+#
+# $Id$
+# 
+#*******************************************************************************
 
 use strict;
 use English;
@@ -15,7 +31,7 @@ my $cmp = "";
 
 # read the list of input files
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
-my @inputfiles = grep { /^stdin\..+/ && -f "$testdir/$_"} readdir(TESTDIR);
+my @inputfiles = grep { /^stdin.+/ && -f "$testdir/$_"} readdir(TESTDIR);
 foreach my $x (@inputfiles) { $x = $testdir . "/" . $x; }
 closedir(TESTDIR);
 
@@ -35,7 +51,7 @@ foreach my $input (@inputfiles) {
 
   # Get the output file name from the input file name.
   my ($volume,$dir,$file) = File::Spec -> splitpath($input);
-  $file =~ s/^stdin\./stdout./;
+  $file =~ s/^stdin/stdout/;
   my $output = File::Spec -> catpath($volume,$dir,$file);
 
   if (-f $output) {
