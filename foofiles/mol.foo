@@ -2381,13 +2381,13 @@ contains
     MAT4*   :: ERI
     INT :: q,a,b,c,d,skipped,atom_a,atom_b,atom_c,atom_d
     DBL :: factor
-    STR :: cutoff
     ENSURE(.atom.created,  "no atom list")
     ENSURE(.atom.bases_are_all_resolved, "no basis set")
-    cutoff.from_dbl(SHELL4_ERI_CUTOFF)
     skipped = 0
     if (.scfdata.output) then
-       stdout.text("Skipping electron repulsion integrals less than " // trim(cutoff) // ".")
+      stdout.set_dbl_style("e")
+      stdout.show("Skipping electron repulsion integrals less than ",SHELL4_ERI_CUTOFF)
+      stdout.set_dbl_style("f")
     end
     if (.scfdata.nddo) then
        do q = 1, .n_shell_quartets
@@ -2589,9 +2589,14 @@ contains
          ft_ab.create(k_max,shell.a.n_comp,shell.b.n_comp)
          .make_ft_pair(ft_ab,k_pts,shell,atom_a,atom_b)
          dens_ba => dens(fb:lb,fa:la)
-         if (a/=b) ft_ab = TWO * ft_ab ! count off-diagonals twice.
-         do k = 1,k_max
-            res(k) = res(k) + ft_ab(k,:,:).trace_of_product(dens_ba)
+         if (a/=b) then ! count off-diagonals twice.
+           do k = 1,k_max
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_of_product(dens_ba)
+           end
+         else
+           do k = 1,k_max
+              res(k) = res(k) + ft_ab(k,:,:).trace_of_product(dens_ba)
+           end
          end
          ft_ab.destroy
          shell.destroy_ptr_part
@@ -2624,9 +2629,14 @@ contains
          ft_ab.create(k_max,shell.a.n_comp,shell.b.n_comp)
          .make_ft_pair(ft_ab,k_pts,shell,atom_a,atom_b)
          dens_ba => dens(fb:lb,fa:la)
-         if (a/=b) ft_ab = TWO * ft_ab ! count off-diagonals twice.
-         do k = 1,k_max
-            res(k) = res(k) + ft_ab(k,:,:).trace_of_product(dens_ba)
+         if (a/=b) then ! count off-diagonals twice.
+           do k = 1,k_max
+              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_of_product(dens_ba)
+           end
+         else
+           do k = 1,k_max
+              res(k) = res(k) + ft_ab(k,:,:).trace_of_product(dens_ba)
+           end
          end
          ft_ab.destroy
          shell.destroy_ptr_part
@@ -2795,35 +2805,49 @@ contains
 
   make_ft_pair(ft_ab,k_pts,shell,atom_a,atom_b)
   ! Make_ft for one pair of gaussians.
-  ! Includes partitioning, dispersion and thermal smearing.
+  ! Includes partitioning and thermal smearing.
      CMAT3 :: ft_ab
      MAT, IN :: k_pts
      SHELL2, IN :: shell
      INT, IN :: atom_a,atom_b
+     BIN :: is_zero
      MAT3* :: t
      MAT* :: p
      INT :: k_max
      ENSURE(.crystal.created,"no crystal data")
      k_max = size(k_pts,1)
-     t.create(k_max,shell.a.n_cc,shell.b.n_cc)
-     .thermal_smearing_correction(t,k_pts,atom_a,atom_b,shell)
      p.create(shell.a.n_cc,shell.b.n_cc)
-     .make_partition_factors(p,shell,atom_a,atom_b)
-     shell.make_ft(ft_ab,k_pts,t,p)
+     .make_partition_factors(p,shell,atom_a,atom_b,is_zero)
+     if (NOT is_zero) then
+       t.create(k_max,shell.a.n_cc,shell.b.n_cc)
+       .thermal_smearing_correction(t,k_pts,atom_a,atom_b,shell)
+       shell.make_ft(ft_ab,k_pts,t,p)
+       t.destroy
+     else
+       ft_ab = ZERO
+     end
      p.destroy
-     t.destroy
   end
 
-  make_partition_factors(p,shell,atom_a,atom_b)
+  make_partition_factors(p,shell,atom_a,atom_b,is_zero)
   ! Make the partitition factors "p" for a particular thermal smearing "model",
   ! for a given "shell" pair with atom centres "atom_a" and "atom_b".
      MAT :: p
      SHELL2, IN :: shell
      INT, IN :: atom_a,atom_b
+     BIN, OUT, optional :: is_zero
      DBL :: ra,rb,fa,fb
      ENSURE(.crystal.created,"no crystal data")
      ra = .crystal.repetition_factor(atom_a)
      rb = .crystal.repetition_factor(atom_b)
+     if (present(is_zero)) then
+       if (ra<1 AND rb<1) then
+         is_zero = TRUE
+         RETURN
+       else
+         is_zero = FALSE
+       end
+     end
      if (ra<1) then; fa = ZERO
      else;           fa = ONE/ra
      end
@@ -3022,7 +3046,6 @@ contains
    ! Make the structure factors for this molecule.
       CVEC* :: sf_eq,Fc
       MAT* :: k_pts
-      ARCHIVE :: archive
       BIN :: complex
       DIE_IF(NOT .crystal.created, "no crystal")
       DIE_IF(NOT .crystal.reflection_data_exists, "no reflection data")
@@ -3038,32 +3061,13 @@ contains
       else
         .make_ft(sf_eq,.density_matrix.restricted,k_pts)
       end
-!     .add_dispersion_correction(sf_eq,k_pts)
       .crystal.sum_unique_sf(Fc,sf_eq)
+!     .add_dispersion_correction(Fc,k_pts)
       sf_eq.destroy
       k_pts.destroy
       .crystal.set_F_calc(Fc)
       .crystal.make_F_predicted
-      archive.set(.name,"structure_factors")
-      archive.write(Fc)
       Fc.destroy
-   end
-
-   get_structure_factors
-   ! Get the structure factors on disk or remake if they don't already exist
-     ARCHIVE :: archive
-     CVEC, PTR :: Fc
-     archive.set(.name,"structure_factors")
-     if (archive.exists) then
-        ENSURE(.crystal.created, "no crystal")
-        ENSURE(.crystal.reflection_data_exists, "no reflection data")
-        Fc.create(.crystal.n_refl)
-        archive.read(Fc)
-        .crystal.set_F_calc(Fc)
-        Fc.destroy
-     else
-        .make_structure_factors
-     end
    end
 
    make_sz_structure_factors
@@ -6740,9 +6744,6 @@ contains
         .make_structure_factors
 
         .make_fock_matrix
-!        .fock_matrix.minus(.old_constraint_matrix)
-!        .make_constraint(constraint, .scfdata.lambda )
-!        .fock_matrix.plus(constraint)
         .fock_matrix.minus(.old_constraint_matrix)
         E_HF = .scf_energy
         E_K = .kinetic_energy
@@ -6881,16 +6882,6 @@ contains
       width = .atom.bounding_cube_width
    end
 
-   get_electron_density_grid(density_grid) [leaky]
-   ! Set "density_grid" to the electron density grid.
-   ! If the archive file exists, read it; otherwise make it.
-      VEC :: density_grid
-      ARCHIVE :: archive
-      archive.set(.name,"electron_density_grid")
-      if (NOT archive.exists) .make_electron_density_grid
-      archive.read(density_grid)
-   end
-
    make_electron_density_grid [leaky]
    ! Work out the density on ".grid" using ".natural orbitals" and the
    ! ".occupation" number vector. A Gnuplot ascii file is generated.
@@ -6899,21 +6890,9 @@ contains
       ENSURE(.grid.created, "no grid")
       density_grid.create(.grid.n_pt)
       .make_density_grid(density_grid)
-      archive.set(.name,"electron_density_grid")
-      archive.write(density_grid)
       archive.set(.name,"electron_density_grid,gnuplot",format="ascii")
       archive.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
       density_grid.destroy
-   end
-
-   get_laplacian_density_grid(laplacian_grid) [leaky]
-   ! Set "laplacian_grid" to the Laplacian density grid.
-   ! If the archive file exists, read it; otherwise make it.
-      VEC :: laplacian_grid
-      ARCHIVE :: archive
-      archive.set(.name,"laplacian_density_grid")
-      if (NOT archive.exists) .make_laplacian_density_grid
-      archive.read(laplacian_grid)
    end
 
    make_laplacian_density_grid [leaky]
@@ -6924,8 +6903,6 @@ contains
       ENSURE(.grid.created, "no grid")
       laplacian_grid.create(.grid.n_pt)
       .make_laplacian_grid(laplacian_grid)
-      archive.set(.name,"laplacian_density_grid")
-      archive.write(laplacian_grid)
       archive.set(.name,"laplacian_density_grid,gnuplot",format="ascii")
       archive.write_gnuplot(laplacian_grid, .grid.n_x, .grid.n_y, .grid.n_z)
       laplacian_grid.destroy
@@ -7002,16 +6979,6 @@ contains
     density_grid.destroy
   end
 
-   get_spin_density_grid(density_grid) [leaky]
-   ! Set "density_grid" to the electron spin density grid.
-   ! If the archive file exists, read it; otherwise make it.
-      VEC :: density_grid
-      ARCHIVE :: archive
-      archive.set(.name,"spin_density_grid")
-      if (NOT archive.exists) .make_spin_density_grid
-      archive.read(density_grid)
-   end
-
    make_spin_density_grid [leaky]
    ! Work out the spin density on ".grid" using ".natural orbitals" and the
    ! ".occupation" number vector. A Gnuplot ascii file is generated.
@@ -7021,8 +6988,6 @@ contains
       .make_ao_sz_density_matrix
       density_grid.create(.grid.n_pt)
       .make_density_grid(density_grid)
-      archive.set(.name,"spin_density_grid")
-      archive.write(density_grid)
       archive.set(.name,"spin_density_grid,gnuplot",format="ascii")
       archive.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
       density_grid.destroy
@@ -7166,16 +7131,6 @@ contains
      NO.destroy
    end
 
-   get_crystal_error_map(map) [leaky]
-   ! Set "map" to the crystal error map. If an archive file exists, read it;
-   ! otherwise make it.
-      VEC :: map
-      ARCHIVE :: archive
-      archive.set(.name,"crystal_error_map")
-      if (NOT archive.exists) .make_crystal_error_map
-      archive.read(map)
-   end
-
    make_crystal_error_map [leaky]
    ! Work out the crystal_error map on ".grid". A Gnuplot ascii file is
    ! generated.
@@ -7202,17 +7157,6 @@ contains
       pt.destroy
    end
 
-   get_orbital_density_grid(g,orb) [leaky]
-   ! Set "g" to the orbital density grid for orbital "orb".
-   ! If the archive file exists, read it; otherwise make it.
-      VEC :: g
-      INT :: orb
-      ARCHIVE :: archive
-      archive.set(.name,"orbital_density_grid"//trim(orb.to_str))
-      if (NOT archive.exists) .make_orbital_density_grid(orb)
-      archive.read(g)
-   end
-
    make_orbital_density_grid(orb) [leaky]
    ! Work out the orbital on ".grid" using ".natural orbitals" for orbital "orb"
    ! A Gnuplot ascii file is generated.
@@ -7225,8 +7169,6 @@ contains
       if (.natural_orbitals.number_kind == "real") then
         gr.create(.grid.n_pt)
         .make_orbital_grid(gr,orb,square=TRUE)
-        archive.set(.name,"orbital_density_grid")
-        archive.write(gr)
         archive.set(.name,"orbital_density_grid"//trim(orb.to_str)//",gnuplot",format="ascii")
         archive.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
         gr.destroy
@@ -7235,8 +7177,6 @@ contains
         gc.create(.grid.n_pt)
         .make_orbital_grid(gc,orb,square=TRUE)
         gr = gc
-        archive.set(.name,"complex_orbital_density_grid")
-        archive.write(gr)
         archive.set(.name,"complex_orbital_density_grid,gnuplot",format="ascii")
         archive.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
         gc.destroy
@@ -7458,7 +7398,7 @@ contains
       jd(:,3) = .B_field(1)*r(:,2) - .B_field(2)*r(:,1)
       r.destroy
       rho.create(.grid.n_pt)
-      .get_electron_density_grid(rho)
+      .make_density_grid(rho)
       jd(:,1) = -HALF*jd(:,1)*rho
       jd(:,2) = -HALF*jd(:,2)*rho
       jd(:,3) = -HALF*jd(:,3)*rho
@@ -8832,15 +8772,16 @@ contains
     ! .fock_matrix does not contain .constraint_matrix
     ! .old_fock_matrix does not contain .old_constraint_matrix
 
-    if (diis1 < diis0 OR E1<E0+TOL(3)) then
+    if (diis1<diis0) then
+      .fock_matrix.set_to(F_backup)
+      .molecular_orbitals.set_to(MO_backup)
+      .density_matrix.set_to(P_backup)
       if (.scfdata.kind == "xray_rhf") then
         ! reinsert contraint matrices
         F_backup.plus(.constraint_matrix)
         .old_fock_matrix.plus(.old_constraint_matrix)
+        .make_structure_factors
       end
-      .fock_matrix.set_to(F_backup)
-      .molecular_orbitals.set_to(MO_backup)
-      .density_matrix.set_to(P_backup)
       P_backup.destroy
       MO_backup.destroy
       F_backup.destroy
@@ -8848,7 +8789,7 @@ contains
     end
 
     mix = 0.9 ! How much of the new, not the old.
-    do n=1,20
+    do n=1,15
       .density_matrix.set_to(P_backup)
       .fock_matrix.set_to(F_backup)
       .density_matrix.damp(.old_density_matrix,ONE-mix)
@@ -8862,10 +8803,12 @@ contains
         El = E_HF
       end
       .make_diis_error(diisl)
-      if ((diisl < diis0) OR El<(E0+TOL(3))) exit
+      .scfdata.dynamic_damp_factor = ONE-mix
+      if (diisl<diis0) exit
       mix = HALF * mix
     end
     E_K = .kinetic_energy ! move this outside of loop
+    .make_structure_factors
     F_backup.destroy
     P_backup.destroy
     MO_backup.destroy
