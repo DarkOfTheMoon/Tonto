@@ -362,8 +362,9 @@ contains
    assign_natural_orbitals
    ! Assign the natural orbitals to be the molecular_orbitals 
       STR :: kind
+      .natural_orbitals.destroy
       .natural_orbitals => .molecular_orbitals
-      kind = .natural_orbitals.spinorbital_kind
+      kind = .molecular_orbitals.spinorbital_kind
       .occupation.create(kind)
       .occupation.zero
       select case ( .molecular_orbitals.spinorbital_kind)
@@ -1262,14 +1263,19 @@ contains
 
    make_natural_orbitals [leaky]
    ! Make the natural orbitals from the density matrix
+     STR :: kind
       ENSURE( .atom.bases_are_all_resolved, "no basis set")
       ENSURE( .density_matrix.created, "no density matrix")
-      select case ( .density_matrix.spinorbital_kind)
+      ENSURE( .density_matrix.any_created, "no density matrix")
+      kind = .density_matrix.spinorbital_kind
+      if (.natural_orbitals.created) .natural_orbitals.destroy_ptr_part
+      select case (kind)
          case ("restricted");         .make_restricted_NOs
          case ("unrestricted");       .make_unrestricted_NOs
 !        case ("general");            .make_general_NOs
          case ("restricted_complex"); .make_restricted_complex_NOs
          case ("general_complex");    .make_general_complex_NOs
+         case default;                DIE("unknown kind" // trim(kind))
       end
    end
 
@@ -4444,6 +4450,7 @@ contains
          case ("natural_orbitals");   archive.write(.natural_orbitals,order=order)
          case ("occupation");         archive.write(.occupation,order=order)
          case ("fock_matrix");        archive.write(.fock_matrix,order=order)
+         case ("orbital_energies");   archive.write(.orbital_energies,order=order)
          case default;     DIE("unknown ascii archive name, " // trim(name))
       end
       archive.close
@@ -4760,8 +4767,8 @@ contains
     stdout.show("No of molecules                = ", q)
     stdout.show("Cutoff radius of cluster (au)  = ", dist_max)
     if (put_thermal) then
-    stdout.show("Thermal tensor axis system     = ", "crystal")
-    stdout.show("Thermal tensor units           = ", "A^2")
+    stdout.show("Thermal tensor axis system     = ", "cartesian")
+    stdout.show("Thermal tensor units           = ", "bohr^2")
     end
 
     if (q>0) then
@@ -4791,6 +4798,9 @@ contains
         l = op_list(4,q)
         pos2 = pos1
         .crystal.transform_geometry(pos2,s)
+        stdout.put_text("! symop = " // s.to_str)
+        stdout.put_text(", h k l = ")
+        stdout.text(h.to_str // " " // h.to_str // " " // l.to_str)
         do n = 1, .n_atom
           therm = therm1(:,:,n)
           therm.change_basis(.crystal.spacegroup.seitz(1:3,1:3,s))
@@ -7087,9 +7097,7 @@ contains
        case("orbital_density");      .make_orbital_density_grid( .grid.orbital)
        case("orbital");              .make_orbital_grid( .grid.orbital)
        case("difference_density");   .make_difference_density_grid
-       case("crystal_density");      .make_crystal_density_grid
        case("fermi_mobility");       .make_fermi_mobility_grid
-       case("crystal_diff_density"); .make_crystal_diff_density_grid
        case("crystal_error_map");    .make_crystal_error_map
        case("spin_density");         .make_spin_density_grid
        case("current_density");      .make_j_density_grid
@@ -7164,197 +7172,77 @@ contains
   make_difference_density_grid [leaky]
   ! Make a Gnuplot ascii file containing the difference density grid.
     ARCHIVE :: archive
-    VEC, PTR :: density_grid,atom_grid,grid
-    MAT, PTR :: old_density_matrix
+    VEC, PTR :: density_grid,NO
+    CVEC, PTR :: NOc
+    OPMAT :: old_density_matrix,atom_NOs,molecule_NOs
+    OPVEC :: atom_occ,molecule_occ
+    MAT, PTR :: pts
+    BIN :: old_dens,old_NOs
+    INT :: n
     ENSURE( .grid.created, "no grid")
-    ENSURE( .density_matrix.restricted.created, "no density matrix")
-    density_grid.create( .grid.n_pt)
-    atom_grid.create( .grid.n_pt)
-    grid.create( .grid.n_pt)
-    old_density_matrix.create( .n_bf, .n_bf)
-    old_density_matrix = .density_matrix.restricted
 
+    ! Get NOs for the molecule
+    old_NOs = FALSE;      old_dens = FALSE
+    if (.density_matrix.created)   old_dens = .density_matrix.any_created
+    if (.natural_orbitals.created) old_NOs = .natural_orbitals.any_created
+    if (NOT old_NOs) .make_natural_orbitals
+    if (old_dens) old_density_matrix.set_to(.density_matrix)
+    molecule_NOs.set_to(.natural_orbitals)
+    molecule_occ.set_to(.occupation)
+
+    ! Get NOs for the promolecule
     .get_atom_density
-    .make_density_grid(atom_grid)
+    .make_natural_orbitals
+    atom_NOs.set_to(.natural_orbitals)
+    atom_occ.set_to(.occupation)
 
-    .density_matrix.restricted = old_density_matrix
-    .make_density_grid(density_grid)
-    grid = density_grid - atom_grid
+    ! Destroy .density_matrix if it wasn't there when we started.
+    .density_matrix.destroy
+    if (old_dens) then
+      .density_matrix.create(.n_bf)
+      .density_matrix.set_to(old_density_matrix)
+    end
+
+    ! Destroy .natural_orbitals if it wasn't there when we started.
+    if (old_NOs) then
+      .natural_orbitals.set_to(molecule_NOs)
+      .occupation.set_to(molecule_occ)
+    else
+      .natural_orbitals.destroy
+      .occupation.destroy
+    end
+    molecule_occ.destroy_ptr_part
+    molecule_NOs.destroy_ptr_part
+
+    density_grid.create(.grid.n_pt)
+    density_grid = ZERO
+    pts.create(.grid.n_pt,3); .grid.points(pts)
+    if (.natural_orbitals.number_kind == "real") then
+      NO.create(.grid.n_pt)
+      do n = 1,.no_of_occupied_NOs
+        .make_orbital_grid(NO,.natural_orbitals.restricted(:,n), pts)
+        density_grid(:).plus_vec(.occupation.restricted(n)*NO(:)*NO(:))
+        .make_orbital_grid(NO,atom_NOs.restricted(:,n), pts)
+        density_grid(:).minus_vec(atom_occ.restricted(n)*NO(:)*NO(:))
+      end
+      NO.destroy
+    else
+      NOc.create(.grid.n_pt)
+      do n = 1,.no_of_occupied_NOs
+         .make_orbital_grid(NOc,.natural_orbitals.restricted_complex(:,n), pts)
+         density_grid(:).plus_vec(.occupation.restricted(n)*real(conjg(NOc(:))*NOc(:)))
+         .make_orbital_grid(NOc,atom_NOs.restricted_complex(:,n), pts)
+         density_grid(:).minus_vec(atom_occ.restricted(n)*real(conjg(NOc(:))*NOc(:)))
+      end
+      NOc.destroy
+    end
+    pts.destroy
 
     archive.set(.name,"difference_density_grid,gnuplot",format="ascii")
-    archive.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
-    old_density_matrix.destroy
-    grid.destroy
-    atom_grid.destroy
-    density_grid.destroy
-  end
-
-  make_crystal_diff_density_grid
-  ! Make a Gnuplot ascii file containing the difference density grid.
-    ARCHIVE :: archive
-    VEC, PTR :: density_grid,atom_grid,grid
-    MAT, PTR :: old_density_matrix
-    STR :: word,units
-    DBL :: distance_max
-
-    distance_max = 5  ! au
-    units = "atomic"
-    do !                                         read any output parameters.
-      if (stdin.buffer.exhausted ) exit
-      stdin.read(word)
-      if (word.is_dbl) then
-        distance_max = word.to_dbl
-      else
-        units = word
-        units.to_lower_case
-      end
-    end
-    select case(units) !                         treat output directives.
-      case ("atomic")
-      case ("angstrom");     distance_max = distance_max * BOHR_PER_ANGSTROM
-      case default; DIE("unknown keyword " // units.trim)
-    end
-
-    ENSURE(.grid.created, "no grid")
-    ENSURE(.density_matrix.restricted.created, "no density matrix")
-    density_grid.create( .grid.n_pt)
-    atom_grid.create( .grid.n_pt)
-    grid.create( .grid.n_pt)
-    old_density_matrix.create( .n_bf, .n_bf)
-    old_density_matrix = .density_matrix.restricted
-
-    .get_atom_density
-    .make_crystal_density_grid(atom_grid,distance_max)
-
-    .density_matrix.restricted = old_density_matrix
-    .make_crystal_density_grid(density_grid,distance_max)
-    grid = density_grid - atom_grid
-
-    archive.set(.name,"crystal_difference_density_grid,gnuplot",format="ascii")
-    archive.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
-    old_density_matrix.destroy
-    grid.destroy
-    atom_grid.destroy
-    density_grid.destroy
-  end
-
-  make_crystal_density_grid
-  ! Work out the density on ".grid" using ".natural orbitals" and the
-  ! ".occupation" number vector. A Gnuplot ascii file is generated.
-    ARCHIVE :: archive
-    STR :: word,units
-    DBL :: distance_max
-    VEC, PTR :: density_grid
-
-    distance_max = 5  ! au
-    units = "atomic"
-    do !                                         read any output parameters.
-      if (stdin.buffer.exhausted ) exit
-      stdin.read(word)
-      if (word.is_dbl) then
-        distance_max = word.to_dbl
-      else
-        units = word
-        units.to_lower_case
-      end
-    end
-    select case(units) !                         treat output directives.
-      case ("atomic")
-      case ("angstrom");     distance_max = distance_max * BOHR_PER_ANGSTROM
-      case default; DIE("unknown keyword " // units.trim)
-    end
-
-    ENSURE( .grid.created, "no grid")
-    density_grid.create( .grid.n_pt)
-    .make_crystal_density_grid(density_grid,distance_max)
-
-    archive.set(.name,"crystal_electron_density_grid")
-    archive.write(density_grid)
-    archive.set(.name,"crystal_electron_density_grid,gnuplot",format="ascii")
     archive.write_gnuplot(density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
     density_grid.destroy
-  end
-
-  make_crystal_density_grid(density_grid,max_cell_distance)
-  ! Work out the density on ".grid" using ".natural orbitals" and the
-  ! ".occupation" number vector. A Gnuplot ascii file is generated.
-  ! If "grid" is present, it is returned, else the grid is written to disk.
-    VEC, OUT :: density_grid
-    DBL, IN :: max_cell_distance
-    VEC, PTR :: temp
-    PLOTGRID, PTR :: grid_old,grid
-    INT :: s,h,k,l,q
-    IMAT, PTR :: op_list
-    VEC, PTR :: dist_list
-    MAT(3,3) :: inverse_cell,cell_matrix
-    MAT(4,4) :: seitz,inverse_seitz
-    VEC(3) :: grid_centre,molecule_translation
-
-    ENSURE( .grid.created, "no grid")
-
-    grid_old.create_copy( .grid )
-    grid.create_copy( .grid )
-    temp.create( .grid.n_pt)
-    inverse_cell = .crystal.inverse_cell_matrix
-    cell_matrix  = .crystal.direct_cell_matrix
-
-    .make_restricted_NOs
-
-    molecule_translation = .atom.centre_of_mass          ! Make the lattice
-    molecule_translation.rotate(inverse_cell)            ! point closest to
-    molecule_translation = floor( molecule_translation ) ! the centre of
-    molecule_translation.rotate(cell_matrix)             ! mass the origin.
-    grid.centre.translate( - molecule_translation )
-    .atom.translate( - molecule_translation )
-
-    grid.centre.rotate(inverse_cell)         ! Convert grid to fractionals.
-    grid.x_axis.rotate(inverse_cell)
-    grid.y_axis.rotate(inverse_cell)
-    grid.z_axis.rotate(inverse_cell)
-
-    .crystal.put_to_unit_cell(grid.centre)   ! Move the grid near the origin.
-
-    .crystal.create_closest_molecule_list(op_list,dist_list, &
-                                 grid_centre,max_cell_distance)
-
-    density_grid = ZERO
-    do q=1,size(dist_list)
-      s = op_list(1,q)
-      if (s==0) exit
-      h = op_list(2,q)
-      k = op_list(3,q)
-      l = op_list(4,q)
-      .grid.copy(grid)
-
-      seitz = .crystal.spacegroup.seitz(:,:,s)
-      seitz = transpose(seitz)
-      inverse_seitz.to_inverse_of(seitz)
-
-      .grid.centre.translate((/-ONE*h,-ONE*k,-ONE*l/)) ! Translate and rotate
-      .grid.centre.seitz_multiply(inverse_seitz)     ! grid origin, but don't
-      .grid.x_axis.rotate(inverse_seitz(1:3,1:3))    ! not translate axis
-      .grid.y_axis.rotate(inverse_seitz(1:3,1:3))    ! directions.
-      .grid.z_axis.rotate(inverse_seitz(1:3,1:3))
-
-      .grid.centre.rotate(cell_matrix)               ! Put into cartesians.
-      .grid.x_axis.rotate(cell_matrix)
-      .grid.y_axis.rotate(cell_matrix)
-      .grid.z_axis.rotate(cell_matrix)
-
-      .grid.update(.atom)  ! To get normalisation and origin right.
-
-      .make_density_grid(temp,make_NOs=FALSE)
-      density_grid = density_grid + temp
-    end
-
-    op_list.destroy
-    dist_list.destroy
-
-    .atom.translate( molecule_translation )
-    .grid.copy(grid_old)
-    temp.destroy
-    grid.destroy
-    grid_old.destroy
+    atom_occ.destroy_ptr_part
+    atom_NOs.destroy_ptr_part
   end
 
    get_spin_density_grid(density_grid) [leaky]
@@ -7383,26 +7271,19 @@ contains
       density_grid.destroy
    end
 
-   make_density_grid(density_grid,make_NOs) [leaky]
+   make_density_grid(density_grid)
    ! Work out the density on ".grid" using ".natural orbitals" and the
    ! ".occupation" number vector.
       VEC :: density_grid
-      BIN, optional :: make_NOs
-      STR :: kind
-      BIN :: do_make_NOs
-      ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
-      do_make_NOs = TRUE
-      if (present(make_NOs)) do_make_NOs = make_NOs
-      kind = .density_matrix.spinorbital_kind
-      if (kind.does_not_include("complex")) then
-         if (do_make_NOs) .make_restricted_NOs
+      BIN :: old_NOs
+      if (.natural_orbitals.created) old_NOs = .natural_orbitals.any_created
+      if (NOT old_NOs) .make_natural_orbitals
+      if (.natural_orbitals.number_kind == "real") then
          .make_density_grid_r(density_grid)
       else
-         if (do_make_NOs) .make_restricted_complex_NOs
          .make_density_grid_c(density_grid)
       end
+      if (NOT old_NOs) .natural_orbitals.destroy_ptr_part
    end
 
    make_density_grid_r(density_grid)
@@ -7411,8 +7292,6 @@ contains
       MAT, PTR :: pt
       INT :: n_pt
       ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created, "no density matrix")
       density_grid = ZERO
       n_pt = .grid.n_pt
       pt.create(n_pt,3); .grid.points(pt)
@@ -7426,8 +7305,6 @@ contains
       MAT, PTR :: pt
       INT :: n_pt
       ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created, "no density matrix")
       density_grid = ZERO
       n_pt = .grid.n_pt
       pt.create(n_pt,3); .grid.points(pt)
@@ -7440,11 +7317,7 @@ contains
    ! the ".occupation" number vector.
       VEC :: density_grid
       MAT :: pts
-      STR :: kind
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
-      kind = .density_matrix.spinorbital_kind
-      if (kind.does_not_include("complex")) then
+      if (.natural_orbitals.number_kind == "real") then
          .make_density_grid_r(density_grid,pts)
       else
          .make_density_grid_c(density_grid,pts)
@@ -7459,8 +7332,8 @@ contains
      VEC, PTR :: NO
      INT :: n_occ,n,n_pts
      ENSURE( size(pts,2)==3,  "incorrect dimension for points array")
-     ENSURE( .atom.bases_are_all_resolved, "no basis set")
-     ENSURE( .natural_orbitals.created, "no orbitals")
+     ENSURE( .natural_orbitals.created("restricted"), "no natural orbitals")
+     ENSURE( .occupation.restricted.created, "no occupation numbers")
      n_pts = size(pts,1)
      density_grid = ZERO
      NO.create(n_pts)
@@ -7480,8 +7353,8 @@ contains
       CVEC, PTR :: NO
       INT :: n_occ,n,n_pts
       ENSURE( size(pts,2)==3,  "incorrect dimension for points array")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created("restricted_complex"), "no density matrix")
+      ENSURE( .natural_orbitals.created("restricted_complex"), "no natural orbitals")
+      ENSURE( .occupation.restricted.created, "no occupation numbers")
       n_pts = size(pts,1)
       density_grid = ZERO
       NO.create(n_pts)
@@ -7493,19 +7366,14 @@ contains
       NO.destroy
    end
 
-   make_laplacian_grid(laplacian_grid,make_NOs) [leaky]
+   make_laplacian_grid(laplacian_grid) [leaky]
    ! Work out the laplacian density on ".grid" using ".natural orbitals" and the
    ! ".occupation" number vector.
       VEC :: laplacian_grid
-      BIN, optional :: make_NOs
-      BIN :: do_make_NOs
-      ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
-      do_make_NOs = TRUE
-      if (present(make_NOs)) do_make_NOs = make_NOs
-         if (do_make_NOs) .make_restricted_NOs
-         .make_laplacian_grid_r(laplacian_grid)
+      BIN :: old_NOs
+      if (.natural_orbitals.created) old_NOs = .natural_orbitals.any_created
+      if (NOT old_NOs) .make_natural_orbitals
+      .make_laplacian_grid_r(laplacian_grid)
    end
 
    make_laplacian_grid_r(laplacian_grid)
@@ -7514,8 +7382,7 @@ contains
       MAT, PTR :: pt
       INT :: n_pt
       ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created, "no density matrix")
+      ENSURE( .natural_orbitals.created("restricted"), "no natural orbitals")
       laplacian_grid = ZERO
       n_pt = .grid.n_pt
       pt.create(n_pt,3); .grid.points(pt)
@@ -7528,8 +7395,6 @@ contains
    ! and  the ".occupation" number vector.
       VEC :: laplacian_grid
       MAT :: pts
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
       .make_laplacian_grid_r(laplacian_grid,pts)
    end
 
@@ -7542,8 +7407,7 @@ contains
      MAT, PTR :: P,D
      INT :: n_occ,n,n_pts
      ENSURE( size(pts,2)==3,  "incorrect dimension for points array")
-     ENSURE( .atom.bases_are_all_resolved, "no basis set")
-     ENSURE( .natural_orbitals.created, "no orbitals")
+     ENSURE( .natural_orbitals.created, "no natural orbitals")
      n_pts = size(pts,1)
      laplacian_grid = ZERO
      NO.create(n_pts)
@@ -7649,22 +7513,16 @@ contains
       archive.read(g)
    end
 
-   make_orbital_density_grid(orb,make_NOs) [leaky]
+   make_orbital_density_grid(orb) [leaky]
    ! Work out the orbital on ".grid" using ".natural orbitals" for orbital "orb"
    ! A Gnuplot ascii file is generated.
       INT :: orb
-      BIN, optional :: make_NOs
       ARCHIVE :: archive
       VEC, PTR  :: gr
       CVEC, PTR :: gc
-      BIN :: do_make_NOs
-      STR :: kind
-      do_make_NOs = TRUE
-      if (present(make_NOs)) do_make_NOs = make_NOs
       ENSURE( .grid.created, "no grid")
-      kind = .density_matrix.spinorbital_kind
-      if (kind.does_not_include("complex")) then
-        if (do_make_NOs) .make_restricted_NOs
+      .make_natural_orbitals
+      if (.natural_orbitals.number_kind == "real") then
         gr.create(.grid.n_pt)
         .make_orbital_grid(gr,orb,square=TRUE)
         archive.set(.name,"orbital_density_grid")
@@ -7673,7 +7531,6 @@ contains
         archive.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
         gr.destroy
       else
-        if (do_make_NOs) .make_restricted_complex_NOs
         gr.create(.grid.n_pt)
         gc.create(.grid.n_pt)
         .make_orbital_grid(gc,orb,square=TRUE)
@@ -7687,22 +7544,16 @@ contains
       end
    end
 
-   make_orbital_grid(orb,make_NOs) [leaky]
+   make_orbital_grid(orb) [leaky]
    ! Work out the orbital on ".grid" using ".natural orbitals" for orbital "orb"
    ! A Gnuplot ascii file is generated.
       INT :: orb
-      BIN, optional :: make_NOs
       ARCHIVE :: archive
       VEC, PTR  :: gr
       CVEC, PTR :: gc
-      BIN :: do_make_NOs
-      STR :: kind
-      do_make_NOs = TRUE
-      if (present(make_NOs)) do_make_NOs = make_NOs
       ENSURE( .grid.created, "no grid")
-      kind = .density_matrix.spinorbital_kind
-      if (kind.does_not_include("complex")) then
-         if (do_make_NOs) .make_restricted_NOs
+      .make_natural_orbitals
+      if (.natural_orbitals.number_kind == "real") then
          gr.create(.grid.n_pt)
          .make_orbital_grid(gr,orb)
          archive.set(.name,"orbital_grid")
@@ -7711,7 +7562,6 @@ contains
          archive.write_gnuplot(gr, .grid.n_x, .grid.n_y, .grid.n_z)
          gr.destroy
       else
-         if (do_make_NOs) .make_restricted_complex_NOs
          gc.create(.grid.n_pt)
          .make_orbital_grid(gc,orb)
          archive.set(.name,"complex_orbital_grid")
@@ -7734,7 +7584,6 @@ contains
       MAT, PTR :: pt
       BIN :: sq
       ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
       ENSURE( .natural_orbitals.created, "no natural orbitals")
       sq = FALSE
       if (present(square)) sq = square
@@ -7761,7 +7610,6 @@ contains
       MAT, PTR :: pt
       BIN :: sq
       ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
       ENSURE( .natural_orbitals.created, "no natural orbitals")
       sq = FALSE
       if (present(square)) sq = square
@@ -7960,9 +7808,10 @@ contains
       BIN :: complex
       ENSURE( .grid.created,  "no grid")
       ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created, "no density matrix")
-      complex = .density_matrix.spinorbital_kind.includes("complex")
-      ENSURE(complex, "need a complex density matrix")
+      ENSURE( .natural_orbitals.created, "no natural orbitals")
+      ENSURE( .natural_orbitals.created, "no natural orbitals")
+      complex = .natural_orbitals.number_kind == "complex"
+      ENSURE(complex, "natural orbitals not complex")
       .make_ao_density_matrix
       .make_restricted_complex_NOs
       jp.create(.grid.n_pt,3)
@@ -8011,7 +7860,7 @@ contains
    make_nabla_orbital_grid(g,orb)
    ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
    ! vector "orb" on a set of grid points defined by ".grid"
-      MAT :: g
+      MAT, OUT :: g
       VEC, IN, target :: orb
       MAT, PTR :: pt,sh_grid_x,sh_grid_y,sh_grid_z
       VEC, PTR :: orb_a
@@ -8046,7 +7895,7 @@ contains
    make_nabla_orbital_grid(g,orb)
    ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
    ! vector "orb" on a set of grid points defined by ".grid"
-      CMAT :: g
+      CMAT, OUT :: g
       CVEC, IN, target :: orb
       MAT, PTR :: pt
       SHELL1 :: sh
@@ -8076,7 +7925,7 @@ contains
    make_nabla_orbital_grid(g,orb,pt)
    ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
    ! vector "orb" on a set of grid points "pt"
-      MAT :: g
+      MAT, OUT :: g
       VEC, IN, target :: orb
       MAT, IN :: pt
       SHELL1, PTR :: sh
@@ -8105,7 +7954,7 @@ contains
    make_nabla_orbital_grid(g,orb,pt)
    ! Evaluate the nabla orbital density for *one* complex AO-basis orbital "orb"
    ! on a set of grid points "pt"
-      CMAT :: g
+      CMAT, OUT :: g
       CVEC, IN, target :: orb
       MAT, IN :: pt
       SHELL1, PTR :: sh
@@ -8129,6 +7978,78 @@ contains
          sh.destroy_ptr_part
       end
       sh.destroy
+   end
+
+   make_nabla_orbital_grid_x(g,orb,pt)
+   ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
+   ! vector "orb" on a set of grid points "pt", x derivative only.
+      VEC, OUT :: g
+      VEC, IN, target :: orb
+      MAT, IN :: pt
+      SHELL1 :: sh
+      MAT, PTR :: sh_grid
+      INT :: n_pt,fa,la,a
+      ENSURE( .atom.created,  "no atom list")
+      ENSURE( .atom.bases_are_all_resolved, "no basis set")
+      n_pt = size(pt,1)
+      ENSURE(size(g)==n_pt, "grid array has wrong dimension")
+      g = ZERO
+      do a = 1,.n_shell
+         .get_shell1(a,sh,fa,la)
+         sh_grid.create(n_pt,sh.n_comp)
+         sh.make_nabla_grid_x(sh_grid,pt)
+         g(:).plus_product(sh_grid(:,:),orb(fa:la))
+         sh_grid.destroy
+         sh.destroy_ptr_part
+      end
+   end
+
+   make_nabla_orbital_grid_y(g,orb,pt)
+   ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
+   ! vector "orb" on a set of grid points "pt", y derivative only.
+      VEC, OUT :: g
+      VEC, IN, target :: orb
+      MAT, IN :: pt
+      SHELL1 :: sh
+      MAT, PTR :: sh_grid
+      INT :: n_pt,fa,la,a
+      ENSURE( .atom.created,  "no atom list")
+      ENSURE( .atom.bases_are_all_resolved, "no basis set")
+      n_pt = size(pt,1)
+      ENSURE(size(g)==n_pt, "grid array has wrong dimension")
+      g = ZERO
+      do a = 1,.n_shell
+         .get_shell1(a,sh,fa,la)
+         sh_grid.create(n_pt,sh.n_comp)
+         sh.make_nabla_grid_y(sh_grid,pt)
+         g(:).plus_product(sh_grid(:,:),orb(fa:la))
+         sh_grid.destroy
+         sh.destroy_ptr_part
+      end
+   end
+
+   make_nabla_orbital_grid_z(g,orb,pt)
+   ! Evaluate the nabla orbital density grid "g" for *one* AO-basis orbital
+   ! vector "orb" on a set of grid points "pt", z derivative only.
+      VEC, OUT :: g
+      VEC, IN, target :: orb
+      MAT, IN :: pt
+      SHELL1 :: sh
+      MAT, PTR :: sh_grid
+      INT :: n_pt,fa,la,a
+      ENSURE( .atom.created,  "no atom list")
+      ENSURE( .atom.bases_are_all_resolved, "no basis set")
+      n_pt = size(pt,1)
+      ENSURE(size(g)==n_pt, "grid array has wrong dimension")
+      g = ZERO
+      do a = 1,.n_shell
+         .get_shell1(a,sh,fa,la)
+         sh_grid.create(n_pt,sh.n_comp)
+         sh.make_nabla_grid_z(sh_grid,pt)
+         g(:).plus_product(sh_grid(:,:),orb(fa:la))
+         sh_grid.destroy
+         sh.destroy_ptr_part
+      end
    end
 
    make_nabla_orbital_grid(g,h,orb,pt)
@@ -8257,16 +8178,12 @@ contains
    ! Grid, basis set, and natural orbitals are required to exist.
    ! A Gnuplot ascii file is also generated.
       VEC :: ELF_grid
-      STR :: kind
       ENSURE( .grid.created,  "no grid")
       ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
-      kind = .density_matrix.spinorbital_kind
-      if (kind.does_not_include("complex")) then
-         .make_restricted_NOs
+      if (.natural_orbitals.destroyed) .make_natural_orbitals
+      if (.natural_orbitals.number_kind == "real") then
          .make_ELF_grid_real(ELF_grid)
       else
-         .make_restricted_complex_NOs
          .make_ELF_grid_complex(ELF_grid)
       end
    end
@@ -8285,7 +8202,7 @@ contains
       INT :: i,n_occ,n,n_pt
       ENSURE( .grid.created,  "no grid")
       ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .natural_orbitals.created, "no density matrix")
+      ENSURE( .natural_orbitals.created, "no natural orbitals")
       ELF_grid = ZERO
       n_pt = .grid.n_pt
       rho_s.create(n_pt);  rho_s  = ZERO
@@ -8346,7 +8263,7 @@ contains
     INT :: n_occ,n,n_pt
     ENSURE( .grid.created,  "no grid")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
-    ENSURE( .natural_orbitals.created, "no density matrix")
+    ENSURE( .natural_orbitals.created, "no natural orbitals")
     ELF_grid = ZERO
     n_pt = .grid.n_pt
     rho_s.create(n_pt);  rho_s  = ZERO
@@ -8390,14 +8307,12 @@ contains
   ! Make the electric potential "pot_grid" on ".grid"
     ARCHIVE :: archive
     VEC, PTR :: pot_grid
-    BIN :: complex
     ENSURE( .grid.created,  "no grid")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     ENSURE( .density_matrix.created, "no density matrix")
     .make_ao_density_matrix
-    complex = .density_matrix.spinorbital_kind.includes("complex")
     pot_grid.create(.grid.n_pt)
-    if (complex) then
+    if (.density_matrix.number_kind == "complex") then
       .make_electric_potential_grid(pot_grid,.density_matrix.restricted_complex)
     else
       .make_electric_potential_grid(pot_grid,.density_matrix.restricted)
@@ -8505,13 +8420,10 @@ contains
    ! Make the solenoidal paramagnetic current density grid "jp" on ".grid"
      ARCHIVE :: archive
      MAT, PTR :: jp
-     BIN :: complex
      ENSURE( .grid.created,  "no grid")
      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-     ENSURE( .density_matrix.created, "no density matrix")
      .make_ao_density_matrix
-     complex = .density_matrix.spinorbital_kind.includes("complex")
-     ENSURE(complex, "no complex density matrix")
+     ENSURE(.density_matrix.created("restricted_complex"), "no density matrix")
      jp.create(.grid.n_pt,3)
      .make_solenoidal_jp_grid(jp,.density_matrix.restricted_complex)
      archive.set(.name,"solenoidal_jp_density_grid")
@@ -8566,13 +8478,10 @@ contains
    ! Make the irrotational paramagnetic current density grid "jp" on ".grid"
       ARCHIVE :: archive
       MAT, PTR :: jp
-      BIN :: complex
       ENSURE( .grid.created,  "no grid")
       ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      ENSURE( .density_matrix.created, "no density matrix")
       .make_ao_density_matrix
-      complex = .density_matrix.spinorbital_kind.includes("complex")
-      ENSURE(complex, "no complex density matrix")
+      ENSURE(.density_matrix.created("restricted_complex"), "no density matrix")
       jp.create(.grid.n_pt,3)
       .make_irrotational_jp_grid(jp,.density_matrix.restricted_complex)
       archive.set(.name,"irrotational_jp_density_grid")
@@ -8769,103 +8678,59 @@ contains
   ! Evaluate the Fermi hole mobility grid "f" on a set of grid points "pt".
     MAT, IN :: pt
     VEC, OUT :: f
-    MAT, PTR :: del_gi
-    VEC, PTR :: g,gi,rho,gx,gy,gz
+    VEC, PTR :: del_gi
+    VEC, PTR :: g,gi,rho,gx,gy,gz,orb
     INT :: n,n_pt,i,n_occ
     DBL :: gin,del_ginx,del_giny,del_ginz,fac
     ENSURE( .grid.created,  "no grid")
-    .make_restricted_NOs
+    if (.natural_orbitals.destroyed) .make_natural_orbitals
     n_pt = .grid.n_pt
     n_occ = .no_of_occupied_NOs
 
-    rho.create(n_pt);   rho = ZERO
     g.create(n_pt);     g = ZERO
     gx.create(n_pt);    gx = ZERO
     gy.create(n_pt);    gy = ZERO
     gz.create(n_pt);    gz = ZERO
     gi.create(n_pt)
-    del_gi.create(n_pt,3)
+    del_gi.create(n_pt)
 
+    orb.create(.n_bf)
     do i=1, n_occ
-      .make_nabla_orbital_grid(del_gi,gi,.natural_orbitals.restricted(:,i), pt)
+      orb = .natural_orbitals.restricted(:,i)
+      .make_orbital_grid(gi,orb,pt)
+      .make_nabla_orbital_grid_x(del_gi,orb,pt)
       do n=1,n_pt
-        gin      = gi(n)
-        del_ginx = del_gi(n,1)
-        del_giny = del_gi(n,2)
-        del_ginz = del_gi(n,3)
-        rho(n)   = rho(n) + gin*gin
-        g(n) = g(n) + del_ginx*del_ginx + del_giny*del_giny + del_ginz*del_ginz
-        gx(n) = gx(n) + gin*del_ginx
-        gy(n) = gy(n) + gin*del_giny
-        gz(n) = gz(n) + gin*del_ginz
+        del_ginx = del_gi(n)
+        g(n) = g(n) + del_ginx*del_ginx
+        gx(n) = gx(n) + gi(n)*del_ginx
+      end
+      .make_nabla_orbital_grid_y(del_gi,orb,pt)
+      do n=1,n_pt
+        del_giny = del_gi(n)
+        g(n) = g(n) + del_giny*del_giny
+        gy(n) = gy(n) + gi(n)*del_giny
+      end
+      .make_nabla_orbital_grid_z(del_gi,orb,pt)
+      do n=1,n_pt
+        del_ginz = del_gi(n)
+        g(n) = g(n) + del_ginz*del_ginz
+        gz(n) = gz(n) + gi(n)*del_ginz
       end
     end
+    orb.destroy
     del_gi.destroy
     gi.destroy
 
-    rho = TWO*rho
-    f = ONE/rho * (g - TWO*(gx * gx + gy * gy + gz * gz)/rho)
+    rho.create(n_pt)
+    .make_density_grid(rho,pt)
+    fac = (THREE*PI/FOUR) * HALF**0.666666666667d0
+    f = ONE/rho * (g - TWO*(gx * gx + gy * gy + gz * gz)/rho) - fac * rho**0.666666666667d0
+    rho.destroy
     gz.destroy
     gy.destroy
     gx.destroy
     g.destroy
-    fac = (THREE*PI/FOUR) * HALF**0.666666666667d0
-    f = f - fac * rho**0.666666666667d0
-    rho.destroy
   end
-
-!  make_fermi_mobility_grid(g,pt) [leaky]
-!  ! Evaluate the Fermi hole mobility grid "g" on a set of grid points "pt".
-!    MAT, IN :: pt
-!    VEC, OUT :: g
-!    MAT, PTR :: del_gi,del_gj
-!    VEC, PTR :: gi,gj,density_grid,T
-!    INT :: n_pt,i,j,n_occ,n
-!    DBL :: gi_delgj_gj_delgix,gi_delgj_gj_delgiy,gi_delgj_gj_delgiz,fac,gin,gjn
-!    ENSURE( .grid.created,  "no grid")
-!    .make_restricted_NOs
-!    n_pt = .grid.n_pt
-!
-!    n_occ = .no_of_occupied_NOs
-!
-!    gi.create(n_pt)
-!    gj.create(n_pt)
-!    del_gi.create(n_pt,3)
-!    del_gj.create(n_pt,3)
-!    g = ZERO
-!    do j=1, n_occ
-!      .make_nabla_orbital_grid(del_gj,gj,.natural_orbitals.restricted(:,j), pt)
-!      do i=j+1, n_occ
-!        .make_nabla_orbital_grid(del_gi,gi,.natural_orbitals.restricted(:,i), pt)
-!        do n=1,n_pt
-!          gin=gi(n)
-!          gjn=gj(n)
-!          gi_delgj_gj_delgix = gin * del_gj(n,1) - gjn * del_gi(n,1)
-!          gi_delgj_gj_delgiy = gin * del_gj(n,2) - gjn * del_gi(n,2)
-!          gi_delgj_gj_delgiz = gin * del_gj(n,3) - gjn * del_gi(n,3)
-!          ! sum over the axes. x,y,z.
-!          g(n) = g(n) + gi_delgj_gj_delgix*gi_delgj_gj_delgix + &
-!                        gi_delgj_gj_delgiy*gi_delgj_gj_delgiy + &
-!                        gi_delgj_gj_delgiz*gi_delgj_gj_delgiz
-!        end
-!      end
-!    end
-!    del_gj.destroy
-!    del_gi.destroy
-!
-!    gj.destroy
-!    gi.destroy
-!
-!    T.create(n_pt)
-!    density_grid.create( .grid.n_pt )
-!    .make_density_grid(density_grid)
-!    g = TWO * g / (density_grid * density_grid)
-!    fac = (3.0d0*PI/4.0d0) / 2.0d0**0.666666666667d0
-!    T = fac * density_grid**0.666666666667d0
-!    g = g - T
-!    density_grid.destroy
-!    T.destroy
-!  end
 
    integrate_density_numerically
    ! Integrate the density numerically
