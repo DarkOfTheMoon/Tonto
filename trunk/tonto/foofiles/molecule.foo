@@ -1364,7 +1364,12 @@ contains
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
       orb_kind :: STR
+      if (.scfdata.created) then
+         orb_kind = .scfdata.spinorbital_kind
+      else   
       orb_kind = .density_matrix.spinorbital_kind
+      end
+
       select case (orb_kind)
          case ("restricted")
             ! do nothing
@@ -5466,6 +5471,9 @@ contains
         .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
       else
         .make_ft(sf_eq,.density_matrix.restricted,k_pts)
+        if (.scfdata.spinorbital_kind=="unrestricted") then
+           .density_matrix.destroy("restricted")
+        end   
       end
       k_pts.destroy
       .crystal.sum_unique_sf(Fc,sf_eq)
@@ -7591,8 +7599,8 @@ contains
          .embedded_scf
        case ("crystal_rhf")
          .crystal_scf
-       case ("xray_rhf","xray_rks","xray_uhf","xray_uks")
-         .xray_constrained_scf
+       case ("pnd_uhf","xray_rhf","xray_rks","xray_uhf","xray_uks")
+         .constrained_scf
        case default;
          .usual_scf
      end
@@ -7667,7 +7675,7 @@ contains
    ! rotations, otherwise known as the "diis error". This is used to check for
    ! SCF convergence.
      diis_error :: REAL
-     .make_diis_error(diis_error)
+     .make_diis_error_length(diis_error)
      .scfdata.set_diis_error(diis_error)
    end
 
@@ -7676,7 +7684,7 @@ contains
    ! rotations, otherwise known as the "diis error". This is used to check for
    ! SCF convergence.
      diis_error :: REAL
-     .make_diis_error(diis_error)
+     .make_diis_error_length(diis_error)
      .scfdata.set_diis_error(diis_error)
    end
 
@@ -7722,9 +7730,9 @@ contains
      end
      .scfdata.using_rough_convergence = FALSE
      .get_initial_guess
-     .make_fock_matrix
+     .make_fock_matrix  
      .make_constraint_data
-     .initialise_scfdata
+     .initialise_scfdata     
      .add_constraint
      .initialise_scfdata_error
      .scfdata.diis.cleanup
@@ -8503,7 +8511,7 @@ contains
 !  Constraint methods
 !  ******************
 
-   xray_constrained_scf ::: leaky
+   constrained_scf ::: leaky
    ! Do a constrained SCF calculation.
    ! The following objects are produced as results:
    !   .molecular_orbitals, .orbital_energies, .density_matrix
@@ -8557,45 +8565,46 @@ contains
    add_constraint
    ! Make the constraint matrix for wavefunction fitting and add it to the fock
    ! matrix to obtain the effective fock matrix.
-   ENSURE(.scfdata.created,"no scf data")
-   ENSURE(.fock_matrix.created,"no fock matrix")
-   ENSURE(.fock_matrix.any_created,"no fock matrix")
-     scf_kind :: STR
-     C :: MAT{REAL}*
-     C_tri :: VEC{REAL}*
+     ENSURE(.scfdata.created,"no scf data")
+     ENSURE(.fock_matrix.created,"no fock matrix")
+     ENSURE(.fock_matrix.any_created,"no fock matrix")
+
+     C :: OPMATRIX*
      arch :: ARCHIVE
-     C.create(.n_bf,.n_bf)
+     C.create(.n_bf,.scfdata.spinorbital_kind)
      .make_constraint(C)
      ! Now add in the contribution
-     scf_kind = .scfdata.kind
-     select case (scf_kind)
-        case("xray_rks","xray_rhf")
-           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda)
-        case("xray_uhf","xray_uks")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
-           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda)
-        case("pnd_uhf")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda)
-           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda)
-        case default
-           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
-     end
-     C_tri.create(C.tri_size)
-     C.compress_to_triangle(C_tri)
+     .fock_matrix.plus_scaled(.scfdata.lambda,C)
+
+     ! Write the compressed constraint to disk.
+     C.compress
      arch.set(.name,"constraint_matrix")
-     arch.write(C_tri)
-     C_tri.destroy
+     arch.write(C.triangle)
      C.destroy
    end
-
+   
    make_constraint(C)
-   ! Make the constraint matrix "C" for wavefunction fitting.
-     C :: MAT{REAL}, INOUT
-   ENSURE(.scfdata.spinorbital_kind=="restricted","can only do restricted calculations")
+   !Make constraint matrix for restricted or unrestricted SCF cases
+      C :: OPMATRIX, INOUT
+   ENSURE(.scfdata.spinorbital_kind=="restricted" OR .scfdata.spinorbital_kind=="unrestricted","can only do restricted or unrestricted calculations") 
    ENSURE(.crystal.created,  "no crystal info")
    ENSURE(.crystal.reflection_data_exists, "no reflection data")
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
+   
+      
+      select case (.scfdata.kind)
+         case ("xray_rhf","xray_rks")
+            .make_r_constraint(C.restricted)
+         case ("xray_uhf","xray_uks")
+            .make_r_constraint(C.alpha)
+            .make_r_constraint(C.beta)
+      end 
+   end  
+   
+   make_r_constraint(C)
+   ! Make the constraint matrix "C" for restricted wavefunction fitting.
+     C :: MAT{REAL}, INOUT
      k_pts :: MAT{REAL}*
      ft_ab_eq,ft_ab :: MAT3{CPX}*
      Fc,fac_times_alpha,Fconjg :: VEC{CPX}*
@@ -8620,9 +8629,10 @@ contains
      Fexp.destroy
      alpha.destroy
      Fconjg.create(n_refl)
-     Fconjg=conjg(Fc(:))
+     Fconjg=conjg(Fc)
      k_pts.create(n_unique,3)
      .crystal.make_unique_SF_k_pts(k_pts)
+     !What does this do?
      cutoff = TOL(10) / .n_shell_pairs
      do q=1, .n_shell_pairs
        .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
@@ -8664,7 +8674,7 @@ contains
 
      ! Read in the matrix from disk
      arch.set(.name,"constraint_matrix")
-     C_tri.create(.n_bf.triangle)
+     C_tri.create(.density_matrix.l_compress(.scfdata.spinorbital_kind))
      arch.read(C_tri)
      arch.close
      arch.delete
@@ -8678,70 +8688,68 @@ contains
    end
 
    reset_constraint_stuff
-   ! ?
+   ! Recalculates the Fock and error matrices so they apply
+   !to the new value of lambda. 
      arch :: ARCHIVE
      i :: INT
-     error,density :: OPMATRIX*
+     error,density,F,C :: OPMATRIX*
      F_tri,C_tri :: VEC{REAL}*
-     F,C :: MAT{REAL}*
+     !F,C :: MAT{REAL}*
      scf_kind :: STR
      if (NOT .scfdata.apply_fock_diis) return
 
-     C_tri.create(.n_bf.triangle)
-     F.create(.n_bf,.n_bf)
+     F.create(.n_bf,.scfdata.spinorbital_kind)
 
-     F_tri.create(.n_bf.triangle)
-     density.create(.n_bf,"restricted")
-     error.create(.n_bf,"restricted")
-
+     density.create(.n_bf,.scfdata.spinorbital_kind)
+     error.create(.n_bf,.scfdata.spinorbital_kind)
+     C_tri.create(density.l_compress)
+     !F_tri.create(density.l_compress)
+     F.compress
+     
      do i=1,.scfdata.diis.dimension-1
        ! Read in the constraint
        .scfdata.diis.get_item(C_tri,"constraint",i)
        ! Read in the Fock
-       .scfdata.diis.get_parameter_item(i,F_tri)
+       !.scfdata.diis.get_parameter_item(i,F_tri)
+       .scfdata.diis.get_parameter_item(i,F.triangle)
        ! Read in the density matrix
        .scfdata.diis.get_item(density,"density",i)
 
        ! Scale the Fock matrix to the new lambda
-       F_tri = F_tri + .scfdata.lambda_step*C_tri
+       !F_tri = F_tri + .scfdata.lambda_step*C_tri
+       F.triangle = F.triangle + .scfdata.lambda_step*C_tri
 
-       F.uncompress_from_triangle(F_tri)
+       F.uncompress
 
-       .make_r_diis_error(error.restricted,F,density.restricted)
+       .make_diis_error(error,F,density)
        error.compress
-       .scfdata.diis.save_pair(F_tri,error.triangle,i)
+       F.compress
+       .scfdata.diis.save_pair(F.triangle,error.triangle,i)
        error.uncompress
      end
-     .scfdata.diis.remake_diis_matrix(.n_bf.triangle)
+     .scfdata.diis.remake_diis_matrix(error.triangle.dim)
      error.destroy
      density.destroy
-     F_tri.destroy
+     !F_tri.destroy
      .unarchive_density_matrix
 
-     ! Just to save effort on memory reallocation.
-     C => F; nullify(F)
+     F.destroy
+     C_tri.destroy
 
+     C.create(.n_bf,.scfdata.spinorbital_kind)
+     
      ! The current Fock matrix is for the old lambda, so let's make it for the
      ! new lambda.
+     C.compress
      arch.set(.name,"constraint_matrix")
-     arch.read(C_tri)
-     C.uncompress_from_triangle(C_tri)
-     scf_kind = .scfdata.kind
-     select case (scf_kind)
-        case("xray_rks","xray_rhf")
-           .fock_matrix.restricted.plus_scaled_mat(C,.scfdata.lambda_step)
-        case("xray_uhf","xray_uks")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
-           .fock_matrix.beta.plus_scaled_mat(C,.scfdata.lambda_step)
-        case("pnd_uhf")
-           .fock_matrix.alpha.plus_scaled_mat(C,.scfdata.lambda_step)
-           .fock_matrix.alpha.minus_scaled_mat(C,.scfdata.lambda_step)
-        case default
-           DIE("Not a contrained wavefunction type, "//trim(scf_kind))
-     end
-
+     arch.read(C.triangle)
+   !stdout.text("resetconstraint",flush=1)  
+   !stdout.put(C.triangle)  
+     C.uncompress
+     .fock_matrix.plus_scaled(.scfdata.lambda_step,C)
+     
      C.destroy
-     C_tri.destroy
+     !C_tri.destroy
    end
 
 !  ********************************
@@ -9756,8 +9764,8 @@ contains
      if (calc_it) then
        .make_atom_density
      end
-     .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
      if (write_archive) arch.write(.density_matrix, genre="restricted")
+     .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
    end
 
    make_atom_density ::: leaky
@@ -10111,47 +10119,46 @@ contains
 !!   if (.scfdata.apply_dynamic_damping) .dynamic_damp(E_HF,E_K)
 !!  end
 
-   make_diis_error(length)
-   ! Make the SCF "error" vector from the current fock_matrix and
-   ! density_matrix, and return the error length.  Useful for reporting the
+   make_diis_error_length(length)
+   ! Make the SCF error vector from the current fock_matrix and
+   ! density_matrix, and return the error "length".  Useful for reporting the
    ! error length.
       length :: REAL
       error :: OPMATRIX*
-      scf_kind :: STR
-      err,F,P :: MAT{CPX}*
       tri :: INT
-      scf_kind = .scfdata.kind
       tri = .n_bf.triangle
-      select case (scf_kind)
+      error.create(.n_bf,.scfdata.spinorbital_kind)
+      .make_diis_error(error)
+      error.compress
+      if (.scfdata.kind == "gchf") then
+         length = sqrt(dot_product(error.square,error.square)) / tri
+      else
+         length = sqrt(dot_product(error.triangle,error.triangle))/tri
+      end
+      error.destroy
+   end
+
+   make_diis_error(error,F,D)
+   ! Make the SCF "error" vector from the current fock_matrix and
+   ! density_matrix.
+      error :: OPMATRIX*
+      F,D :: OPMATRIX*, optional
+      fock_matrix,density_matrix :: OPMATRIX*
+      fock_matrix => .fock_matrix
+      if (present(F)) fock_matrix => F
+      density_matrix => .density_matrix
+      if (present(D)) density_matrix => D
+      select case (.scfdata.kind)
          case ("rhf","rks","xray_rhf","xray_rks","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
-            error.create(.n_bf,"restricted")
-            .make_r_diis_error(error.restricted,.fock_matrix.restricted,.density_matrix.restricted)
-            error.compress
-            length = sqrt(dot_product(error.triangle,error.triangle)) / tri
-            error.destroy
+            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.restricted)
          case ("rohf")
-            error.create(.n_bf,"restricted")
-            .make_r_diis_error(error.restricted,.fock_matrix.restricted,.density_matrix.alpha)
-            error.compress
-            length = sqrt(dot_product(error.triangle,error.triangle)) / tri
-            error.destroy
+            .make_r_diis_error(error.restricted,fock_matrix.restricted,density_matrix.alpha)
          case ("uhf","uks","xray_uhf","xray_uks","pnd_uhf")
-            error.create(.n_bf,"unrestricted")
-            .make_r_diis_error(error.alpha,.fock_matrix.alpha,.density_matrix.alpha)
-            .make_r_diis_error(error.beta, .fock_matrix.beta, .density_matrix.beta)
-            error.compress
-            length = sqrt(dot_product(error.triangle,error.triangle)) / tri
-            error.destroy
+            .make_r_diis_error(error.alpha,fock_matrix.alpha,density_matrix.alpha)
+            .make_r_diis_error(error.beta, fock_matrix.beta, density_matrix.beta)
          case ("gchf")
-            error.create(.n_bf,"general_complex")
-            err => error.general_complex
-            F   => .fock_matrix.general_complex
-            P   => .density_matrix.general_complex
-            .make_gc_diis_error(err,F,P)
-            error.compress
-            length = sqrt(dot_product(error.square,error.square)) / tri
-            error.destroy
-         case default;  DIE("unknown kind, "//trim(scf_kind))
+            .make_gc_diis_error(error.general_complex,fock_matrix.general_complex,density_matrix.general_complex)
+         case default;  DIE("unknown kind, "//trim(.scfdata.kind))
       end
    end
 
@@ -10274,8 +10281,7 @@ contains
      core,r12 :: BIN, optional
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.density_matrix.created,"no density matrix")
-   ENSURE(.density_matrix.any_created,"no density matrix")
-   ENSURE(.density_matrix.spinorbital_kind==.scfdata.spinorbital_kind,"incompatible density")
+   ENSURE(.density_matrix.created(.scfdata.spinorbital_kind),"incompatible density")
      dP,dF :: OPMATRIX*
      orb_kind :: STR
      do_delta_build :: BIN
@@ -10316,8 +10322,7 @@ contains
      core,r12 :: BIN, optional
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(P.created,"no density matrix")
-   ENSURE(P.any_created,"no density matrix")
-   ENSURE(P.spinorbital_kind==.scfdata.spinorbital_kind,"incompatible density")
+   ENSURE(P.created(.scfdata.spinorbital_kind),"incompatible density")
      direct :: BIN
      direct = .scfdata.direct
      if (NOT direct) .get_ERI_integrals
@@ -15125,7 +15130,7 @@ contains
 !     F_backup.create_copy(.fock_matrix)
 !     MO_backup.create_copy(.molecular_orbitals)
 !     P_backup.create_copy(.density_matrix)
-!     .make_diis_error(diis1)
+!     .make_diis_error_length(diis1)
 !
 !     .unarchive_fock_matrix(archive_name="old_fock_matrix")
 !     old_F  => .fock_matrix.restricted
@@ -15133,7 +15138,7 @@ contains
 !     old_MO => .molecular_orbitals.restricted
 !     .unarchive_density_matrix(archive_name="old_density_matrix")
 !     old_P  => .density_matrix.restricted
-!     .make_diis_error(diis0)
+!     .make_diis_error_length(diis0)
 !
 !     .fock_matrix        => F_backup
 !     .molecular_orbitals => MO_backup
@@ -15216,7 +15221,7 @@ contains
 !     end
 !     .old_fock_matrix.minus(.old_constraint_matrix)
 !     .minimise_Camp_King_lambda(lambda,ded0,ded1a,Q,CV,theta,n_p,diis0)
-!     .make_diis_error(diisl)
+!     .make_diis_error_length(diisl)
 !     if (diisl < 0.95*diis1 OR abs(ded1a) < abs(ded1)) then
 !       Uh.create(.n_bf,.n_bf)
 !       .make_Camp_King_U_hat(Uh,lambda,theta)
@@ -15394,7 +15399,7 @@ contains
 !     else
 !       El = .scf_energy
 !     end
-!     .make_diis_error(diisl)
+!     .make_diis_error_length(diisl)
 !     F.create(.n_bf,.n_bf)
 !     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
 !     F.change_basis_using(Q)
@@ -15476,7 +15481,7 @@ contains
 !     ! .old_fock_matrix contains .old_constraint_matrix
 !
 !     ! Get DIIS error and energy for new density
-!     .make_diis_error(diis1)
+!     .make_diis_error_length(diis1)
 !     if (.scfdata.kind == "xray_rhf") then
 !       ! Remove the constraint matrix from the new fock matrix.
 !       F_backup.minus(.constraint_matrix)
@@ -15489,7 +15494,7 @@ contains
 !     ! Get DIIS error and energy for old density
 !     .fock_matrix.set_to(.old_fock_matrix)
 !     .density_matrix.set_to(.old_density_matrix)
-!     .make_diis_error(diis0)
+!     .make_diis_error_length(diis0)
 !     if (.scfdata.kind == "xray_rhf") then
 !       ! Remove the constraint matrix from the old fock matrix.
 !       .old_fock_matrix.minus(.old_constraint_matrix)
@@ -15532,7 +15537,7 @@ contains
 !       else
 !         El = E_HF
 !       end
-!       .make_diis_error(diisl)
+!       .make_diis_error_length(diisl)
 !       .scfdata.dynamic_damp_factor = ONE-mix
 !       if (diisl<TEN*diis0) exit
 !       mix = HALF * mix
