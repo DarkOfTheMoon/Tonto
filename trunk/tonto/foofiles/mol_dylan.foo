@@ -676,4 +676,695 @@ contains
       atom_kind.destroy
    end
 
+  test_eigen
+     INT :: n,i
+     DBL :: dot
+     MAT, PTR :: m
+     VEC, PTR :: eval
+     MAT, PTR :: L,R,w
+     stdin.read(n)
+     m.create(n,n)
+     stdin.read(m)
+     eval.create(n)
+     L.create(n,n)
+     R.create(n,n)
+     m.solve_general_eigenproblem(eval,L,R)
+     stdout.show("n =",n)
+     stdout.text("eval:")
+     stdout.put(eval,"column")
+     stdout.text("Left eigenvectors:")
+     stdout.put(L)
+     stdout.text("right eigenvectors:")
+     stdout.put(R)
+     w.create(n,n)
+     w.to_product(L,R,transpose_a=TRUE)
+     stdout.text("(left)^T x (right) eigenvectors:")
+     stdout.put(w)
+     w.destroy
+     R.destroy
+     L.destroy
+     eval.destroy
+     m.destroy
+  end
+
+! *************************************************************
+! Determinant Variation Perturbation Theory (DVPT) SCF routines
+! *************************************************************
+
+  DVPT_scf [recursive] [leaky]
+  ! Do a restricted determinant variation perturbation theory SCF calculation. The following
+  ! are produced as results: .molecular_orbitals, .orbital_energies, .density_matrix  
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.bases_are_all_resolved, "no basis set")
+    .make_DVPT_initial_mos
+    .make_DVPT_density_matrices
+    .make_DVPT_fock_matrices
+    .scfdata.set(nuclear_energy=.nuclear_energy)
+    .scfdata.reset(energy=.DVPT_scf_energy, kinetic_energy=ZERO)
+    .scfdata.put_banner
+    ! Begin iterations
+    do
+    ! .extrapolate_scf
+      .update_DVPT_orbitals
+      .schmidt_orthonormalise(.molecular_orbitals)
+      .make_DVPT_density_matrices
+      .make_DVPT_fock_matrices
+      .save_DVPT_results
+      .scfdata.update(energy=.DVPT_scf_energy, kinetic_energy=ZERO)
+      .scfdata.put_results
+      if (.scfdata.scf_done) exit
+    end
+    .scfdata.cleanup_diis
+    .fock_matrix.destroy("restricted")
+    .ab_ab_ERI.destroy
+  end
+
+  update_DVPT_orbitals
+  ! Solve for the new DVPT orbitals and energies. An initial set of orbitals
+  ! and a Fock matrix must already exist in memory. The new molecular orbitals 
+  ! "MO*U" are found from the old MOs solving : (MO^T F MO)U = MO^T S MO U E 
+  ! where U is a general matrix (since F is not symmetric).
+    VEC, PTR :: MO_energies
+    MAT, PTR :: MO,F
+    MAT, PTR :: G,U,left
+    INT :: i
+    MO_energies => .orbital_energies.restricted
+    MO => .molecular_orbitals.restricted
+    F  => .fock_matrix.restricted
+    G.create(.n_bf,.n_bf)
+    U.create(.n_bf,.n_bf)
+    left.create(.n_bf,.n_bf)
+    G = F
+    G.change_basis(MO)
+    ! Level shifting
+    if ( .scfdata.apply_level_shifting) then
+      do i = .n_a + 1, .n_bf
+        G(i,i) = .scfdata.level_shift + G(i,i)
+      end
+    end
+    G.solve_general_eigenproblem(MO_energies,left,U)
+    G.to_product(MO,U)
+    MO = G
+    left.destroy
+    U.destroy
+    G.destroy
+  end
+
+  save_DVPT_results
+  ! Save the DVPT results in various archives
+    ARCHIVE :: archive
+    INT :: m
+    .save_scf_results
+    m = .DVPT_order
+    archive.set(.name,"DVPT_mo_"// m.to_str.trim)
+    archive.write(.molecular_orbitals.restricted)
+  end
+
+  schmidt_orthonormalise(MO)
+  ! Schmidt orthonormalise the molecular orbitals, "MO"
+     OPMAT :: MO
+     MAT, PTR :: S
+     ENSURE(MO.spinorbital_kind=="restricted","only works for restricted so far")
+     S.create(.n_bf,.n_bf)
+     .get_overlap_matrix(S)
+     MO.schmidt_orthonormalise(S)
+     S.destroy
+  end
+
+  make_DVPT_initial_mos [leaky]
+  ! Make the DVPT initial orbitals. Currently this is just the same
+  ! as the usual initial guess, but the MO's are written to disk.
+     INT :: m
+     MAT, PTR :: MO
+     ARCHIVE :: m_archive
+     m = .DVPT_order
+     m_archive.set(.name,"DVPT_mo_"// m.to_str.trim)
+     .scfdata.kind = "rhf"
+     .get_initial_guess
+     .scfdata.kind = "rdvpt"
+     MO => .molecular_orbitals.restricted
+     m_archive.write(MO)
+  end
+
+  DVPT_order result (X)
+  ! Determine the DVPT order by looking for the highest number "X" for
+  ! which a DVPT_mo_X archive file exists.
+     INT :: X
+     ARCHIVE :: archive
+     INT :: order = 999
+     if (order/=999) then
+        X = order
+     else
+        X = 0
+        do
+           archive.set(.name,"DVPT_mo_"// X.to_str.trim)
+           if (archive.does_not_exist) exit
+           X = X + 1
+        end
+        order = X
+     end
+  end
+
+  make_DVPT_density_matrices
+  ! Make all the DVPT density matrices up to the required order
+  ! NOTE: the indice order is opposite to the paper.
+     INT :: m,j
+     m = .DVPT_order
+     do j = 0,m
+        .make_DVPT_density_matrix(m,j)
+     end
+     .make_DVPT_eff_density_matrix
+  end
+
+  make_DVPT_eff_density_matrix
+  ! Make the effective DVPT fock matrix
+     INT :: m,i,j
+     DBL :: fac,sum,det
+     MAT, PTR :: DD,D
+     ARCHIVE :: d_archive
+     .density_matrix.restricted.destroy
+     DD.create(.n_bf,.n_bf); DD = ZERO
+     D.create(.n_bf,.n_bf)
+     m   = .DVPT_order
+     do i = 0,m
+     do j = 0,i
+        fac = TWO
+        if (i==j) fac = ONE
+        .get_DVPT_density_matrix(D,det,i,j)
+        sum = sum + fac*det
+        D = fac*D
+        DD.plus(D)
+     end
+     end
+     DD = DD/sum
+     d_archive.set(.name,"DVPT_density_matrix")
+     d_archive.write(DD)
+     .density_matrix.restricted => DD
+     D.destroy
+  end
+
+  get_DVPT_density_matrix(D,determinant,left,right)
+  ! Get the determinant variation perturbation theory transition density matrix 
+  ! for a left determinant orbitals "left" and  a right determinant orbitals "right". 
+  ! Make the density if the archive does not exist.
+     MAT :: D
+     DBL :: determinant
+     INT :: left,right
+     ARCHIVE :: d_archive
+     STR :: label
+     label = left.to_str.trim // right.to_str.trim
+     d_archive.set(.name,"DVPT_density_"// label)
+     if (d_archive.does_not_exist) .make_DVPT_density_matrix(left,right)
+     d_archive.read(D)
+     d_archive.set(.name,"DVPT_determinant_"// left.to_str.trim // right.to_str.trim)
+     d_archive.read(determinant)
+  end
+
+  make_DVPT_density_matrix(left,right)
+  ! Make the determinant variation perturbation theory transition density matrix 
+  ! for a left determinant orbitals "left" and  a right determinant orbitals "right". 
+  ! The density and determinant are stored as archives on disk.
+     INT :: left,right
+     MAT, PTR :: D,L,R
+     ARCHIVE :: l_archive,r_archive,d_archive
+     DBL :: determinant
+     D.create(.n_bf,.n_bf)
+     l_archive.set(.name,"DVPT_mo_"// left.to_str.trim)
+     r_archive.set(.name,"DVPT_mo_"// right.to_str.trim)
+     ENSURE(l_archive.exists, "no DVPT mo archive, no. ="// left.to_str.trim)
+     ENSURE(r_archive.exists, "no DVPT mo archive, no. ="// right.to_str.trim)
+     L.create(.n_bf,.n_bf)
+     R.create(.n_bf,.n_bf)
+     l_archive.read(L)
+     r_archive.read(R)
+     .make_DVPT_density_matrix(D,determinant,L,R)
+     R.destroy
+     L.destroy
+     d_archive.set(.name,"DVPT_density_"// left.to_str.trim // right.to_str.trim)
+     d_archive.write(D)
+     d_archive.set(.name,"DVPT_determinant_"// left.to_str.trim // right.to_str.trim)
+     d_archive.write(determinant)
+     D.destroy
+  end
+
+  make_DVPT_density_matrix(D,determinant,left,right)
+  ! Make the determinant variation perturbation theory transition density matrix "D" for a
+  ! left determinant of orbitals "left" and  a right determinant of orbitals "right". 
+  ! Also return the "determinant" of the orbital ovarlap matrix.
+     MAT :: D
+     MAT :: left,right
+     DBL :: determinant
+     MAT, PTR :: C,S
+     MAT, PTR :: W
+     ENSURE(size(D,1)==size(D,2),"D is not square")
+     ENSURE(size(D,1)==.n_bf,"D has wrong size")
+     ENSURE(size(left,1)==size(left,2),"left is not square")
+     ENSURE(size(left,1)==.n_bf,"left has wrong size")
+     ENSURE(size(right,1)==size(right,2),"right is not square")
+     ENSURE(size(right,1)==.n_bf,"right has wrong size")
+     C.create(.n_bf,.n_bf)
+     S.create(.n_bf,.n_bf)
+     .make_overlap(S,left,right)
+     .make_cofactor(C,determinant,S)
+     S.destroy
+     W.create(.n_bf,.n_bf)
+     W.to_product(C,left,transpose_b=TRUE)
+     D.to_product(right,W)
+     W.destroy
+     C.destroy
+  end
+
+  make_overlap(S,left,right)
+  ! Make the overlap matrix "S" between two sets of orbitals "left" and "right".
+     MAT :: S,left,right
+     MAT, PTR :: W
+     ENSURE(size(S,1)==.n_bf,"incorrect size for array S")
+     ENSURE(size(S,2)==.n_bf,"incorrect size for array S")
+     ENSURE(size(left,1)==.n_bf,"incorrect size for array left")
+     ENSURE(size(left,2)==.n_bf,"incorrect size for array left")
+     ENSURE(size(right,1)==.n_bf,"incorrect size for array right")
+     ENSURE(size(right,2)==.n_bf,"incorrect size for array right")
+     W.create(.n_bf,.n_bf)
+     .get_overlap_matrix(S)
+     W.to_product(S,right)
+     S.to_product(left,W,transpose_a=TRUE)
+     W.destroy
+  end
+
+  make_cofactor(C,determinant,S)
+  ! Make the cofactor matrix "C" and "determinant" for the matrix "S".
+  ! Note: this constructs the alpha-alpha part of the cofactor, but the
+  ! determinant is that for the full overlap matrix
+     MAT :: C,S
+     DBL :: determinant
+     VEC, PTR :: eval,n
+     MAT, PTR :: left,right,W
+     INT :: dim,i
+     DBL :: dot
+     ENSURE(size(C,1)==size(C,2),"C is not square")
+     ENSURE(size(S,1)==size(S,2),"incorrect size for array S")
+     ENSURE(size(S,1)==size(C,1),"array C and array S incompatible")
+     dim = size(C,1)
+     left.create(dim,dim)
+     right.create(dim,dim)
+     eval.create(dim)
+     ! Get the eigenvalues and determinant of S
+     S.solve_general_eigenproblem(eval,left,right)
+     determinant = product(eval)
+     determinant = determinant*determinant ! include beta part
+     ! Make the cofactor
+     n.create(dim)
+     n = determinant/eval
+     W.create(dim,dim)
+     W.to_product_with_diagonal(n,left,transpose_a=TRUE)
+     C = matmul(right,W)
+!
+!    stdout.text("S:")
+!    stdout.put(S)
+!    stdout.text("n:")
+!    stdout.put(n,format="column")
+!    stdout.text("L:")
+!    stdout.put(left)
+!    stdout.text("R:")
+!    stdout.put(right)
+!    W = matmul(right,transpose(left))
+!    stdout.text("R L^T:")
+!    stdout.put(W)
+!    W = matmul(transpose(left),right)
+!    stdout.text("L^T R:")
+!    stdout.put(W)
+!    stdout.text("C:")
+!    stdout.put(C)
+!
+     W.destroy
+     n.destroy
+     eval.destroy
+     right.destroy
+     left.destroy
+  end
+
+  make_DVPT_fock_matrices [leaky]
+  ! Make the DVPT fock matrices up to the required order,
+  ! including the effective fock matrix
+     INT :: m,j
+     m = .DVPT_order
+     do j = 0,m
+        .make_DVPT_fock_matrix(m,j)
+     end
+     .make_DVPT_eff_fock_matrix
+  end
+
+  make_DVPT_eff_fock_matrix [leaky]
+  ! Make the effective DVPT fock matrix
+     INT :: m,j
+     DBL :: E_m,E_mj,sum,det
+     MAT, PTR :: FF,F,W,D
+     ARCHIVE :: f_archive
+     .fock_matrix.restricted.destroy
+     FF.create(.n_bf,.n_bf); FF = ZERO
+     F.create(.n_bf,.n_bf)
+     W.create(.n_bf,.n_bf)
+     D.create(.n_bf,.n_bf)
+     m   = .DVPT_order
+     E_m = .DVPT_electronic_energy
+     sum = ZERO
+     do j = 0,m
+        .get_DVPT_fock_matrix(F,m,j)
+        .get_DVPT_density_matrix(D,det,m,j)
+        sum = sum + det
+        det = 1/(TWO*det)
+        FF.plus(F)
+        .add_core_hamiltonian(FF)
+        E_mj = E_m + det*F.trace_of_product(D)
+        .get_overlap_matrix(F)
+        W.to_product(D,F) 
+        D.to_product(F,W) 
+        FF = FF - E_mj*D
+     end
+     FF = FF/sum
+     f_archive.set(.name,"DVPT_effective_fock_"// m.to_str.trim)
+     f_archive.write(FF)
+     .fock_matrix.restricted => FF
+     D.destroy
+     W.destroy
+     F.destroy
+  end
+
+  get_DVPT_fock_matrix(F,left,right)
+  ! Get the determinant variation perturbation theory transition Fock matrix 
+  ! for a left determinant orbitals "left" and  a right determinant orbitals "right". 
+     MAT :: F
+     INT :: left,right
+     ARCHIVE :: f_archive
+     STR :: label
+     label = left.to_str.trim // right.to_str.trim
+     f_archive.set(.name,"DVPT_fock_"// label)
+     if (f_archive.does_not_exist) .make_DVPT_fock_matrix(left,right)
+     f_archive.read(F)
+  end
+
+  make_DVPT_fock_matrix(left,right)
+  ! Make the determinant variation perturbation theory transition fock matrix 
+  ! for a left determinant orbitals "left" and  a right determinant orbitals "right". 
+  ! The Fock matrix is stored as an archive on disk.
+     INT :: left,right
+     MAT, PTR :: F
+     ARCHIVE :: f_archive
+     F.create(.n_bf,.n_bf)
+     .make_DVPT_fock_matrix(F,left,right)
+     f_archive.set(.name,"DVPT_fock_"// left.to_str.trim // right.to_str.trim)
+     f_archive.write(F)
+     F.destroy
+  end
+
+  make_DVPT_fock_matrix(F,left,right)
+  ! Make the determinant variation perturbation theory transition fock matrix for
+  ! a left determinant of orbitals "left" and a right determinant of orbitals
+  ! "right". If present, "D" is used as the density matrix.
+     MAT :: F
+     INT :: left,right
+     MAT, PTR :: P
+     DBL :: determinant,fac
+     P.create(.n_bf,.n_bf)
+     .get_DVPT_density_matrix(P,determinant,left,right)
+     .make_r_asymmetric_fock(P,F,direct=FALSE,core=FALSE,r12=TRUE) 
+     fac = TWO/determinant
+     F = fac*F
+     P.destroy
+  end
+
+  make_r_asymmetric_fock(P,F,direct,core,r12) [leaky]
+  ! Make a new restricted Fock matrix "F" from an asymmetric density matrix "P".
+  ! If present and TRUE , "direct" means calculate integrals on the fly
+  ! If present and FALSE, "core" removes the core matrix contribution
+  ! If present and FALSE, "r12"  removes the two electron contribution
+    BIN, optional :: direct,core,r12
+    MAT :: P,F
+    MAT, PTR :: J,K
+    BIN :: do_direct,add_core,add_r12
+    ENSURE(size(F,1)==.n_bf, "Fock matrix dimensions wrong")
+    ENSURE(size(P,1)==.n_bf, "Density matrix dimensions wrong")
+    do_direct= FALSE
+    add_core = TRUE
+    add_r12  = TRUE
+    if (present(direct)) do_direct = direct
+    if (present(core))   add_core = core
+    if (present(r12))    add_r12  = r12
+    if (add_r12) then
+       J.create(.n_bf,.n_bf)
+       K.create(.n_bf,.n_bf)
+       if (do_direct) then; .make_r_asymmetric_JK_direct(J,K,P)
+       else;                .make_r_asymmetric_JK_disk(J,K,P)
+       end
+       F = J - HALF*K 
+       K.destroy
+       J.destroy
+    else
+       F = ZERO
+    end
+    if (add_core) then
+      .add_core_hamiltonian(F)
+    end
+  end
+
+  make_r_asymmetric_JK_direct(J,K,P)
+  ! Make the real coulomb matrices "J" and exchange matrix "K"  from an
+  ! asymmetric density matrix "P" directly from the integrals. 
+    MAT :: J,K,P
+    MAT4, PTR   :: I
+    SHELL4, PTR :: shell4
+    VEC, PTR :: I_max
+    INT :: ac,ab,cd,aa,cc
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
+    DBL :: cutoff,I_abcd,factor
+    BIN :: skip
+    J = ZERO
+    K = ZERO
+    cutoff = .scfdata.eri_cutoff
+    shell4.create
+    I_max.create(.n_shell_pairs)
+    .make_max_abab_integrals(I_max)
+    do ab = 1,.n_shell_pairs
+      .get_shell_pair(ab,a,b)
+      fa = .first_basis_fn_for_shell(a)
+      fb = .first_basis_fn_for_shell(b)
+      la = .last_basis_fn_for_shell(a)
+      lb = .last_basis_fn_for_shell(b)
+      do cd = 1,ab
+        .get_shell_pair(cd,c,d)
+        fc = .first_basis_fn_for_shell(c)
+        fd = .first_basis_fn_for_shell(d)
+        lc = .last_basis_fn_for_shell(c)
+        ld = .last_basis_fn_for_shell(d)
+        .get_shell_quartet(shell4,a,b,c,d)
+        skip = .schwarz_inequality_test(cutoff,ab,cd,fa,la,fb,lb,fc,lc,fd,ld,P,I_max)
+        if (skip) then
+           shell4.destroy_ptr_part
+           cycle
+        end
+        I.create(fa,la,fb,lb,fc,lc,fd,ld)
+        shell4.get_ERI(I)
+        factor = ONE                                ! Evaluate the integrals
+        if (a==b)          factor = HALF            ! Coincidence factors   
+        if (c==d)          factor = HALF * factor
+        if (a==c AND b==d) factor = HALF * factor
+        do d = fd,ld
+        do c = fc,lc
+        do b = fb,lb
+        do a = fa,la
+           I_abcd = factor * I(a,b,c,d)
+           J(a,b) = J(a,b) + I_abcd*(P(d,c)+P(c,d)) ! These are symmetric
+           J(c,d) = J(c,d) + I_abcd*(P(b,a)+P(a,b))
+           K(a,d) = K(a,d) + I_abcd*P(b,c)          ! These are asymmetric
+           K(a,c) = K(a,c) + I_abcd*P(b,d) 
+           K(b,c) = K(b,c) + I_abcd*P(a,d)
+           K(b,d) = K(b,d) + I_abcd*P(a,c)
+           K(d,a) = K(d,a) + I_abcd*P(c,b)
+           K(c,a) = K(c,a) + I_abcd*P(d,b)
+           K(c,b) = K(c,b) + I_abcd*P(d,a)
+           K(d,b) = K(d,b) + I_abcd*P(c,a)
+        end
+        end
+        end
+        end
+        I.destroy
+        shell4.destroy_ptr_part
+      end
+    end
+    I_max.destroy
+    shell4.destroy
+    .weight_diagonal_blocks(J,TWO)
+    J.make_symmetric
+  end
+
+  make_r_asymmetric_JK_disk(J,K,P)
+  ! Make the real coulomb matrices "J" and exchange matrix "K"  from an
+  ! asymmetric density matrix "P" using disk integrals. 
+    MAT :: J,K,P
+    ARCHIVE, PTR :: eri_archive,ind_archive
+    MAT4, PTR   :: I
+    INT :: q,n_quartets,a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
+    DBL :: I_abcd
+    eri_archive.create(.name,"eri_integrals")
+    ind_archive.create(.name,"eri_index")
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.bases_are_all_resolved, "no basis set")
+    ENSURE( eri_archive.exists, "no integral file")
+    ENSURE( ind_archive.exists, "no integral index file")
+    eri_archive.open(for="read-only",buffered=TRUE,type="dbl")
+    ind_archive.open(for="read-only",buffered=TRUE,type="int")
+    J = ZERO
+    K = ZERO
+    n_quartets = .n_shell_quartets
+    do
+       ind_archive.file.read(q)
+       if (q > n_quartets) exit
+       .get_shell_quartet(q,fa,la,fb,lb,fc,lc,fd,ld)
+       I.create(fa,la,fb,lb,fc,lc,fd,ld)
+       eri_archive.file.read(I)
+       do d = fd,ld
+       do c = fc,lc
+       do b = fb,lb
+       do a = fa,la
+          I_abcd = I(a,b,c,d)
+          J(a,b) = J(a,b) + I_abcd*(P(d,c)+P(c,d)) ! These are symmetric
+          J(c,d) = J(c,d) + I_abcd*(P(b,a)+P(a,b))
+          K(a,d) = K(a,d) + I_abcd*P(b,c)          ! These are asymmetric
+          K(a,c) = K(a,c) + I_abcd*P(b,d) 
+          K(b,c) = K(b,c) + I_abcd*P(a,d)
+          K(b,d) = K(b,d) + I_abcd*P(a,c)
+          K(d,a) = K(d,a) + I_abcd*P(c,b)
+          K(c,a) = K(c,a) + I_abcd*P(d,b)
+          K(c,b) = K(c,b) + I_abcd*P(d,a)
+          K(d,b) = K(d,b) + I_abcd*P(c,a)
+       end
+       end
+       end
+       end
+       I.destroy
+    end
+    ind_archive.destroy
+    eri_archive.destroy
+    .weight_diagonal_blocks(J,TWO)
+    J.make_symmetric
+  end
+
+  make_max_abab_integrals(I_max)
+  ! Make "I_max", the square root of the maximum of the (ab|ab) ERI integrals.
+    VEC :: I_max
+    INT :: ab,fa,fb,la,lb,sa,sb,na,nb, a,b
+    SHELL4 :: shell4
+    MAT4, PTR :: Iabab
+    DBL :: Imax
+    ENSURE(size(I_max)==.n_shell_pairs,"wrong size for array I_max")
+    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
+      .get_shell_pair(ab,sa,sb)            ! Shell pair ab|ab
+      fa = .first_basis_fn_for_shell(sa)
+      fb = .first_basis_fn_for_shell(sb)
+      la = .last_basis_fn_for_shell(sa)
+      lb = .last_basis_fn_for_shell(sb)
+      na = la-fa+1
+      nb = lb-fb+1
+      .set_shell_quartet_ab(shell4,sa,sb)
+      .set_shell_quartet_cd(shell4,sa,sb)
+      Iabab.create(na,nb,na,nb)
+      shell4.get_ERI(Iabab)
+      shell4.destroy_ptr_part
+      Imax = ZERO
+      do a=1,na
+      do b=1,nb
+         Imax = max(abs(Iabab(a,b,a,b)),Imax)
+      end
+      end
+      I_max(ab) = sqrt(Imax)
+      Iabab.destroy
+    end
+  end
+
+  schwarz_inequality_test(cutoff,ab,cd,fa,la,fb,lb,fc,lc,fd,ld,P,I_max) result(skip)
+  ! Return "skip", a logical variable which is TRUE if the maximum contribution to 
+  ! the restricted Fock matrix (based on the schwarz inequality test) from a shell 
+  ! of ERI integrals (ab|cd) with shell pair indices "ab" and "cd" and with basis 
+  ! function limits "fa, "la", ..., "fd, "ld" is smaller than a preset "cutoff". 
+  ! "P" is the density matrix, and "I_max(ab)" is maximum value of the square root 
+  ! of the integral (ab|ab) for the shell pair with index "ab".
+    BIN :: skip
+    DBL :: cutoff
+    INT :: ab,cd,fa,la,fb,lb,fc,lc,fd,ld, a,b,c,d
+    MAT :: P
+    VEC :: I_max
+    DBL :: Pmax
+    Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+    do d = fd,ld
+    do c = fc,lc
+       Pmax = max(abs(P(d,c)),Pmax)
+       do b = fb,lb
+          Pmax = max(abs(P(d,b)),abs(P(c,b)),Pmax)
+          do a = fa,la
+             Pmax = max(abs(P(b,a)),abs(P(d,a)),abs(P(c,a)),Pmax)
+          end
+       end
+    end
+    end
+    if (Pmax*I_max(ab)*I_max(cd) > cutoff) then; skip = FALSE
+    else;                                        skip = FALSE
+    end
+  end
+ 
+   get_shell_pair_indices_from(index,a,b)
+   ! Return the actual shell indicies "a" and "b" which map to "index"
+     INT, IN :: index
+     INT, OUT :: a,b
+     a  = (1+sqrt(8.0d0*index-7.0d0))/2
+     b  = index - a*(a-1)/2
+   end
+
+  DVPT_scf_energy result (res)
+  ! Evaluates the determinant variation perturbation theory SCF energy 
+  ! (including the nuclear repulsion contribution)
+    DBL :: res
+    res = .DVPT_electronic_energy + .nuclear_energy
+  end
+
+  DVPT_electronic_energy result (res)
+  ! Evaluates the SCF electronic energy 
+    DBL :: res
+    STR :: kind
+    MAT, PTR :: F,D
+    INT :: m,i,j
+    DBL :: fac,det,sum
+    m = .DVPT_order
+    kind = .scfdata.kind
+    select case (kind)
+       case ("rdvpt","restricted_dvpt")
+          F.create(.n_bf,.n_bf)
+          D.create(.n_bf,.n_bf)
+          res = ZERO
+          sum = ZERO
+          do i = 0,m
+          do j = 0,i
+             fac = TWO
+             if (i==j) fac = ONE
+             .get_DVPT_fock_matrix(F,i,j)
+             .add_core_hamiltonian(F)
+             .add_core_hamiltonian(F)
+             .get_DVPT_density_matrix(D,det,i,j)
+          !  stdout.show("i   =",i)
+          !  stdout.show("j   =",j)
+          !  stdout.show("det =",det)
+          !  stdout.text("D:")
+          !  stdout.put(D)
+          !  stdout.text("F:")
+          !  stdout.put(F)
+             res = res + fac*F.trace_of_product(D)
+             sum = sum + fac*det
+          end
+          end
+          res = res/sum
+          D.destroy
+          F.destroy
+       case default; DIE("not yet implemented, " // .scfdata.kind)
+    end
+  end
+
 end
