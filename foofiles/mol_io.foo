@@ -36,6 +36,7 @@ module MOL_IO
    use PLOTGRID
    use DFTGRID
    use POINTGROUP
+   use SPACEGROUP
    use XTAL
    use MOL_COMMON
    use MOL_XTAL
@@ -94,6 +95,21 @@ contains
       .xtal.destroy
       .xtal.create
       .xtal.read(.in)
+      if ( .atom.created) .make_partition_factors
+   end
+
+   make_partition_factors [leaky]
+   ! Perform a reduction in the crystal symmetry due to special geometrty 
+   ! of the molecule, to get the partition factor data
+      MAT, PTR :: g
+      ENSURE( .atom.created, "no atom_list")
+      g.create(3,.n_atom)
+      .get_crystal_geometry(g)
+      .xtal%spacegroup.make_unique_symops(g)
+      .partition_factors.destroy
+      .partition_factors.create(.n_atom)
+      .xtal%spacegroup.get_partition_factors(.partition_factors,g,.full_cell_geometry)
+      g.destroy
    end
 
    read_pointgroup [leaky]
@@ -123,15 +139,14 @@ contains
       .set_atom_info
    end
   
-  read_partition_data [leaky]
-  ! Read the molecule partitioning data.
+  read_partition_factors [leaky]
+  ! Read the molecule partition factors for structure factor calculations.
     STR :: word
     INT :: n
-    DIE_IF( .atom.destroyed, "must have atoms defined first")
+    ENSURE( .atom.created, "must have atoms defined first")
     .partition_factors.destroy
     .partition_factors.create( .n_atom )
     .partition_factors = ONE
-    .in.read( .partition_model )
     do
       .in.read(word)
       word.to_lower_case
@@ -217,7 +232,7 @@ contains
    end
 
    read_g94_checkpoint_file [leaky]
-   ! Read a g94 checkpoint file into TONTO
+   ! Read a g94 checkpoint file (after fchk conversion to ASCII) into TONTO
       STR :: name
       INPUT, PTR :: chkfile
       IVEC, PTR :: shell_l, nps, shell_to_atom, e_atom
@@ -275,7 +290,6 @@ contains
       tmp_sta.create( .n_shell); tmp_pe.create( .n_prim)
       tmp_cc.create( .n_prim)
       nps.create( .n_shell); shell_to_atom.create( .n_shell)
-      pe.create( .n_prim); cc.create( .n_prim)
       extra_cc.create( .n_prim)
       chkfile.read( tmp_shells)
       chkfile.look_for("Number of primitives per shell")
@@ -289,7 +303,7 @@ contains
       e_atom.create( .n_atom); e_atom.zero
       prims = .n_prim
       if (any( tmp_shells == (-1) )) then
-        do a = 1, .n_prim
+        do a = 1, .n_shell
            if (tmp_shells(a) == (-1)) then
               e_atom(tmp_sta(a)) = e_atom(tmp_sta(a)) + 1
               prims = prims + tmp_nps(a)
@@ -297,7 +311,7 @@ contains
         end
         chkfile.look_for("P(S=P)"); chkfile.read_line
         chkfile.read( extra_cc)
-       end
+      end
       s = .n_shell + sum(e_atom)
       shell_l.create(s); nps.create(s)
       pe.create( prims); cc.create( prims)
@@ -310,17 +324,17 @@ contains
            shell_l(a) = 0
            nps(a) = tmp_nps(c)
            shell_to_atom(a) = tmp_sta(c)
-           pe(m1:m1+tmp_nps(c)) = tmp_pe(m2:m2+tmp_nps(c))
-           cc(m1:m1+tmp_nps(c)) = tmp_cc(m2:m2+tmp_nps(c))
+           pe(m1:m1+tmp_nps(c)-1) = tmp_pe(m2:m2+tmp_nps(c)-1)
+           cc(m1:m1+tmp_nps(c)-1) = tmp_cc(m2:m2+tmp_nps(c)-1)
            a = a+1; m1=m1+tmp_nps(c)
            shell_l(a) = 1
            nps(a) = tmp_nps(c)
            shell_to_atom(a) = tmp_sta(c)
-           pe(m1:m1+tmp_nps(c)) = tmp_pe(m2:m2+tmp_nps(c))
-           cc(m1:m1+tmp_nps(c)) = extra_cc(m2:m2+tmp_nps(c))
+           pe(m1:m1+tmp_nps(c)-1) = tmp_pe(m2:m2+tmp_nps(c)-1)
+           cc(m1:m1+tmp_nps(c)-1) = extra_cc(m2:m2+tmp_nps(c)-1)
         else
-           pe(m1:m1+tmp_nps(c)) = tmp_pe(m2:m2+tmp_nps(c))    
-           cc(m1:m1+tmp_nps(c)) = tmp_cc(m2:m2+tmp_nps(c))
+           pe(m1:m1+tmp_nps(c)-1) = tmp_pe(m2:m2+tmp_nps(c)-1)    
+           cc(m1:m1+tmp_nps(c)-1) = tmp_cc(m2:m2+tmp_nps(c)-1)
            shell_l(a) = tmp_shells(c)
            nps(a) = tmp_nps(c)
            shell_to_atom(a) = tmp_sta(c) 
@@ -573,31 +587,91 @@ contains
    put
    ! Put all the available molecule information on file "out"
       .out.flush
-      .out.text("Molecule output:")
+      .out.text("Molecule information:")
+      .out.flush
       .out.show("Name                   =",.name)
-      .out.show("Chemical Formula       =",trim(.chemical_formula))
       .out.show("Charge                 =",.charge)
       .out.show("Multiplicity           =",.mult)
       .out.show("Applied E Field        =",.E_field(1),.E_field(2),.E_field(3))
       .out.show("Applied B Field        =",.B_field(1),.B_field(2),.B_field(3))
       .out.show("B field Gauge origin   =",.gauge_origin)
+      if (.atom.created)        .put_atoms
+      if (.pointgroup.created)  .put_pointgroup
+      if (.xtal.created)        .put_xtal
+      if (.grid.created)        .put_grid
+      if (.dftgrid.created)     .put_dftgrid
+   end
+
+   put_atoms
+   ! Output the atom basis set information
+      ENSURE( .atom.created,"no atom list")
+      .out.flush
+      .out.text("Molecule atom information:")
+      .out.flush
+      .out.show("Chemical Formula       =",trim(.chemical_formula))
       .out.show("No of atoms            =",.n_atom)
       .out.show("No of electrons        =",.n_e)
       .out.show("No of alpha electrons  =",.n_a)
       .out.show("No of beta  electrons  =",.n_b)
+      .put_atom_coordinates
+      if (.atom.basis_resolved) .put_basis
+      .put_thermal_tensors
+   end
+
+   put_atom_coordinates
+   ! Output the atom basis set information
+      INT :: i,n_dbl,temp1,temp2
+      BIN :: basis_exists
+      ENSURE( .atom.created,"no atom list")
+      .out.flush
+      .out.text("Molecule atom coordinate information:")
+      .out.flush
+      basis_exists = .atom.basis_all_labeled
+      n_dbl = 3
+      if (basis_exists) n_dbl = 4
+      temp1 = .out%dbl_width
+      temp2 = (80-3*.out%int_width)/n_dbl
+      .out.set_dbl_width(temp2)
+      .out.dash(int_fields=3,dbl_fields=n_dbl)
+      .out.put("#",int_width=TRUE)
+      .out.put("ID",int_width=TRUE)
+      .out.put("Z",int_width=TRUE)
+      .out.put("x")
+      .out.put("y")
+      .out.put("z")
+      if (basis_exists) .out.put("Basis")
+      .out.flush
+      .out.dash(int_fields=3,dbl_fields=n_dbl)
+      do i = 1,.n_atom
+         .out.put(i)
+         .out.put(.atom(i)%label,int_width=TRUE)
+         .out.put(.atom(i)%atomic_number)
+         .out.put(.atom(i)%pos(1))
+         .out.put(.atom(i)%pos(2))
+         .out.put(.atom(i)%pos(3))
+         if (basis_exists) .out.put(.atom(i)%basis%label)
+         .out.flush
+      end 
+      .out.dash(int_fields=3,dbl_fields=n_dbl)
+      .out.set_dbl_width(temp1)
+      .atom.put_bond_length_table(.out)
+      .atom.put_bond_angle_table(.out)
+      .atom.put_torsion_angle_table(.out)
+   end 
+
+   put_basis
+   ! Output the molecule basis set information
+      .out.flush
+      .out.text("Molecule atom basis set information:")
+      .out.flush
       .out.show("No. of basis sets      =",.n_basis)
       .out.show("No. of shells          =",.n_shell)
       .out.show("No. of shell pairs     =",.n_shell_pairs)
       .out.show("No. of shell quartets  =",.n_shell_quartets)
       .out.show("No. of basis functions =",.n_bf)
       .out.show("No. of primitives      =",.n_prim)
-      if (.atom.created)        .put_atoms
-      if (.atom.basis_resolved) .put_basis
-      if (.pointgroup.created)  .put_pointgroup
-      if (.xtal.created)        .put_xtal
-      if (.grid.created)        .put_grid
-      if (.dftgrid.created)     .put_dftgrid
-   end
+      .basis.put(.out)
+   end 
 
    put_pointgroup
    ! Output the current pointgroup
@@ -673,9 +747,48 @@ contains
 
    put_xtal
    ! Output the current xtal
-      .put_thermal_tensors
-      if (.xtal.F_calc_exists AND F_exp_exists_(self%xtal)) .xtal.update_gof_parameters
+      if (.xtal.F_calc_exists AND F_exp_exists_(self%xtal)) &
+         .xtal.update_gof_parameters
       .xtal.put(.out)
+      if ( .partition_factors.created) .put_partition_factors 
+   end
+
+   put_partition_factors
+   ! Output the current xtal
+      INT :: n,i,pf,nn
+      STR :: symbol
+      .out.flush
+      .out.text("Molecule repetition factors and equivalent positions for each atom:")
+      .out.flush
+      nn = size(.full_cell_geometry,2)
+      .out.show("No. of inputted  atoms = ",.n_atom)
+      .out.show("No. of generated atoms = ",nn)
+      .out.flush
+      .out.dash(int_fields=2,dbl_fields=3)
+      .out.put("Atom",int_width=TRUE)
+      .out.put("Factor",int_width=TRUE)
+      .out.put("x")
+      .out.put("y")
+      .out.put("z",flush=1)
+      .out.dash(int_fields=2,dbl_fields=3)
+      nn = 0
+      do n = 1,.n_atom
+         symbol = .atom(n).chemical_symbol.trim // " (" // n.to_str.trim // ")"
+         .out.put(symbol,int_width=TRUE)
+         pf = .partition_factors(n)
+         .out.put(pf)
+         do i = 1, .xtal%spacegroup%n_seitz/pf
+            nn = nn+1
+            if (i>1) then
+            .out.tab(int_fields=2)
+            end
+            .out.put(.full_cell_geometry(1,nn))
+            .out.put(.full_cell_geometry(2,nn))
+            .out.put(.full_cell_geometry(3,nn))
+            .out.flush
+         end
+      end
+      .out.dash(int_fields=2,dbl_fields=3)
    end
 
    put_molecular_orbitals
@@ -728,53 +841,6 @@ contains
         .out.put( .fock_matrix)
       end
    end
-
-   put_atoms
-   ! Output the atom basis set information
-      INT :: i,n_dbl,temp1,temp2
-      BIN :: basis_exists
-      ENSURE( .atom.created,"no atom list")
-      .out.flush
-      .out.text("Atoms:")
-      .out.flush
-      basis_exists = .atom.basis_all_labeled
-      n_dbl = 3
-      if (basis_exists) n_dbl = 4
-      temp1 = .out%dbl_width
-      temp2 = (80-3*.out%int_width)/n_dbl
-      .out.set_dbl_width(temp2)
-      .out.dash(int_fields=3,dbl_fields=n_dbl)
-      .out.put("#",int_width=TRUE)
-      .out.put("ID",int_width=TRUE)
-      .out.put("Z",int_width=TRUE)
-      .out.put("x")
-      .out.put("y")
-      .out.put("z")
-      if (basis_exists) .out.put("Basis")
-      .out.flush
-      .out.dash(int_fields=3,dbl_fields=n_dbl)
-      do i = 1,.n_atom
-         .out.put(i)
-         .out.put(.atom(i)%label,int_width=TRUE)
-         .out.put(.atom(i)%atomic_number)
-         .out.put(.atom(i)%pos(1))
-         .out.put(.atom(i)%pos(2))
-         .out.put(.atom(i)%pos(3))
-         if (basis_exists) .out.put(.atom(i)%basis%label)
-         .out.flush
-      end 
-      .out.dash(int_fields=3,dbl_fields=n_dbl)
-      .out.set_dbl_width(temp1)
-      .atom.put_bond_length_table(.out)
-      .atom.put_bond_angle_table(.out)
-      .atom.put_torsion_angle_table(.out)
-      .out.flush
-   end 
-
-   put_basis
-   ! Output the molecule basis set information
-      .basis.put(.out)
-   end 
 
    put_PND_sf
    ! Output the magnetic structure factors
@@ -1163,9 +1229,9 @@ contains
     out3.flush
     out3.show("MOL:  ",trim(.name))
     out3.put_text("COORD:")
-    out3.put(.xtal%spacegroup%position(1))
-    out3.put(.xtal%spacegroup%position(2))
-    out3.put(.xtal%spacegroup%position(3))
+    out3.put(ZERO)
+    out3.put(ZERO)
+    out3.put(ZERO)
     out3.put_text(" none",flush=1)
     out3.show("RMAT: ",1)
     out3.put(.xtal%unitcell%rotation_matrix)
