@@ -1,6 +1,7 @@
 #!/usr/bin/perl
 #*******************************************************************************
-# This script compares two Tonto output files.
+# This script compares two Tonto output files.  It exits with 0 exit status if
+# they are equal.
 # It ignores predefined differences, such as date/time, version number, and
 # platform identifier.
 #
@@ -37,8 +38,8 @@ push @skip, '^\s*Maximum memory blocks used =';
 push @skip, '^\s*Call stack level           =';
 push @skip, '^\s*Maximum call stack depth   =';
 
-open(FILE1,$filenamea);
-open(FILE2,$filenameb);
+open(FILE1,"<",$filenamea) || die "\nError opening $filenamea:\n$!";
+open(FILE2,"<",$filenameb) || die "\nError opening $filenameb:\n$!";
 
 my $equal = &compare; # do the comparison
 
@@ -51,7 +52,7 @@ exit (! $equal);
 
 sub compare {
 # do the comparison, by looping through both files at the same time.  Not
-# necessarily at the same rate.
+# necessarily at the same rate.  Returns 1 if they are the same.
    PAIR_LINE_LOOP: while (1) {             # Loop over paurs of lines ...
 
       my $line1 = <FILE1>;
