@@ -22,8 +22,8 @@ my $VENDOR = '';                      # Name of the compiler vendor.
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f';                    # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
-my $COMPILER_VENDOR = '';             # e.g. LAHEY
-my $PLATFORM = '';                    # This is the compiler vendor and operating system
+my $PLATFORM_ID = '';                 # e.g. LAHEY
+my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -121,9 +121,9 @@ if ($FC ne '') {
   if ($VENDOR ne '') {&print_result($VENDOR)}
   else {&print_result('cannot determine');}
 
-  $COMPILER_VENDOR = "${VENDOR}-${FC}-on-${OS}";
-  $PLATFORM = "${SRCDIR}/platforms/${COMPILER_VENDOR}";
-  print STDERR "Options for your compiler are in $PLATFORM\n";
+  $PLATFORM_ID = "${VENDOR}-${FC}-on-${OS}";
+  $PLATFORM_INFO_FILE = "${SRCDIR}/platforms/${PLATFORM_ID}";
+  print STDERR "Options for your compiler are in $PLATFORM_INFO_FILE\n";
   &check_siteconfig;
 } else {
   die "Cannot find a Fortran compiler on your system.";
@@ -256,12 +256,12 @@ sub get_vendor {
 
 ################################################################################
 sub check_siteconfig {
-  if (! -f $PLATFORM) {
+  if (! -f $PLATFORM_INFO_FILE) {
     print STDERR "\n";
-    print STDERR "File ${PLATFORM} created from template.\n";
-    print STDERR "Please edit ${PLATFORM}.\n";
+    print STDERR "File ${PLATFORM_INFO_FILE} created from template.\n";
+    print STDERR "Please edit ${PLATFORM_INFO_FILE}.\n";
     open(SCt,"${SRCDIR}/platforms/template");
-    open(SC,"> $PLATFORM");
+    open(SC,"> $PLATFORM_INFO_FILE");
     while(<SCt>) {
       s/^(FC.*?=)(.*)/$1 $FC/;
       print SC;
@@ -293,8 +293,8 @@ sub do_substitutions_into_Makefile {
     s/\@MAKE\@/$MAKE/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
-    s/\@PLATFORM\@/$PLATFORM/g;
-    s/\@COMPILER_VENDOR\@/$COMPILER_VENDOR/g;
+    s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
+    s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     print OUTFILE;
   }
   close(OUTFILE);
