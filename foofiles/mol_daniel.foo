@@ -556,63 +556,6 @@ contains
 !                            Cluster stuff.
 !*******************************************************************************
 
-  put_cluster_operations
-  ! Outputs a list of the symmetry operations and translations of the molecules
-  ! which are within distance_max of the centre of the molecule.
-  ! Optional input position must be in crystal coordinates.
-    IMAT* :: op_list
-    VEC* :: dist_list
-    INT :: q
-    DBL :: dist_max
-    VEC(3) :: position
-    STR :: word
-
-    ! defaults
-    dist_max  = 5
-    position = (/ZERO,ZERO,ZERO/)
-
-    read_loop : do
-      stdin.read(word)
-      word.to_lower_case
-      select case (word)
-         case("end");                     exit read_loop
-         case("distance");                stdin.read(dist_max)
-         case("position");                stdin.read(position)
-         case("centre");                  stdin.read(position)
-      end
-    end do read_loop
-    position.rotate_by(.crystal.direct_cell_matrix)
-
-    .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
-
-    q=size(op_list,2)
-    if (op_list(1,1) == 0) q=0
-
-    stdout.flush
-    stdout.text("Cluster operations.")
-    stdout.show("No of molecules                = ", q)
-    stdout.show("Cutoff radius of cluster (au)  = ", dist_max)
-    if (q>0) then
-      stdout.put("symop",int_width=TRUE)
-      stdout.put("h",int_width=TRUE)
-      stdout.put("k",int_width=TRUE)
-      stdout.put("l",int_width=TRUE)
-      stdout.put("distance (au)")
-      stdout.flush
-      do q=1,size(dist_list)
-        if (op_list(1,q)==0) exit
-        stdout.put(op_list(1,q))
-        stdout.put(op_list(2,q))
-        stdout.put(op_list(3,q))
-        stdout.put(op_list(4,q))
-        stdout.put(dist_list(q))
-        stdout.flush
-      end
-    end
-    op_list.destroy
-    dist_list.destroy
-  end
-
   put_cluster_input
   ! Outputs the input data for a cluster of molecules around the centre of the
   ! molecule.
@@ -622,9 +565,9 @@ contains
     IMAT* :: op_list
     VEC* :: dist_list
     VEC(3) :: pos
-    STR :: word
+    STR :: word,thermal_axis,thermal_units,axis,units
     MAT3* :: therm1
-    MAT(3,3) :: therm
+    MAT(3,3) :: therm,d
     MAT* :: pos1,pos2
     VEC(3) :: position
     INT :: s,h,k,l,n,q
@@ -639,44 +582,51 @@ contains
     dist_max  = 5
     position = (/ZERO,ZERO,ZERO/)
     put_thermal = FALSE
+    thermal_units = "bohr^2"
+    axis = "crystal"
+    units = "bohr"
 
-    read_loop : do
+    do
       stdin.read(word)
       word.to_lower_case
       select case (word)
-         case("end");                     exit read_loop
-         case("put_thermal_tensors");     stdin.read(put_thermal)
-         case("distance");                stdin.read(dist_max)
-         case("position");                stdin.read(position)
-         case("centre");                  stdin.read(position)
+         case("end");                      exit
+         case("put_thermal_tensors=");     stdin.read(put_thermal)
+         case("distance=");                stdin.read(dist_max)
+         case("position=");                stdin.read(position)
+         case("centre=");                  stdin.read(position)
+         case("axis=");                    stdin.read(axis)
+         case("thermal_units=");           stdin.read(thermal_units)
+         case("units=");                   stdin.read(units)
          case default; DIE("unknown keyword : " // trim(word))
       end
-    end do read_loop
+    end
     position.rotate_by(.crystal.direct_cell_matrix)
 
     .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
-    dist_list.destroy
 
     q=size(op_list,2)
     if (op_list(1,1) == 0) q=0
 
     stdout.flush
     stdout.text("Cluster input.")
-    stdout.show("No of molecules                = ", q)
-    stdout.show("Cutoff radius of cluster (au)  = ", dist_max)
+    stdout.show("No of molecules                   = ", q)
+    stdout.show("Cutoff radius of cluster (au)     = ", dist_max)
+    stdout.show("Centre of cluster (cartesians au) = ", position)
     if (put_thermal) then
-    stdout.show("Thermal tensor axis system     = ", "cartesian")
-    stdout.show("Thermal tensor units           = ", "bohr^2")
+    stdout.show("Thermal tensor axis system        = ", "crystal")
     end
+    stdout.flush
 
     if (q>0) then
       stdout.put_text("atoms")
       stdout.flush
-      stdout.put_text('data_order= label "axis_system crystal" pos basis_label')
-      if (put_thermal) &
-      stdout.put_text(' thermal_tensor ')
-      stdout.text(' end')
-      stdout.text("loop")
+      stdout.put_text("data_order= { label ")
+      if (axis/="cartesian") stdout.put_text('"axis_system ' // trim(axis) // '" ')
+      stdout.put_text("pos basis_label")
+      if (put_thermal) stdout.put_text(' thermal_tensor ')
+      stdout.text(" }")
+      stdout.text("{")
 
       pos1.create(3,.n_atom)
       pos2.create(3,.n_atom)
@@ -688,6 +638,7 @@ contains
         therm1(:,:,n) = .atom(n).thermal_tensor
       end
 
+      d = .crystal.direct_cell_matrix
       do q=1,size(dist_list)
         s = op_list(1,q)
         if (s==0) exit
@@ -696,31 +647,40 @@ contains
         l = op_list(4,q)
         pos2 = pos1
         .crystal.transform_geometry(pos2,s)
-        stdout.put_text("! symop = " // trim(s.to_str))
-        stdout.put_text(", h k l = ")
-        stdout.text(trim(h.to_str) // " " // trim(k.to_str) // " " // trim(l.to_str))
+        stdout.put_text("! seitz op = " // trim(s.to_str) // ", ")
+        stdout.put_text(achar(91) // "h k l" // achar(93) // " = ")
+        stdout.put_text(achar(91) // trim(h.to_str) // " ")
+        stdout.put_text(trim(k.to_str) // " " // trim(l.to_str) // achar(93))
+        stdout.put_text(", distance from centre is ")
+        stdout.text(trim(dist_list(q).to_str('(f10.5)')) // " au.")
         do n = 1, .n_atom
           therm = therm1(:,:,n)
           therm.change_basis(.crystal.spacegroup.seitz(1:3,1:3,s))
           pos = pos2(:,n) + (/h,k,l/)
           stdout.put_text(trim(.atom(n).label),int_width=TRUE)
+          if (axis=="cartesian") pos = matmul(d,pos)
+          if (units/="bohr") pos.convert_to(units)
           stdout.put(pos(1))
           stdout.put(pos(2))
           stdout.put(pos(3))
+          if (units/="bohr") stdout.put_text(" " // trim(units))
           stdout.put_text(" " // trim(.atom(n).basis.label))
           if (put_thermal) then
+            if (thermal_units/="bohr^2") therm.convert_to(thermal_units)
             stdout.put(therm(1,1))
             stdout.put(therm(2,2))
             stdout.put(therm(3,3))
             stdout.put(therm(1,2))
             stdout.put(therm(1,3))
             stdout.put(therm(2,3))
+            if (thermal_units/="bohr^2") stdout.put_text(" " // trim(thermal_units))
           end
           stdout.flush
         end
       end
-      stdout.text("end end",flush=2)
+      stdout.text("}",flush=2)
 
+      dist_list.destroy
       therm1.destroy
       pos2.destroy
       pos1.destroy
@@ -745,6 +705,7 @@ contains
     INT :: s,h,k,l,n,q
     DBL :: dist_max
     MOL* :: mol
+    BIN :: have_ops
 
     ENSURE(.crystal.created, "no crystal data")
     ENSURE(.atom.created, "no atom data")
@@ -752,6 +713,7 @@ contains
     dist_max  = 5
     position = (/ZERO,ZERO,ZERO/)
 
+    have_ops=FALSE
     read_loop : do
       stdin.read(word)
       word.to_lower_case
@@ -760,13 +722,20 @@ contains
          case("distance=");                stdin.read(dist_max)
          case("position=");                stdin.read(position)
          case("centre=");                  stdin.read(position)
+!         case("operations=")
+!           have_ops=TRUE
+!           n = stdin.list_length
+!           op_list.create(4,n)
+!           stdin.read(op_list,order="by_column")
          case default; DIE("unknown keyword : " // trim(word))
       end
     end do read_loop
     position.rotate_by(.crystal.direct_cell_matrix)
 
-    .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
-    dist_list.destroy
+    if (NOT have_ops) then
+      .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
+      dist_list.destroy
+    end
 
     .save
     .crystal.create
