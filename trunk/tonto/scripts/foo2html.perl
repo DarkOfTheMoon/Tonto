@@ -13,37 +13,32 @@ $ExitValue = 0;
 ## Define the .foo file, long and short documentation files
 ## -----------------------------------------------------------------------------
 
-@ARGV==1             or die "Must supply one file name without .foo extension,";
-$ARGV[0] !~ /\.foo$/ or die "Must supply file name without .foo extension,";
+@ARGV==3 or die "Must supply 3 arguments; foo filename, and long and short output html filenames.";
+$filename = $ARGV[0];
+$filename =~ s/\.foo//g;
 
-$foofile = $ARGV[0] . '.foo';        # This is the .foo file to work on
+$foofile = $ARGV[0];                 # This is the .foo file to work on
+$long    = $ARGV[1];                 # long routine name
+$short   = $ARGV[2];                 # short routine name
 
 open(FOOFILE,$foofile) or die "$FOOFILE does not exist,";
-
-$long = 'long';                      # long routine name
-system("/bin/rm -f $long");
-
 open(LONG,">".$long);
+open(SHORT,">".$short);
 
 print LONG '<html>';
 print LONG "<head>";
 print LONG "  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=iso-8859-1\">";
 print LONG "  <META name=\"robots\" content=\"noindex, nofollow\">";
-print LONG "  <TITLE>Documentation for $ARGV[0]</TITLE>";
+print LONG "  <TITLE>Documentation for $filename</TITLE>";
 print LONG "</head>";
 print LONG "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=2>";
 print LONG '<pre>';
-
-$short = 'short';
-system("/bin/rm -f $short");
-
-open(SHORT,">".$short);              # short routine name
 
 print SHORT '<html>';
 print SHORT "<head>";
 print SHORT "  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=iso-8859-1\">";
 print SHORT "  <META name=\"robots\" content=\"noindex, nofollow\">";
-print SHORT "  <TITLE>Documentation for $ARGV[0]</TITLE>";
+print SHORT "  <TITLE>Documentation for $filename</TITLE>";
 print SHORT "</head>";
 print SHORT "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=2>";
 print SHORT '<pre>';
@@ -735,15 +730,9 @@ line: while (<FOOFILE>) {
 print SHORT '</pre>';
 print SHORT '</body>';
 print SHORT '</html>';
-
-$name = lc($long_module_name);
-system("mv -f short ${name}_short.html");
-
 print LONG '</pre>';
 print LONG '</body>';
 print LONG '</html>';
-
-system("mv -f long ${name}.html");
 
 exit $ExitValue;
 
