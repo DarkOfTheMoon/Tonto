@@ -1,0 +1,717 @@
+!------------------------------------------------------------------------------
+!
+! QUADRATURE:
+!
+! For integrating one dimensional functions, either by adaptive trapezoid or
+! adaptive Simpsons rules, or by using Gauss quadrature --- i.e. getting
+! abscissas and weights based on orthogonal polynomial theory. The Gauss
+! quadratures are based on the Numerical Recipes, pp. 144-149.
+!
+! The following Gauss quadratures are available, with weight function W(x):
+! . Gauss-Legendre:  W(x) = 1,                     -1 < x < 1
+! . Guass-Chebyshev: W(x) = (1-x^2)^{-1/2},        -1 < x < 1
+! . Guass-Laguerre:  W(x) = x^alpha e^-x,           0 < x < infinity
+! . Guass-Hermite:   W(x) = e^-x^2,         -infinity < x < infinity
+! . Guass-Jacobi:    W(x) = (1-x)^alpa(1-x)^beta,  -1 < x < 1
+!
+! Copyright (C) Dylan Jayatilaka, 2004
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!
+!------------------------------------------------------------------------------
+
+module QUADRATURE
+
+   implicit none
+
+!   type QUADRATURE
+!
+!   kind :: STR  DEFAULT(" ")
+!   ! Identifier for the kind of quadrature
+!
+!   n_points :: INT  DEFAULT(0)
+!   ! No of quadrature points
+!
+!   lower_limit :: REAL  DEFAULT(-ONE)
+!   ! Lower integration limit (if appropriate)
+!
+!   upper_limit :: REAL  DEFAULT(ONE)
+!   ! Upper integration limit (if appropriate)
+!
+!   gauss_laguerre_alpha :: REAL  DEFAULT(ONE)
+!   ! Gauss-Laguerre alpha parameters
+!
+!   gauss_jacobi_alpha :: REAL  DEFAULT(ONE)
+!   ! Gauss-Jacobi alpha parameter
+!
+!   gauss_jacobi_beta :: REAL  DEFAULT(ONE)
+!   ! Gauss-Jacobi alpha parameter
+!
+!   root :: VEC{REAL}*  DEFAULT_NULL
+!   ! The quadrature point i.e. root of the appropriate orthogonal polynomial
+!
+!   weight :: VEC{REAL}*  DEFAULT_NULL
+!   ! The quadrature weight
+!
+!   end
+
+contains
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+     object :: QUADRATURE
+     self :: PTR
+   end
+
+   copy(c) ::: leaky
+   ! Copy the contents of "c" to self.
+     c :: QUADRATURE, IN
+     self = c
+     if (c.root.created)   .root.create_copy(c.root)
+     if (c.weight.created) .weight.create_copy(c.weight)
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+      self :: PTR
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.root)
+      nullify(.weight)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      .root.destroy
+      .weight.destroy
+   end
+
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   set_defaults 
+   ! Set up a defaults
+      .kind = " "
+      .accuracy = QUADRATURE_ACCURACY
+      .n_points = 0
+      .lower_limit = -ONE
+      .upper_limit = ONE
+      .gauss_laguerre_alpha = ONE
+      .gauss_jacobi_alpha = ONE
+      .gauss_jacobi_beta = ONE
+      .eps = QUADRATURE_EPS
+      .maxit = QUADRATURE_MAXIT
+      .finalised = FALSE
+   end
+
+!  *************
+!  Input methods
+!  *************
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("}                    ")  ! exit case
+         case ("eps=                 "); .read_eps
+         case ("gauss_laguerre_alpha="); .read_gauss_laguerre_alpha
+         case ("gauss_jacobi_alpha   "); .read_gauss_jacobi_alpha
+         case ("gauss_jacobi_beta    "); .read_gauss_jacobi_beta 
+         case ("junk=                "); .read_junk
+         case ("kind=                "); .read_kind
+         case ("n_points=            "); .read_n_points
+         case ("limits=              "); .read_limits
+         case ("lower_limit=         "); .read_lower_limit
+         case ("maxit=               "); .read_maxit
+         case ("upper_limit=         "); .read_upper_limit
+         case ("put                  "); .put
+         case ("units=               "); .read_units
+         case default;         UNKNOWN(word)
+      end
+   end
+
+   read_units ::: get_from(OBJECT)
+   ! Read a string which describes the units to be used
+   end
+
+   read_junk ::: get_from(OBJECT)
+   ! Read in a junk string, useful for ignoring a field
+   end
+
+   read_accuracy
+   ! Read the accuracy of integration. Used only for adaptive integration methods.
+      stdin.read(.accuracy)
+   end
+
+   read_eps
+   ! Read the relative accuracy needed for the roots. Used only for Gauss
+   ! quadrature methods.
+      stdin.read(.eps)
+   end
+
+   read_maxit
+   ! Read the maximum number of iterations to use when solving for ythe roots.
+   ! Used only for Gauss quadrature methods.
+      stdin.read(.maxit)
+   end
+
+   read_kind
+   ! Read the kind of interpolation to use.
+      stdin.read(.kind)
+      .kind.to_lower_case
+      select case (.kind)
+         case ("adaptive_trapezoid")                
+         case ("adaptive_simpson  ")                
+         case ("gauss_legendre    ")                
+         case ("gauss_chebyshev   ")     
+         case ("gauss_laguerre    ") 
+         case ("gauss_hermite     ")
+         case ("gauss_jacobi      ")
+         case default; UNKNOWN(.kind)
+      end
+   end
+
+   read_n_points
+   ! Read in the number of quadrature points wanted
+      stdin.read(.n_points)
+   end
+
+   read_limits
+   ! Read in the limits of integration
+      limits :: VEC{REAL}(2)
+      stdin.read(limits)
+      .lower_limit = limits(1)
+      .upper_limit = limits(2)
+   end
+
+   read_lower_limit
+   ! Read in the lower limit of integration
+      stdin.read(.lower_limit)
+   end
+
+   read_upper_limit
+   ! Read in the upper limit of integration
+      stdin.read(.upper_limit)
+   end
+   
+   read_gauss_laguerre_alpha
+   ! Read in the Gauss-Laguerre alpha parameter
+      stdin.read(.gauss_laguerre_alpha)
+   end
+
+   read_gauss_jacobi_alpha
+   ! Read in the Gauss-Jacobi alpha parameter
+      stdin.read(.gauss_jacobi_alpha)
+   end
+
+   read_gauss_jacobi_beta
+   ! Read in the Gauss-Jacobi beta parameter
+      stdin.read(.gauss_jacobi_beta)
+   end
+
+   finalise ::: leaky
+   ! Check everything is OK after reading data. Make the roots and weights if we
+   ! need to.
+   ENSURE(.lower_limit<.upper_limits,"wrongly ordered limits")
+      if (.kind(1:5)=="gauss") .set_roots_and_weights 
+      .finalised = TRUE
+   end
+
+!  ***********
+!  Set methods
+!  ***********
+
+
+   set_accuracy(accuracy)
+   ! Set the accuracy of integration. Used only for adaptive integration methods.
+      accuracy :: REAL
+   ENSURE(accuracy>ZERO,"must have +ve accuracy")
+      .accuracy = accuracy
+   end
+
+   set_eps(eps)
+   ! Set the relative accuracy needed for the roots. Used only for Gauss
+   ! quadrature methods.
+      eps :: REAL
+   ENSURE(eps>ZERO,"must have +ve eps")
+      .eps = eps
+   end
+
+   set_maxit(maxit)
+   ! Set the maximum number of iterations to use when solving for the roots.
+   ! Used only for Gauss quadrature methods.
+      maxit :: INT
+   ENSURE(maxit>0,"maxit must be positive")
+      .maxit = maxit
+   end
+
+   set_kind(kind)
+   ! Set the kind of interpolation to use.
+      kind :: STR
+      .kind = kind
+      .kind.to_lower_case
+      select case (.kind)
+         case ("adaptive_trapezoid")                
+         case ("adaptive_simpson  ")                
+         case ("gauss_legendre    ")                
+         case ("gauss_chebyshev   ")     
+         case ("gauss_laguerre    ") 
+         case ("gauss_hermite     ")
+         case ("gauss_jacobi      ")
+         case default; UNKNOWN(.kind)
+      end
+   end
+
+   set_n_points(n_points)
+   ! Set the number of quadrature points wanted
+      n_points :: INT
+   ENSURE(n_points>0,"n_points must be positive")
+      .n_points = n_points
+   end
+
+   set_limits(limits)
+   ! Read in the limits of integration
+      limits :: VEC{REAL}(2)
+      .lower_limit = limits(1)
+      .upper_limit = limits(2)
+   end
+
+   set_lower_limit(limit)
+   ! Set the lower limit of integration
+      limit :: REAL
+      .lower_limit = limit
+   end
+
+   set_upper_limit(limit)
+   ! Set the upper limit of integration
+      limit :: REAL
+      .upper_limit = limit
+   end
+   
+   set_gauss_laguerre_alpha(alpha)
+   ! Set the Gauss-Laguerre alpha parameter
+      alpha :: REAL
+      .gauss_laguerre_alpha = alpha
+   end
+
+   set_gauss_jacobi_alpha(alpha)
+   ! Set the Gauss-Jacobi alpha parameter
+      alpha :: REAL
+      .gauss_jacobi_alpha = alpha
+   end
+
+   set_gauss_jacobi_beta(beta)
+   ! Set the Gauss-Jacobi beta parameter
+      beta :: REAL
+      .gauss_jacobi_beta = beta
+   end
+
+!  ****************************
+!  Quadrature roots and weights
+!  ****************************
+
+   set_roots_and_weights ::: leaky
+   ! Set the Gauss-Legendre roots and weights
+   ENSURE(.n_points>0,"must have positive number of points")
+   ENSURE(.kind(1:5)=="gauss","must be a gauss quadrature")
+      .root.destroy
+      .root.create(.n_points)
+      .weight.destroy
+      .weight.create(.n_points)
+      select case (.kind)
+         case ("gauss_chebyshev   "); .set_gauss_chebyshev_weights
+         case ("gauss_legendre    "); .set_gauss_legendre_weights
+         case ("gauss_laguerre    "); .set_gauss_laguerre_weights
+         case ("gauss_hermite     "); .set_gauss_hermite_weights
+         case ("gauss_jacobi      "); .set_gauss_jacobi_weights
+         case default; UNKNOWN(.kind)
+      end
+   end
+
+   set_gauss_chebyshev_weights ::: private
+   ! Set the Gauss-Legendre roots and weights
+      i :: INT
+      pi_n :: REAL
+      pi_n = PI/.n_points
+      .weight = pi_n
+      do i = 1,.n_points
+         .root(i) = cos(pi_n*(i-HALF))
+      end
+   end
+
+   set_gauss_legendre_weights ::: private
+   ! Set the Gauss-Legendre roots and weights
+      i,j,n,m,it :: INT
+      p1,p2,p3,pp,x1,x2,xl,xm,z,z1 :: REAL
+      x1 = .lower_limit
+      x2 = .upper_limit
+      n = .n_points
+      m = (n+1)/2
+      xm = HALF*(x2+x1)
+      xl = HALF*(x2-x1)
+      do i = 1,m
+         z = cos(PI*(i-QUARTER)/(n+HALF))
+         it = 0
+         do
+            it = it + 1
+            p1 = ONE
+            p2 = ZERO
+            do j = 1,n
+               p3 = p2
+               p2 = p1
+               p1 = ((2*j-1)*z*p2 - (j-1)*p3)/j
+            end
+            pp = n*(z*p1-p2)/(z*z-ONE)
+            z1 = z
+            z = z1 - p1/pp
+            if (abs(z-z1)<.eps) exit
+            DIE_IF(it==.maxit,"too many iterations")
+         end
+         .root(i)     = xm - xl*z
+         .root(n+1-i) = xm + xl*z
+         .weight(i)     = TWO*xl/((ONE-z*z)*pp*pp)
+         .weight(n+1-i) = .weight(i)
+      end
+   end
+
+   set_gauss_laguerre_weights ::: private
+   ! Set the Gauss-Laguerre roots and weights
+      i,j,n,i2,it :: INT
+      a,p1,p2,p3,pp,z,z1,g1,g2 :: REAL
+      n = .n_points
+      a = .gauss_laguerre_alpha
+      do i = 1,n
+         i2 = i-2
+         select case (i)
+            case(1);      z = (ONE+a)*(THREE+0.92*a)/(ONE+2.4*n+1.8*a)
+            case(2);      z = z + (15.0+6.25*a)/(ONE+0.9*a*2.5*n)
+            case default; z = ((ONE+2.55*i2)/(1.9*i2)+1.26*i2*a/(ONE+3.5*i2))*(z-.root(i2))/(ONE+0.3*a)
+         end
+         it = 0
+         do 
+            it = it + 1
+            p1 = ONE
+            p2 = ZERO
+            do j = 1,n
+               p3 = p2
+               p2 = p1
+               p1 = ((2*j-1+a-z)*p2 - (j-1+a)*p3)/j
+            end
+            pp = (n*p1 - (n+a)*p2)/z
+            z1 = z
+            z = z1 - p1/pp
+            if (abs(z-z1)<.eps) exit
+            DIE_IF(it==.maxit,"too many interations")
+         end
+         .root(i) = z
+         g1 = a+n
+         g2 = n
+         .weight(i) = -exp(g1.ln_gamma-g2.ln_gamma)/pp*n*p2
+      end
+   end
+
+   set_gauss_hermite_weights ::: private
+   ! Set the Gauss-Hermite roots and weights
+      i,j,n,m,it :: INT
+      pim4,p1,p2,p3,pp,z,z1 :: REAL
+      pim4 = 0.75112554444649425d0
+      n = .n_points
+      m = (n+1)/2
+      do i = 1,m
+         select case (i)
+            case (1);     z = sqrt(float(2*n+1)) - 1.85575*(2*n+1)**(-.16667)
+            case (2);     z = z - 1.14*n**.426/z
+            case (3);     z = 1.86*z - 0.86*.root(1)
+            case (4);     z = 1.91*z - 0.91*.root(2)
+            case default; z = TWO*z - .root(i-2)
+         end
+         it = 0
+         do 
+            it = it + 1
+            p1 = pim4
+            p2 = ZERO
+            do j = 1,n
+               p3 = p2
+               p2 = p1
+               p1 = z*sqrt(TWO/j)*p2 - sqrt(dble(j-1)/dble(j))*p3
+            end
+            pp = sqrt(TWO*n)*p2
+            z1 = z
+            z = z1 - p1/pp
+            if (abs(z-z1)<.eps) exit
+            DIE_IF(it==.maxit,"too many interations")
+         end
+         .root(i)     =  z
+         .root(n+1-i) = -z
+         .weight(i)     = TWO/(pp*pp)
+         .weight(n+1-i) = .weight(i)
+      end
+   end
+
+   set_gauss_jacobi_weights ::: private
+   ! Set the Gauss-Hermite roots and weights
+      i,j,n,it :: INT
+      al,be,albe,an,bn,a,b,c,r1,r2,r3,p1,p2,p3,pp,z,z1,tmp,g1,g2,g3,g4 :: REAL
+      al = .gauss_jacobi_alpha
+      be = .gauss_jacobi_alpha
+      albe = al + be
+      n = .n_points
+      do i = 1,n
+         if (i==1) then
+            an = al/n
+            be = be/n
+            r1 = (ONE+al)*(2.78/(FOUR+n*n)+0.768*an/n)
+            r2 = ONE + 1.48*an + 0.96*bn + 0.452*an*an + 0.83*an*bn
+            z = ONE - r1/r2
+         else if (i==2) then
+            r1 = (4.1+al)/((ONE+al)*(ONE+0.156*al))
+            r2 = ONE + 0.06*(n-EIGHT)*(ONE+0.12*al)/n
+            r3 = ONE + 0.012*be*(ONE+0.25*abs(al))/n
+            z = z - (ONE-z)*r1*r2*r3
+         else if (i==3) then
+            r1 = (1.67+0.28*al)/(ONE+0.37*al)
+            r2 = ONE + 0.22*(n-EIGHT)/n
+            r3 = ONE + EIGHT*be/((6.28*be)*n*n)
+            z = z - (.root(1)-z)*r1*r2*r3
+         else if (i==(n-1)) then
+            r1 = (ONE+0.235*be)/(0.766+0.119*be)
+            r2 = ONE/(ONE+0.639*(n-FOUR)/(ONE+0.71*(n-FOUR)))
+            r3 = ONE/(ONE+20.0*al/((7.5+al)*n*n))
+            z = z + (z-.root(n-3))*r1*r2*r3
+         else if (i==n) then
+            r1 = (ONE+0.37*be)/(1.67+0.28*be)
+            r2 = ONE/(ONE+0.22*(n-EIGHT)/n)
+            r3 = ONE/(ONE+EIGHT*al/((6.28+al)*n*n))
+            z = z + (z-.root(n-2))*r1*r2*r3
+         else 
+            z = THREE*.root(i-1) - THREE*.root(i-2) + .root(i-3)
+         end
+         it = 0
+         do 
+            it = it + 1
+            tmp = TWO + albe
+            p1 = (al-be+tmp*z)/TWO
+            p2 = ONE
+            do j = 2,n
+               p3 = p2
+               p2 = p1
+               tmp = 2*j + albe
+               a = 2*j*(j+albe)*(tmp-TWO)
+               b = (tmp-ONE)*(al*al-be*be+tmp*(tmp-TWO)*z)
+               c = TWO*(j-1+al)*(j-1+be)*tmp
+               p1 = (b*p2-c*p3)/a
+            end
+            pp = (n*(al-be-tmp*z)*p1 + TWO*(n+al)*(n+be)*p2)/(tmp*(ONE-z*z))
+            z1 = z
+            z = z1 - p1/pp
+            if (abs(z-z1)<.eps) exit
+            DIE_IF(it==.maxit,"too many interations")
+         end
+         .root(i) =  z
+         g1 = al+n
+         g2 = be+n
+         g3 = n+ONE
+         g4 = n+albe+ONE
+         .weight(i) = exp(g1.ln_gamma+g2.ln_gamma-g3.ln_gamma-g4.ln_gamma)*tmp*TWO**albe/(pp*p2)
+      end
+   end
+
+!  ******************
+!  Quadrature methods
+!  ******************
+
+   quadrate(func) result(res)
+   ! Quadrate the function "func".
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      res :: REAL
+   ENSURE(.n_points>0,"no roots")
+   ENSURE(.root.created,"no roots")
+   ENSURE(.weight.created,"no weights")
+      i :: INT
+      f :: VEC{REAL}*
+      f.create(.n_points)
+      do i = 1,.n_points
+         f(i) = func(.root(i))
+      end
+   stdout.text("f")
+   stdout.put(f,"column")
+   stdout.text("root")
+   stdout.put(.root,"column")
+   stdout.text("weight")
+   stdout.put(.weight,"column")
+      res = sum(.weight*f)
+      f.destroy
+   end
+
+   integrate(func) result(res)
+   ! Quadrate the function "func".
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      res :: REAL
+      select case (.kind)
+         case ("adaptive_trapezoid"); res = .adaptive_trapezoid_integrate(func)
+         case ("adaptive_simpson  "); res = .adaptive_simpson_integrate(func)
+         case default; UNKNOWN(.kind)
+      end
+   end
+
+   adaptive_trapezoid_integrate(func,a,b,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using adaptive trapezoidal rule with Simpsons
+   ! approximation acceleration.  If present, "a" and "b" are the limits of
+   ! integrations and "accuracy" is the required accuracy of the integral.
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b :: REAL, optional, IN
+      accuracy :: REAL, optional, IN
+      res :: REAL
+      tol,h,xa,xb,xm,fa,fb,fm,one_trap,two_trap,left,right :: REAL
+      xa = .lower_limit; if (present(a)) xa = a
+      xb = .upper_limit; if (present(b)) xb = b
+      tol = .accuracy;   if (present(accuracy)) tol = accuracy
+      h  = xb-xa
+      xm = (xa+xb)/TWO
+      fa = func(xa)
+      fb = func(xb)
+      fm = func(xm)
+      one_trap = h*(fa+fb)/TWO
+      two_trap = h*(fa+TWO*fm+fb)/FOUR
+      if (abs(one_trap-two_trap)<THREE*tol) then
+         res = (FOUR*two_trap - one_trap)/THREE
+      else
+         left  = .adaptive_trapezoid_integrate(func,xa,xm,tol/TWO)
+         right = .adaptive_trapezoid_integrate(func,xm,xb,tol/TWO)
+         res = left + right
+      end
+   end
+
+   adaptive_simpson_integrate(func,a,b,accuracy) result(res) ::: recursive, private
+   ! Integrate the function "func" using adaptive Simpson rule with
+   ! acceleration.  If present, "a" and "b" are the limits of integration and
+   ! "accuracy" is the required accuracy of the integral.
+      interface
+         func(x) result(res)
+            x :: REAL, IN
+            res :: REAL
+         end
+      end
+      a,b :: REAL, optional, IN
+      accuracy :: REAL, optional, IN
+      res :: REAL
+      tol,h,xa,xb,m1,m2,m3,fa,fb,f1,f2,f3,s1,s2,left,right :: REAL
+      xa = .lower_limit; if (present(a)) xa = a
+      xb = .upper_limit; if (present(b)) xb = b
+      tol = .accuracy;   if (present(accuracy)) tol = accuracy
+      h   = (xb-xa)/TWO
+      m1  = (THREE*xa+xb)/FOUR
+      m2  = (xa+xb)/TWO
+      m3  = (xa+THREE*xb)/FOUR
+      fa = func(xa)
+      fb = func(xb)
+      f1 = func(m1)
+      f2 = func(m2)
+      f3 = func(m3)
+      s1 = h*(fa+FOUR*f2+fb)/THREE
+      s2 = h*(fa+FOUR*f1+TWO*f2+FOUR*f3+fb)/SIX
+      if (abs(s1-s2)<15.0d0*tol) then
+         res = (16.0d0*s2 - s1)/15.0d0
+      else
+         left  = .adaptive_simpson_integrate(func,xa,m2,tol/TWO)
+         right = .adaptive_simpson_integrate(func,m2,xb,tol/TWO)
+         res = left + right
+      end
+   end
+
+!  **************
+!  Output methods
+!  **************
+
+   put
+   ! Put the quadrature object.
+   ENSURE(.finalised,"not finalised")
+      i :: INT
+      stdout.flush
+      stdout.text("QUADRATURE information:")
+      stdout.flush
+      stdout.show("kind                 =",.kind)
+      stdout.show("n_points             =",.n_points)
+      stdout.show("lower_limit          =",.lower_limit)
+      stdout.show("upper_limit          =",.upper_limit)
+      if (.kind=="gauss_laguerre") &
+      stdout.show("gauss_laguerre_alpha =",.gauss_laguerre_alpha)
+      if (.kind=="gauss_jacobi") then
+      stdout.show("gauss_jacobi_alpha   =",.gauss_jacobi_alpha)
+      stdout.show("gauss_jacobi_beta    =",.gauss_jacobi_beta)
+      end
+      if (.root.created AND .weight.created) then
+         stdout.flush
+         stdout.text("Roots and weights:")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=2)
+         stdout.put("#",int_width=TRUE)
+         stdout.put("Root")
+         stdout.put("Weight")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=2)
+         do i = 1,.n_points
+            stdout.put(i)
+            stdout.put(.root(i))
+            stdout.put(.weight(i))
+            stdout.flush
+         end
+         stdout.dash(int_fields=1,real_fields=2)
+      end
+   end
+
+end
