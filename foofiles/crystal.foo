@@ -435,6 +435,26 @@ contains
       end
    end
 
+   move_to_unit_cell(g)
+   ! Transform the geometry "g" in fractional coordinates into the
+   ! (1,1,1) unit cell
+      MAT :: g
+      INT :: n,n_atom
+      VEC(3) :: centre
+      ENSURE(size(g,1)==3, "incorrect size for array g")
+      n_atom = size(g,2)
+      .change_geometry_from_crystal(g)
+      centre =  + 0.001d0               ! geometrical centre of the fragment.
+      do n = 1, n_atom
+        centre = centre + g(:,n)
+      end
+      centre = floor(centre / n_atom)
+      do n = 1, n_atom
+        g(:,n) = g(:,n) - centre
+      end
+      .change_geometry_to_crystal(g)
+   end
+
 !  ************
 !  Read methods
 !  ************
@@ -1141,179 +1161,72 @@ contains
 ! Operations on atomvecs in a crystal
 ! ***********************************
 
-  generate_unique_symop_list(list,atomvec)
-  ! Returns a list of which seitz matrices don't generate equivalent molecules.
+  generate_unique_symop_list(list)
+  ! Returns a list of which seitz matrices generate unique molecules.
   ! Usefull when the molecule is on a special position.
     IN :: self
     BINVEC, OUT :: list
-    ATOMVEC, PTR :: atomvec,atomvec_frac,atomvec1,atomvec2
+    MAT, PTR :: pos1,pos2
+    BINVEC, PTR :: matched
     BIN :: same
-    INT :: s1,s2,n_atom,n_seitz
+    INT :: s1,s2,n,q
 
-    n_seitz = .spacegroup.n_seitz
-    ENSURE(size(list) == n_seitz, "symop list not correct size")
-    n_atom=size(atomvec)
-    atomvec_frac.create_copy(atomvec)
-    atomvec_frac.convert_to_crystal(self) ! Put into fractionals
-    atomvec1.create(n_atom)
-    atomvec2.create(n_atom)
+    ENSURE(size(list) == .spacegroup.n_seitz, "symop list not correct size")
+    pos1.create(3,.n_fragment_atoms)
+    pos2.create(3,.n_fragment_atoms)
+    matched.create(.n_fragment_atoms)
 
-    do s1=1,n_seitz
-      atomvec1.copy(atomvec_frac)
-      atomvec1.seitz_multiply( transpose( .spacegroup.seitz(:,:,s1)))
-      atomvec1.convert_from_crystal(self)
-      atomvec1.ensure_in_unitcell(self)
+    do s1=1,.spacegroup.n_seitz
+      pos1 = .fragment_geometry
+      .move_to_unit_cell(pos1)
+      .transform_geometry(pos1,s1)
+      .move_to_unit_cell(pos1)
       same = FALSE
       do s2=1,s1-1
-        atomvec2.copy(atomvec_frac)
-        atomvec2.seitz_multiply( transpose( .spacegroup.seitz(:,:,s2)))
-        atomvec2.convert_from_crystal(self)
-        atomvec2.ensure_in_unitcell(self)
-        same = atomvec1.same_as(atomvec2)
+        pos2 = .fragment_geometry
+        .move_to_unit_cell(pos2)
+        .transform_geometry(pos2,s2)
+        .move_to_unit_cell(pos2)
+        matched = FALSE
+        do n = 1, .n_fragment_atoms
+          do q = 1, .n_fragment_atoms
+            same = pos2(:,n).same_as(pos1(:,q), TOL(3))
+            if (same) then
+              matched(q) = TRUE
+              exit
+            end
+          end
+          if (NOT same) exit   ! atom q doesn't have a match.
+        end
+        same = all(matched)    ! They are the same if all have a match.
         if (same) exit
       end
       list(s1) = NOT same
     end
 
-    atomvec2.nullify_ptr_part;      atomvec2.destroy
-    atomvec1.nullify_ptr_part;      atomvec1.destroy
-    atomvec_frac.nullify_ptr_part;  atomvec_frac.destroy
+    matched.destroy
+    pos2.destroy
+    pos1.destroy
   end
 
-  create_closest_molecule_list(op_list,dist_list,atomvec,distance_max,indices) [leaky]
-  ! Creates a list of the symmetry operations and translations of the molecules
-  ! which are within max_distance of the centre of the molecule.
-    IMAT, PTR :: op_list,temp_imat
-    VEC, PTR :: dist_list,temp_vec
-    DBL, optional :: distance_max
-    IMAT, PTR, optional :: indices
-    ATOMVEC, PTR :: atomvec,atomvec_frac,atomvec1,atomvec2,atomvec3
-    BINVEC, PTR :: unique_symop_list
-    VEC(3) :: centre,origin_shift
-    INT :: s,h,k,l,d_h,d_k,d_l,q,maxnum,n_atom,t1,t2
-    DBL :: distance,max_distance,max_cell_distance,a,b,c,x,c_h,c_k,c_l,d_x,d_y
-
-    unique_symop_list.create( .spacegroup.n_seitz)
-    .generate_unique_symop_list(unique_symop_list,atomvec)
-
-    max_distance = 10d0
-    if (present(distance_max)) max_distance = distance_max
-
-    a = .unit_cell_length(1)
-    b = .unit_cell_length(2)
-    c = .unit_cell_length(3)
-    n_atom = size(atomvec)
-    max_cell_distance = max_distance + a + b + c
-    maxnum = unique_symop_list.n_true * &
-                              (ceiling(max_cell_distance/min(a,b,c)))**3
-
-    atomvec_frac.create_copy(atomvec)                  ! fractional
-    atomvec_frac.rotate(.inverse_cell_matrix)          ! coordinates
-    atomvec1.create(n_atom)
-    atomvec2.create(n_atom)
-    atomvec3.create(n_atom)
-
-    ! Want the origin to be the cell containing the molecule.
-    origin_shift = atomvec.centre_of_atoms
-    origin_shift.rotate( .inverse_cell_matrix)         ! Put in fractionals.
-    origin_shift = origin_shift + TOL(6)               ! Overcome roundoff error.
-    origin_shift = floor( origin_shift )
-    atomvec_frac.translate( -origin_shift )
-    atomvec3.copy(atomvec_frac)
-    atomvec3.rotate( .direct_cell_matrix)              ! Put in cartesians.
-
-    centre = atomvec.centre_of_mass
-    centre.rotate( .inverse_cell_matrix)
-    centre = centre - origin_shift
-    c_h = centre(1); c_k = centre(2); c_l = centre(3)  ! in fractionals
-    centre.rotate( .direct_cell_matrix)
-
-    dist_list.create(maxnum)
-    op_list.create(4,maxnum)
-    if (present(indices)) indices.create(2,maxnum)
-
-    q = 0
-    do s = 1, .spacegroup.n_seitz
-      if (NOT unique_symop_list(s)) cycle
-      atomvec1.copy(atomvec_frac)
-      atomvec1.seitz_multiply( transpose( .spacegroup.seitz(:,:,s)))
-
-      ! h ranges from centre_h - delta_h to centre_h + delta_h
-      d_h = ceiling(max_cell_distance/a)
-      do h = floor(c_h)-d_h,ceiling(c_h)+d_h
-        d_x = abs(c_h - h) * a
-        d_k = ceiling((max_cell_distance-d_x)/b)       ! crude but effective.
-        do k = floor(c_k)-d_k,ceiling(c_k)+d_k
-          d_y = abs(c_k - k) * b
-          d_l = ceiling((max_cell_distance-d_x-d_y)/c)
-          do l = floor(c_l)-d_l,ceiling(c_l)+d_l
-            atomvec2.copy(atomvec1)
-            atomvec2.translate((/dble(h),dble(k),dble(l)/)) ! translate by hkl.
-            atomvec2.rotate(.direct_cell_matrix)            ! Put in cartesians.
-!            atomvec2.get_distance_from(atomvec3,distance,t1,t2)
-            atomvec2.get_distance_from(centre,distance,t1)
-            if (distance < max_distance) then
-              q = q + 1; dist_list(q) = distance
-              op_list(:,q) = (/s,h,k,l/)
-              if (present(indices)) then
-!                indices(:,q) = (/t1,t2/)
-                indices(:,q) = (/t1,1/)
-              end
-            end
-          end
-        end
-      end
-    end
-
-    if (q==0) then ! None within required distance.
-      dist_list.shrink(1);               dist_list = ZERO
-      op_list.shrink(4,1);               op_list = 0
-      if (present(indices)) then
-        indices.shrink(2,1);             indices = 0
-      end
-    else
-      ! Truncate the lists.
-      dist_list.shrink(q)
-      op_list.shrink(4,q)
-      if (present(indices)) indices.shrink(2,q)
-
-      ! Sort by distance.  h and x are temporaries.
-      do k = 1, q
-       do l = k, q
-        if (dist_list(l) < dist_list(k)) then
-          op_list.swap_columns(k,l)
-          dist_list.swap_elements(k,l)
-          if (present(indices)) indices.swap_columns(k,l)
-        end
-       end
-      end
-    end
-
-    atomvec3.nullify_ptr_part;      atomvec3.destroy
-    atomvec2.nullify_ptr_part;      atomvec2.destroy
-    atomvec1.nullify_ptr_part;      atomvec1.destroy
-    atomvec_frac.nullify_ptr_part;  atomvec_frac.destroy
-    unique_symop_list.destroy
-  end
-
-  create_closest_molecule_list(op_list,dist_list,atomvec,position,distance_max,index) [leaky]
+  create_closest_molecule_list(op_list,dist_list,position,distance_max) [leaky]
   ! Creates a list of the symmetry operations and translations of the molecules
   ! which are within max_distance of the centre of the molecule.
   ! If "position" is specified, it is used instead of the centre of the
   ! molecule.
-    IMAT, PTR :: op_list,temp_imat
-    VEC, PTR :: dist_list,temp_vec
+    IMAT, PTR :: op_list
+    VEC, PTR :: dist_list
     VEC, IN :: position
-    IVEC, PTR, optional :: index
     DBL, optional :: distance_max
-    ATOMVEC, PTR :: atomvec,atomvec_frac,atomvec1,atomvec2
+    MAT, PTR :: pos1,pos2,pos3
     BINVEC, PTR :: unique_symop_list
-    VEC(3) :: centre,origin_shift
-    INT :: s,h,k,l,d_h,d_k,d_l,q,maxnum,n_atom,t1
-    DBL :: distance,max_distance,max_cell_distance,a,b,c,x,c_h,c_k,c_l,d_x,d_y
+    VEC(3) :: centre,diff
+    IVEC(3) :: offset
+    INT :: n,s,h,k,l,d_h,d_k,d_l,q,maxnum
+    DBL :: distance,dist,max_distance,max_cell_distance,a,b,c
 
-    unique_symop_list.create( .spacegroup.n_seitz)
-    .generate_unique_symop_list(unique_symop_list,atomvec)
+    unique_symop_list.create(.spacegroup.n_seitz)
+    .generate_unique_symop_list(unique_symop_list)
 
     max_distance = 10d0
     if (present(distance_max)) max_distance = distance_max
@@ -1321,89 +1234,83 @@ contains
     a = .unit_cell_length(1)
     b = .unit_cell_length(2)
     c = .unit_cell_length(3)
-    n_atom = size(atomvec)
     max_cell_distance = max_distance + a + b + c
     maxnum = unique_symop_list.n_true * &
                               (ceiling(max_cell_distance/min(a,b,c)))**3
 
-    atomvec_frac.create_copy(atomvec)                  ! fractional
-    atomvec_frac.rotate(.inverse_cell_matrix)          ! coordinates
-    atomvec1.create(n_atom)
-    atomvec2.create(n_atom)
-
-    origin_shift = atomvec.centre_of_atoms             ! Want the origin
-    origin_shift.rotate( .inverse_cell_matrix)         ! to be the cell
-    origin_shift = floor( origin_shift )               ! containing
-    atomvec_frac.translate( -origin_shift )            ! the molecule.
-
-    centre = position
-    centre.rotate(.inverse_cell_matrix)
-    centre = centre - origin_shift
-    c_h = centre(1); c_k = centre(2); c_l = centre(3)  ! in fractionals
-    centre.rotate(.direct_cell_matrix)
-
     dist_list.create(maxnum)
     op_list.create(4,maxnum)
-    if (present(index)) index.create(maxnum)
+
+    pos1.create(3,.n_fragment_atoms)
+    pos2.create(3,.n_fragment_atoms)
+    pos3.create(3,.n_fragment_atoms)
+    pos1 = .fragment_geometry
+    .move_to_unit_cell(pos1)
+
+    centre = position                        ! Center of the cluster
+    centre.rotate_by(.inverse_cell_matrix)
+    offset = floor(centre+0.001d0)           ! hkl offset of cluster
+    ! We work with the 0,0,0 cell as the center of the cluster, then translate
+    ! by the offset.
+    centre = position - offset
 
     q = 0
     do s = 1, .spacegroup.n_seitz
       if (NOT unique_symop_list(s)) cycle
-      atomvec1.copy(atomvec_frac)
-      atomvec1.seitz_multiply( transpose( .spacegroup.seitz(:,:,s)))
+      pos2 = pos1
+      .transform_geometry(pos2,s)
 
-      ! h ranges from centre_h - delta_h to centre_h + delta_h
       d_h = ceiling(max_cell_distance/a)
-      do h = floor(c_h)-d_h,ceiling(c_h)+d_h
-        d_x = abs(c_h - h) * a
-        d_k = ceiling((max_cell_distance-d_x)/b)       ! crude but effective.
-        do k = floor(c_k)-d_k,ceiling(c_k)+d_k
-          d_y = abs(c_k - k) * b
-          d_l = ceiling((max_cell_distance-d_x-d_y)/c)
-          do l = floor(c_l)-d_l,ceiling(c_l)+d_l
-            atomvec2.copy(atomvec1)
-            atomvec2.translate((/ONE*h,ONE*k,ONE*l/))  ! Translate through lattice
-            atomvec2.rotate(.direct_cell_matrix)       ! Put in cartesians.
-            atomvec2.get_distance_from(position,distance,t1)
+      do h = -d_h,+d_h
+        d_k = ceiling((max_cell_distance-abs(h)*a)/b)
+        do k = -d_k,+d_k
+          d_l = ceiling((max_cell_distance-abs(h)*a-abs(k)*b)/c)
+          do l = -d_l,+d_l
+            do n=1,.n_fragment_atoms
+              pos3(:,n) = pos2(:,n) + (/h,k,l/)      ! Translate through lattice
+            end
+            .change_geometry_from_crystal(pos3)      ! Put in cartesians.
+            diff = pos3(:,1) - centre
+            distance = dot_product(diff,diff)
+            do n=2,.n_fragment_atoms
+              diff = pos3(:,n) - centre
+              dist = dot_product(diff,diff)
+              if (dist<distance) distance=dist
+            end
+            if (distance < TOL(6)) distance = ZERO
+            distance = sqrt(distance)
             if (distance < max_distance) then
               q = q + 1; dist_list(q) = distance
               op_list(:,q) = (/s,h,k,l/)
-              if (present(index)) then
-                index(q) = t1
-              end
             end
           end
         end
       end
     end
 
+    do n=1,q
+      op_list(2:4,n) = op_list(2:4,n) + offset       ! Translate cluster to
+    end                                              ! correct cell.
+
     if (q==0) then ! None within required distance.
       dist_list.shrink(1);               dist_list = ZERO
       op_list.shrink(4,1);               op_list = 0
-      if (present(index)) then
-        index.shrink(1);                 index = 0
-      end
     else
       ! Truncate the lists.
       dist_list.shrink(q)
       op_list.shrink(4,q)
-      if (present(index)) index.shrink(q)
 
-      ! Sort by distance.  h and x are temporaries.
+      ! Sort by distance.
       do k = 1, q
        do l = k, q
         if (dist_list(l) < dist_list(k)) then
           op_list.swap_columns(k,l)
           dist_list.swap_elements(k,l)
-          index.swap_elements(k,l)
         end
        end
       end
     end
 
-    atomvec2.nullify_ptr_part;      atomvec2.destroy
-    atomvec1.nullify_ptr_part;      atomvec1.destroy
-    atomvec_frac.nullify_ptr_part;  atomvec_frac.destroy
     unique_symop_list.destroy
   end
 
@@ -1412,8 +1319,8 @@ contains
 !  *****************************************
 
    make_reduced_group_data(atom) [leaky]
-   ! The reduced group are those unique seitz operators which are needed to generate
-   ! the complete ".unit_cell_geometry" from the atom fragment "atom".
+   ! The reduced group are those unique seitz operators which are needed to
+   ! generate the complete ".unit_cell_geometry" from the atom fragment "atom".
    ! Some of these symmetry operations may only lead to geometries which are
    ! inversions of, or translations of, other operations in the reduced group.
    ! This information is also worked out here, and it can be used to save work
@@ -1434,10 +1341,10 @@ contains
    end
 
    z_factor(atom) result (res)
-   ! The Z crystallographic factor for ".fragment_geometry", defined
-   ! as the ratio of the number of electrons in the unit cell on the
-   ! number of electrons in the fragment. Hence, we require information
-   ! for each "atom" in the fragment.
+   ! The Z crystallographic factor for ".fragment_geometry", defined as the
+   ! ratio of the number of electrons in the unit cell on the number of
+   ! electrons in the fragment. Hence, we require information for each "atom" in
+   ! the fragment.
       ATOMVEC :: atom
       DBL :: res
       INT :: u,n,a,f
