@@ -470,7 +470,7 @@ sub analyse_command_arguments {
          }
          close USDFILE;
       } else {
-         $do_usd = 0;
+      #  $do_usd = 0;
       }
    }
    
@@ -1283,7 +1283,7 @@ sub analyse_foo_line {
          elsif ($newscopeunit eq 'virtual module') { &analyse_new_module_scope($input_line,"virtual module"); }
          elsif ($newscopeunit eq 'program')        { &analyse_new_module_scope($input_line,"program"); }
          elsif ($newscopeunit eq 'interface'
-             && $parentscope  eq 'module')         { &analyse_new_interface_scope($input_line); }
+             && $parentscope  eq 'module')         { &analyse_new_module_interface_scope($input_line); }
          elsif ($newscopeunit eq 'type'  )         { &analyse_new_type_scope($input_line); }
          elsif ($newscopeunit eq 'array type'  )   { &analyse_new_type_scope($input_line); }
          elsif ($newscopeunit eq 'empty-end')      { &analyse_new_end_scope($input_line); }     # Inheritance in here
@@ -1607,12 +1607,12 @@ sub find_new_scoping_unit {
     $oldscopeunit = $scopeunit;
   }
 
-#print "foind scope line------> $_[0]";
-#print "new scope = $newscopeunit";
-#print "    scope = $scopeunit";
-#print "  @ scope = @scope";
-#print "old scope = $oldscopeunit";
-#print "par scope = $parentscope";
+# print "found scope line------> $_[0]";
+# print "new scope = $newscopeunit";
+# print "    scope = $scopeunit";
+# print "  @ scope = @scope";
+# print "old scope = $oldscopeunit";
+# print "par scope = $parentscope";
 }
 
 ################################################################################
@@ -2645,11 +2645,15 @@ sub html_do_new_contains_scope {
 
 ################################################################################
 # The line is a new scoping unit, which is an interface.
-sub analyse_new_interface_scope {
+sub analyse_new_module_interface_scope {
 
   # Change the interface declaration
   $_[0] =~ m/^\s*interface\s*([a-z]\w*)/o;
   $name = $1;
+  if ($#scope<=2) { 
+     $current_rout_name = $name; 
+   # print "set current_rout_name to $current_rout_name";
+  }
 }
 
 ################################################################################
@@ -2816,21 +2820,6 @@ sub analyse_new_end_scope {
 }
 
 ################################################################################
-#Process the new scoping unit, which is a labelled end keyword.
-sub do_new_named_end {
-# if ($oldscopeunit eq 'contains') {
-#   &pop_scope;
-# }
-#  &pop_scope;
-}
-
-################################################################################
-#Process the new scoping unit, which is a labelled end keyword.
-sub end_new_end {
-   if ($scopeunit eq 'contains') { undef %routine; }
-}
-
-################################################################################
 # Add a scoping unit to the scope stack.  Also set $newscopeunitfound,
 # $newscopeunit and $oldscopeunit.
 sub push_scope {
@@ -2855,8 +2844,7 @@ sub pop_scope {
     # The following is needed because an interface in a routine may
     # reset the current_rout_name, which is needed in a lot of places.
 
-    if ($oldscopeunit =~ '(subroutine)|(function)' &&
-        $scopeunit eq 'interface' ) {
+    if ($oldscopeunit =~ '(subroutine)|(function)' && $scopeunit eq 'interface' ) {
        $current_rout_name = pop @rout_name_stack;
        $routine{$current_rout_name}{template} = 0;  
        $current_rout_name = $rout_name_stack[$#rout_name_stack];
@@ -2971,8 +2959,24 @@ sub fortran_do_new_end_scope {
         $fortran_out = ""; #Do not output anything for array types.
   }
 
-  elsif ($oldscopeunit eq 'interface' && $do_usd && ! defined $usd{$current_rout_name}) {
-        $skip_fortran_out = 1; return;
+  elsif ($oldscopeunit eq 'interface') {
+   # print "current_rout_name = $current_rout_name";
+   # print "used              = $usd{$current_rout_name}";
+   # print "scope             = $#scope";
+   # if (defined $#scope) { print "scope defined"; }
+   # print "do_usd            = $do_usd";
+   # if (defined $do_usd) { print "usd defined"; }
+   # print "short_name        = $usd{$routine{$current_rout_name}{short_name}}";
+     if    ($#scope<1 && $do_usd && ! defined $usd{$current_rout_name}) {
+   #    print "HERE";
+        $skip_fortran_out = 1; return; # MOdule interface
+     }
+     elsif ($#scope>=2 && $do_usd && ! defined $usd{$routine{$current_rout_name}{short_name}}) {
+   #    print "HERE2";
+        $skip_fortran_out = 1; return; # Routine interface
+     } else {
+        $fortran_out =~ s/end\s*/end $oldscopeunit/;
+     }
   }
 
   elsif ($fortran_out =~ /end\s*(?:$|!)/) { # not named end
@@ -3096,7 +3100,7 @@ sub fortran_do_new_module_interface_scope {
   # Change the interface declaration
   $fortran_out =~ m/^\s*interface\s*([a-z]\w*)/o;
 
-  $current_rout_name = $1;
+# $current_rout_name = $1;
 
   if ($do_usd && ! defined $usd{$current_rout_name}) {
       $skip_fortran_out = 1; return;
@@ -4990,7 +4994,8 @@ sub analyse_rout_name {
     my ($name,$function,$indent,$args,$result,$result_arg,$attr);
 
     # This checks if the current routine is an interface within an unused/used routine
-    my ($in_unused) = $#scope>2 && $do_usd && ! defined $usd{$current_rout_name};
+    my ($within_unused) = $#scope>2 && $do_usd && 
+            ! defined $usd{$routine{$current_rout_name}{short_name}};
 
     # Check for common typo
     if ($X =~ / :: /) {
@@ -5028,12 +5033,13 @@ sub analyse_rout_name {
     }
 
     # If this is a template or unused routine, do the minimum and get out.
-    if ($attr =~ /^template/ || ($do_usd && ! defined $usd{$short_name} && $#scope<=2) || $in_unused) {
+    my $is_unused = $do_usd && ! defined $usd{$short_name} && $#scope<=2;
+    if ($attr =~ /^template/ || $is_unused || $within_unused) {
        $routine{$short_name}{template} = 1;  
        $routine{$short_name}{short_name} = $short_name;
        $routine{$short_name}{real_name}  = $short_name;
        push @rout_name_stack, $short_name;
-       if ($do_usd && ! defined $usd{$short_name}) { print "skipped $short_name"; }
+       if ($is_unused && $pass==2) { print "skipped $short_name"; }
        return;
     }
 
