@@ -4,7 +4,8 @@
 # It ignores predefined differences, such as date/time, version number, and
 # platform identifier.
 #
-# (c) Daniel Grimwood, University of Western Australia, 2004.
+# (c) Daniel Grimwood, The University of Western Australia, 2004.
+# (c) Dylan Jayatilaka, The University of Western Australia, 2004.
 #
 # $Id$
 # 
@@ -14,50 +15,80 @@ use strict;
 my $filenamea = shift;
 my $filenameb = shift;
 
-open(FILEa,$filenamea);
-open(FILEb,$filenameb);
+my @skip; # array of regular expressions to match lines to ignore.
 
-my $equal = 1;
-while(my $lineb = <FILEb>) {
-  my $linea = <FILEa>;
+# default skip regexp
+push @skip, '^\s*$'; # blank lines.
+push @skip, '^\s*Timer started';
+push @skip, '^\s*Version:';
+push @skip, '^\s*Platform:';
+push @skip, '^\s*Build-date:';
+push @skip, '^\s*Wall-clock time taken';
+push @skip, '^\s*CPU time taken';
+push @skip, '^\s*Warning in routine';
+push @skip, '^\s*Routine call stack:';
+push @skip, '^\s*Call *Routine name *Memory used';
+push @skip, '^    \d+\.   [A-Z.]+:\w+\s+\d+\s*$';
+push @skip, 'Memory usage report';
+push @skip, '^\s*Memory used                =';
+push @skip, '^\s*Maximum memory used        =';
+push @skip, '^\s*Memory blocks used         =';
+push @skip, '^\s*Maximum memory blocks used =';
+push @skip, '^\s*Call stack level           =';
+push @skip, '^\s*Maximum call stack depth   =';
 
-  # if EOF on $filea, then the files are not equal.
-  if (not defined $linea) {$equal = 0; last;}
+open(FILE1,$filenamea);
+open(FILE2,$filenameb);
 
-  # If they are equal, then move onto the next line.
-  if ($linea eq $lineb) {next;}
+my $equal = &compare; # do the comparison
 
-  # Parts of these lines should not be compared.
-  if ($linea =~ m'^\s*Version: ') { $linea = $&}
-  if ($lineb =~ m'^\s*Version: ') { $lineb = $&}
-  if ($linea =~ m'^\s*Platform: ') { $linea = $&}
-  if ($lineb =~ m'^\s*Platform: ') { $lineb = $&}
-  if ($linea =~ m'^\s*Build-date: ') { $linea = $&}
-  if ($lineb =~ m'^\s*Build-date: ') { $lineb = $&}
-  if ($linea =~ m'^\s*Timer started at ') { $linea = $&}
-  if ($lineb =~ m'^\s*Timer started at ') { $lineb = $&}
-  if ($linea =~ m'^\s*Wall-clock time taken for job "(.*)" is ') { $linea = $&}
-  if ($lineb =~ m'^\s*Wall-clock time taken for job "(.*)" is ') { $lineb = $&}
-  if ($linea =~ m'^\s*CPU time taken for job "(.*)" is ') { $linea = $&}
-  if ($lineb =~ m'^\s*CPU time taken for job "(.*)" is ') { $lineb = $&}
-
-  if ($linea ne $lineb) {
-    $equal = 0;
-    last;
-  }
-}
-
-my $linea = <FILEa>;
-# if EOF on $filea, then the files are not equal.
-if (defined $linea) {$equal = 0;}
-
-#if ($equal) {
-#  print "$filenamea and $filenameb are equal\n";
-#} else {
-#  print "$filenamea and $filenameb are not equal\n";
-#}
-
-close(FILEb);
-close(FILEa);
+close(FILE2);
+close(FILE1);
 
 exit (! $equal);
+
+#*******************************************************************************
+
+sub compare {
+# do the comparison, by looping through both files at the same time.  Not
+# necessarily at the same rate.
+   PAIR_LINE_LOOP: while (1) {             # Loop over paurs of lines ...
+
+      my $line1 = <FILE1>;
+      my $line2 = <FILE2>;
+      return (1) if (!$line1 and !$line2); # EOF on both files
+      return (0) if ( $line1 and !$line2); # EOF on FILE2 but not FILE1
+      return (0) if (!$line1 and  $line2); # EOF on FILE1 but not FILE2
+
+      chomp($line1);
+      chomp($line2);
+
+      OK_LINE1: while (1) {
+         foreach my $skip (@skip) {
+            next if $line1 !~ /${skip}/;   # Skip explicitly ignored -skip lines
+            $line1 = <FILE1>;
+            last OK_LINE1 if (!$line1);
+            chomp($line1); next OK_LINE1;
+         }
+         last OK_LINE1;
+      }
+
+      OK_LINE2: while (1) {
+         foreach my $skip (@skip) {
+            next if $line2 !~ /${skip}/;   # Skip explicitly ignored -skip lines
+            $line2 = <FILE2>;
+            last OK_LINE2 if (!$line2);
+            chomp($line2); next OK_LINE2;
+         }
+         last OK_LINE2;
+      }
+
+      return (0) if ( $line1 and !$line2); # EOF on FILE2 but not FILE1
+      return (0) if (!$line1 and  $line2); # EOF on FILE1 but not FILE2
+      return (1) if (!$line1 and !$line2); # EOF on both files
+      $line1 =~ s/\s+/ /g;  # Condense all whitespace
+      $line2 =~ s/\s+/ /g;  # Condense all whitespace
+      return (0) if ( $line1 ne   $line2); # Lines differ, not same
+   }
+}
+
