@@ -61,17 +61,17 @@ $argerr=1 if ($#ARGV+1==0);
 while (@ARGV) {
   $arg=shift;
   for ($arg) {
-    /^-cmp/ && do {$cmp=shift; last; };
-    /^-fc/ && do {$fc=shift; last; };
+    /^-cmp/      && do {$cmp=shift; last; };
+    /^-fc/       && do {$fc=shift; last; };
     /^-provides/ && do {$provides=shift; last; };
     /^-requires/ && do {$requires=shift; last; };
-    /^-mod_ext/ && do {$mod_ext=shift; last; };
+    /^-mod_ext/  && do {$mod_ext=shift; last; };
     warn "Error : unexpected argument $arg\n";
     $argerr=1;
   }
 }
-defined $cmp || do {$argerr=1; warn "Error : -cmp flag not supplied.\n"};
-defined $fc || do {$argerr=1; warn "Error : -fc flag not supplied.\n"};
+defined $cmp      || do {$argerr=1; warn "Error : -cmp flag not supplied.\n"};
+defined $fc       || do {$argerr=1; warn "Error : -fc flag not supplied.\n"};
 defined $provides || do {$argerr=1; warn "Error : -provides flag not supplied.\n"};
 defined $requires || do {$argerr=1; warn "Error : -requires flag not supplied.\n"};
 
@@ -312,7 +312,7 @@ sub ECHO_AND_RUN {
   my ($mycommand, $exit_value);
   $mycommand = join(' ',@_);
   $mycommand =~ s/{/\\{/g; # replace curlies to stop globbing
-  print $mycommand;
+  print "$mycommand\n";
   system($mycommand);
   if ($?==-1) {
     $exit_value = -1;

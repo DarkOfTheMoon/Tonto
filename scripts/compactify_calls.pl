@@ -67,7 +67,7 @@ if (! defined $caller_file) {
     die "No -caller module specified. Stopped";
 }
 
-$caller_file   =~ /^([\w{,}]+)(\.[\w]+)*?\.foo/;
+$caller_file   =~ /^([\w{,}]+)(\.[\w]+)*?\.rcf/;
 $caller_module = '' ;
 if (defined $1) { $caller_module = $1 } 
 if (defined $2) { $caller_module .= $2 } 
@@ -80,12 +80,12 @@ $caller_module = uc($caller_module);
 # Make the list of all foo files. We'll read them next.
 
 my @all_files; # All the foo files
-my %module;    # Same as @allfiles, without .fooending
+my %module;    # Same as @allfiles, without .rcf ending
 
 push(@all_files,$caller_file,@called_files);
  print "@all_files\n";
 
-# Check all end in ".foo" and all exist; read them in.
+# Check all end in ".rcf" and all exist; read them in.
 
 my $foofile;
 my $head_name;
@@ -99,7 +99,7 @@ foreach $foofile (@all_files) {
 
    # get the head and tail of $foofile
 
-   $foofile   =~ /([\w{,}]+)(\.\w+)*?(\.foo)?$/;
+   $foofile   =~ /([\w{,}]+)(\.\w+)*?(\.rcf)?$/;
    $head_name = '' ;
    if (defined $1) { $head_name = $1 } 
    if (defined $2) { $head_name .= $2 } 
@@ -109,13 +109,13 @@ foreach $foofile (@all_files) {
    # does $foofile have a head?
 
    if ($head_name eq "") {
-        die "No head part for .foo file \"$foofile\". Stopped";
+        die "No head part for .rcf file \"$foofile\". Stopped";
    }
 
-   # does $foofile end in .foo ?
+   # does $foofile end in .rcf ?
 
    if ($tail_name eq "") {
-        die "Tail of .foo file \"$foofile\" does not end in .foo. Stopped";
+        die "Tail of .rcf file \"$foofile\" does not end in .rcf. Stopped";
    }
 
    # does .rcf exist? Then open it.

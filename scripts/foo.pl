@@ -102,6 +102,7 @@ my $do_unknown = 1;           # Set TRUE if UNKNOWN construct is made
 my $do_generic = 1;           # Set TRUE if generic interfaces are to be used
 my $do_routine_calls = 0;     # Set TRUE if routine calls are to be stored
 my $do_tidy    = 0;           # Set TRUE if preprocessor will tidy code
+my $do_usd = 0;               # Set TRUE if eliminatinmg unused routines AND the .usd file exists 
 
 ################################################################################
 #                                Scoping units.
@@ -459,12 +460,17 @@ sub analyse_command_arguments {
    }
 
    if ($usdfile ne "") {
+      $do_usd = 1;
       if (open(USDFILE,$usdfile)) {
          my $rout;
          while ($rout = <USDFILE>) {
+            chomp($rout);
             $usd{$rout} = 1;
+            print "keeping $rout";
          }
          close USDFILE;
+      } else {
+         $do_usd = 0;
       }
    }
    
@@ -1181,7 +1187,7 @@ sub report_error {
 ################################################################################
   my $message = $_[0];
   my @tmpstack = @filestack;
-  print STDERR "\nFoo Error :";
+  print STDERR "\nFoo Error:";
   while ($#tmpstack>=0) {
     #my $thishandle = pop @tmpstack;
     my $thishandle = shift @tmpstack;
@@ -1190,11 +1196,7 @@ sub report_error {
     print STDERR "Line $line of file \"$name\".";
   }
   if ($#rout_name_stack>=0) {
-    if (defined $routine{$#rout_name_stack}{function}) {
-      print STDERR "Function \"$rout_name_stack[$#rout_name_stack]\".";
-    } else {
-      print STDERR "Subroutine \"$rout_name_stack[$#rout_name_stack]\".";
-    }
+    print STDERR "Method \"$current_rout_name\".";
   }
   print STDERR "\n$message\n";
   exit 1;
@@ -2102,6 +2104,7 @@ sub fortran_dump_interface {
 
   foreach $rout (keys %overload_count) {
       next if (defined $routine{$rout}{inlined_by_foo});
+      next if ($do_usd && ! defined $usd{$rout});
       $cnt = $overload_count{$rout}-1;
       $pvt = $routine{$rout}{generic_access};
       if ($do_generic) {
@@ -2855,6 +2858,7 @@ sub pop_scope {
     if ($oldscopeunit =~ '(subroutine)|(function)' &&
         $scopeunit eq 'interface' ) {
        $current_rout_name = pop @rout_name_stack;
+       $routine{$current_rout_name}{template} = 0;  
        $current_rout_name = $rout_name_stack[$#rout_name_stack];
     }
 
@@ -2965,6 +2969,10 @@ sub fortran_do_new_end_scope {
 
   elsif ($oldscopeunit eq 'array type') {
         $fortran_out = ""; #Do not output anything for array types.
+  }
+
+  elsif ($oldscopeunit eq 'interface' && $do_usd && ! defined $usd{$current_rout_name}) {
+        $skip_fortran_out = 1; return;
   }
 
   elsif ($fortran_out =~ /end\s*(?:$|!)/) { # not named end
@@ -3082,10 +3090,18 @@ sub html_do_new_routine_interface_scope {
 ################################################################################
 # Process new 'interface' into fortran.
 sub fortran_do_new_module_interface_scope {
+
   my ($name);
 
   # Change the interface declaration
   $fortran_out =~ m/^\s*interface\s*([a-z]\w*)/o;
+
+  $current_rout_name = $1;
+
+  if ($do_usd && ! defined $usd{$current_rout_name}) {
+      $skip_fortran_out = 1; return;
+  }
+
   if ($do_generic) {
      $fortran_out = "   public    $1_\n   interface $1_";
   } else {
@@ -3121,6 +3137,10 @@ sub html_do_module_interface_scope {
 ################################################################################
 # The line is within the scope of an interface within a module.
 sub fortran_do_module_interface_scope {
+
+   if ($do_usd && ! defined $usd{$current_rout_name}) {
+      $skip_fortran_out = 1; return;
+   }
 
    # Get the indent
    $fortran_out =~ '([a-zA-Z]\w*)';
@@ -4272,6 +4292,9 @@ sub module_colon_to_fortran {
      $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
      if ($do_generic) { $X = $pre."call ".$rout."_".$post; } 
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
+     if ($do_routine_calls && $pass==2) {
+          print RCFILE "   $rout_type:$rout";
+     }
   }
 
   while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call, NOT following .
@@ -4301,6 +4324,9 @@ sub module_colon_to_fortran {
      $called_routines{$rout_type}{$rout}{function_call} = 1;
      if ($do_generic) { $X = $pre.$rout.$post; } 
      else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
+     if ($do_routine_calls && $pass==2) {
+          print RCFILE "   $rout_type:$rout";
+     }
   }
 
   return $X;
@@ -4959,9 +4985,12 @@ sub type_of_this {
 
 sub analyse_rout_name {
 
-    my($X) = @_;
+    my ($X) = @_;
 
-    my($name,$function,$indent,$args,$result,$result_arg,$attr);
+    my ($name,$function,$indent,$args,$result,$result_arg,$attr);
+
+    # This checks if the current routine is an interface within an unused/used routine
+    my ($in_unused) = $#scope>2 && $do_usd && ! defined $usd{$current_rout_name};
 
     # Check for common typo
     if ($X =~ / :: /) {
@@ -4986,7 +5015,7 @@ sub analyse_rout_name {
     if (defined $5) { $attr = $5; } 
     else            { $attr = ''; }
 
-    # Save the non-unique $short_name
+    # Save the non-unique $short_name, set $current_rout_name
     my $short_name = $name;
     $current_rout_name = $name;
 
@@ -4998,11 +5027,13 @@ sub analyse_rout_name {
        $result_arg = '';
     }
 
-    # If this is a template, do the minimum and get out.
-    if ($attr =~ /^template/ || defined $usd{$short_name}) {
+    # If this is a template or unused routine, do the minimum and get out.
+    if ($attr =~ /^template/ || ($do_usd && ! defined $usd{$short_name} && $#scope<=2) || $in_unused) {
        $routine{$short_name}{template} = 1;  
        $routine{$short_name}{short_name} = $short_name;
        $routine{$short_name}{real_name}  = $short_name;
+       push @rout_name_stack, $short_name;
+       if ($do_usd && ! defined $usd{$short_name}) { print "skipped $short_name"; }
        return;
     }
 
@@ -5062,9 +5093,10 @@ sub analyse_rout_name {
     $routine{$name}{ensure_statements} = $ensure;
 
     # Add to the routine name stack. Needed for routines within interface blocks
-    # within routine declaration parts.
+    # within routine declaration parts. Set $current_rout_name to the unique $real_name
     $current_rout_name = $name;
     push @rout_name_stack, $name;
+
     $n_define_type = 0;
     @old_define_type = undef;
     @new_define_type = undef;
@@ -5197,7 +5229,7 @@ sub analyse_rout_name {
        $current_type_name = undef;
     } 
 
-    if ($do_routine_calls && $pass==2) {
+    if ($do_routine_calls && $pass==2 && $#scope<=2) {
         print RCFILE "$short_name:";
     }
 
