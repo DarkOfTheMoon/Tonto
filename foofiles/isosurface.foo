@@ -57,10 +57,11 @@ contains
      .copy(s)
    end
 
-   copy(s)
+   copy(s) ::: leaky
    ! Copy self.
      s :: ISOSURFACE, IN
      self = s
+     if (s.iso_values.created) .iso_values.create_copy(s.iso_values)
      if (s.point.created) .point.create_copy(s.point)
      if (s.face.created) .face.create_copy(s.face)
      if (s.point_gradient.created) .point_gradient.create_copy(s.point_gradient)
@@ -68,7 +69,9 @@ contains
      if (s.point_gaussian_curvature.created) .point_gaussian_curvature.create_copy(s.point_gaussian_curvature)
      if (s.hash.created) .hash.create_copy(s.hash)
      if (s.surface_property_values.created) .surface_property_values.create_copy(s.surface_property_values)
+     if (s.surface_iso_values.created) .surface_iso_values.create_copy(s.surface_iso_values)
      if (s.colour.created) .colour.create_copy(s.colour)
+     if (s.interpolator.created) .interpolator.create_copy(s.interpolator)
    end
 
    destroy  ::: leaky
@@ -82,6 +85,7 @@ contains
 
    nullify_ptr_part
    ! Nullify the pointer parts 
+      nullify(.iso_values)
       nullify(.point)
       nullify(.face)
       nullify(.point_gradient)
@@ -89,7 +93,9 @@ contains
       nullify(.point_gaussian_curvature)
       nullify(.hash)
       nullify(.surface_property_values)
+      nullify(.surface_iso_values)
       nullify(.colour)
+      nullify(.interpolator)
       nullify(.atom)
       ! These are for tesselate method (not fully operational)
     ! nullify(.shift)
@@ -101,6 +107,7 @@ contains
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts 
+      .iso_values.destroy
       .point.destroy
       .face.destroy
       .point_gradient.destroy
@@ -108,7 +115,9 @@ contains
       .point_gaussian_curvature.destroy
       .hash.destroy
       .surface_property_values.destroy
+      .surface_iso_values.destroy
       .colour.destroy
+      .interpolator.destroy
       nullify(.atom) ! never destroy this
       ! These are for tesselate method (not fully operational)
     ! .shift.destroy
@@ -116,6 +125,19 @@ contains
     ! .adjoining_edge.destroy
     ! .ok.destroy
     ! .ok_neighbours.destroy
+   end
+
+   destroy_info_arrays ::: leaky
+   ! Destroy the isosurface information arrays
+      .n_pt   = 0
+      .n_face = 0
+      .point.destroy
+      .point_gradient.destroy
+      .point_mean_curvature.destroy
+      .point_gaussian_curvature.destroy
+      .face.destroy
+      .surface_property_values.destroy
+      .surface_iso_values.destroy
    end
 
 !   created result(res)
@@ -140,12 +162,18 @@ contains
       .iso_value = ISOSURFACE_ISO_VALUE
       .n_pt   = 0
       .n_face = 0
+      .area = ZERO
       .volume = ZERO
+      .an_volume = ZERO
       .volume_min = ZERO
       .volume_max = ZERO
       .n_skip = 0
       .level = 0
       .final_level = 0
+      .scan_level = 0
+      .minimum_scan_level = ISOSURFACE_MINIMUM_SCAN_LEVEL
+      .minimum_scan_division = ZERO
+      .voxel_proximity_factor = ISOSURFACE_VOXEL_PROXIMITY_FACTOR
       .del = ONE
       .surface_property = " "
       .chop_surface_property_range = FALSE
@@ -153,14 +181,20 @@ contains
       .y = 0
       .z = 0
       .big_interior = FALSE
-      .use_interpolator = FALSE
+      .surface_point = ISOSURFACE_SURFACE_POINT ! [TOL(6),TOL(6),TOL(6)]
+      .surface_property_lower_bound = ISOSURFACE_PROPERTY_LB
+      .surface_property_upper_bound = ISOSURFACE_PROPERTY_UB
+      .surface_prop_lower_bound_abs = ISOSURFACE_PROPERTY_LB_ABS
+      .surface_prop_upper_bound_abs = ISOSURFACE_PROPERTY_UB_ABS
+    ! .use_interpolator = FALSE
+    ! .interpolation_kind = ISOSURFACE_INTERPOLATION_KIND
+    ! .interpolator_table_length = ISOSURFACE_TABLE_LENGTH
+    ! .interpolator_table_spacing = ISOSURFACE_TABLE_SPACING
+    ! .interpolator_table_eps = ISOSURFACE_TABLE_EPS
     ! .accuracy = TOL(3)
     ! .smallness = 0.8   
     ! .flatness = 0.5
     ! .n_skip = 0
-      .surface_point = ISOSURFACE_SURFACE_POINT ! [TOL(6),TOL(6),TOL(6)]
-      .surface_property_lower_bound = ISOSURFACE_PROPERTY_LB
-      .surface_property_upper_bound = ISOSURFACE_PROPERTY_UB
       if (.colour.created) .colour.destroy
       .colour.create
       .colour.set_reverse_defaults
@@ -209,19 +243,21 @@ contains
      res :: BIN
      res = TRUE
      select case (.iso_kind)
-        case("electron_density   "); res = TRUE
-        case("laplacian_density  "); res = TRUE
-        case("orbital_density    "); res = TRUE
-        case("orbital            "); res = TRUE
         case("delta_density      "); res = TRUE ! only for +ve densities ...
-        case("true_fermi_mobility"); res = TRUE
-        case("fermi_mobility     "); res = TRUE
-        case("spin_density       "); res = TRUE ! only for +ve densities
-        case("hirshfeld_density  "); res = TRUE 
-        case("stockholder_density"); res = TRUE 
-        case("elf                "); res = TRUE
-        case("tsirelson_elf      "); res = TRUE
         case("electric_potential "); res = TRUE
+        case("electron_density   "); res = TRUE
+        case("elf                "); res = TRUE
+        case("fermi_mobility     "); res = TRUE
+        case("grad_rho_on_rho    "); res = TRUE ! a guess
+        case("hirshfeld_density  "); res = TRUE 
+        case("laplacian_density  "); res = TRUE
+        case("orbital            "); res = TRUE
+        case("orbital_density    "); res = TRUE
+        case("promolecule_density"); res = TRUE
+        case("spin_density       "); res = TRUE ! only for +ve densities
+        case("stockholder_density"); res = TRUE 
+        case("true_fermi_mobility"); res = TRUE
+        case("tsirelson_elf      "); res = TRUE
         case default;      ! don't know what it should be ... 
      end
    end
@@ -244,6 +280,13 @@ contains
       res = .surface_property_upper_bound/=ISOSURFACE_PROPERTY_UB
    end
 
+   surface_property_ub_abs_set result (res)
+   ! Return TRUE if the surface property upper bound for absolute values has
+   ! been set.
+      res :: BIN
+      res = .surface_prop_upper_bound_abs/=ISOSURFACE_PROPERTY_UB_ABS
+   end
+
    surface_point_set result (res)
    ! Return TRUE if the surface point has been set
       res :: BIN
@@ -263,19 +306,26 @@ contains
    ! "word" is a sequence of blank separated strings. In this case, 
    ! the sequence is processed as if it were a separate file.
       keyword :: STR
-      word :: STR
-      word = keyword
-      word.to_lower_case
-      select case (word)
+      select case (keyword)
          case ("}                            ")  ! exit case
          case ("colourfunction=              "); .read_colourfunction
          case ("put_colourfunction           "); .colour.put
          case ("big_interior=                "); .read_big_interior
+         case ("interpolator=                "); .read_interpolator
+       ! case ("interpolation_kind=          "); .read_interpolation_kind
+       ! case ("interpolator_table_eps=      "); .read_interpolator_eps
+       ! case ("interpolator_table_length=   "); .read_interpolator_length
+       ! case ("interpolator_table_spacing=  "); .read_interpolator_spacing
          case ("iso_value=                   "); .read_iso_value
+         case ("iso_values=                  "); .read_iso_values
          case ("kind=                        "); .read_kind
+         case ("minimum_scan_division=       "); .read_minimum_scan_division
+         case ("minimum_scan_level=          "); .read_minimum_scan_level
          case ("plotgrid=                    "); .read_plotgrid
          case ("surface_property_lower_bound="); .read_surface_property_lb
          case ("surface_property_upper_bound="); .read_surface_property_ub
+         case ("surface_prop_lower_bound_abs="); .read_surface_property_lb_abs
+         case ("surface_prop_upper_bound_abs="); .read_surface_property_ub_abs
          case ("chop_surface_property_range= "); stdin.read(.chop_surface_property_range)
          case ("put                          "); .put
          case ("put_connected_area           "); .put_connected_area
@@ -292,8 +342,9 @@ contains
          case ("test                         "); .test
          case ("triangulation_method=        "); .read_triangulation_method
          case ("units=                       "); .read_units
-         case ("use_interpolator=            "); .read_use_interpolator
-         case default;           UNKNOWN(word)
+         case ("voxel_proximity_factor=      "); .read_voxel_proximity_factor
+       ! case ("use_interpolator=            "); .read_use_interpolator
+         case default;           UNKNOWN(keyword)
       end
    end
 
@@ -317,21 +368,26 @@ contains
       stdin.read(.iso_value)
    end
 
+   read_iso_values
+   ! Read the defining iso_values for the isosurface
+      stdin.read_ptr(.iso_values)
+   end
+
    read_kind
    ! Read the kind of isosurface to plot.
-      kind :: STR
-      stdin.read(kind)
-      kind.to_lower_case
-      .iso_kind = kind
+      stdin.read(.iso_kind)
+      .iso_kind.to_lower_case
       select case (.iso_kind)
         case("elf                ")
         case("electric_potential ")
         case("electron_density   ")
         case("fermi_mobility     ")
+        case("grad_rho_on_rho    ")
         case("hirshfeld_density  ")
         case("laplacian_density  ")
         case("orbital            ")
         case("orbital_density    ")
+        case("promolecule_density")
         case("spin_density       ")
         case("stockholder_density")
         case("true_fermi_mobility")
@@ -345,6 +401,7 @@ contains
    ! Read the triangulation method a number whose smallness correlates with how
    ! small each face of the generated isosurface is.
       stdin.read(.triangulation_method)
+      .triangulation_method.to_lower_case
       select case (.triangulation_method)
          case("marching_cube          ")
          case("recursive_marching_cube")
@@ -352,12 +409,63 @@ contains
       end
    end
 
-   read_use_interpolator
-   ! Read whether to use an interpolator to evaluate the function values on the
-   ! surface. This may or may not be used by the object calling the isosurface
-   ! module.
-      stdin.read(.use_interpolator)
+   read_interpolator
+   ! Read in dummy interpolator information; this is not to be used for
+   ! specifying interpolation information, it is only used to specify
+   ! interpolation methods, interpolation table lengths, interpolation table
+   ! spacing, and interpolation tolerances.
+      .interpolator.create
+      .interpolator.read_keywords
    end
+
+!   read_use_interpolator
+!   ! Read whether to use an interpolator to evaluate the function values on the
+!   ! surface. This may or may not be used by the object calling the isosurface
+!   ! module.
+!      stdin.read(.use_interpolator)
+!   end
+
+!   read_interpolation_kind
+!   ! Read the kind of interpolation to use.
+!      stdin.read(.interpolation_kind)
+!      .interpolation_kind.to_lower_case
+!      select case (.interpolation_kind)
+!         case ("linear")                   ! Linear interpolation between data_value's
+!         case ("cubic_spline")             ! Cubic spline interpolation between data_value's
+!         case ("logarithmic_linear")       ! Linear interpolation between the log of the data_value's
+!         case ("logarithmic_cubic_spline") ! Spline interpolation between the log of the data_value's
+!         case default; UNKNOWN(.interpolation_kind)
+!      end
+!      .use_interpolator = TRUE
+!   end
+
+!   read_interpolator_length
+!   ! Read the length of the interpolation table to use. This is for constant
+!   ! step size interpolation tables.
+!      length :: REAL
+!      stdin.read(.interpolator_table_length)
+!      ENSURE(.interpolator_table_length>ZERO,"table length must be +ve")
+!      ENSURE(.interpolator_table_length>.interpolator_table_spacing,"length must be larger than spacing")
+!      .use_interpolator = TRUE
+!   end
+
+!   read_interpolator_spacing
+!   ! Read the spacing between points in the interpolation table.
+!      length :: REAL
+!      stdin.read(.interpolator_table_spacing)
+!      ENSURE(.interpolator_table_spacing>ZERO,"spacing must be +ve")
+!      ENSURE(.interpolator_table_spacing<.interpolator_table_length,"spacing must be smaller than length")
+!      .use_interpolator = TRUE
+!   end
+
+!   read_interpolator_eps
+!   ! Read the value for which any smaller in the interpolation table are set to
+!   ! zero. This may reduce the size of the interpolation table.
+!      length :: REAL
+!      stdin.read(.interpolator_table_eps)
+!      ENSURE(.interpolator_table_eps>ZERO,"interpolator eps must be +ve and small")
+!      .use_interpolator = TRUE
+!   end
 
    read_plotgrid
    ! Read in the plot grid data
@@ -374,6 +482,7 @@ contains
    read_surface_property
    ! Read surface properties to calculate
       stdin.read(.surface_property)
+      .surface_property.to_lower_case
 !     property = .surface_property
 !     property.to_lower_case
 !      select case (property)
@@ -396,8 +505,46 @@ contains
       stdin.read(.surface_property_upper_bound)
    end
 
+   read_surface_property_lb_abs
+   ! Read the value of the lower bound for absolute values of the property.
+      stdin.read(.surface_prop_lower_bound_abs)
+   end
+
+   read_surface_property_ub_abs
+   ! Read the value of the upper bound for absolute values of the property.
+      stdin.read(.surface_prop_upper_bound_abs)
+   end
+
    read_units ::: get_from(OBJECT)
    ! Read a string which describes the units to be used
+   end
+
+   read_minimum_scan_division
+   ! Read the minimum acceptable size for the marching cube, in order to resolve
+   ! all important isosurface features, when using the recursive marching cubes
+   ! method.
+      stdin.read(.minimum_scan_division)
+      ENSURE(.minimum_scan_division>ZERO,"value must be positive")
+   end
+
+   read_minimum_scan_level
+   ! Read the minimum number of scan divisions when using the recursive marching
+   ! cubes method. It must be large enough to resolve all isosurface features.
+   ! It is probably better to set the minimum_scan_division above, which is a
+   ! length. However, the number entered here is used as a sanity check to
+   ! override the number of divisions obtained from the minimum_scan_division if
+   ! it is smaller than this number.
+      stdin.read(.minimum_scan_level)
+      ENSURE(.minimum_scan_level>0,"value must be positive")
+   end
+
+   read_voxel_proximity_factor
+   ! Read the voxel proximity factor, which determies whn a voxel or marching
+   ! cube is close to the isosurface. It works by checking if the .iso_value is
+   ! within the entered factor times the difference between the maximum and
+   ! minimum function values on the voxel eges.
+      stdin.read(.voxel_proximity_factor)
+      ENSURE(.voxel_proximity_factor>ONE,"value must be greater than one")
    end
 
 !   read_accuracy
@@ -421,6 +568,12 @@ contains
 !      stdin.read(.smallness)
 !   end
 
+   use_interpolator result (res)
+   ! Return TRUE if the interpolator is created and supposed to be used.
+      res :: BIN
+      res = .interpolator.created
+   end
+
    is_hirshfeld_surface result (res)
    ! Return TRUE if the isosurface settings are for a Hirshfeld surface.
       res :: BIN
@@ -430,13 +583,40 @@ contains
    surface_label result (res)
    ! Return a string which describes the isosurface, including the isovalue.
       res :: STR
-      if (.is_hirshfeld_surface) then
-         res = "hirshfeld_surface"
+      prop :: STR
+      orb :: INT
+      if      (.is_hirshfeld_surface) then
+         res = "Hirshfeld_surface"
+      else if (.iso_kind=="orbital") then
+         prop = .orbital_label
+         res = prop.trim // ",isovalue=" // .iso_value.to_str("f10.5")
       else
-         res = .iso_kind.trim // ",isovalue=" // .iso_value.to_str("f10.5")
+         prop = .iso_kind
+         prop(1:1).to_upper_case
+         res = prop.trim // ",isovalue=" // .iso_value.to_str("f10.5")
       end
-      if (.surface_property/=" ") then
-         res = .surface_property.trim // "-on-" // res.trim
+      if (.surface_property=="orbital") then
+         prop = .orbital_label
+         res = prop.trim // "-on-" // res.trim
+      else if (.surface_property/=" " AND .surface_property/="none") then
+         prop = .surface_property
+         prop(1:1).to_upper_case
+         res = prop.trim // "-on-" // res.trim
+      end
+   end
+
+   orbital_label result (res)
+   ! Return a string which describes the orbital being plotted
+      res :: STR
+      orb :: INT
+      orb = .grid.HOMO_orbital
+      if      (orb==0) then
+         res = "HOMO"
+      else if (orb>0) then
+         res = "HOMO-plus-"// orb.to_str.trim 
+      else if (orb<0) then
+         orb = -orb
+         res = "HOMO-minus-"// orb.to_str.trim 
       end
    end
 
@@ -468,40 +648,46 @@ contains
    ! .scan_level. Then output the grid information before doing anything, so
    ! the user can check everything is OK.
       n_div,n_pt :: INT
-      scale,scan_del :: REAL
+      scale :: REAL
       select case (.triangulation_method)
          case("marching_cube          ")
             .grid.update_for_marching_cubes
             .del = .grid.del
          case("recursive_marching_cube")
             ENSURE(.grid.width.are_all_equal,"grid widths must be all equal")
-            n_div = .no_of_divisions(ONE)  ! Should be an adjustable parameter?
-            n_div = max(n_div,4)           ! At least 4 divisions ...
+            if (.minimum_scan_division.equals(ZERO)) then
+               if (.grid.plot_kind=="stockholder_density") then
+                  .minimum_scan_division = TWO*ISOSURFACE_MINIMUM_SCAN_DIVISION
+               else 
+                  .minimum_scan_division = ISOSURFACE_MINIMUM_SCAN_DIVISION
+               end
+            end
+            ! First find the number of divisions required
+            n_div = .no_of_divisions(.minimum_scan_division)
+            n_div = max(n_div,.minimum_scan_level) 
             n_pt = 2**n_div
+            ! The user might have requested too small a number of points ...
+            ! We must have at least the minimum number of divisions
             if (n_pt>(.grid.n_x-1)) then
                WARN("No. of points not sufficient, adjusting to be larger")
                .grid.n_x = n_pt + 1
             end
+            ! Find out what the final level is that we really need.
             .final_level = ceiling(log(real(.grid.n_x-2))/log(TWO))
-          ! .scan_level  = ceiling(log(real(n_pt-2))/log(TWO))
-          ! .scan_level  = 4
-            if (.grid.plot_kind=="stockholder_density") then; scan_del = ONE
-            else;                                        scan_del = HALF
-            end
-            .scan_level  = -log(scan_del/.grid.width(1))/log(TWO)
-            .scan_level  = min(.final_level,.scan_level)
-            .scan_level  = max(.scan_level,4)
-          stdout.show(" *** scan_level =",.scan_level)
             ENSURE(.final_level<=32,"too many grid points: # of divisions = "//.final_level.to_str.trim)
-            ENSURE(.final_level>  3,"too few grid points: # of divisions = "//.final_level.to_str.trim)
+            ENSURE(.final_level>=.minimum_scan_level,"too few grid points: # of divisions = "//.final_level.to_str.trim)
+            .scan_level  = -log(.minimum_scan_division/.grid.width(1))/log(TWO)
+            .scan_level  = min(.final_level,.scan_level)
+            .scan_level  = max(.scan_level,.minimum_scan_level)
+            ! We have the right level, now adjust the # of points
             WARN("Adjusting grid points higher to the nearest power of 2")
             .grid.n_x = 2**.final_level + 1     
-            .grid.set_points_widths_origin
+            ! Set the box width so that we get exactly the desired separation
             if (.grid.desired_separation>ZERO) then
                scale = .grid.desired_separation/.grid.del
                .grid.width = .grid.width*scale
-               .grid.set_points_widths_origin
             end
+            .grid.set_points_widths_origin
             .del = .grid.width(1)
          case default;        UNKNOWN(.triangulation_method)
       end
@@ -559,7 +745,8 @@ contains
          end
          end
       end
-      .volume = HALF*(.volume_min+.volume_max)
+      .set_area
+      .set_volume
       info.destroy
       f.destroy
       .point.shrink_columns(.n_pt)
@@ -573,17 +760,11 @@ contains
    set_isosurface_info_arrays ::: leaky, private
    ! Destroy the isosurface information and set the informations arrays to nice
    ! big sizes to begin with.
-      .n_pt   = 0
-      .n_face = 0
-      .point.destroy
+      .destroy_info_arrays
       .point.create(3,ISOSURFACE_N_POINT)
-      .point_gradient.destroy
       .point_gradient.create(3,ISOSURFACE_N_POINT)
-      .point_mean_curvature.destroy
       .point_mean_curvature.create(ISOSURFACE_N_POINT)
-      .point_gaussian_curvature.destroy
       .point_gaussian_curvature.create(ISOSURFACE_N_POINT)
-      .face.destroy
       .face.create(3,ISOSURFACE_N_FACE)
    end
 
@@ -699,6 +880,34 @@ contains
 
    recursively_cubify(func) ::: leaky, private
    ! Generate the isosurface using the recursive marching cube algorithm.
+   ! Multiple isosurface values are merged into one isosurface.
+      interface
+         func(values,pt) 
+            values :: VEC{REAL}, OUT
+            pt :: MAT{REAL}, IN
+         end
+      end
+      i :: INT
+      isosurface :: ISOSURFACE*
+      if (.iso_values.created) then
+         .iso_value = .iso_values(1) ! set this
+         isosurface.create_copy(self)
+         do i = 1,.iso_values.dim
+            isosurface.iso_value = isosurface.iso_values(i)
+            isosurface.recursively_cubify_this(func)
+            isosurface.surface_iso_values.create(isosurface.n_pt)
+            isosurface.surface_iso_values = isosurface.iso_value
+            self.merge_with(isosurface)
+            isosurface.destroy_info_arrays
+         end
+         isosurface.destroy
+      else
+            .recursively_cubify_this(func)         
+      end
+   end 
+
+   recursively_cubify_this(func) ::: leaky, private
+   ! Generate the isosurface using the recursive marching cube algorithm.
       interface
          func(values,pt) 
             values :: VEC{REAL}, OUT
@@ -731,7 +940,8 @@ contains
       .face.shrink_columns(.n_face)
       .rotate_gradients
       .hash.destroy
-      .volume = HALF*(.volume_min+.volume_max)
+      .set_area
+      .set_volume
    end 
 
    no_of_divisions(side_length) result (res) ::: private
@@ -759,21 +969,21 @@ contains
    ! the current cube was generated by a bisection method. We keep the
    ! "parent_cube" to save on function evaluations on the corners.
       interface
-         func(values,pt)                     ! The function whose isosurface we make
+         func(values,pt)                       ! The function whose isosurface we make
             values :: VEC{REAL}, OUT
             pt :: MAT{REAL}, IN
          end
       end
-      parent_cube :: MARCHINGCUBE, IN        ! Parent cube; importantly, has corner values
-      cube :: MARCHINGCUBE                   ! One of the 8 child cube; becomes next parent
+      parent_cube :: MARCHINGCUBE, IN          ! Parent cube; importantly, has corner values
+      cube :: MARCHINGCUBE                     ! One of the 8 child cube; becomes next parent
       kube :: VEC{MARCHINGCUBE}(8)             ! The group of final 8 child "cubes"
       p3 :: MAT4{REAL}(3,0:2,0:2,0:2)          ! The points of all child "cubes"
       p5 :: MAT4{REAL}(3,0:4,0:4,0:4)          ! The interior and surrounds of the final 8-"kube"
       f3 :: MAT3{REAL}(0:2,0:2,0:2)            ! The interior values used to make all child "cubes"
-      f5 :: MAT3{REAL}(0:4,0:4,0:4)            ! The interior and surrounds of the final 8-"kube"
+      f5 :: MAT3{REAL}(0:4,0:4,0:4)            ! The interior and surrounding values of the final 8-"kube"
       skip :: VEC{BIN}(8)                      ! Tells if we can skip any of the final 8-"kubes"
       eval :: MAT3{BIN}(5,5,5)                 ! Tells which of the "p5" points need to be 
-                                             ! evaluated using "func".
+                                               ! evaluated using "func".
       left  :: VEC{INT}(8) = [0,1,0,3,0,5,0,7] ! The lexical index of the left-cube
       front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
       below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
@@ -809,7 +1019,7 @@ contains
           !   (.level==(.scan_level+1) AND cube.is_nearly_on_surface(0.05d0)) OR &
           !   (.level >(.scan_level+1) AND cube.is_on_surface)
           ! do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface_old(0.10d0)
-            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(1.50d0)
+            do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
             if (do_divide) then 
                .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
                .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
@@ -1396,35 +1606,6 @@ contains
 !                .shift(.face(3,n))) 
 !   end
 
-   average_face_normal(n) result (res) 
-   ! Returns the average normal for face "n"
-      n :: INT
-      res :: VEC{REAL}(3)
-   ENSURE(.point_gradient.created,"no point_gradient array")
-   ENSURE(.face.created,"no face array")
-   ENSURE(n<=.face.dim2,"n too large")
-      a,b,c :: VEC{REAL}(3)
-      a = .point_gradient(:,.face(1,n)); a.normalise
-      b = .point_gradient(:,.face(2,n)); b.normalise
-      c = .point_gradient(:,.face(3,n)); c.normalise
-      res = (a+b+c)/THREE
-      res.normalise
-   end
-
-   average_face_gradient(n) result (res) 
-   ! Returns the average gradient for face "n"
-      n :: INT
-      res :: VEC{REAL}(3)
-   ENSURE(.point_gradient.created,"no point_gradient array")
-   ENSURE(.face.created,"no face array")
-   ENSURE(n<=.face.dim2,"n too large")
-      a,b,c :: VEC{REAL}(3)
-      a = .point_gradient(:,.face(1,n))
-      b = .point_gradient(:,.face(2,n))
-      c = .point_gradient(:,.face(3,n))
-      res = (a+b+c)/THREE
-   end
-
 !  ****************
 !  Plotting Methods
 !  ****************
@@ -1443,9 +1624,9 @@ contains
       call func(.surface_property_values,transpose(.point))
    end 
 
-!  *****
-!  Areas
-!  *****
+!  ***************
+!  Connected Areas
+!  ***************
 
    put_connected_area
    ! Put the connected area for a given ".surface_property" out.
@@ -1492,11 +1673,8 @@ contains
       res :: REAL
    ENSURE(.n_pt>0,"there are no isosurface points")
    ENSURE(present(lower) OR present(upper),"no bounds specified")
-      prop :: STR
       W :: VEC{REAL}*
-      prop = property
-      prop.to_lower_case
-      select case (prop)
+      select case (property)
          case ("mean_curvature")
             res = .connected_property_area(.point_mean_curvature,lower,upper)
          case ("gaussian_curvature")
@@ -1584,6 +1762,10 @@ contains
       face.destroy
    end
 
+!  ***************
+!  Area and volume
+!  ***************
+
    total_area(faces) result (res) 
    ! Returns the *total* area of the list of "faces".
       faces :: VEC{INT}
@@ -1611,6 +1793,118 @@ contains
       b = .point(:,.face(3,face)) - .point(:,.face(1,face))
       c = a.cross(b)
       res = c.norm
+   end
+
+   face_normal(face) result (res) 
+   ! Returns the face normal for the "face". This is not determined within a
+   ! sign (I think) since we don't know what is the inside or outside. (However,
+   ! the algorithm may generate the face points in the clockwise order so that
+   ! the normal calculated below *is* pointing outwards -- I should check that).
+      face :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(face>0,"face, nonpositive value")
+   ENSURE(face<=.n_face,"face, value too large")
+   ENSURE(.n_face>0,"there are no isosurface points")
+      a,b :: VEC{REAL}(3)
+      a = .point(:,.face(2,face)) - .point(:,.face(1,face))
+      b = .point(:,.face(3,face)) - .point(:,.face(1,face))
+      res = a.cross(b)
+      res.normalise
+   end
+
+   face_midpoint(face) result (res) 
+   ! Returns the face midpoint for the "face". 
+      face :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(face>0,"face, nonpositive value")
+   ENSURE(face<=.n_face,"face, value too large")
+   ENSURE(.n_face>0,"there are no isosurface points")
+      a,b,c :: VEC{REAL}(3)
+      a = .point(:,.face(1,face))
+      b = .point(:,.face(2,face))
+      c = .point(:,.face(3,face))
+      res = THIRD*(a+b+c)
+   end
+
+   average_face_normal(n) result (res) 
+   ! Returns the average normal for face "n", calculated as the average of the
+   ! gradient normals at each vertex.
+      n :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(.face.created,"no face array")
+   ENSURE(n<=.face.dim2,"n too large")
+      a,b,c :: VEC{REAL}(3)
+      a = .point_gradient(:,.face(1,n)); a.normalise
+      b = .point_gradient(:,.face(2,n)); b.normalise
+      c = .point_gradient(:,.face(3,n)); c.normalise
+      res = (a+b+c)/THREE
+      res.normalise
+   end
+
+   average_face_gradient(n) result (res) 
+   ! Returns the average gradient for face "n"
+      n :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(.face.created,"no face array")
+   ENSURE(n<=.face.dim2,"n too large")
+      a,b,c :: VEC{REAL}(3)
+      a = .point_gradient(:,.face(1,n))
+      b = .point_gradient(:,.face(2,n))
+      c = .point_gradient(:,.face(3,n))
+      res = (a+b+c)/THREE
+   end
+
+   point_normal(n) result (res) 
+   ! Returns the point normal for point "n", calculated as the norm of the
+   ! point_gradient for than point
+      n :: INT
+      res :: VEC{REAL}(3)
+   ENSURE(.point_gradient.created,"no point_gradient array")
+   ENSURE(n<=.n_pt,"n too large")
+   ENSURE(n>0,"n must be positive")
+      res = .point_gradient(:,n)
+      res.normalise
+   end
+
+   set_area 
+   ! Set the *total* area of the isosurface
+   ENSURE(.face.created,"no isosurface faces created")
+   ENSURE(.n_face>0,"no isosurface faces")
+      i :: INT
+      .area = ZERO
+      do i = 1,.face.dim
+         .area = .area + .face_area(i)
+      end
+   end
+
+   set_volume 
+   ! Set the *total* volume of the isosurface. This is set in two ways: from the
+   ! face normals, and from the average of the vertex normals, calculated from
+   ! the .point_gradients.
+   ENSURE(.point.created,"no isosurface points created")
+   ENSURE(.n_pt>0,"no isosurface points")
+   ENSURE(.face.created,"no isosurface faces created")
+   ENSURE(.n_face>0,"no isosurface faces")
+      f,i1,i2,i3 :: INT
+      base,height,h1,h2,h3 :: REAL
+      .volume = ZERO
+      .an_volume = ZERO
+      do f = 1,.face.dim
+         i1 = .face(1,f)
+         i2 = .face(2,f)
+         i3 = .face(3,f)
+         base = .face_area(f)
+         height = dot_product(.face_normal(f),.point(:,i1))
+         .volume = .volume + base*height
+         h1 = dot_product(.point_normal(i1),.point(:,i1))
+         h2 = dot_product(.point_normal(i2),.point(:,i2))
+         h3 = dot_product(.point_normal(i3),.point(:,i3))
+         .an_volume = .an_volume + base*(h1+h2+h3)
+      end
+      .volume = THIRD*.volume
+      .an_volume = NINTH*.an_volume
    end
 
 !  ******************
@@ -1685,6 +1979,33 @@ contains
       k2 = m + k2
    end
 
+!  *******************
+!  Merge an isosurface
+!  *******************
+
+   merge_with(other) ::: leaky
+   ! This routine takes the "other" isosurface and merges it into the current
+   ! isosurface. Of course, the settings may differe between the two surfaces:
+   ! the settings for self are retained. It is intended that the surfaces to be
+   ! merged will be of the same kind, only different for the defining
+   ! iso_values.
+      other :: ISOSURFACE
+      if (other.point.created) .point.append_columns(other.point)
+      if (other.point_gradient.created) .point_gradient.append_columns(other.point_gradient)
+      if (other.point_mean_curvature.created) .point_mean_curvature.append(other.point_mean_curvature)
+      if (other.point_gaussian_curvature.created) .point_gaussian_curvature.append(other.point_gaussian_curvature)
+      other.face = other.face + .n_pt
+      if (other.face.created) .face.append_columns(other.face)
+      other.face = other.face - .n_pt
+      if (other.surface_property_values.created) .surface_property_values.append(other.surface_property_values)
+      if (other.surface_iso_values.created) .surface_iso_values.append(other.surface_iso_values)
+      .n_pt = .n_pt + other.n_pt
+      .n_face = .n_face + other.n_face
+      .area = .area + other.area
+      .volume = .volume + other.volume
+      .an_volume = .an_volume + other.an_volume
+   end
+
 !  **************
 !  Output methods
 !  **************
@@ -1700,11 +2021,17 @@ contains
       stdout.show("No. of points            =",.n_pt) 
       stdout.show("No. of faces             =",.n_face) 
       stdout.show("Use interpolator?        =",.use_interpolator)
+      stdout.show("Surface area             =",.area) 
       stdout.show("Interior volume          =",.volume) 
+      stdout.show("Average normal volume    =",.an_volume) 
       stdout.show("Volume lower bound       =",.volume_min) 
       stdout.show("Volume upper bound       =",.volume_max) 
+      stdout.show("Average of volume bounds =",HALF*(.volume_min+.volume_max))
       stdout.show("Big interior?            =",.big_interior) 
       stdout.show("Reverse surface normals? =",.big_interior) 
+      stdout.show("Minimum scan division    =",.minimum_scan_division)
+      stdout.show("Minimum scan level       =",.minimum_scan_level) 
+      stdout.show("Voxel proximity factor   =",.voxel_proximity_factor)
       stdout.show("# of divisions           =",.final_level) 
       stdout.show("# of scan divisions      =",.scan_level) 
       stdout.show("# of func. evals skipped =",.n_skip) 
@@ -1754,7 +2081,6 @@ contains
 
    put_vertex_normals
    ! Put the list of normals for each canonical point
-   ENSURE(.n_pt>0,"no isosurface points")
       normal :: MAT{REAL}*
       n :: VEC{REAL}(3)
       i :: INT
@@ -1773,20 +2099,22 @@ contains
 
    put_vertex_properties
    ! Put out lists of vertex surface curvature properties.
+   ENSURE(.n_pt>0,"There are no vertex points") 
       use_labels :: BIN
       n :: INT
       n = 5
-      if (.surface_property/=" ") n = 6
+      if (.surface_property/=" ") n = n + 2
+      if (.surface_iso_values.created) n = n + 1
       use_labels = stdout.use_labels
       stdout.set_use_labels(FALSE)
       stdout.flush
       stdout.show("begin vertex_properties "//n.to_str.trim,.n_pt)
       if (.surface_property/=" ") .put_surface_property_values
+      .put_vertex_shape_index
+      .put_vertex_curvedness
+      .put_vertex_RMS_curvature
       .put_vertex_mean_curvatures
       .put_vertex_gaussian_curvatures
-      .put_vertex_RMS_curvature
-      .put_vertex_curvedness
-      .put_vertex_shape_index
       stdout.text("end vertex_properties")
       stdout.set_use_labels(use_labels)
    end
@@ -1850,19 +2178,37 @@ contains
    ! Put out the surface_property_values
    ENSURE(.surface_property/=" ","no surface property set")
    ENSURE(.surface_property_values.created,"no surface property values")
-      save_real_style :: STR
+      save_real_style,prop,log_prop :: STR
       values :: VEC{REAL}*
       values.create_copy(.surface_property_values)
       if (.surface_property_lb_set) values.chop_small_values(.surface_property_lower_bound)
       if (.surface_property_ub_set) values.chop_large_values(.surface_property_upper_bound)
+      prop = .surface_property
+      prop(1:1).to_upper_case
       save_real_style = stdout.real_style
       stdout.set_real_style("e")
       stdout.flush
-      stdout.show("begin "//.surface_property.trim//" ",.surface_property)
+      stdout.show("begin "//prop.trim//" ",prop.trim)
       stdout.put(values,"column")
-      stdout.text("end "//.surface_property.trim)
+      stdout.text("end "//prop.trim)
+      values = .surface_property_values
+      values.chop_small_absolute_values(.surface_prop_lower_bound_abs)
+      if (.surface_property_ub_abs_set) &
+      values.chop_large_absolute_values(.surface_prop_upper_bound_abs)
+      values = log(abs(values))/log(TEN)
+      log_prop = "log10_abs_"//trim(prop)
+      stdout.flush
+      stdout.show("begin "//log_prop.trim//" ",log_prop.trim)
+      stdout.put(values,"column")
+      stdout.text("end "//log_prop.trim)
       stdout.real_style = save_real_style
       values.destroy
+      if (.surface_iso_values.destroyed) return
+      stdout.flush
+      stdout.show("begin multiple_iso_values ","Multiple_iso_values")
+      stdout.put(.surface_iso_values,"column")
+      stdout.text("end multiple_iso_values")
+      stdout.real_style = save_real_style
    end
 
    put_grid
@@ -2182,8 +2528,7 @@ contains
       .put_points(angstrom=FALSE)
       .put_faces
       .put_vertex_normals
-      .put_vertex_properties
-    ! if (.surface_property/=" ") .put_surface_property_values
+      if (.n_pt>0) .put_vertex_properties
       stdout.text("end surface")
    end
 
