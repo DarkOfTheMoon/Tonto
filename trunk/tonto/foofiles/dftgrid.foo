@@ -33,8 +33,10 @@ module DFTGRID
    use STR
    use INPUT
    use OUTPUT
+   use ARCHIVE
    use IVEC
    use MAT
+   use SHELL1
    use ATOM
    use ATOMVEC
 
@@ -56,6 +58,7 @@ module DFTGRID
 !     DBL :: gauss_chebyshev_m       = ONE    ! Gauss-Chebyshev radial grid power parameter
 !     DBL :: euler_maclaurin_alpha   = ONE    ! Euler-Maclaurin radial grid scale parameter
 !     DBL :: euler_maclaurin_m       = ONE    ! Euler-Maclaurin radial grid power parameter
+!     ARCHIVE :: archive                      ! Archive to store the generated grids
 !  end
 
 contains
@@ -65,17 +68,18 @@ contains
 !  Create and destroy methods
 !  **************************
 
-   create
+   create(root_name,name,kind,format)
    ! Create an object
       PTR :: self
+      STR, optional :: root_name,name,kind,format
       nullify(self)
       allocate(self)
       std_mm.add(DFTGRID_SIZE)
       .set_default
+      .archive.set_names(root_name,name,kind,format)
    end
 
    destroy 
-   ! Destroy an object
       PTR :: self
       if (.destroyed) return
       std_mm.delete(DFTGRID_SIZE)
@@ -90,7 +94,6 @@ contains
    end
 
    destroyed result(res)
-   ! Returns true if self has *not* been created
       PTR :: self
       BIN :: res
       res = NOT associated(self)
@@ -99,15 +102,27 @@ contains
    set_default
    ! Set up a default crystal object
       .spherical_grid_kind = 'lebedev'
-      .spherical_grid_order = 19
-      .radial_grid_kind = 'gauss_chebyshev'
-      .radial_grid_order = 30
+      .spherical_grid_order = 35
+      .radial_grid_kind = 'gauss-chebyshev'
+      .radial_grid_order = 60
       .becke_m_partition_power = TWO
       .gauss_chebyshev_m       = ONE
       .gauss_chebyshev_alpha   = THREE
       .euler_maclaurin_m       = TWO
       .euler_maclaurin_alpha   = TWO
       .set_grid_data
+      .archive.set_root_name("?")
+      .archive.set_name("?")
+      .archive.set_kind(.archive_kind)
+   end
+
+   archive_kind result(kind)
+   ! Return the archive "kind" using the current dftgrid settings
+      STR :: kind
+      kind =              .spherical_grid_kind.trim // "_" 
+      kind = kind.trim // .spherical_grid_order.to_str.trim // "_"
+      kind = kind.trim // .radial_grid_kind.trim // "_" 
+      kind = kind.trim // .radial_grid_order.to_str.trim
    end
 
 !  ************
@@ -150,12 +165,16 @@ contains
       .set_radial_grid_data
       .set_spherical_grid_data
       .n_atom_pts = .n_spherical_pts*.n_radial_pts
+      .archive.set_kind( .archive_kind.trim )
+      DIE_IF(.archive%root_name=="?","no DFT archive root name is specified")
    end
   
    set_radial_grid_data
    ! Set the radial grid data
       select case (.radial_grid_kind)
+         case ("gauss-chebyshev");   .n_radial_pts = .radial_grid_order
          case ("gauss_chebyshev");   .n_radial_pts = .radial_grid_order
+         case ("euler-maclaurin");   .n_radial_pts = .radial_grid_order
          case ("euler_maclaurin");   .n_radial_pts = .radial_grid_order
          case default;               DIE("Unknown radial grid kind")
       end 
@@ -225,26 +244,197 @@ contains
       res = ZERO
       .set_grid_data
       n_pt = .n_atom_pts
-      pt0.create(n_pt,3)
-      wt0.create(n_pt)
-      pt.create(n_pt,3)
-      wt.create(n_pt)
-      .make_atom_grid(pt0,wt0)
+      pt0.create(n_pt,3); wt0.create(n_pt)
+      pt.create(n_pt,3);  wt.create(n_pt)
+      .get_atom_grid(pt0,wt0)
       do a = 1, atom.n_atom
          .rescale_displace_partition(pt0,wt0,pt,wt,a,atom)
          do n = 1,n_pt
             res = res + wt(n)*f(pt(n,:))
          end
       end
-      wt.destroy
-      pt.destroy
-      wt0.destroy
-      pt0.destroy
+      wt.destroy;  pt.destroy
+      wt0.destroy; pt0.destroy
+   end
+
+   integrate_molecular_property(X,mol) result (res)
+   ! Integrate a scalar molecular property, which is represented by a
+   ! subroutine "X" which returns "values" of the property in a vector,
+   ! given "mol" as the molecule, and "pts" as a set of points.
+   ! The result of the integration is "res".
+      interface
+         X(mol,values,pts)
+            use TYPES
+            MOL :: mol
+            VEC :: values
+            MAT :: pts
+         end
+      end
+      MOL :: mol
+      DBL :: res
+      INT :: n_pt, a, n
+      MAT, PTR :: pt0,pt
+      VEC, PTR :: wt0,wt, values
+      res = ZERO
+      .set_grid_data
+      n_pt = .n_atom_pts
+      pt0.create(n_pt,3); wt0.create(n_pt)
+      pt.create(n_pt,3);  wt.create(n_pt)
+      values.create(n_pt)
+      .get_atom_grid(pt0,wt0)
+      do a = 1, mol%n_atom
+         .rescale_displace_partition(pt0,wt0,pt,wt,a, mol%atom)
+         call X(mol,values,pt)
+         do n = 1,n_pt
+            res = res+ wt(n)*values(n)
+         end
+      end
+      values.destroy
+      wt.destroy;  pt.destroy
+      wt0.destroy; pt0.destroy
+   end
+
+   make_matrix_elements_of(V,mol,shell,ans) 
+   ! Integrate the matrix elements of a multiplicative operator "V" for 
+   ! molecule "mol" between all components of two A.O. shells given by
+   ! the shell-pair "shell". The result of the integration is matrix "ans". 
+   ! Operator "V" is represented by a subroutine which returns "v_grid" 
+   ! on a set of "pts" for a given molecule "mol".
+      interface
+         V(mol,v_grid,pts)
+            use TYPES
+            MOL :: mol
+            VEC :: v_grid
+            MAT :: pts
+         end
+      end
+      MOL :: mol
+      SHELL2 :: shell
+      MAT :: ans
+      ATOMVEC, PTR :: atom
+      INT :: n_pt, n,a,b,i, atom_a,atom_b
+      MAT, PTR :: pt0,pt
+      VEC, PTR :: wt0,wt, v_grid
+      MAT, PTR :: a_grid,b_grid
+      ans = ZERO
+      .set_grid_data
+      n_pt = .n_atom_pts
+      pt0.create(n_pt,3); wt0.create(n_pt)
+      pt.create(n_pt,3);  wt.create(n_pt)
+      v_grid.create(n_pt)
+      a_grid.create(n_pt,shell%a%n_comp)
+      b_grid.create(n_pt,shell%b%n_comp)
+      .get_atom_grid(pt0,wt0)
+      atom_a = mol%atom.atom_index_from_pos(shell%a%pos)
+      atom_b = mol%atom.atom_index_from_pos(shell%b%pos)
+      if (atom_a==atom_b) then 
+         atom.create(1)
+         atom(1) = mol%atom(atom_a)
+      else
+         atom.create(2)
+         atom(1) = mol%atom(atom_a)
+         atom(2) = mol%atom(atom_b)
+      end
+      do n = 1,size(atom)
+         .rescale_displace_partition(pt0,wt0,pt,wt,n, atom)
+         call V(mol,v_grid,pt)
+         shell%a.make_grid(a_grid,pt)
+         shell%b.make_grid(b_grid,pt)
+         do a = 1,shell%a%n_comp
+         do b = 1,shell%b%n_comp
+         do i = 1,n_pt
+            ans(a,b) = ans(a,b) + wt(i)*a_grid(i,a)*v_grid(i)*b_grid(i,b)
+         end
+         end
+         end
+      end
+      atom.nullify_ptr_part; atom.destroy
+      b_grid.destroy; a_grid.destroy
+      v_grid.destroy
+      wt.destroy;  pt.destroy
+      wt0.destroy; pt0.destroy
+   end
+
+   make_SO_matrix_elements_of(V,mol,shell,ans) 
+   ! Integrate the spin orbit matrix elements of a multiplicative operator "V" for 
+   ! molecule "mol" between all gradient (nabla) components and shell components
+   ! of two A.O. shells, given by the shell-pair "shell". The result of the 
+   ! integration is matrix "ans". Operator "V" is represented by a subroutine 
+   ! which returns "v_grid" on a set of "pts" for a given molecule "mol".
+      interface
+         V(mol,v_grid,pts)
+            use TYPES
+            MOL :: mol
+            VEC :: v_grid
+            MAT :: pts
+         end
+      end
+      MOL :: mol
+      SHELL2 :: shell
+      MAT4 :: ans
+      ATOMVEC, PTR :: atom
+      INT :: n_pt, n,k,l,a,b,i, atom_a,atom_b
+      MAT, PTR  :: pt0,pt
+      VEC, PTR  :: wt0,wt, v_grid
+      MAT3, PTR :: a_grid,b_grid
+      ans = ZERO
+      .set_grid_data
+      n_pt = .n_atom_pts
+      pt0.create(n_pt,3); wt0.create(n_pt)
+      pt.create(n_pt,3);  wt.create(n_pt)
+      v_grid.create(n_pt)
+      a_grid.create(n_pt,shell%a%n_comp,3)
+      b_grid.create(n_pt,shell%b%n_comp,3)
+      .get_atom_grid(pt0,wt0)
+      atom_a = mol%atom.atom_index_from_pos(shell%a%pos)
+      atom_b = mol%atom.atom_index_from_pos(shell%b%pos)
+      if (atom_a==atom_b) then 
+         atom.create(1)
+         atom(1) = mol%atom(atom_a)
+      else
+         atom.create(2)
+         atom(1) = mol%atom(atom_a)
+         atom(2) = mol%atom(atom_b)
+      end
+      do n = 1,size(atom)
+         .rescale_displace_partition(pt0,wt0,pt,wt,n, atom)
+         call V(mol,v_grid,pt)
+         shell%a.make_nabla_grid(a_grid,pt)
+         shell%b.make_nabla_grid(b_grid,pt)
+         do k = 1,3
+         do l = 1,3
+         do a = 1,shell%a%n_comp
+         do b = 1,shell%b%n_comp
+         do i = 1,n_pt
+            ans(a,b,k,l) = ans(a,b,k,l) + wt(i)*a_grid(i,a,k)*v_grid(i)*b_grid(i,b,l)
+         end
+         end
+         end
+         end
+         end
+      end
+      atom.nullify_ptr_part; atom.destroy
+      b_grid.destroy; a_grid.destroy
+      v_grid.destroy
+      wt.destroy;  pt.destroy
+      wt0.destroy; pt0.destroy
    end
 
 !  ************************
 !  Grid generation routines
 !  ************************
+
+   get_grid(pt,wt,atom)
+   ! Get from an archive an entire dft integration grid, points and weights ("pt","wt")
+   ! for a list of "atom" positions.
+      MAT :: pt
+      VEC :: wt
+      ATOMVEC :: atom
+      .archive.set_name("DFT_grid")
+      if ( .archive.does_not_exist) then; .make_grid(pt,wt,atom)
+      else;                               .archive.read(pt,wt)
+      end
+   end
 
    make_grid(pt,wt,atom)
    ! Make an entire dft integration grid, points and weights ("pt","wt")
@@ -257,7 +447,8 @@ contains
       INT :: n_pt, a, n, n_atom
       .set_grid_data
       n_atom = atom.n_atom
-      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts*n_atom,"pt incorrectly dimensioned")
+      ENSURE(size(pt,1)==.n_atom_pts*n_atom,"pt incorrectly dimensioned")
+      ENSURE(size(pt,2)==3,"pt incorrectly dimensioned")
       ENSURE(size(wt)==.n_atom_pts*n_atom,"wt incorrectly dimensioned")
       n_pt = .n_atom_pts
       pt0.create(n_pt,3)
@@ -270,6 +461,8 @@ contains
       end
       wt0.destroy
       pt0.destroy
+      .archive.set_name("DFT_grid")
+      .archive.write(pt,wt)
    end
 
    rescale_displace_partition(pt0,wt0,pt,wt,a,atom)
@@ -277,8 +470,9 @@ contains
    ! displaces the grid ("pt0","wt0") from the origin to the position
    ! of "atom" number "a", and partition it to work with all the other
    ! atoms, returning the grid ("pt","wt") = ("pt0" + disp, partition*"wt0")
-   ! Th weights are altered according to the Becke atomic partition function 
+   ! The weights are altered according to the Becke atomic partition function 
    ! for the displaced grid centred on atom "a".
+   ! NOTE : all the atoms in "atom" must be distinct!!!!!!
    ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
    !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
       MAT :: pt0,pt
@@ -291,33 +485,27 @@ contains
       MAT, PTR :: partition
       STR :: symbol
       .set_grid_data
-      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts,"pt incorrectly dimensioned")
-      ENSURE(size(pt0,2)==3 AND size(pt0,1)==.n_atom_pts,"pt0 incorrectly dimensioned")
+      ENSURE(size(pt,1)==.n_atom_pts, "pt incorrectly dimensioned")
+      ENSURE(size(pt,2)==3,           "pt incorrectly dimensioned")
+      ENSURE(size(pt0,1)==.n_atom_pts,"pt0 incorrectly dimensioned")
+      ENSURE(size(pt0,2)==3,          "pt0 incorrectly dimensioned")
       ENSURE(size(wt)==.n_atom_pts,"wt incorrectly dimensioned")
       ENSURE(size(wt0)==.n_atom_pts,"wt0 incorrectly dimensioned")
       ENSURE(a>=1 AND a<= atom.n_atom,"`a' argument out of range")
-      !
-      ! (pt, wt) = (pt0, wt0)
-      pt = pt0; wt = wt0
-      !
-      ! Rescale the grid according to Becke's method
-      symbol = atom(a).chemical_symbol
-      if ( symbol == "H" ) then
-          alpha = atom(a).bragg_slater_radius
-      else 
-          alpha = HALF*atom(a).bragg_slater_radius
+      pt = pt0; wt = wt0                   ! (pt, wt) = (pt0, wt0)
+      symbol = atom(a).chemical_symbol     ! <-- Rescale the grid according to Becke's method
+      if (symbol == "H") then
+         alpha =      atom(a).bragg_slater_radius
+      else
+         alpha = HALF*atom(a).bragg_slater_radius
       end
       wt = alpha*alpha*alpha*wt
       pt = alpha*pt
-      !
-      ! Displace the grid
-      disp = atom(a)%pos
+      disp = atom(a)%pos                   ! <-- Displace the grid
       do n = 1,.n_atom_pts 
           pt(n,:) = pt(n,:) + disp
       end
-      !
-      ! Partition the grid
-      m = .becke_m_partition_power
+      m = .becke_m_partition_power         ! <-- Partition the grid, below
       n_atom = atom.n_atom                 ! Number of atoms
       partition.create(.n_atom_pts,n_atom) ! Create partition array 
       partition = ONE
@@ -355,6 +543,17 @@ contains
       partition.destroy
    end
 
+   get_atom_grid(pt,wt)
+   ! Get from an archive the dft grid points "pt", and weights "wt" at the origin
+   ! suitable for integrating a single atom. 
+      MAT :: pt
+      VEC :: wt
+      .archive.set_name("DFT_atom_grid")
+      if ( .archive.does_not_exist) then; .make_atom_grid(pt,wt)
+      else;                               .archive.read(pt,wt)
+      end
+   end
+
    make_atom_grid(pt,wt)
    ! Make the dft grid points "pt", and weights "wt" at the origin
    ! suitable for integrating a single atom. It is made as the 
@@ -366,7 +565,8 @@ contains
       MAT, PTR :: spherical_pt
       VEC, PTR :: spherical_wt,radial_pt,radial_wt
       .set_grid_data
-      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts,"pt incorrectly dimensioned")
+      ENSURE(size(pt,1)==.n_atom_pts,"pt incorrectly dimensioned")
+      ENSURE(size(pt,2)==3,          "pt incorrectly dimensioned")
       ENSURE(size(wt)==.n_atom_pts,"wt incorrectly dimensioned")
       ! Allocate the spherical and radial grids
       spherical_pt.create(.n_spherical_pts,3)
@@ -391,6 +591,8 @@ contains
       radial_pt.destroy
       spherical_wt.destroy
       spherical_pt.destroy
+      .archive.set_name("DFT_atom_grid")
+      .archive.write(pt,wt)
    end 
 
    make_radial_grid(pt,wt)
@@ -398,7 +600,9 @@ contains
    ! and weights "wt"
      VEC :: pt,wt
      select case (.radial_grid_kind)
+       case ("gauss-chebyshev");   .make_gauss_chebyshev_grid(pt,wt)
        case ("gauss_chebyshev");   .make_gauss_chebyshev_grid(pt,wt)
+       case ("euler-maclaurin");   .make_euler_maclaurin_grid(pt,wt)
        case ("euler_maclaurin");   .make_euler_maclaurin_grid(pt,wt)
        case default;               DIE("Unknown radial type")
      end select
@@ -430,10 +634,11 @@ contains
    ! coordinates "pt" and weights "wt"
       VEC :: pt,wt
       INT :: i, num
-      DBL :: alpha, m, pm, tm, pf, n1, a, x
+      DBL :: alpha, m, rm, pm, tm, pf, n1, a, x
       alpha = .euler_maclaurin_alpha
       m     = .euler_maclaurin_m
       num   = .radial_grid_order
+      rm = ONE/m
       pm = ONE + m
       tm = ONE - m
       n1 = ONE + num 
