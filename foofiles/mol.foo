@@ -4331,7 +4331,8 @@ contains
   ! Do a Hartree-Fock SCF calculation. The following :
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! are produced as results.
-    OPMAT* :: dP,dF,old_P,old_F,error
+    OPMAT* :: dP,dF,old_P,old_F,error,old_MO
+    DBL :: lambda
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     ! Initialize cycles
@@ -4339,6 +4340,7 @@ contains
     .make_fock_matrix(core=TRUE)
     dP.create(.n_bf); old_P.create_copy(.density_matrix)
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
+    old_MO.create_copy(.molecular_orbitals)
     ! Zeroth iteration.
     .scfdata.reset(.nuclear_energy,.scf_energy,.kinetic_energy)
     .make_scf_error(error) 
@@ -4348,6 +4350,7 @@ contains
       if (.scfdata.scf_done) exit
       .extrapolate_scf(error)
       old_F.set_to(.fock_matrix)
+      old_MO.set_to(.molecular_orbitals)
       .update_molecular_orbitals
       .schmidt_orthonormalise(.molecular_orbitals)
       .make_scf_density_matrix
@@ -4357,6 +4360,8 @@ contains
       .make_fock_matrix(dP,dF,core=FALSE)
       .fock_matrix.set_to(old_F)
       .fock_matrix.plus(dF)
+    lambda=1.0
+    if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F)
       old_P.set_to(.density_matrix)
       .scfdata.update(.scf_energy,.kinetic_energy)
       .make_scf_error(error)
@@ -4365,6 +4370,7 @@ contains
     error.destroy
     dF.destroy
     dP.destroy
+    old_MO.destroy
     old_F.destroy
     old_P.destroy
     .scfdata.cleanup_diis
@@ -6661,14 +6667,15 @@ contains
       .scfdata.put_results                     ! Zeroth iteration (important!)
       .scfdata.diis.cleanup
       do
-        .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+!        .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+        .make_constraint(constraint, .scfdata.lambda )
         .add_constraint(constraint)
         .make_scf_error(error) 
         .extrapolate_scf(error)
         old_MO.set_to(.molecular_orbitals)
-        .update_molecular_orbitals
         old_P.set_to(.density_matrix)
         old_F.set_to(.fock_matrix)
+        .update_molecular_orbitals
         .make_scf_density_matrix
         .save_scf_results
 
@@ -6676,11 +6683,15 @@ contains
         dP.minus(old_P)
 
         .make_fock_matrix(dP,dF,core=FALSE)
-
-!        lambda=ONE
-!        if (old_MO.spinorbital_kind=="restricted") .camp_king(lambda,old_MO,old_F)
         .fock_matrix.set_to(old_F)
         .fock_matrix.plus(dF)
+
+        lambda=0.9
+        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
+        lambda=1.0
+        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
+        lambda=1.1
+        if (.scfdata.using_camp_king) .camp_king(lambda,old_MO,old_F,constraint)
 
         .make_structure_factors
         .scfdata.update(.scf_energy,.kinetic_energy)
@@ -6720,21 +6731,23 @@ contains
       DIE("can only do restricted calculations.")
     end
     ! Add the constraint in the MO basis 
-    constraint.restricted.change_basis(MO)          ! Zero out the occ-occ and vir-vir
-    constraint.restricted(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
-    constraint.restricted(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
-    .fock_matrix.restricted.change_basis(MO)
-    .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
-    .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
+!    constraint.restricted.change_basis(MO)          ! Zero out the occ-occ and vir-vir
+!    constraint.restricted(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
+!    constraint.restricted(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
+!    .fock_matrix.restricted.change_basis(MO)
+!    .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
+!    .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
+
     .fock_matrix.plus(constraint)
-    ! Change .fock_matrix back to the AO basis 
-    temp.create( .n_bf, .n_bf)
-    S.create( .n_bf, .n_bf)
-    .get_overlap_matrix(S)
-    temp.to_product(MO,S,transpose_a=TRUE)
-    S.destroy
-    .fock_matrix.restricted.change_basis(temp) ! Back to AO basis.
-    temp.destroy
+
+!    ! Change .fock_matrix back to the AO basis 
+!    temp.create( .n_bf, .n_bf)
+!    S.create( .n_bf, .n_bf)
+!    .get_overlap_matrix(S)
+!    temp.to_product(MO,S,transpose_a=TRUE)
+!    S.destroy
+!    .fock_matrix.restricted.change_basis(temp) ! Back to AO basis.
+!    temp.destroy
   end
 
   make_constraint(constraint,lambda)
@@ -8435,11 +8448,12 @@ contains
 !                        Camp-King routines
 !*******************************************************************************
 
-  camp_king(lambda,MO_old,F_old)
+  camp_king(lambda,MO_old,F_old,constraint)
   ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
   ! lambda should be between 0 and 1.
-    DBL, IN :: lambda
+    DBL, INOUT :: lambda
     OPMAT, IN :: MO_old,F_old
+    OPMAT, INOUT, optional :: constraint
     OPMAT* :: F_backup,MO_backup,P_backup
     MAT* :: old_MO,new_MO,old_F,new_F,MO
     MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl
@@ -8447,9 +8461,9 @@ contains
     INT :: minpq,n,n_p,n_q,i,k,j
     DBL :: ded0,ded1,ded1a,E0,E1,E2
 
-    F_backup.set_to(.fock_matrix) !create_copy
-    MO_backup.set_to(.molecular_orbitals)
-    P_backup.set_to(.density_matrix)
+    F_backup.create_copy(.fock_matrix)
+    MO_backup.create_copy(.molecular_orbitals)
+    P_backup.create_copy(.density_matrix)
 
     n_p = .n_e/2
     n_q = .n_bf - n_p
@@ -8488,7 +8502,7 @@ contains
     U.to_product(Cj,Cj1)                        ! eqn 8
     V=Cj1
     W=Cj1
-    .make_Camp_King_VWT(V,W,theta,U)
+    U.make_corresponding_orbitals(V,W,theta,n_p)
     U.destroy
 
     CV.create(.n_bf,.n_bf)
@@ -8541,6 +8555,11 @@ contains
     .molecular_orbitals.restricted = MO            ! which is in AO basis.
     .make_scf_density_matrix(damp=FALSE)
     .make_fock_matrix
+    if (present(constraint)) then
+!      .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+      .make_constraint(constraint, .scfdata.lambda )
+      .add_constraint(constraint)
+    end
     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
     F.change_basis(Q)
     F.change_basis(Cl)
@@ -8569,74 +8588,6 @@ contains
     .fock_matrix.set_to(F_backup)
     .molecular_orbitals.set_to(MO_backup)
     .density_matrix.set_to(P_backup)
-  end
-
-  make_Camp_King_VWT(V,W,theta,U) [private]
-    IN :: self
-    MAT, target :: V,W
-    VEC, OUT :: theta
-    MAT, target :: U
-    MAT* :: Vp,Vq,Wp,Wq,M,MWq,Hq,Up,Uq,Hp,VpM,VpMWq,VqNWp,NWp,N,tmpm
-    MAT* :: UqWq,UpWp,Dp,Dq,a,b,c
-    INT :: minpq,maxpq,n_p,n_q
-    VEC* :: tmp,lambda
-    BIN :: ea1,eb14,eb13,eb9
-    DBL :: dbl
-    n_p = ceiling(.n_e/TWO)
-    n_q = .n_bf - n_p
-    minpq = min(n_p,n_q)
-    maxpq = max(n_p,n_q)
-
-    Vp => V(:n_p,:n_p)
-    Vq => V(n_p+1:,n_p+1:)
-    Wp => W(:n_p,:n_p)
-    Wq => W(n_p+1:,n_p+1:)
-    M  => U(:n_p,n_p+1:n_p+n_q)
-    Up => U(:n_p,:n_p)
-    Uq => U(n_p+1:,n_p+1:)
-
-
-    U.zero_small_values(TOL(10))
-    W(:n_p,n_p+1:)=ZERO
-    W(n_p+1:,:n_p)=ZERO
-    V(:n_p,n_p+1:)=ZERO
-    V(n_p+1:,:n_p)=ZERO
-
-!    Hp.create(n_p,n_p)
-!    Hp.to_product(M,M,transpose_b=TRUE)
-!    Hp.solve_eigenproblem(theta,Vp)
-!    Hp.destroy
-!    Vp.zero_small_values(TOL(10))
-!    theta.zero_small_values(TOL(10))
-!    Vp.reverse_column_order
-!    theta(1:minpq).reverse_order                       ! eqn B6
-!    Wq(:,:n_p).to_product(M,Vp,transpose_a=TRUE)
-!    Wq.schmidt_orthonormalise
- 
-    lambda.create(n_q)
-    Hq.create(n_q,n_q)
-    Hq.to_product(M,M,transpose_a=TRUE)
-    Hq.solve_eigenproblem(lambda,Wq)                 ! eqn A3
-    Hq.destroy
-    lambda.reverse_order                             ! eqn B6
-    theta = lambda(:minpq)
-    theta.zero_small_values(TOL(10))
-    theta = sqrt(theta)                              ! eqn A4
-    theta = asin(theta)            ! eqn B17
-    lambda.destroy
-    Wq.zero_small_values(TOL(10))
-    Wq.reverse_column_order
-    MWq.create(n_p,n_q)
-    MWq.to_product(M,Wq)
-    Vp = MWq(:n_p,:n_p)
-    MWq.destroy
-    Vp.schmidt_orthonormalise
- 
-    Vq.to_product(Uq,Wq)
-    Vq.reverse_schmidt_orthogonalise                 ! eqn B8
-
-    Wp.to_product(Up,Vp,transpose_a=TRUE)
-    Wp.reverse_schmidt_orthogonalise                 ! eqn B11
   end
 
   make_Camp_King_U_hat(Uh,lambda,theta) [private]
