@@ -3408,7 +3408,9 @@ sub tidy_do_routine_body {
 
 sub html_do_routine_body {
 
-  if ($routine{$current_rout_name}{in_routine_body} ) {
+  if (defined $current_rout_name &&
+      defined $routine{$current_rout_name}{in_routine_body} &&
+      $routine{$current_rout_name}{in_routine_body} ) {
 
       # This is for indenting continuation lines.
 
@@ -4265,17 +4267,20 @@ sub dots_to_fortran {
 
         # Deal with some intrinsics by explicit inlining
 
-        if ($rout =~ m'^dim([1234567]?)$'o) {     # Modify dim statements explicitly
+        if ($rout =~ m'^dim([1234567]?)$'o) {   # Modify dim statements explicitly
           if (defined $1 && $1 ne '') { $arg .= ",$1"}
           $rout = 'size';
           $underscore = '';
-        } elsif ($rout =~ m'^size$'o) {           # Modify size statements explicitly
+        } elsif ($rout =~ m'^nullify$'o) {      # Modify nullify statements explicitly
+          $rout = 'nullify';
+          $underscore = '';
+        } elsif ($rout =~ m'^size$'o) {         # Modify size statements explicitly
           $rout = 'size';
           $underscore = '';
-        } elsif ($rout =~ m'^trim$'o) {           # Modify trim statements explicitly
+        } elsif ($rout =~ m'^trim$'o) {         # Modify trim statements explicitly
           $rout = 'trim';
           $underscore = '';
-        } elsif ($rout =~ m'^verify$'o) {         # Modify verify statements explicitly
+        } elsif ($rout =~ m'^verify$'o) {       # Modify verify statements explicitly
           $rout = 'verify';
           $underscore = '';
         } elsif ($rout =~ m'^asin$'o) {         # Modify asin statements explicitly
@@ -4287,13 +4292,13 @@ sub dots_to_fortran {
         } elsif ($rout =~ m'^atan$'o) {         # Modify atan statements explicitly
           $rout = 'atan';
           $underscore = '';
-        } elsif ($rout =~ m'^sin$'o) {         # Modify sin statements explicitly
+        } elsif ($rout =~ m'^sin$'o) {          # Modify sin statements explicitly
           $rout = 'sin';
           $underscore = '';
-        } elsif ($rout =~ m'^cos$'o) {         # Modify cos statements explicitly
+        } elsif ($rout =~ m'^cos$'o) {          # Modify cos statements explicitly
           $rout = 'cos';
           $underscore = '';
-        } elsif ($rout =~ m'^tan$'o) {         # Modify tan statements explicitly
+        } elsif ($rout =~ m'^tan$'o) {          # Modify tan statements explicitly
           $rout = 'tan';
           $underscore = '';
         } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {   
