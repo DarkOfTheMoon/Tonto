@@ -166,7 +166,7 @@ $tonto_type{'type X'}{'field Y of X'} = 'type of the field Y of X';
 ## Analyse the types.foo file
 ## -----------------------------------------------------------------------------
 
-open(TYPES,'types.foo');
+open(TYPES,'foofiles/types.foo');
 
 # Search for a type line
 

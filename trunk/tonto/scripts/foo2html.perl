@@ -213,7 +213,7 @@ $nuse = 0;# no of use modules
 ## Analyse the types.foo file
 ## -----------------------------------------------------------------------------
 
-open(TYPES,'types.foo');
+open(TYPES,'foofiles/types.foo');
 
 # Search for a type line
 
