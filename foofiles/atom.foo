@@ -11,8 +11,8 @@ module ATOM
    use TYPES
    use SYSTEM
    use STR
-   use INT
    use BUFFER
+   use INT
    use VEC
    use MAT
    use MAT3
@@ -55,6 +55,12 @@ module ATOM
 !
 !   OPVEC* :: occupation
 !   ! The occupation numbers for the atom
+!
+!   DBL :: energy
+!   ! The energy of the isolated atom
+!
+!   INT :: group
+!   ! An integer which describes thr group to which the atom belongs
 !
 !   end
 
@@ -213,27 +219,25 @@ contains
 
    create
    ! Create an atom
-      PTR :: self
+      self :: PTR
       nullify(self)
       allocate(self)
+      ADD_MEMORY(ATOM_SIZE)
       .nullify_ptr_part
-      ADD_MEM(ATOM_SIZE)
-      .thermal_tensor = ZERO
-      .axis_system = "cartesian"
-      .thermal_axis_system = "cartesian"
+      .set_defaults
    end
 
   create_copy(atom)
   ! Create a copy of atom.
-    ATOM :: atom
-    PTR :: self
+    atom :: ATOM
+    self :: PTR
     .create
     .copy(atom)
   end
 
   copy(atom)
   ! Make self a copy of atom.
-    ATOM :: atom
+    atom :: ATOM
     .label = atom.label
     .pos = atom.pos
     .atomic_number = atom.atomic_number
@@ -245,11 +249,11 @@ contains
 
    destroy 
    ! Destroy an atom
-      PTR :: self
+      self :: PTR
       if (.destroyed) return
       .destroy_ptr_part
       deallocate(self)
-      DELETE_MEM(ATOM_SIZE)
+      DELETE_MEMORY(ATOM_SIZE)
    end
   
    nullify_ptr_part
@@ -268,77 +272,91 @@ contains
 
    created result(res)
    ! Returns true if self has been created
-      PTR :: self
-      BIN :: res
+      self :: PTR
+      res :: BIN
       res = associated(self)
    end
 
    destroyed result(res)
    ! Returns true if self has *not* been created
-      PTR :: self
-      BIN :: res
+      self :: PTR
+      res :: BIN
       res = NOT associated(self)
    end
  
-   set_default
+   set_defaults
    ! Set a default atom
       .thermal_tensor = ZERO
-      .label = "H"
-      .atomic_number = 1
-      .pos = (/ZERO,ZERO,ZERO/)
+      .label = "?"
+      .atomic_number = 0
+      .pos = [ ZERO,ZERO,ZERO ]
       .axis_system = "cartesian"
       .thermal_axis_system = "cartesian"
-      .basis.create
-      .basis.set_default
+      .energy = ZERO
+      .group  = 0
    end
 
 !  *************
 !  Input methods
 !  *************
 
-   read [leaky]
+   read [recursive] [leaky]
    ! Read data from "stdin" using keyword style input.
-      STR :: word
+      word :: STR
+      stdin.read(word)
+      ENSURE(word=="{","expecting an open bracket symbol, {")
       read_loop: do          ! Loop over keywords
          stdin.read(word)
+         if (word=="}")      exit read_loop
          if (stdin.reverted) exit read_loop
-         if (word=="end")    exit read_loop
          .process_input(word)      
       end do read_loop
    end
 
-   process_input(word) [leaky]
+   process_input(word) [recursive] [leaky]
    ! Process a keyword "word". Data is inputted from "stdin", unless
    ! "word" is a sequence of blank separated strings. In this case, 
    ! the sequence is processed as if it were a separate file.
-      STR(*) :: word
+      word :: STR(*)
+      internal :: STRVEC(1)
+      word1 :: STR
+      word.to_lower_case
       if (word.includes(" ")) then
-         stdin.redirect([word])
-         .read
+         word.get_next_items(word1)
+         select case (word.item(1))
+           case ("axis_system=        "); .set_axis_system(word1)
+           case ("thermal_axis_system="); .set_thermal_axis_system(word1)
+           case  default ;                UNKNOWN(word)
+         end
+!         internal(1) = word
+!         stdin.redirect(internal)
+!         .read
+!         stdin.revert
       else
          select case (word)
-            case("end");                  ! exit surrounding loop
-            case("atom");                 .read
-            case("units");                .read_units
-            case("label");                .read_label
-            case("axis_system");          .read_axis_system
-            case("thermal_axis_system");  .read_thermal_axis_system
-            case("pos");                  stdin.read(.pos)   
-            case("thermal_tensor");       .read_thermal_tensor
-            case("basis_label");          .read_basis_label
-            case("basis");                .read_basis
-            case default;                 DIE("unknown keyword, "//trim(word))
+           case ("}                   ")  ! exit case
+           case ("atom=               "); .read
+           case ("units=              "); .read_units
+           case ("label=              "); .read_label
+           case ("pos=                "); .read_pos   
+           case ("thermal_tensor=     "); .read_thermal_tensor
+           case ("basis_label=        "); .read_basis_label
+           case ("basis=              "); .read_basis
+           case ("group=              "); .read_group
+           case ("junk=               "); .read_junk
+           case ("put                 "); .put
+           case  default ;                UNKNOWN(word)
          end
       end
    end
 
    process_input(keyword) [leaky]
    ! Process each of the words in the "keyword" list.
-      STRVEC :: keyword
-      INT :: k,n_key
+      keyword :: STRVEC
+      k,n_key :: INT
       n_key = size(keyword)
       do k = 1,n_key
-         if (keyword(k)=="end") exit 
+         if (keyword(k)=="}") exit 
          .process_input(keyword(k)) 
       end
       ENSURE(k>=n_key,"unprocessed words remain in the keyword list")
@@ -349,12 +367,27 @@ contains
       stdin.set_default_units(stdin.next_str)
    end
 
+   read_junk
+   ! Read in a junk string, useful for ignoring a field
+      stdin.skip_next_item
+   end
+
+   read_group
+   ! Read the index which describes the group the atom belongs to.
+      stdin.read(.group)
+   end
+
+   read_pos
+   ! Read in the position
+      stdin.read(.pos)
+   end
+
    read_label
    ! Read an ATOM label followed by three coordinates (without basis set)
    ! from "stdin". 
-      INT :: lensym,z
-      STR :: symbol
-      BIN :: error
+      lensym,z :: INT
+      symbol :: STR
+      error :: BIN
       stdin.read(.label)         ! Input atom label
       if (.label.is_int) then    ! The label must be the atomic number
          z = .label.to_int
@@ -362,7 +395,7 @@ contains
       else                       ! First part of the label is the element symbol
          lensym = .label.scan("123456789 ")-1
          error = lensym>2 OR lensym==0
-         DIE_IF(error,"unacceptable atom symbol, "// trim(.label))
+         ENSURE(NOT error,"unacceptable atom symbol, "// trim(.label))
          symbol = .label(1:lensym)
          symbol(1:1).to_upper_case
          symbol(2:2).to_lower_case
@@ -383,22 +416,51 @@ contains
       stdin.read(.axis_system)
       .thermal_axis_system = .axis_system
       select case (.axis_system)
-        case ("cartesian","crystal")
+        case ("cartesian")
+        case ("crystal  ")
         case default
-          DIE("unknown axis system " // trim(.axis_system))
+          UNKNOWN(.axis_system)
       end
    end
+
+  set_axis_system(word)
+  ! Read a string which describes the axis system. Currently allowed is 
+  ! "cartesian" or "crystal". NOTE: .thermal_axis_system is changed too.
+    word :: STR(*), IN
+    .axis_system = word
+    .thermal_axis_system = .axis_system
+    select case (.axis_system)
+      case ("cartesian")
+      case ("crystal  ")
+      case default
+        UNKNOWN(.axis_system)
+    end
+  end
 
    read_thermal_axis_system
    ! Read a string which describes the thermal tensor axis system.
    ! Currently allowed, is "cartesian" or "crystal".
       stdin.read(.thermal_axis_system)   
       select case (.thermal_axis_system)
-        case ("cartesian","crystal")
+        case ("cartesian")
+        case ("crystal  ")
         case default
-          DIE("unknown axis system " // trim(.thermal_axis_system))
+          UNKNOWN(.thermal_axis_system)
       end
    end
+
+  set_thermal_axis_system(word)
+  ! Read a string which describes the thermal tensor axis system.
+  ! Currently allowed, is "cartesian" or "crystal".
+    word :: STR(*), IN
+    .thermal_axis_system = word
+    select case (.thermal_axis_system)
+      case ("cartesian")
+      case ("crystal  ")
+      case default
+        UNKNOWN(.thermal_axis_system)
+    end
+  end
 
    read_basis [leaky]
    ! Read an ATOM basis set from "stdin"
@@ -419,25 +481,23 @@ contains
    !              TF = exp ( -2\pi^2 U_{ij} h_i h_j a^*_i a^*_j )
    ! where (h) are the miller indices and (a^*) are the reciprocal lattice
    ! constants in angstrom^{-2}.
-      VEC(6) :: tensor
+      tensor :: VEC(6)
       stdin.read(tensor)
       .thermal_tensor(1,1) = tensor(1) ! Units must be bohr^2
-      .thermal_tensor(2,2) = tensor(2) ! unless over-ridden by stdin.default_units
-      .thermal_tensor(3,3) = tensor(3) ! ... see below
+      .thermal_tensor(2,2) = tensor(2) ! unless over-ridden by read_units=
+      .thermal_tensor(3,3) = tensor(3) 
       .thermal_tensor(1,2) = tensor(4)
       .thermal_tensor(1,3) = tensor(5)
       .thermal_tensor(2,3) = tensor(6)
       .thermal_tensor(2,1) = .thermal_tensor(1,2)
       .thermal_tensor(3,1) = .thermal_tensor(1,3)
       .thermal_tensor(3,2) = .thermal_tensor(2,3)
-      if (stdin.default_units=="angstrom^2") &
-         .thermal_tensor.convert_from("angstrom^2")
    end
 
   resolve_axis_system(crystal)
   ! Change the axis system for the position and thermal tensors to
   ! "cartesian". "crystal" holds the axis system information.
-    CRYSTAL, IN :: crystal
+    crystal :: CRYSTAL, IN
     if (.axis_system=="crystal")         .position_from(crystal)
     if (.thermal_axis_system=="crystal") .thermal_tensor_from(crystal)
   end
@@ -445,92 +505,86 @@ contains
   change_axis_system_to(kind,crystal)
   ! Change the axis system for the position and thermal tensors
   ! to "kind", either crystal or cartesian.
-    STR(*), IN :: kind
-    CRYSTAL, IN :: crystal
+    kind :: STR(*), IN
+    crystal :: CRYSTAL, IN
     select case (kind)
-      case ("cartesian")
-        .position_from(crystal)
-        .thermal_tensor_from(crystal)
-      case ("crystal")
-        .position_to(crystal)
-        .thermal_tensor_to(crystal)
+      case ("cartesian"); .position_from(crystal); .thermal_tensor_from(crystal)
+      case ("crystal  "); .position_to(crystal);   .thermal_tensor_to(crystal)
       case default
-        DIE("unknown axis system, " // trim(kind))
+        UNKNOWN(kind)
     end
   end
 
   change_thermal_axis_system_to(kind,crystal)
   ! Change the axis system for the thermal tensors to "kind",
   ! either crystal or cartesian.
-    STR(*), IN :: kind
-    CRYSTAL, IN :: crystal
+    kind :: STR(*), IN
+    crystal :: CRYSTAL, IN
     select case (kind)
-      case ("cartesian")
-        .thermal_tensor_from(crystal)
-      case ("crystal")
-        .thermal_tensor_to(crystal)
+      case ("cartesian"); .thermal_tensor_from(crystal)
+      case ("crystal  "); .thermal_tensor_to(crystal)
       case default
-        DIE("unknown axis system, " // trim(kind))
+        UNKNOWN(kind)
     end
   end
 
   thermal_tensor_from(crystal)
   ! Change thermal parameters in the crystal axis system to the
   ! cartesian axis system
-    CRYSTAL, IN :: crystal
+    crystal :: CRYSTAL, IN
     select case (.thermal_axis_system)
-      case ("crystal")
+      case ("crystal  ")
         .thermal_tensor.change_basis(crystal.direct_U_cell_matrix)
         .thermal_axis_system = "cartesian"
       case ("cartesian")
         ! do nothing
       case default
-        DIE("unknown axis system, " // trim(.thermal_axis_system))
+        UNKNOWN(.thermal_axis_system)
     end
   end
 
   thermal_tensor_to(crystal)
   ! Change thermal parameters in the cartesian axis system to the
   ! crystal axis system
-    CRYSTAL, IN :: crystal
+    crystal :: CRYSTAL, IN
     select case (.thermal_axis_system)
-      case ("crystal")
+      case ("crystal  ")
         ! do nothing
       case ("cartesian")
         .thermal_tensor.change_basis(crystal.reciprocal_U_cell_matrix)
         .thermal_axis_system = "crystal"
       case default
-        DIE("unknown axis system, " // trim(.thermal_axis_system))
+        UNKNOWN(.thermal_axis_system)
     end
   end
 
   position_from(crystal)
   ! Change atom positions in the crystal axis system to the
   ! cartesian axis system
-    CRYSTAL, IN :: crystal
+    crystal :: CRYSTAL, IN
     select case (.axis_system)
-      case ("crystal")
+      case ("crystal  ")
         .pos = matmul(crystal.direct_cell_matrix,.pos)
         .axis_system = "cartesian"
       case ("cartesian")
         ! do nothing
       case default
-        DIE("unknown axis system, " // trim(.axis_system))
+        UNKNOWN(.axis_system)
     end
   end
 
   position_to(crystal)
   ! Change atom positions in the cartesian axis system to the
   ! the crystal axis system
-    CRYSTAL, IN :: crystal
+    crystal :: CRYSTAL, IN
     select case (.axis_system)
-      case ("crystal")
+      case ("crystal  ")
         ! do nothing
       case ("cartesian")
         .pos = matmul(crystal.inverse_cell_matrix,.pos)
         .axis_system = "crystal"
       case default
-        DIE("unknown axis system, " // trim(.axis_system))
+        UNKNOWN(.axis_system)
     end
   end
 
@@ -578,8 +632,8 @@ contains
    ! label are not compared since the same kind of atom can have a different
    ! position and label.  To check if the basis set is the same, only the
    ! label is used.
-      ATOM :: atom
-      BIN :: res
+      atom :: ATOM
+      res :: BIN
       ENSURE( .basis.created,"no basis set to compare")
       res = .atomic_number==atom.atomic_number AND &
             .basis.label==atom.basis.label
@@ -587,49 +641,49 @@ contains
 
    no_of_shells result(res) 
    ! Return the no of shells
-      INT :: res
+      res :: INT
       res = .basis.n_shell
    end
 
    n_shell result(res) 
    ! Return the no of shells
-      INT :: res
+      res :: INT
       res = .basis.n_shell
    end
 
    no_of_basis_functions result (res)
    ! Return the no of basis functions
-      INT :: res
+      res :: INT
       res = .basis.no_of_basis_functions
    end
 
    n_bf result (res)
    ! Return the no of basis functions
-      INT :: res
+      res :: INT
       res = .basis.n_bf
    end
 
    no_of_primitives result (res)
    ! Return the no of primitives for this atom
-      INT :: res
+      res :: INT
       res = .basis.no_of_primitives
    end
 
    n_prim result (res)
    ! Return the no of primitives for this atom
-      INT :: res
+      res :: INT
       res = .basis.n_prim
    end
 
    no_of_occupied_NOs(kind,tol) result (res)
-   ! Returns the number of non-zero occupied natural orbitals. For this purpose, 
+   ! Returns the number of non-zero occupied natural orbitals. For this purpose,
    ! zero is defined to be "tol" if present, or TOL(7) otherwise
-      STR, optional :: kind
-      DBL, optional :: tol
-      INT :: res
-      STR :: itemkind
-      DBL :: eps
-      INT :: n,n_bf
+      kind :: STR(*), optional
+      tol :: DBL, optional
+      res :: INT
+      itemkind :: STR
+      eps :: DBL
+      n,n_bf :: INT
       ENSURE( .occupation.created, "no occupation numbers")
       itemkind = .occupation.spinorbital_kind
       if (present(kind)) itemkind=kind
@@ -688,13 +742,13 @@ contains
                end
             end
          case default
-            DIE("unknown occupation number kind, "// trim(itemkind))
+            DIE("unknown occupation kind, "//trim(itemkind))
       end
    end
    
    chemical_symbol result(res)
    ! Return the chemical symbol for this atom
-      CHR(2) :: res
+      res :: CHR(2)
       if (.atomic_number<1 OR .atomic_number>103) then; res = "??"
       else;                  res = element_symbols(.atomic_number)
       end
@@ -702,7 +756,7 @@ contains
 
    mass result (res)
    ! Return the atomic mass for this atom
-      DBL :: res
+      res :: DBL
       if (.atomic_number<1 OR .atomic_number>92) then; res = ZERO
       else;                  res = atomic_masses(.atomic_number)
       end
@@ -710,8 +764,9 @@ contains
 
    mean_neutron_number result (res)
    ! Return the average (abundance weighted) number of neutrons for this atom,
-   ! calculated roughly by subtracting the number of protons from the atomic mass.
-      DBL :: res
+   ! calculated roughly by subtracting the number of protons from the atomic
+   ! mass.
+      res :: DBL
       if (.atomic_number<1 OR .atomic_number>92) then; res = ZERO
       else;                  res = .mass - .atomic_number
       end
@@ -719,7 +774,7 @@ contains
 
    bragg_slater_radius result (res)
    ! Return the Bragg-Slater radius for this atom
-      DBL :: res
+      res :: DBL
       if (.atomic_number<1 OR .atomic_number>54) then; res = ZERO
       else;                  res = bragg_slater_radii(.atomic_number)
       end
@@ -727,50 +782,60 @@ contains
 
    neutron_scattering_length result (res)
    ! Return the neutron scattering length for this atom
-      DBL :: res
+      res :: DBL
       if (.atomic_number<1 OR .atomic_number>95) then; res = ZERO
       else;            res = neutron_scattering_lengths(.atomic_number)
       end
    end
 
-   period_number result(p)
-   ! Return the period (i.e. row) on which the atom lies
-      INT :: p
-      INT :: noble,n
+   period_number(Z) result(p)
+   ! Return the period (i.e. row) on which the atom lies.
+   ! If "Z" is present it is used as the atomic number.
+      Z :: INT, optional
+      p :: INT
+      atomic_number,noble,n :: INT
+      atomic_number = .atomic_number
+      if (present(Z)) atomic_number = Z
       p = 1
-      if (.atomic_number<1) return
+      if (atomic_number<1) return
       noble = 0
       do
          n = (p+2)/2
          noble = noble + 2*n**2
-         if (.atomic_number <= noble) exit
+         if (atomic_number <= noble) exit
          p = p + 1
       end 
    end
 
-   column_number result(col)
-   ! Return the period column (i.e. row) on which the atom lies
-      INT :: col
-      INT :: p,noble,n
+   column_number(Z) result(col)
+   ! Return the period column (i.e. row) on which the atom lies.
+   ! If "Z" is present it is used as the atomic number.
+      Z :: INT, optional
+      col :: INT
+      atomic_number,p,noble,n :: INT
+      atomic_number = .atomic_number
+      if (present(Z)) atomic_number = Z
       p = 1
-      if (.atomic_number<1) return
+      if (atomic_number<1) return
       noble = 0
       do
          n = (p+2)/2
          noble = noble + 2*n**2
-         if (.atomic_number <= noble) exit
+         if (atomic_number <= noble) exit
          p = p + 1
       end 
       noble = noble - 2*n**2
-      col = .atomic_number - noble
+      col = atomic_number - noble
    end
 
-   period_block result(b)
-   ! Return the period bloc character in which the atom lies
-      CHR :: b
-      INT :: p,col
-      p   = .period_number
-      col = .column_number
+   period_block(Z) result(b)
+   ! Return the period block character in which the atom lies.
+   ! If "Z" is present it is used as the atomic number.
+      Z :: INT, optional
+      b :: CHR
+      p,col :: INT
+      p   = .period_number(Z)
+      col = .column_number(Z)
       if (p<4) then
          select case (col)
             case (1:2);   b = "s"
@@ -794,13 +859,15 @@ contains
       end
    end
 
-   ground_state_multiplicity result(mult)
+   ground_state_multiplicity(Z) result(mult)
    ! Return the ground state multiplicity for this atom according to Hunds rule
    ! (Note this is not neccesarily the real ground state, esp. for Cu)
-      INT :: mult
-      INT :: p,col
-      p   = .period_number
-      col = .column_number
+   ! If "Z" is present it is used as the atomic number.
+      Z :: INT, optional
+      mult :: INT
+      p,col :: INT
+      p   = .period_number(Z)
+      col = .column_number(Z)
       if (p<4) then
          select case (col)
             case (2,8);   mult = 1
@@ -835,9 +902,9 @@ contains
 
   dispersion_correction(wavelength) result(res)
   ! The dispersion correction which best matches the wavelength.
-    IN :: self
-    DBL :: wavelength
-    CDBL :: res
+    self :: IN
+    wavelength :: DBL
+    res :: CDBL
     if (.atomic_number<1 OR .atomic_number>92) then
       res = ZERO
     else
