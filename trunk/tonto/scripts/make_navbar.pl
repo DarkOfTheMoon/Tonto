@@ -19,32 +19,25 @@ $htmldir = File::Spec->canonpath($rel_path);
 $rel_path = File::Spec->abs2rel($f95docdir,$docdir);
 $f95docdir = File::Spec->canonpath($rel_path);
 
+print "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Frameset//EN\">";
 print "<HTML>\n";
 print "<HEAD>\n";
 print "  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=iso-8859-1\">\n";
 print "  <META name=\"robots\" content=\"noindex, nofollow\">\n";
 print "  <TITLE>Tonto Navigation</TITLE>\n";
-print "  <STYLE type=\"text/css\">";
-print "  <!--";
-print "   DIV.indent { margin-left : 15px }";
-print "  -->";
-print "  </STYLE>";
-print "<BASE TARGET=\"main\">\n";
+print "  <LINK REL=\"stylesheet\" HREF=\"tonto.css\" TYPE=\"text/css\">\n";
+print "  <BASE TARGET=\"main\">\n";
 print "</HEAD>\n";
-print "<body BGCOLOR=\"#FFFFFF\">\n";
-print "<DIV CLASS=\"indent\" ALIGN=\"left\">\n";
-print "<DIV STYLE=\"background-color : #DDDDEE\">\n";
-print "<BR>\n";
-print "<IMG SRC=\"logo_150.png\" WIDTH=150 HEIGHT=32>\n";
+print "<BODY>\n";
 
-print "<BR><BR>";
-print "<BR><A HREF=\"htmlmanual/index.html\">What is TONTO?</A>\n";
-print "<BR><BR>\n";
+print "<DIV CLASS=\"TITLE\">\n";
+print "<BR><A CLASS=\"LOGO\">Tonto</A><BR><BR>\n";
 print "<IMG SRC=\"hr.png\" HEIGHT=10 WIDTH=100%>\n";
 print "</DIV>\n";
+print "<H2 CLASS=\"TITLE\"><A HREF=\"htmlmanual/index.html\">Main Manual</A></H2>\n";
+print "<IMG SRC=\"hr.png\" HEIGHT=10 WIDTH=100%>\n";
 
-print "<BR>\n";
-print "<DIV STYLE=\"background-color : #DDDDEE\">MODULES</DIV>\n";
+print "<H2 CLASS=\"TITLE\">Modules</H3>\n";
 
 foreach $i (@dirlist) {
   $_=$i;
@@ -59,7 +52,7 @@ foreach $i (@modlist) {
 }
 
 print "<BR><BR>\n";
-print "<DIV STYLE=\"background-color : #DDDDEE\">PROGRAMS</DIV>\n";
+print "<H2 CLASS=\"TITLE\">Programs</H3>\n";
 
 foreach $i (@proglist) {
    print "<BR><A HREF=\"$htmldir/$i\_short.html\">$i</A> <A HREF=\"foofiles/$i.foo\">.foo</A>  <A HREF=\"$f95docdir/$i.F95\">.F95</A>\n";
