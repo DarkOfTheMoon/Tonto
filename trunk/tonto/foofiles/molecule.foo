@@ -2455,6 +2455,35 @@ contains
      S.destroy
    end
 
+   make_nuclear_matrix(Z,charges,points)
+   ! Calculate the nuclear attraction matrix "Z" given a set of "charges" at a
+   ! set of "points".
+     Z,points :: MAT{REAL}
+     charges :: VEC{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(charges.dim==points.dim1,"inconsistent charges and points arrays")
+   ENSURE(points.dim2==3,"wrong 2nd dimension, points array")
+     Z_c :: MAT{REAL}*
+     q,c,fa,la,fb,lb,start,step :: INT
+     sh :: SHELL2
+     Z = ZERO
+     start = 1 + tonto_parallel.this_proc
+     step = tonto_parallel.n_proc
+     do q = start,.n_shell_pairs,step
+       .get_shell_pair(sh,q,fa,la,fb,lb)
+       Z_c.create(sh.a.n_comp,sh.b.n_comp)
+       do c = 1,charges.dim
+         sh.get_nuc(Z_c,ZERO,points(c,:))
+         Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - charges(c) * Z_c
+       end
+       Z_c.destroy
+       sh.destroy_ptr_part
+     end
+     tonto_parallel.sum_symmetric_matrices(Z)
+     Z.symmetric_reflect
+   end
+
    get_core_matrix(H,nuclei)
    ! Get the core hamiltonian matrix. If already in memory, do nothing. Else if
    ! the archive file exists, read it. Otherwise make it.
@@ -3079,6 +3108,33 @@ contains
               values(i) = values(i) + Z_n / r
             else
               values(i) = values(i) + TEN**6
+            end
+         end
+      end
+   end
+
+   electric_potential(values,grid,charges,positions) ::: selfless
+   ! Calculate the electric potential "values" at a set of "grid" points, coming
+   ! from a given set "charges" located at "positions".  This is useful for
+   ! numerical integration of the potential.
+      values,charges :: VEC{REAL}
+      grid,positions :: MAT{REAL}
+   ENSURE(charges.dim==positions.dim1,"inconsistent charges and positions arrays")
+   ENSURE(positions.dim2==3,"wrong 2nd dimension, positions array")
+   ENSURE(values.dim==grid.dim1,"inconsistent values and grid array")
+      n_pts,n,i :: INT
+      q,r :: REAL
+      pos :: VEC{REAL}(3)
+      values = ZERO
+      do n = 1,charges.dim
+         q = charges(n)
+         pos = positions(n,:)
+         do i = 1,grid.dim1
+            r = pos.distance_to(grid(i,:))
+            if (r>tiny(r)) then
+              values(i) = values(i) + q / r
+            else
+              values(i) = values(i) + TEN**6 ! something very large
             end
          end
       end
@@ -4324,6 +4380,72 @@ contains
        case default
          DIE("unknown correlation functional")
      end
+   end
+
+   make_numerical_J_matrix_v1(J)
+   ! Evaluate the coulomb matrix "J" using numerical evaluation of the potential
+   ! on a DFT integration grid.
+     J :: MAT{REAL}, target
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.dftgrid.created, "need to specify dftgrid")
+     pt :: MAT{REAL}*
+     wt,p :: VEC{REAL}*
+     n_pt :: INT
+     n_pt = .dftgrid.n_pts*.n_atom
+     p.create(n_pt)
+     pt.create(n_pt,3)
+     wt.create(n_pt)
+     .dftgrid.make_grid(pt,wt,.atom)
+     .make_density_grid(p,pt)
+     p = wt*p ! Now we have the effective charges
+     wt.destroy
+     .make_nuclear_matrix(J,charges=p,points=pt)
+     pt.destroy
+     p.destroy
+   end
+
+   make_numerical_J_matrix_v2(J)
+   ! Evaluate the coulomb matrix "J" using numerical evaluation of the potential
+   ! on a DFT integration grid.
+     J :: MAT{REAL}, target
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.dftgrid.created, "need to specify dftgrid")
+     JJ,pt :: MAT{REAL}*
+     wt,q :: VEC{REAL}*
+     n_pt, p,fa,la,fb,lb,atom_a,atom_b :: INT
+     sh :: SHELL2
+     atom :: VEC{ATOM}*
+     n_pt = .dftgrid.n_pts*.n_atom
+     q.create(n_pt)
+     pt.create(n_pt,3)
+     wt.create(n_pt)
+     .dftgrid.make_grid(pt,wt,.atom)
+     .make_density_grid(q,pt)
+     q = wt*q ! Now we have the effective charges
+     wt.destroy
+     J = ZERO
+     do p = 1,.n_shell_pairs
+        .get_shell_pair(sh,p,fa,la,fb,lb,atom_a,atom_b)
+        if (atom_a==atom_b) then
+           atom.create(1)
+           atom(1) = .atom(atom_a)
+        else
+           atom.create(2)
+           atom(1) = .atom(atom_a)
+           atom(2) = .atom(atom_b)
+        end
+        JJ.create(sh.a.n_comp,sh.b.n_comp)
+        .dftgrid.make_potential_MEs_of(MOLECULE:electric_potential,q,pt,sh,atom,JJ)
+        atom.nullify_ptr_part; atom.destroy
+        J(fa:la,fb:lb) = J(fa:la,fb:lb) - JJ
+        JJ.destroy
+        sh.destroy_ptr_part
+     end
+     J.symmetric_reflect
+     pt.destroy
+     q.destroy
    end
 
 !  **********************
