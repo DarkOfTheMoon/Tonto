@@ -619,6 +619,17 @@ contains
     stdout.flush
 
     if (q>0) then
+
+!      stdout.flush
+!      do q=1,size(dist_list)
+!        if (op_list(1,q)==0) exit
+!        stdout.put(op_list(1,q))
+!        stdout.put(op_list(2,q))
+!        stdout.put(op_list(3,q))
+!        stdout.put(op_list(4,q))
+!        stdout.flush
+!      end
+
       stdout.put_text("atoms")
       stdout.flush
       stdout.put_text("data_order= { label ")
@@ -692,9 +703,14 @@ contains
   ! Self gets shifted to saved_self, and self becomes a new molecule which is a
   ! cluster defined by the original molecule.
   ! Optional input position must be in crystal coordinates.
+  ! If you specify the partition factors explicitly, the length of the array
+  ! must be the number of atoms in the new cluster - you may have to run it a
+  ! first time to get the number of atoms.
+  ! The unit_factor is useful if you know that nothing is repeated in the
+  ! cluster.
     PTR :: self
     IMAT* :: op_list
-    VEC* :: dist_list
+    VEC* :: dist_list,factors
     VEC(3) :: pos
     STR :: word
     MAT3* :: therm1
@@ -704,16 +720,16 @@ contains
     IVEC* :: map,count
     INT :: s,h,k,l,n,q
     DBL :: dist_max
-    MOL* :: mol
-    BIN :: have_ops
+    BIN :: have_factors,unit_factors
 
     ENSURE(.crystal.created, "no crystal data")
     ENSURE(.atom.created, "no atom data")
     ! defaults
     dist_max  = 5
     position = (/ZERO,ZERO,ZERO/)
+    have_factors = FALSE
+    unit_factors = FALSE
 
-    have_ops=FALSE
     read_loop : do
       stdin.read(word)
       word.to_lower_case
@@ -722,17 +738,17 @@ contains
          case("distance=");                stdin.read(dist_max)
          case("position=");                stdin.read(position)
          case("centre=");                  stdin.read(position)
-!         case("operations=")
-!           have_ops=TRUE
-!           n = stdin.list_length
-!           op_list.create(4,n)
-!           stdin.read(op_list,order="by_column")
+         case("factors=");                 stdin.read_ptr(factors)
+                                           have_factors = TRUE
+         case("unit_factors=");            stdin.read(unit_factors)
+         case("symops=");                  stdin.read_ptr(op_list,n_rows=4)
          case default; DIE("unknown keyword : " // trim(word))
       end
     end do read_loop
+    if (unit_factors) have_factors=TRUE
     position.rotate_by(.crystal.direct_cell_matrix)
 
-    if (NOT have_ops) then
+    if (NOT op_list.created) then
       .crystal.create_closest_molecule_list(op_list,dist_list,position,dist_max)
       dist_list.destroy
     end
@@ -755,12 +771,28 @@ contains
       .set_scf_defaults
       if (.saved.density_matrix.created) then
         if (.saved.density_matrix.any_created) then
-          .create_cluster_density_from_molecule(op_list,map,count)
+          if (NOT have_factors) then
+            factors.create(size(count))
+            do n=1,size(count)
+              factors(n) = ONE/count(n)
+            end
+          else
+            if (unit_factors) then
+              factors.create(size(count))
+              factors = ONE
+            else
+              word = "inputted partition factor array must be length" // &
+                      trim( size(count).to_str)
+              ENSURE(size(factors)==size(count),word)
+            end
+          end
+          .create_cluster_density_from_molecule(op_list,map,factors)
         end
       end
     end
 
     count.destroy
+    factors.destroy
     map.destroy
     op_list.destroy
 
@@ -854,12 +886,13 @@ contains
     .crystal.make_reduced_group_data(.atom)
   end
 
-  create_cluster_density_from_molecule(symops,map,count) [leaky]
+  create_cluster_density_from_molecule(symops,map,factors) [leaky]
   ! Given the cluster "mol", defined from "self" by "symops", "map", and
-  ! "count", create the density matrix for "mol" from that of "self".
+  ! "factors", create the density matrix for "mol" from that of "self".
   ! Can only do up to f functions.
     IMAT, IN :: symops
-    IVEC, IN :: map,count
+    IVEC, IN :: map
+    VEC, IN :: factors
     MAT* :: new_dens,dtr,ftr,w,old_dens,tra,trb
     MAT(3,3), target :: seitz,tmp
     MAT(1,1), target :: mat1
@@ -959,12 +992,14 @@ contains
       oa1= .atom_for_shell(s1)
       f1= .first_basis_fn_for_shell(s1)
       l1= .last_basis_fn_for_shell(s1)
-      c1= ONE/count(oa1)
+!      c1= ONE/count(oa1)
+      c1= factors(oa1)
       do s2=1,.n_shell
         oa2= .atom_for_shell(s2)
         f2= .first_basis_fn_for_shell(s2)
         l2= .last_basis_fn_for_shell(s2)
-        c2= ONE/count(oa2)
+!        c2= ONE/count(oa2)
+        c2= factors(oa2)
         new_dens(f1:l1,f2:l2) = new_dens(f1:l1,f2:l2) * HALF * (c1 + c2)
       end
     end
@@ -1032,6 +1067,48 @@ contains
     ftr(1:10,10:10) = ftr(1:10,10:10)*sqrt(FIVE*THREE)
     ftr(4:9 , 1:10) = ftr(4:9 , 1:10)*(ONE/sqrt(FIVE))
     ftr(10:10,1:10) = ftr(10:10,1:10)*(ONE/sqrt(FIVE*THREE))
+  end
+
+
+
+  factor_density [leaky]
+  ! Applies atomic partition factors to the density matrix, useful for zeroing
+  ! out certain atoms.
+  ! reads in the density factors from stdin.
+    PTR :: self
+    STR :: word
+    VEC* :: list
+    INT :: a1,a2,nf1,nl1,nf2,nl2
+    DBL :: factor
+
+    ENSURE(.atom.created, "no atom data")
+    ENSURE(.scfdata.spinorbital_kind=="restricted",can only do restricted density)
+    ! defaults
+
+    list.create(.n_atom)
+
+    read_loop : do
+      stdin.read(word)
+      word.to_lower_case
+      select case (word)
+         case("end");                      exit read_loop
+         case("factors=");                 stdin.read(list)
+         case default; DIE("unknown keyword : " // trim(word))
+      end
+    end do read_loop
+
+    do a1 = 1, .n_atom
+      nf1 = .first_basis_fn_for_atom(a1)
+      nl1 = .last_basis_fn_for_atom(a1)
+      do a2 = 1, .n_atom
+        nf2 = .first_basis_fn_for_atom(a2)
+        nl2 = .last_basis_fn_for_atom(a2)
+        factor = (list(a1)+list(a2))/TWO ! mulliken partitioning
+        .density_matrix.restricted(nf1:nl1,nf2:nl2).to_product(factor)
+      end
+    end
+    list.destroy
+
   end
 
 end 
