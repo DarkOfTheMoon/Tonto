@@ -1177,8 +1177,12 @@ contains
       INT :: res
       INT :: n_shell_pair
       n_shell_pair = .no_of_shell_pairs
-      ENSURE(n_shell_pair/sqrt(TWO) <= (huge(n_shell_pair))**HALF,"too many shells")
-      res = n_shell_pair*(n_shell_pair+1)/2
+      if (n_shell_pair/sqrt(TWO) <= (huge(n_shell_pair))**HALF) then
+         res = n_shell_pair*(n_shell_pair+1)/2
+      else
+         WARN("too many shells")
+         res = 0
+      end
    end
 
    no_of_basis_functions result (res)
@@ -1516,6 +1520,14 @@ contains
         end
         shell.destroy_ptr_part
       end
+    else if (.scfdata.nudo) then
+      do q=1,.n_shell_pairs
+        .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
+        if (.atom.bonded(atom_a,atom_b)) then; shell.get_kei(T(fa:la,fb:lb))
+        else;                                  T(fa:la,fb:lb) = ZERO
+        end
+        shell.destroy_ptr_part
+      end
     else
       do q=1,.n_shell_pairs
         .get_shell_pair(shell,q,fa,la,fb,lb)
@@ -1556,8 +1568,17 @@ contains
     if (.scfdata.nddo) then
       do q=1,.n_shell_pairs
         .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
-        shell.get_kei( T(fa:la,fb:lb), S(fa:la,fb:lb))
-        if (atom_a/=atom_b) T(fa:la,fb:lb) = ZERO
+        if (atom_a==atom_b) then; shell.get_kei(T(fa:la,fb:lb),S(fa:la,fb:lb))
+        else;                     T(fa:la,fb:lb) = ZERO; S(fa:la,fb:lb) = ZERO
+        end
+        shell.destroy_ptr_part
+      end
+    else if (.scfdata.nudo) then
+      do q=1,.n_shell_pairs
+        .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
+        if (.atom.bonded(atom_a,atom_b)) then; shell.get_kei(T(fa:la,fb:lb),S(fa:la,fb:lb))
+        else;                                  T(fa:la,fb:lb) = ZERO; S(fa:la,fb:lb) = ZERO
+        end
         shell.destroy_ptr_part
       end
     else
@@ -1617,6 +1638,21 @@ contains
         end
         shell.destroy_ptr_part
       end
+    else if (.scfdata.nudo) then
+      do q=1,.n_shell_pairs
+        .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
+        if (.atom.bonded(atom_a,atom_b)) then
+          Z_c.create(shell.a.n_comp,shell.b.n_comp)
+          do c=1,.n_atom
+            atom=>.atom(c)
+            shell.get_nuc(Z_c, atom.mass,atom.pos)
+          ! shell.make_nuclear_attraction_ints(Z_c, atom.pos)
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.atomic_number * Z_c
+          end
+          Z_c.destroy
+        end
+        shell.destroy_ptr_part
+      end
     else
       do q=1,.n_shell_pairs
         .get_shell_pair(shell,q,fa,la,fb,lb)
@@ -1655,6 +1691,21 @@ contains
       do q=1,.n_shell_pairs
         .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
         if (atom_a==atom_b) then
+          Z_c.create(shell.a.n_comp,shell.b.n_comp)
+          do c=1,n_atom
+            atom=>.atom(nuclei(c))
+            shell.get_nuc(Z_c, atom.mass,atom.pos)
+          ! shell.make_nuclear_attraction_ints(Z_c, atom.pos)
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.atomic_number * Z_c
+          end
+          Z_c.destroy
+        end
+        shell.destroy_ptr_part
+      end
+    else if (.scfdata.nudo) then
+      do q=1,.n_shell_pairs
+        .get_shell_pair(shell,q,a,b,fa,la,fb,lb,atom_a,atom_b)
+        if (.atom.bonded(atom_a,atom_b)) then
           Z_c.create(shell.a.n_comp,shell.b.n_comp)
           do c=1,n_atom
             atom=>.atom(nuclei(c))
@@ -2303,6 +2354,32 @@ contains
          ERI.destroy
          shell4.destroy_ptr_part
        end
+    else if (.scfdata.nudo) then
+       do q = 1, .n_shell_quartets
+         .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
+         if (.atom.bonded(atom_a,atom_b) AND .atom.bonded(atom_c,atom_d)) then
+           .get_shell_quartet(shell4,q,a,b,c,d)
+         else
+           skipped = skipped + 1
+           cycle
+         end
+         if (shell4.skip_ERI) then
+           skipped = skipped + 1
+           shell4.destroy_ptr_part
+           cycle
+         end
+         ERI.create(shell4.a.n_comp,shell4.b.n_comp,shell4.c.n_comp,shell4.d.n_comp)
+         shell4.get_ERI(ERI)
+         factor = ONE
+         if (a==b) factor = HALF                    ! Coincidence factors
+         if (c==d) factor = HALF * factor
+         if (a==c AND b==d) factor = HALF * factor
+         ERI = factor * ERI
+         eri_archive.file.write(ERI)
+         eri_index.file.write(q)
+         ERI.destroy
+         shell4.destroy_ptr_part
+       end
     else
        do q = 1, .n_shell_quartets
          .get_shell_quartet(shell4,q,a,b,c,d)
@@ -2374,6 +2451,14 @@ contains
       if (.scfdata.nddo) then
         .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
         if (atom_a==atom_b AND atom_c==atom_d) then
+          .get_shell_quartet(shell4,q,a,b,c,d)
+        else
+          skipped = skipped + 1
+          cycle
+        end
+      else if (.scfdata.nudo) then
+        .get_shell_quartet_indexes(q,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
+        if (.atom.bonded(atom_a,atom_b) AND .atom.bonded(atom_c,atom_d)) then
           .get_shell_quartet(shell4,q,a,b,c,d)
         else
           skipped = skipped + 1
@@ -5758,6 +5843,7 @@ contains
     SHELLQUARTET  :: shellquartet
     INT :: ab,cd,i_a,i_b,i_c,i_d
     INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
+    INT :: atom_a,atom_b,atom_c,atom_d
     DBL :: I_abcd,factor,P_dc,P_db,P_cb,cutoff
     DBL :: Jcd,Kbc,Kbd
     BIN :: skip
@@ -5776,6 +5862,9 @@ contains
     ! skip = .sleazy_test(cutoff,ab,max_P,max_I)
     ! if (skip) cycle
       .get_shell_pair_indices(ab,i_a,i_b)    ! a & b shell indices.
+      atom_a = .atom_for_shell(i_a)
+      atom_b = .atom_for_shell(i_b)
+      if (.scfdata.nudo AND .atom.not_bonded(atom_a,atom_b)) cycle
       fa = .first_basis_fn_for_shell(i_a)
       fb = .first_basis_fn_for_shell(i_b)
       la = .last_basis_fn_for_shell(i_a)
@@ -5783,6 +5872,9 @@ contains
       shellquartet.ab => shellpair(ab)
       do cd = 1,ab
         .get_shell_pair_indices(cd,i_c,i_d)  ! c & d shell indices.
+        atom_c = .atom_for_shell(i_c)
+        atom_d = .atom_for_shell(i_d)
+        if (.scfdata.nudo AND .atom.not_bonded(atom_c,atom_d)) cycle
         fc = .first_basis_fn_for_shell(i_c)
         fd = .first_basis_fn_for_shell(i_d)
         lc = .last_basis_fn_for_shell(i_c)
@@ -5799,6 +5891,7 @@ contains
   
         I.create(fa,la,fb,lb,fc,lc,fd,ld)
         shellquartet.get_ERI(I)
+      ! shellquartet.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
       ! write(*,'("I=",8i2)') fa,la,fb,lb,fc,lc,fd,ld
       ! write(*,'(3d15.6)') I
         if (factor < 0.9) then ! apply coincidence factor
