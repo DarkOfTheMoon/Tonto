@@ -65,7 +65,7 @@ while (@ARGS) {
 if ($argerr==1) {
   warn(
     "\nUsage :\n",
-    "\t perl -w compare_module_file.perl [-compiler compiler_id] \\\n",
+    "\t perl -w compare_module_file.pl [-compiler compiler_id] \\\n",
     "\t\t filename1 filename2 \n",
     "\n",
     "Where :\n",
