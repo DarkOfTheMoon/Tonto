@@ -7217,7 +7217,7 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT, PTR :: error   DEFAULT_NULL
+    OPMAT, PTR :: dP,dF,old_P,old_F, error   DEFAULT_NULL
 
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
@@ -7225,6 +7225,9 @@ contains
 
     .get_initial_guess
     .make_fock_matrix
+    dP.create(.n_bf); old_P.create_copy(.density_matrix)
+    dF.create(.n_bf); old_F.create_copy(.fock_matrix)
+    .make_scf_error(error) 
 
     if (.optimise_thermals) then
       .fit_thermal_parameters
@@ -7248,8 +7251,18 @@ contains
         .update_molecular_orbitals
         .make_scf_density_matrix
         .save_scf_results
-        .make_fock_matrix                      ! To get new Hartree-Fock energy.
-        .make_structure_factors
+
+      dP.set_to(.density_matrix)
+      dP.minus(old_P)
+
+      .make_fock_matrix(dP,dF,core=FALSE)
+
+      .fock_matrix.set_to(old_F)
+      .fock_matrix.plus(dF)
+      old_P.set_to(.density_matrix)
+      old_F.set_to(.fock_matrix)
+
+        .make_structure_factors                ! To get new Hartree-Fock energy.
 
         .scfdata.update(energy=.scf_energy, kinetic_energy=.kinetic_energy)
         .scfdata.set_stats(.crystal.chi2, .crystal.goodness_of_fit, &
@@ -7263,8 +7276,15 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
+    error.destroy
+    .scfdata.cleanup_diis
+    .fock_matrix.destroy("all")
+    dF.destroy
+    dP.destroy
+    old_F.destroy
+    old_P.destroy
+
     .crystal.put_reflection_data
-    .scfdata.diis.delete_archives
     if (.optimise_thermals) .put_atom_thermal_tensors
   end
 
@@ -7765,9 +7785,11 @@ contains
      MAT :: pts
      MAT, PTR :: k   DEFAULT_NULL
      VEC, PTR :: F,phase   DEFAULT_NULL
+     VEC, PTR :: F_exp,F_pred DEFAULT_NULL
      INT :: n_pts,n_refl,n
      DBL :: fac
      ENSURE( .crystal.created,  "no crystal")
+     ENSURE( .crystal.F_pred.created, "no calculated structure factors")
      ENSURE( .crystal.F_calc.created, "no calculated structure factors")
      ENSURE( .crystal.F_exp.created,  "no experimental structure factors")
      ENSURE( size(pts,2)==3,  "incorrect dimension for points array")
@@ -7777,8 +7799,15 @@ contains
      n_refl = .crystal.n_refl
      k.create(n_refl,3); .crystal.make_k_pts(k)
      F.create(n_refl)
-!     F = .crystal.F_exp - abs(.crystal.F_pred)
-     F = sign(.crystal.F_exp,.crystal.F_pred) - .crystal.F_pred
+
+     F_pred.create(n_refl)
+     F_exp.create(n_refl)
+     F_pred = sign(.crystal.F_pred,real(.crystal.F_calc))
+     F_exp = sign(.crystal.F_exp,F_pred)
+     F = F_exp - F_pred
+     F_exp.destroy
+     F_pred.destroy
+
      phase.create(n_refl)
      do n = 1,n_pts
         phase.to_product(k,pts(n:n,:),transpose_b=TRUE)
