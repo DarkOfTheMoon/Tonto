@@ -77,15 +77,21 @@ module SYSTEM
 !
 !   STRVEC, PTR :: call_stack DEFAULT_NULL
 !   ! Stores the name of each subroutine at each call-level for tracebacks
-!
-!   STR :: file_name
+! 
+!   STR :: io_file_name
 !   ! Last file used
-!
-!   INT :: file_record
+! 
+!   STR :: io_file_action
+!   ! The action (read or write) assciated with the io_file
+! 
+!   INT :: io_file_record
 !   ! Record number of last file
-!
-!   STR :: file_operation
-!   ! Operation performed on file
+! 
+!   BSTR :: io_file_buffer
+!   ! The buffer string associated with the io_file
+! 
+!   INT :: io_file_pos
+!   ! The position of the cursor in the buffer string
 !
 !   end
 
@@ -96,7 +102,8 @@ module SYSTEM
 
    SYSTEM, target, public :: std_system  = &
      system_type(0,SYSTEM_STD_ERROR_UNIT,0,0,0,0,SYSTEM_MEMORY_LIMIT, &
-                 FALSE,SYSTEM_MEMORY_UNITS,0,0,0,null(),null(),"",0,"")
+                 FALSE,SYSTEM_MEMORY_UNITS,0,0,0,null(),null(), &
+                 "unknown","unknown",0," ",0)
 
 contains
 
@@ -116,8 +123,6 @@ contains
       TEXTFILE :: file
       .error_unit = file.unit
    end
-
-!-------------------------------------------------------------------------------
 
 !  *****************
 !  Creation routines
@@ -178,11 +183,13 @@ contains
       .stack_level = 0
       .stack_max_level = 0
       .stack_check_level = 0
+      .io_file_name   = "unknown"
+      .io_file_action = "unknown"
+      .io_file_record = 0
+      .io_file_buffer = " "
+      .io_file_pos    = 0
       nullify(.call_stack)
       nullify(.used_stack) 
-      .file_name = ""
-      .file_record = 0
-      .file_operation = ""
       if (present(mem_limit)) .mem_limit = mem_limit
    end
 
@@ -217,8 +224,8 @@ contains
       .error_status = 1
       write(.error_unit,*)
       write(.error_unit,"(a)") "Error!"
-      .report_stack
-      .report_file
+      .report_io_file_info
+      .report_stack_info
       stop    
    end
 
@@ -230,8 +237,8 @@ contains
       write(.error_unit,*)
       write(.error_unit,"(a)") "Error: "//trim(message)
       if (present(iostat)) write(.error_unit,"(a,i4)") " Fortran error ",iostat
-      .report_stack
-      .report_file
+      .report_io_file_info
+      .report_stack_info
       stop    
    end
 
@@ -317,7 +324,7 @@ contains
       if (.stack_level<=.stack_check_level) then
          name = .call_stack(.stack_level)
          .warn("memory leak report for routine "//trim(name))
-         .report_stack
+         .report_stack_info
       end
       .stack_level = .stack_level - 1
    end
@@ -336,7 +343,7 @@ contains
       if (.used_stack(.stack_level) <0) &
                                     .warn("memory sink in routine "//trim(name))
       if (.used_stack(.stack_level)/=0 AND .stack_level>.stack_check_level) &
-                                    .report_stack
+                                    .report_stack_info
       .unstack
    end
 
@@ -435,10 +442,10 @@ contains
     write(unit,'("Maximum blocks used = ",i9)')    .mem_max_blocks
     write(unit,'("Level               = ",i9)')    .stack_level
     write(unit,'("Maximum level  used = ",i9)')    .stack_max_level
-    .report_stack(out)
+    .report_stack_info(out)
   end
 
-  report_stack(out,full_report)
+  report_stack_info(out,full_report)
   ! Report memory stack usage. Use the unit number for file "out", if present.
   ! If present and TRUE, "full_report" requests a full stack output.
     TEXTFILE, optional :: out
@@ -453,33 +460,42 @@ contains
     if (.stack_level>0) then
       write(unit,*)
       write(unit,'(a)') "Routine call stack:"
-      write(unit,'("Call   Routine name        ",a37)') "Usage"
+      write(unit,*)
+      write(unit,'("   Call   Routine name        ",a37)') "Usage"
       do l = 1,.stack_level
-      write(unit,'(i3,".",3x,a48,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
+      write(unit,'(3x,i3,".",3x,a48,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
       end
     end
     if (.stack_max_level>.stack_level AND full) then
        write(unit, &
-         '("----------------------------------------------------------------")')
+         '("   ----------------------------------------------------------------")')
       do l = .stack_level+1,.stack_max_level
-      write(unit,'(i3,".",3x,a48,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
+      write(unit,'(3x,i3,".",3x,a48,i9)') l,adjustl(.call_stack(l)),.used_stack(l)/fac
       end
     end
   end
 
-  report_file(out)
+  report_io_file_info(out)
   ! Report info about the most recent open file.
     TEXTFILE, optional :: out
     INT :: unit
-    if (.file_name /= "") then
-      unit = std_system.error_unit
-      if (present(out)) unit = out.unit
-      write(unit,*)
-      write(unit,'(a33)') "Open file most recently accessed:"
-      write(unit,'("File name            ",a43)') trim(.file_name)
-      write(unit,'("File record number   ",i43)') .file_record
-      write(unit,'("Operation attempted  ",a43)') trim(.file_operation)
-    end
+    BSTR :: cursor
+    INT :: pos,f
+    RETURN_IF(.io_file_name=="unknown")
+    unit = std_system.error_unit
+    if (present(out)) unit = out.unit
+    pos = max(1,.io_file_pos)
+    f = scan(.io_file_buffer(pos:),"abcdefghijklmnopqrstuvwxyz")
+    pos = pos + f - 1
+    cursor = repeat("-",pos-1)//"^"
+    write(unit,*)
+    write(unit,"(a)") "Text file most recently accessed:"
+    write(unit,*)
+    write(unit,'("   File name   = ",a)')  .io_file_name
+    write(unit,'("   I/O action  = ",a)')  .io_file_action
+    write(unit,'("   Line number = ",i4)') .io_file_record
+    write(unit,'("   File buffer = ",a)')  trim(.io_file_buffer)
+    write(unit,'("   Cursor -------",a)')  trim(cursor)
   end
 
 end 
