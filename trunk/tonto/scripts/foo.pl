@@ -10,13 +10,13 @@
 #
 # Usage :
 #
-#   perl -w ./foo.pl [ -fortran file.f95
+#   perl -w ./foo.pl  [ -fortran file.f95 [-fortranint file.int] [-fortranuse file.use] ]
 #
-#                    [-fortranint file.int] [-fortranuse file.use] ]
+#                     [-htmlshort short.html -htmllong long.html] [-types types.foo] [-tidy] 
 #
-#                    [-htmlshort short.html -htmllong long.html]
+#                     [-routine_calls file.rcf] [-used_routines file.usd]
 #
-#                    [-types types.foo] [-tidy] [dir/]file.foo
+#                     [dir/]file.foo
 # Where :
 #
 #   [dir/]file.foo        is the foo file to be preprocessed. The .foo extension
@@ -52,6 +52,15 @@
 #
 #   -tidy                 specfies that a tidied up version of file.foo,
 #                         called "file.tidy", will be produced.
+#
+#   -routine_calls file.rcf  specifies that the calls from each routine
+#                         are to be outputted to file.rcf, for later use
+#                         in compactification, by an associated script 
+#                         compactify_calls.pl
+#
+#   -used_routines file.usd  specifies a .usd file which lists the routines 
+#                         which are to be compiled. If the file does not exist, 
+#                         then none of the routines are compiled.
 #
 # (c) Dylan Jayatilaka, University of Western Australia, 2002.
 # (c) Daniel Grimwood, University of Western Australia, 2002.
@@ -481,14 +490,15 @@ sub analyse_command_arguments {
    print << '-----EOF';
    
     Usage :
+ 
+       perl -w ./foo.pl  [ -fortran file.f95 [-fortranint file.int] [-fortranuse file.use] ]
+ 
+                         [-htmlshort short.html -htmllong long.html] [-types types.foo] [-tidy] 
+ 
+                         [-routine_calls file.rcf] [-used_routines file.usd]
+ 
+                         [dir/]file.foo
    
-      perl -w ./foo.perl [-fortran file.f95
-   
-                         [-fortranint file.int] [-fortranuse file.use] ]
-   
-                         [-htmlshort short.html -htmllong long.html]
-   
-                         [-types types.foo] [-tidy] [dir/]file.foo
     Where :
    
       [dir/]file.foo        is the foo file to be preprocessed. The .foo extension
@@ -524,6 +534,15 @@ sub analyse_command_arguments {
 
       -tidy                 specfies that a tidied up version of file.foo,
                             called "file.tidy", will be produced.
+
+      -routine_calls file.rcf  specifies that the calls from each routine
+                            are to be outputted to file.rcf, for later use
+                            in compactification, by an associated script 
+                            compactify_calls.pl
+
+     -used_routines file.usd   specifies a .usd file which lists the routines 
+                            which are to be compiled. If the file does not exist, 
+                            then none of the routines are compiled.
 -----EOF
      exit 1;
 }
