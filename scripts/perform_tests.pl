@@ -5,11 +5,6 @@
 # All command line arguments are compulsory - run the script without them to get
 # the usage message.
 #
-# It expects that the input for the program is the file "stdin", and the output
-# file is "stdout".  Files in the test directory should be matched pairs, with
-# the end of their names being "stdin" or "stdout", and the rest being
-# identical.  Files that are not matched pairs like this are skipped.
-#
 # (c) Daniel Grimwood, University of Western Australia, 2004.
 #
 # $Id$
@@ -18,7 +13,6 @@
 
 use strict;
 use English;
-use ExtUtils::Command;
 use File::Copy ('copy');
 
 my $testdir = "";
@@ -27,17 +21,16 @@ my $cmp = "";
 
 &analyse_arguments(@ARGV);
 
-# read the list of input files
+# read the list of test jobs
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
-my @inputfiles = grep { /stdin$/ && -f "$testdir/$_"} readdir(TESTDIR);
-foreach my $x (@inputfiles) { $x = $testdir . "/" . $x; }
+my @testdescriptionfiles = grep { /^test/ && -f "$testdir/$_"} readdir(TESTDIR);
+#foreach my $x (@inputfiles) { $x = $testdir . "/" . $x; }
 closedir(TESTDIR);
 
 my $failed = 0;
-my $skipped = 0;
 my $agreed = 0;
 my $disagreed = 0;
-my $ntests = $#inputfiles+1;
+my $ntests = $#testdescriptionfiles+1;
 
 if ($ntests>0) {
   print "Using the program \"$program\".\n";
@@ -45,35 +38,50 @@ if ($ntests>0) {
 }
 
 #main loop over tests
-foreach my $input (@inputfiles) {
+foreach my $testdescription (@testdescriptionfiles) {
 
-  # Get the output file name from the input file name.
-  my $output = $input;
-  $output =~ s/stdin$/stdout/;
-
-  if (-f $output) {
-    print "running \"$input\" ... ";
-
-    copy($input,"stdin");
-
-    # run the program.
-    if (system($program) != 0) {
-      $failed++;
-      print "failed\n";
-    } else {
-      if (system("$cmp $output stdout")==0) {
-        $agreed++;
-        print "agreed\n";
-      } else {
-        $disagreed++;
-        print "disagreed\n";
-      }
-    }
-  } else {
-    print "skipping \"$input\" ... ";
-    $skipped++;
-    print "no test output file!\n";
+  # Read the input and output files from the test description file.
+  open(TEST,"< $testdir/$testdescription");
+  my %inputs = ();
+  my %outputs = ();
+  while (<TEST>) {
+    if (m/input:\s+(.+)\s+(.+)/) { $inputs{$1} = $2; }
+    if (m/output:\s+(.+)\s+(.+)/) { $outputs{$1} = $2; }
   }
+
+  # Copy the input files to the test directory.
+  foreach my $input (keys(%inputs)) {
+    copy("$testdir/$input",$inputs{$input});
+  }
+
+  print "running \"$testdescription\" ... ";
+
+  # run the program.
+  if (system($program) != 0) {
+    $failed++;
+    print "failed\n";
+  } else {
+    my $ok = 1;
+    foreach my $output (keys(%outputs)) {
+      my $out1 = "$testdir/$output";
+      my $out2 = $outputs{$output};
+      copy("$out1","$out2");
+      $ok = ($ok && ! system("$cmp $out1 $out2"));
+    }
+    if ($ok) {
+      $agreed++;
+      print "agreed\n";
+    } else {
+      $disagreed++;
+      print "disagreed\n";
+    }
+  }
+
+  # Delete the test files.  These are the input and output files read in from
+  # the test description file.  Any other files created by the test job should
+  # be deleted by the test job.
+  unlink values(%inputs);
+  unlink values(%outputs);
 }
 
 # print the summary
@@ -82,7 +90,6 @@ print "There are $ntests tests;\n";
 if ($agreed>0) {print "  $agreed gave correct results.\n";}
 if ($disagreed>0) {print "  $disagreed gave incorrect results.\n";}
 if ($failed>0) {print "  $failed failed to run correctly.\n";}
-if ($skipped>0) {print "  $skipped skipped.\n";}
 
 
 sub analyse_arguments {
@@ -133,8 +140,8 @@ sub analyse_arguments {
  Where:
 
     -testdir dir   means test all files in the directory "dir".  All files
-                   beginning with "stdin" are expected to be test jobs.  Those
-                   without a corresponding "stdout" file will be skipped.  E.g.
+                   beginning with "test" describe test jobs.  
+                   E.g.
                    the files "h2o.rhf.stdin" and "h2o.rhf.stdout" go together.
 
     -program prog  "prog" is the program to test.  E.g.
