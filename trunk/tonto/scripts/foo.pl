@@ -3460,6 +3460,17 @@ sub fortran_do_routine_scope {
 
    if ( ! $not_blank) { return; }
 
+   # Don't output inherited self pointer lines; so, the self variable can have
+   # its pointer status changed without it affecting the inheritance matching
+   # mechanism, so you don't need separate inherit interfaces.
+   if ( defined $current_rout_name && $routine{$current_rout_name}{inherited}
+       && $routine{$current_rout_name}{being_inherited}) { 
+      if ($input_line =~ /^\s+self\s+::\s+(PTR|pointer)/) { 
+         $skip_fortran_out = 1;
+         return; 
+      }
+   }
+
    if ( ! $routine{$current_rout_name}{in_routine_body} ) {
       my $comment;
       ($fortran_out,$comment) = &split_by_comment($fortran_out);
