@@ -85,9 +85,6 @@ module MOL
 !   VEC(3) :: gauge_origin
 !   ! Global gauge origin for magnetic field
 !
-!   VEC(3) :: quantization_axis
-!   ! Axis for quantizing any momenta
-!
 !   ATOMVEC, PTR :: atom DEFAULT_NULL
 !   ! List of atoms in molecule
 !
@@ -289,7 +286,6 @@ contains
       .E_field = ZERO
       .B_field = ZERO
       .gauge_origin = ZERO
-      .quantization_axis = (/ ZERO, ZERO, ONE /)
       .charge = 0
       .mult = 1
       .optimise_thermals = FALSE
@@ -2272,7 +2268,7 @@ contains
       factor = ONE
       if (a==b) factor = HALF                    ! Coincidence factors
       if (c==d) factor = HALF * factor
-      if (a==c AND b==d) factor = HALF * factor
+      if (a==c AND b==d) factor = HALF * factor  
       Sx = factor*Sx; Sy = factor*Sy; Sz = factor*Sz
       Ox = factor*Ox; Oy = factor*Oy; Oz = factor*Oz
       SOx_archive.file.write(Sx); SOx_archive.file.write(Ox)
@@ -4925,45 +4921,31 @@ contains
   ! Do a Hartree-Fock SCF calculation. The following :
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! are produced as results.
-    MAT, PTR :: S
     OPMAT, PTR :: dP,dF,old_P,old_F
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     .get_initial_guess
-
     .make_fock_matrix(core=TRUE)
-
     .scfdata.set(nuclear_energy=.nuclear_energy)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
     .scfdata.put_banner
-
     dP.create(.n_bf)
     dF.create(.n_bf)
     old_P.create_copy(.density_matrix)
     old_F.create_copy(.fock_matrix)
-
     ! first iteration.
     .extrapolate_scf
     .update_molecular_orbitals
-
-    S.create( .n_bf, .n_bf)
-    .get_overlap_matrix(S)
-    .molecular_orbitals.schmidt_orthonormalise(S)
-    S.destroy
-
+    .schmidt_orthonormalise(.molecular_orbitals)
     .make_scf_density_matrix
     .save_scf_results
     .make_fock_matrix(core=TRUE)
     .scfdata.update( energy=.scf_energy, kinetic_energy=.kinetic_energy )
     .scfdata.put_results
-
     do
       .extrapolate_scf
       .update_molecular_orbitals
-      S.create( .n_bf, .n_bf)
-      .get_overlap_matrix(S)
-      .molecular_orbitals.schmidt_orthonormalise(S)
-      S.destroy
+      .schmidt_orthonormalise(.molecular_orbitals)
       .make_scf_density_matrix
       .save_scf_results
       dP.set_to(.density_matrix)
@@ -4977,14 +4959,22 @@ contains
       .scfdata.put_results
       if (.scfdata.scf_done) exit
     end
-
     dF.destroy
     dP.destroy
     old_F.destroy
     old_P.destroy
-
     .scfdata.cleanup_diis
     .fock_matrix.destroy("all")
+  end
+
+  schmidt_orthonormalise(MO)
+  ! Schmidt orthonormalise the molecular orbitals, "MO"
+     OPMAT :: MO
+     MAT, PTR :: S
+     S.create(.n_bf,.n_bf)
+     .get_overlap_matrix(S)
+     MO.schmidt_orthonormalise(S)
+     S.destroy
   end
 
   update_molecular_orbitals
@@ -5058,10 +5048,6 @@ contains
     U.create(2*.n_bf,2*.n_bf)
     G = F
     G.change_basis(MO)
-      !  stdout.text("F in MO basis, real")
-      !  stdout.put( real(G))
-      !  stdout.text("F in MO basis, imag")
-      !  stdout.put( aimag(G))
     ! Level shifting
     if ( .scfdata.apply_level_shifting) then
       do i = .n_e + 1, 2*.n_bf
@@ -5069,8 +5055,6 @@ contains
       end
     end
     G.solve_eigenproblem(MO_energies,U)
-      !  stdout.text("MO energies")
-      !  stdout.put( MO_energies, format="column")
     G.to_product(MO,U)
     MO = G
     U.destroy
@@ -5369,12 +5353,11 @@ contains
   ! Get the initial guess for the .molecular_orbitals by reading an old archive of 
   ! .molecular_orbitals, and then make the SCF density matrix as well. 
   ! Convert the .molecular_orbitals, if neccesary.
-     STR :: kind
      ARCHIVE :: archive
-     kind = .scfdata.initial_mos
-     archive.set(.name,"molecular_orbitals",kind=kind)
+     archive.set(.name,"molecular_orbitals",kind=.scfdata.initial_mos)
      archive.read(.molecular_orbitals)
-     .molecular_orbitals.convert_to( .scfdata.molecular_orbital_kind,.n_bf,.n_a,.n_b)
+     .molecular_orbitals.convert_to(.scfdata.molecular_orbital_kind,.n_a,.n_b, &
+                                    .scfdata.quantization_axis)
      .make_scf_density_matrix
      .orbital_energies.create(kind=.scfdata.orbital_energies_kind)
   end
@@ -5384,11 +5367,10 @@ contains
   ! occupied restricted natural orbitals from the sum of atomic densities guess 
   ! for the density matrix. Convert these .molecular_orbitals, if neccesary.
   ! Also make the SCF .density_matrix from these .molecular_orbitals.
-     STR :: initial_mos,kind
+     STR :: kind
      ARCHIVE :: archive
      .get_atom_density
-     kind = .density_matrix.spinorbital_kind
-     if (kind/="restricted") then
+     if (.density_matrix.spinorbital_kind/="restricted") then
         archive.set(.name,"atom_density_matrix", kind="restricted")
         .density_matrix.destroy("restricted")
         archive.read(.density_matrix)
@@ -5397,7 +5379,7 @@ contains
      .put_natural_orbitals
      .assign_MOs_to_NOs
      kind = .scfdata.molecular_orbital_kind
-     .molecular_orbitals.convert_to(kind,.n_bf,.n_a,.n_b)
+     .molecular_orbitals.convert_to(kind,.n_a,.n_b,.scfdata.quantization_axis)
      .make_scf_density_matrix
      .orbital_energies.create(kind=.scfdata.orbital_energies_kind)
   end
@@ -5446,7 +5428,7 @@ contains
     kind = .scfdata.orbital_energies_kind
     .orbital_energies.convert_to(kind)
     kind = .scfdata.molecular_orbital_kind
-    .molecular_orbitals.convert_to(kind,factor=HALF)
+    .molecular_orbitals.convert_to(kind,.n_a,.n_b,.scfdata.quantization_axis)
     .make_scf_density_matrix
     .make_fock_matrix  ! Make a fock matrix (only to get MO's)
     .make_fock_guess   ! Get a reasonable set of starting MO's
@@ -5492,7 +5474,7 @@ contains
        .density_matrix.destroy
        .density_matrix.create(.n_bf,"restricted")
        archive.read(.density_matrix)
-       .density_matrix.convert_to( .scfdata.spinorbital_kind,factor=HALF)
+       .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
     else
        .make_atom_density
     end
@@ -5547,7 +5529,7 @@ contains
      archive.set(.name,"atom_density_matrix", kind="restricted")
      archive.write(.density_matrix, kind="restricted")
     end
-    .density_matrix.convert_to( .scfdata.spinorbital_kind,factor=HALF)
+    .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
     atom_kind.destroy
     last.destroy
     first.destroy
@@ -6112,12 +6094,6 @@ contains
        else;                .make_u_JK_disk(J,Ka,Kb,Pab,P.alpha,P.beta)
        end
        Pab.destroy
-                               ! stdout.text("J:")
-                               ! stdout.put(J)
-                               ! stdout.text("Ka:")
-                               ! stdout.put(Ka)
-                               ! stdout.text("Kb:")
-                               ! stdout.put(Kb)
        F.alpha = J - Ka 
        F.beta = J - Kb 
        Kb.destroy
@@ -6127,12 +6103,8 @@ contains
        F.alpha = ZERO
        F.beta  = ZERO
     end
-                               ! stdout.text("r12 part")
-                               ! .put_fock_matrix
     if (add_core) .add_core_hamiltonian(F.alpha)
     if (add_core) .add_core_hamiltonian(F.beta)
-                               ! stdout.text("total fock")
-                               ! .put_fock_matrix
   end
 
   make_ro_fock(P,F,direct,core,r12) [leaky]
@@ -6205,12 +6177,6 @@ contains
        Pba.destroy
        Pb.destroy
        Pa.destroy
-                               ! stdout.text("J:")
-                               ! stdout.put(J)
-                               ! stdout.text("Ka:")
-                               ! stdout.put(Ka)
-                               ! stdout.text("Kb:")
-                               ! stdout.put(Kb)
        Ka = J - Ka; Fgc.alpha_alpha_set_to(Ka)
        Kb = J - Kb; Fgc.beta_beta_set_to(Kb)
        Kba = -Kba;  Fgc.beta_alpha_set_to(Kba)
@@ -6222,11 +6188,7 @@ contains
        Fgc = ZERO
     end
     Fgc.make_hermitian
-                               ! stdout.text("r12 part")
-                               ! .put_fock_matrix
     if (add_core) .add_core_hamiltonian(Fgc)
-                               ! stdout.text("total fock")
-                               ! .put_fock_matrix
   end
 
   add_gc_so_fock(P,F) [leaky]
@@ -6302,6 +6264,68 @@ contains
 ! J & K matrix routines
 !**********************
 
+  schwarz_inequality_test(cutoff,ab,cd,fa,la,fb,lb,fc,lc,fd,ld,P,I_max) result(skip)
+  ! Return "skip", a logical variable which is TRUE if the maximum contribution to 
+  ! the restricted Fock matrix (based on the schwarz inequality test) from a shell 
+  ! of ERI integrals (ab|cd) with shell pair indices "ab" and "cd" and with basis 
+  ! function limits "fa, "la", ..., "fd, "ld" is smaller than a preset "cutoff". 
+  ! "P" is the density matrix, and "I_max(ab)" is maximum value of the square root 
+  ! of the integral (ab|ab) for the shell pair with index "ab".
+    BIN :: skip
+    DBL :: cutoff
+    INT :: ab,cd,fa,la,fb,lb,fc,lc,fd,ld, a,b,c,d
+    MAT :: P
+    VEC :: I_max
+    DBL :: Pmax
+    Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+    do d = fd,ld
+    do c = fc,lc
+       Pmax = max(abs(P(d,c)),Pmax)
+       do b = fb,lb
+          Pmax = max(abs(P(d,b)),abs(P(c,b)),Pmax)
+          do a = fa,la
+             Pmax = max(abs(P(b,a)),abs(P(d,a)),abs(P(c,a)),Pmax)
+          end
+       end
+    end
+    end
+    if (Pmax*I_max(ab)*I_max(cd) > cutoff) then; skip = FALSE
+    else;                                        skip = TRUE
+    end
+  end
+
+  make_max_abab_integrals(I_max)
+  ! Make "I_max", the square root of the maximum of the (ab|ab) ERI integrals.
+    VEC :: I_max
+    INT :: ab,fa,fb,la,lb,sa,sb,na,nb, a,b
+    SHELL4 :: shell4
+    MAT4, PTR :: Iabab
+    DBL :: Imax
+    ENSURE(size(I_max)==.n_shell_pairs,"wrong size for array I_max")
+    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
+      .get_shell_pair(ab,sa,sb)            ! Shell pair ab|ab
+      fa = .first_basis_fn_for_shell(sa)
+      fb = .first_basis_fn_for_shell(sb)
+      la = .last_basis_fn_for_shell(sa)
+      lb = .last_basis_fn_for_shell(sb)
+      na = la-fa+1
+      nb = lb-fb+1
+      .set_shell_quartet_ab(shell4,sa,sb)
+      .set_shell_quartet_cd(shell4,sa,sb)
+      Iabab.create(na,nb,na,nb)
+      shell4.get_ERI(Iabab)
+      shell4.destroy_ptr_part
+      Imax = ZERO
+      do a=1,na
+      do b=1,nb
+         Imax = max(abs(Iabab(a,b,a,b)),Imax)
+      end
+      end
+      I_max(ab) = sqrt(Imax)
+      Iabab.destroy
+    end
+  end
+
   make_r_JK_direct(J,K,P)
   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a 
   ! symmetric density matrix "P" directly. 
@@ -6313,38 +6337,14 @@ contains
     INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd,factor,P_dc,P_db,P_cb,cutoff
     DBL :: Jcd,Kbc,Kbd,Iab,Pmax,Imax
-    BIN :: do_it
+    BIN :: skip
 
     J = ZERO
     K = ZERO
     cutoff = .scfdata.eri_cutoff
 
     max_I.create( .n_shell_pairs )
-    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
-      .get_shell_pair(ab,i_a,i_b)          ! shell pair ab|ab
-      fa = .first_basis_fn_for_shell(i_a)
-      fb = .first_basis_fn_for_shell(i_b)
-      la = .last_basis_fn_for_shell(i_a)
-      lb = .last_basis_fn_for_shell(i_b)
-      n_comp_a = la-fa+1
-      n_comp_b = lb-fb+1
-      .set_shell_quartet_ab(shell4,i_a,i_b)
-      .set_shell_quartet_cd(shell4,i_a,i_b)
-      Iabab.create(n_comp_a,n_comp_b,n_comp_a,n_comp_b)
-      shell4.get_ERI(Iabab)
-      shell4.destroy_ptr_part
-
-      Imax = ZERO
-      do a=1,n_comp_a
-        do b=1,n_comp_b
-          Iab = abs(Iabab(a,b,a,b))
-          Imax = max(Iab,Imax)
-        end
-      end
-      max_I(ab) = sqrt(Imax)
-      Iabab.destroy
-    end
-
+    .make_max_abab_integrals(max_I)
     do ab = 1, .n_shell_pairs
       .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
       fa = .first_basis_fn_for_shell(i_a)
@@ -6353,71 +6353,48 @@ contains
       lb = .last_basis_fn_for_shell(i_b)
       .set_shell_quartet_ab(shell4,i_a,i_b)
       do cd = 1,ab
-        .get_shell_pair(cd,i_c,i_d)                    ! c & d shell indices.
-
+        .get_shell_pair(cd,i_c,i_d)          ! c & d shell indices.
         fc = .first_basis_fn_for_shell(i_c)
         fd = .first_basis_fn_for_shell(i_d)
         lc = .last_basis_fn_for_shell(i_c)
         ld = .last_basis_fn_for_shell(i_d)
-
-        Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+                                             ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+        skip = .schwarz_inequality_test(cutoff,ab,cd,fa,la,fb,lb,fc,lc,fd,ld,P,max_I)
+        if (skip) cycle
+                                             ! calculate ab|cd
+        .set_shell_quartet_cd(shell4,i_c,i_d)
+        factor = ONE                         ! Evaluate the integrals'
+        if (i_a==i_b) factor = HALF          ! coincidence factors
+        if (i_c==i_d) factor = HALF * factor
+        if (i_a==i_c AND i_b==i_d) factor = HALF * factor
+  
+        I.create(fa,la,fb,lb,fc,lc,fd,ld)
+        shell4.get_ERI(I)
         do d = fd,ld
           do c = fc,lc
-            Pmax = max(abs(P(d,c)),Pmax)
+            P_dc = P(d,c)
+            Jcd = ZERO
             do b = fb,lb
-              Pmax = max(abs(P(d,b)),abs(P(c,b)),Pmax)
+              P_db = P(d,b)
+              P_cb = P(c,b)
+              Kbc = ZERO
+              Kbd = ZERO
               do a = fa,la
-                Pmax = max(abs(P(b,a)),abs(P(d,a)),abs(P(c,a)),Pmax)
+                I_abcd = factor * I(a,b,c,d)
+                J(a,b) = J(a,b) + I_abcd*P_dc
+                Jcd    = Jcd    + I_abcd*P(b,a)
+                K(a,c) = K(a,c) + I_abcd*P_db
+                K(a,d) = K(a,d) + I_abcd*P_cb
+                Kbc    = Kbc    + I_abcd*P(d,a)
+                Kbd    = Kbd    + I_abcd*P(c,a)
               end
+              K(b,c) = K(b,c) + Kbc
+              K(b,d) = K(b,d) + Kbd
             end
+            J(c,d) = J(c,d) + Jcd
           end
         end
-        if (Pmax * max_I(ab) * max_I(cd) > cutoff) then
-          do_it = TRUE
-        else
-          do_it = FALSE
-        end
-
-        if (do_it) then                        ! calculate ab|cd
-          fc = .first_basis_fn_for_shell(i_c)
-          fd = .first_basis_fn_for_shell(i_d)
-          lc = .last_basis_fn_for_shell(i_c)
-          ld = .last_basis_fn_for_shell(i_d)
-          .set_shell_quartet_cd(shell4,i_c,i_d)
-    
-          factor = ONE                         ! Evaluate the integrals'
-          if (i_a==i_b) factor = HALF          ! coincidence factors
-          if (i_c==i_d) factor = HALF * factor
-          if (i_a==i_c AND i_b==i_d) factor = HALF * factor
-    
-          I.create(fa,la,fb,lb,fc,lc,fd,ld)
-          shell4.get_ERI(I)
-          do d = fd,ld
-            do c = fc,lc
-              P_dc = P(d,c)
-              Jcd = ZERO
-              do b = fb,lb
-                P_db = P(d,b)
-                P_cb = P(c,b)
-                Kbc = ZERO
-                Kbd = ZERO
-                do a = fa,la
-                  I_abcd = factor * I(a,b,c,d)
-                  J(a,b) = J(a,b) + I_abcd*P_dc
-                  Jcd    = Jcd    + I_abcd*P(b,a)
-                  K(a,c) = K(a,c) + I_abcd*P_db
-                  K(a,d) = K(a,d) + I_abcd*P_cb
-                  Kbc    = Kbc    + I_abcd*P(d,a)
-                  Kbd    = Kbd    + I_abcd*P(c,a)
-                end
-                K(b,c) = K(b,c) + Kbc
-                K(b,d) = K(b,d) + Kbd
-              end
-              J(c,d) = J(c,d) + Jcd
-            end
-          end
-          I.destroy
-        end
+        I.destroy
         shell4.destroy_cd
       end
       shell4.destroy_ab
@@ -6496,43 +6473,18 @@ contains
     INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd,factor,Pa_db,Pa_cb,Pb_db,Pb_cb,cutoff
     DBL :: P_dc,Iab,Pmax,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd,Imax
-    BIN :: do_it
+    BIN :: skip
 
     J  = ZERO
     Ka = ZERO
     Kb = ZERO
     cutoff = .scfdata.eri_cutoff
     abs_P.create( .n_bf, .n_bf)
-    abs_P = max(abs(P),abs(Pa),abs(Pb))
-
-    max_I.create( .n_shell_pairs )
-    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
-      .get_shell_pair(ab,i_a,i_b)          ! shell pair ab|ab
-      fa = .first_basis_fn_for_shell(i_a)
-      fb = .first_basis_fn_for_shell(i_b)
-      la = .last_basis_fn_for_shell(i_a)
-      lb = .last_basis_fn_for_shell(i_b)
-      n_comp_a = la-fa+1
-      n_comp_b = lb-fb+1
-      .set_shell_quartet_ab(shell4,i_a,i_b)
-      .set_shell_quartet_cd(shell4,i_a,i_b)
-      Iabab.create(n_comp_a,n_comp_b,n_comp_a,n_comp_b)
-      shell4.get_ERI(Iabab)
-      shell4.destroy_ptr_part
-
-      Imax = ZERO
-      do a=1,n_comp_a
-        do b=1,n_comp_b
-          Iab = abs(Iabab(a,b,a,b))
-          Imax = max(Iab,Imax)
-        end
-      end
-      max_I(ab) = sqrt(Imax)
-      Iabab.destroy
-    end
-
+    abs_P = max(abs(P),abs(Pa),abs(Pb)) ! Is this necessary?
+    max_I.create( .n_shell_pairs )      ! Store the largest integral for each
+    .make_max_abab_integrals(max_I)     ! shell pair ab|ab
     do ab = 1, .n_shell_pairs
-      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      .get_shell_pair(ab,i_a,i_b)            ! a & b shell indices.
       .set_shell_quartet_ab(shell4,i_a,i_b)
       fa = .first_basis_fn_for_shell(i_a)
       fb = .first_basis_fn_for_shell(i_b)
@@ -6540,81 +6492,59 @@ contains
       lb = .last_basis_fn_for_shell(i_b)
 
       do cd = 1,ab
-        .get_shell_pair(cd,i_c,i_d)                    ! c & d shell indices.
+        .get_shell_pair(cd,i_c,i_d)          ! c & d shell indices.
 
         fc = .first_basis_fn_for_shell(i_c)
         fd = .first_basis_fn_for_shell(i_d)
         lc = .last_basis_fn_for_shell(i_c)
         ld = .last_basis_fn_for_shell(i_d)
-
-        Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+                                             ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+        skip = .schwarz_inequality_test(cutoff,ab,cd,fa,la,fb,lb,fc,lc,fd,ld,abs_P,max_I)
+        if (skip) cycle
+                                             ! calculate ab|cd
+        .set_shell_quartet_cd(shell4,i_c,i_d)
+        factor = ONE                         ! Evaluate the integrals'
+        if (i_a==i_b) factor = HALF          ! coincidence factors
+        if (i_c==i_d) factor = HALF * factor
+        if (i_a==i_c AND i_b==i_d) factor = HALF * factor
+  
+        I.create(fa,la,fb,lb,fc,lc,fd,ld)
+        shell4.get_ERI(I)
         do d = fd,ld
           do c = fc,lc
-            Pmax = max(abs_P(d,c),Pmax)
+            P_dc = P(d,c)
+            Jcd = ZERO
             do b = fb,lb
-              Pmax = max(abs_P(d,b),abs_P(c,b),Pmax)
+              Pa_db = Pa(d,b)
+              Pb_db = Pb(d,b)
+              Pa_cb = Pa(c,b)
+              Pb_cb = Pb(c,b)
+              Ka_bc = ZERO
+              Kb_bc = ZERO
+              Ka_bd = ZERO
+              Kb_bd = ZERO
               do a = fa,la
-                Pmax = max(abs_P(b,a),abs_P(d,a),abs_P(c,a),Pmax)
+                I_abcd  = factor  * I(a,b,c,d)
+                J(a,b)  = J(a,b)  + I_abcd*P_dc
+                Jcd     = Jcd     + I_abcd*P(b,a)
+                Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
+                Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
+                Ka_bc   = Ka_bc   + I_abcd*Pa(d,a)
+                Ka_bd   = Ka_bd   + I_abcd*Pa(c,a)
+                Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
+                Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
+                Kb_bc   = Kb_bc   + I_abcd*Pb(d,a)
+                Kb_bd   = Kb_bd   + I_abcd*Pb(c,a)
               end
+              Ka(b,c) = Ka(b,c) + Ka_bc
+              Ka(b,d) = Ka(b,d) + Ka_bd
+              Kb(b,c) = Kb(b,c) + Kb_bc
+              Kb(b,d) = Kb(b,d) + Kb_bd
             end
+            J(c,d) = J(c,d) + Jcd
           end
         end
-        if (Pmax * max_I(ab) * max_I(cd) > cutoff) then
-          do_it = TRUE
-        else
-          do_it = FALSE
-        end
-
-        if (do_it) then                        ! calculate ab|cd
-          fc = .first_basis_fn_for_shell(i_c)
-          fd = .first_basis_fn_for_shell(i_d)
-          lc = .last_basis_fn_for_shell(i_c)
-          ld = .last_basis_fn_for_shell(i_d)
-          .set_shell_quartet_cd(shell4,i_c,i_d)
-    
-          factor = ONE                         ! Evaluate the integrals'
-          if (i_a==i_b) factor = HALF          ! coincidence factors
-          if (i_c==i_d) factor = HALF * factor
-          if (i_a==i_c AND i_b==i_d) factor = HALF * factor
-    
-          I.create(fa,la,fb,lb,fc,lc,fd,ld)
-          shell4.get_ERI(I)
-          do d = fd,ld
-            do c = fc,lc
-              P_dc = P(d,c)
-              Jcd = ZERO
-              do b = fb,lb
-                Pa_db = Pa(d,b)
-                Pb_db = Pb(d,b)
-                Pa_cb = Pa(c,b)
-                Pb_cb = Pb(c,b)
-                Ka_bc = ZERO
-                Kb_bc = ZERO
-                Ka_bd = ZERO
-                Kb_bd = ZERO
-                do a = fa,la
-                  I_abcd  = factor  * I(a,b,c,d)
-                  J(a,b)  = J(a,b)  + I_abcd*P_dc
-                  Jcd     = Jcd     + I_abcd*P(b,a)
-                  Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
-                  Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
-                  Ka_bc   = Ka_bc   + I_abcd*Pa(d,a)
-                  Ka_bd   = Ka_bd   + I_abcd*Pa(c,a)
-                  Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
-                  Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
-                  Kb_bc   = Kb_bc   + I_abcd*Pb(d,a)
-                  Kb_bd   = Kb_bd   + I_abcd*Pb(c,a)
-                end
-                Ka(b,c) = Ka(b,c) + Ka_bc
-                Ka(b,d) = Ka(b,d) + Ka_bd
-                Kb(b,c) = Kb(b,c) + Kb_bc
-                Kb(b,d) = Kb(b,d) + Kb_bd
-              end
-              J(c,d) = J(c,d) + Jcd
-            end
-          end
-          I.destroy
-        end
+        I.destroy
         shell4.destroy_cd
       end
       shell4.destroy_ab
@@ -6701,7 +6631,7 @@ contains
     CMAT :: Ka,Kb,Kba,Pa,Pb,Pba
     MAT4, PTR   :: I
     SHELL4, PTR :: shell4
-    INT :: ac,ab,cd,aa,cc
+    INT :: ab,cd,aa,bb,cc,dd
     INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd,factor
     J   = ZERO
@@ -6709,61 +6639,58 @@ contains
     Kb  = ZERO
     Kba = ZERO
     shell4.create
-    do ac = 1, .n_shell_pairs
-      .get_shell_pair(ac,ab,cd)
-      do aa = 1,ab
-        .get_shell_pair(ab,a,b)
-        fa = .first_basis_fn_for_shell(a)
-        fb = .first_basis_fn_for_shell(b)
-        la = .last_basis_fn_for_shell(a)
-        lb = .last_basis_fn_for_shell(b)
-        do cc = 1,cd
-          .get_shell_pair(cd,c,d)
-          fc = .first_basis_fn_for_shell(c)
-          fd = .first_basis_fn_for_shell(d)
-          lc = .last_basis_fn_for_shell(c)
-          ld = .last_basis_fn_for_shell(d)
-          .get_shell_quartet(shell4,a,b,c,d)
-          if (shell4.skip_ERI) then
-            shell4.destroy_ptr_part
-            cycle
-          end
-          I.create(fa,la,fb,lb,fc,lc,fd,ld)
-          shell4.get_ERI(I)
-          factor = ONE                          ! Evaluate the integrals
-          if (a==b) factor = HALF               ! Coincidence factors   
-          if (c==d) factor = HALF * factor
-          if (a==c AND b==d) factor = HALF * factor
-          do d = fd,ld
-            do c = fc,lc
-              do b = fb,lb
-                do a = fa,la
-                   I_abcd = factor * I(a,b,c,d)
-                   J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
-                   J(c,d)   = J(c,d)   + I_abcd*P(b,a)
-                   Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
-                   Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
-                   Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
-                   Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
-                   Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
-                   Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
-                   Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
-                   Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
-                   Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
-                   Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
-                   Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
-                   Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
-                   Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
-                   Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
-                   Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
-                   Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
-                end
+    do ab = 1,.n_shell_pairs
+      .get_shell_pair(ab,aa,bb)
+      fa = .first_basis_fn_for_shell(aa)
+      fb = .first_basis_fn_for_shell(bb)
+      la = .last_basis_fn_for_shell(aa)
+      lb = .last_basis_fn_for_shell(bb)
+      do cd = 1,ab
+        .get_shell_pair(cd,cc,dd)
+        fc = .first_basis_fn_for_shell(cc)
+        fd = .first_basis_fn_for_shell(dd)
+        lc = .last_basis_fn_for_shell(cc)
+        ld = .last_basis_fn_for_shell(dd)
+        .get_shell_quartet(shell4,aa,bb,cc,dd)
+        if (shell4.skip_ERI) then
+          shell4.destroy_ptr_part
+          cycle
+        end
+        I.create(fa,la,fb,lb,fc,lc,fd,ld)
+        shell4.get_ERI(I)
+        factor = ONE                                   ! Evaluate the integrals
+        if (aa==bb) factor = HALF                      ! Coincidence factors   
+        if (cc==dd) factor = HALF * factor
+        if (aa==cc AND bb==dd) factor = HALF * factor
+        do d = fd,ld
+          do c = fc,lc
+            do b = fb,lb
+              do a = fa,la
+                 I_abcd = factor * I(a,b,c,d)
+                 J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
+                 J(c,d)   = J(c,d)   + I_abcd*P(b,a)
+                 Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
+                 Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
+                 Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+                 Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+                 Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
+                 Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
+                 Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+                 Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+                 Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+                 Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
+                 Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+                 Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+                 Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+                 Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+                 Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+                 Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
               end
             end
           end
-          I.destroy
-          shell4.destroy_ptr_part
         end
+        I.destroy
+        shell4.destroy_ptr_part
       end
     end
     shell4.destroy
@@ -6802,7 +6729,8 @@ contains
       ind_archive.file.read(q)
       if (q > n_quartets) exit
       .get_shell_quartet(q,fa,la,fb,lb,fc,lc,fd,ld)
-      I.create(fa,la,fb,lb,fc,lc,fd,ld)
+    ! I.create(fa,la,fb,lb,fc,lc,fd,ld)
+      allocate(I(fa:la,fb:lb,fc:lc,fd:ld))
       eri_archive.file.read(I)
       do d = fd,ld
       do c = fc,lc
@@ -6831,7 +6759,8 @@ contains
       end
       end
       end
-      I.destroy
+    ! I.destroy
+      deallocate(I)
     end
     ind_archive.destroy
     eri_archive.destroy
@@ -6858,7 +6787,7 @@ contains
     ENSURE( SO_archive.exists,  "no spin orbit integral file!")
     ENSURE( ind_archive.exists, "no spin orbit integral index file")
     SO_archive.open(for="read-only",buffered=TRUE,type="dbl")
-    ind_archive.open(for="read-only",buffered=TRUE,type="dbl")
+    ind_archive.open(for="read-only",buffered=TRUE,type="int")
     JS = ZERO; KS = ZERO; JO = ZERO; KO = ZERO
     I = (ZERO,ONE)
     n_quartets = .n_shell_quartets
@@ -7027,6 +6956,12 @@ contains
     .scfdata.set_stats(.crystal.chi2, .crystal.goodness_of_fit, &
                          .crystal.r_factor, .crystal.weighted_r_factor)
     .scfdata.put_banner
+
+    stdout.show("Using scale factor       = ", .crystal.use_scale_factor,dbl_width=TRUE)
+    stdout.show("Using extinction         = ", .crystal.correct_extinction,dbl_width=TRUE)
+    stdout.show("Thermal smearing model   = ", .crystal.thermal_smearing_model)
+    stdout.show("Fragment partition model = ", .crystal.partition_model)
+    stdout.flush
 
     .crystal.put_corrections(stdout)
 
