@@ -140,7 +140,7 @@ module CRYSTAL
 !   VEC, PTR :: sigma DEFAULT_NULL
 !   ! Experimental sigma
 !
-!   VEC, PTR :: F_calc DEFAULT_NULL
+!   CVEC, PTR :: F_calc DEFAULT_NULL
 !   ! Calculated structure factors
 !
 !   DBL :: chi2
@@ -161,11 +161,8 @@ module CRYSTAL
 !   DBL :: scale_factor
 !   ! Scale factor used to minimise chi^2
 !
-!   BIN :: F_calc_scaled
-!   ! True if F_calc is has been scaled by scale_factor
-!
 !   DBL :: sf_multiplier
-!   ! Arbitrary scale factor.  (F_calc/F_exp)
+!   ! Arbitrary scale factor.  (F_mag/F_exp)
 !
 !   BIN :: correct_extinction
 !   ! True if extinction is to be corrected
@@ -213,7 +210,6 @@ contains
       .ext_factor = ZERO
       .wavelength = 0.71069d0       ! Mo K alpha
       .kind = "x-ray"
-      .F_calc_scaled = FALSE
       .thermal_smearing_model = ""
       .partition_model = ""
    end
@@ -257,7 +253,6 @@ contains
          .n_param = 0
          .scale_factor = ONE
          .ext_factor = ZERO
-         .F_calc_scaled = FALSE
          if (.F_calc_exists) .F_calc.destroy
          if (.F_exp_exists) then
             .F_exp.destroy
@@ -301,7 +296,6 @@ contains
       .ext_factor = ZERO
       .wavelength = 0.71069d0
       .kind = "x-ray"
-      .F_calc_scaled = FALSE
       .thermal_smearing_model = ""
       .partition_model = ""
    end
@@ -477,7 +471,6 @@ contains
             case("thermal_smearing_model");  .read_thermal_smearing_model
             case("partition_model");         .read_partition_model
             case("sigma_is_sqrt_of_f");      .sigma_is_sqrt_of_f
-            case("scale_fc");                .scale_Fc
             case("update_gof_parameters");   .update_gof_parameters
             case("erase_spacegroup");        .spacegroup.destroy_ptr_part
             case("destroy_spacegroup");      .spacegroup.destroy_ptr_part
@@ -568,8 +561,9 @@ contains
    end
 
    read_hkl_data(in) [leaky]
-   ! Read the hkl Miller index triple followed by the experimental structure factor,
-   ! then the calculated structure factor, and then experimental standard deviation
+   ! Read the hkl Miller index triple followed by the experimental structure
+   ! factor, then the calculated structure factor, and then experimental
+   ! standard deviation
       TEXTFILE :: in
       INT :: i
       STR :: word
@@ -644,7 +638,7 @@ contains
    ! Read the hkl Miller index triple followed by the calculated
    ! structure factor to add onto the existing structure factors.
       INT :: i,h,k,l
-      DBL :: Fc
+      CDBL :: Fc
       STR :: word
       ENSURE(.n_refl>0, "no reflections to read")
       ENSURE(.F_calc.created, "require F_calc already")
@@ -712,19 +706,22 @@ contains
   ! "scale_factor".  Structure factors are not scaled in calculating the
   ! gof parameters.
     DBL :: top1,top2,bot1,bot2
+    VEC, PTR :: Fc
     DIE_IF( .no_F_exp, "no experimental structure factors")
     DIE_IF( .no_F_calc, "no calculated structure factors")
+    Fc.create(.n_refl)
+    Fc = .F_mag
     top1 = ZERO; top2 = ZERO
     bot1 = ZERO; bot2 = ZERO
     select case (trim(.kind))
       case ("x-ray","xray")
-        top1 = sum( abs(.F_calc - sign(.F_exp,.F_calc)) )
-        top2 = sum( ((.F_calc - sign(.F_exp,.F_calc)) / .sigma)**2 )
+        top1 = sum( abs(Fc - sign(.F_exp,Fc)) )
+        top2 = sum( ((Fc - sign(.F_exp,Fc)) / .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
       case ("neutron")
-        top1 = sum( abs(.F_calc - .F_exp) )
-        top2 = sum( ((.F_calc - .F_exp) / .sigma)**2 )
+        top1 = sum( abs(Fc - .F_exp) )
+        top2 = sum( ((Fc - .F_exp) / .sigma)**2 )
         bot1 = sum( abs(.F_exp) )
         bot2 = sum( (.F_exp / .sigma)**2 )
       case default; DIE("crystal_kind not defined.")
@@ -733,6 +730,7 @@ contains
     .weighted_r_factor = sqrt(top2/bot2)
     .chi2 = top2/max(.n_refl - .n_param,1)
     .gof = sqrt(.chi2)
+    Fc.destroy
   end
 
   update_scaled_gof_parameters
@@ -745,7 +743,7 @@ contains
     top1 = ZERO; top2 = ZERO
     bot1 = ZERO; bot2 = ZERO
     Fc.create( .n_refl )
-    Fc = .scaled_Fc
+    Fc = .scaled_F_mag
     select case (trim(.kind))
       case ("x-ray","xray")
         top1 = sum( abs(Fc - sign(.F_exp,Fc)) )
@@ -759,36 +757,40 @@ contains
         bot2 = sum( (.F_exp / .sigma)**2 )
       case default; DIE("data kind not defined.")
     end
-    Fc.destroy
     .r_factor = top1/bot1
     .weighted_r_factor = sqrt(top2/bot2)
     .chi2 = top2/max(.n_refl - .n_param,1)
     .gof = sqrt(.chi2)
+    Fc.destroy
   end
 
-  get_scale_factor [pure]
+  get_scale_factor
     INOUT :: self
     DBL :: top,bot
-    top = sum( abs(.F_calc(:) * .F_exp(:) ) / (.sigma(:)*.sigma(:)) )
-    bot = sum( (.F_calc(:)    * .F_calc(:)) / (.sigma(:)*.sigma(:)) )
+    VEC, PTR :: Fc
+    Fc.create(.n_refl)
+    Fc = .F_mag
+    top = sum( abs(Fc(:) * .F_exp(:) ) / (.sigma(:)*.sigma(:)) )
+    bot = sum( (Fc(:)    * Fc(:)     ) / (.sigma(:)*.sigma(:)) )
+    Fc.destroy
     .scale_factor = top/bot
     .ext_factor  = ZERO
     .n_param = 1
   end
 
-  scale_Fc
-  ! Scale the calculated structure factors.
-    DIE_IF( .no_F_calc, "no calculated structure factors")
-    .F_calc = .scaled_Fc
-    .F_calc_scaled = TRUE
-  end
-
-  scaled_Fc result(res)
-  ! Return the scaled structure factors.
+  F_mag result(res)
+  ! Return the magnitude of the structure factors.
     INOUT :: self
     VEC( .n_refl ) :: res
     DIE_IF( .no_F_calc, "no calculated structure factors")
-    res = .F_calc * .extinction_correction
+    res = abs(.F_calc)
+  end
+
+  scaled_F_mag result(res)
+  ! Return the scaled structure factors.
+    INOUT :: self
+    VEC( .n_refl ) :: res
+    res = .F_mag * .extinction_correction
   end
 
   extinction_correction result(res)
@@ -801,8 +803,9 @@ contains
       angle_part.create( .n_refl )
       angle_part = .extinction_angle_part
       .get_extinction_parameters
-      res(:) = .scale_factor * (ONE + .ext_factor * .F_calc(:)* .F_calc(:) &
-                              * angle_part(:))**(-0.25d0)
+      res(:) = .scale_factor &
+                    * (ONE + .ext_factor * .F_calc(:)*conjg(.F_calc(:)) &
+                    * angle_part(:))**(-0.25d0)
       angle_part.destroy
     else
       .get_scale_factor
@@ -837,9 +840,12 @@ contains
     DBL :: ghigh,glow,gnew,dghigh,dgnew,dglow
     DBL :: xhigh,xlow,xnew,dxhigh,dxlow,dxnew,xprev,gprev
     VEC, PTR :: angle_bit
+    VEC, PTR :: Fc
     INT :: j
 
     .get_scale_factor
+    Fc.create(.n_refl)
+    Fc = .F_mag
 
     .n_param = 2
 
@@ -856,21 +862,21 @@ contains
         do                                    ! get g which minimises dchi2/dg
           gnew=(glow+ghigh)/TWO
           .scale_factor=gnew
-          dgnew  = .dchidg(gnew, .ext_factor ,angle_bit)
+          dgnew  = .dchidg(Fc,gnew, .ext_factor ,angle_bit)
           if (abs(dgnew) <= 1E-8) exit
-          dglow  = .dchidg(glow, .ext_factor ,angle_bit)
-          dghigh = .dchidg(ghigh, .ext_factor ,angle_bit)
+          dglow  = .dchidg(Fc,glow, .ext_factor ,angle_bit)
+          dghigh = .dchidg(Fc,ghigh, .ext_factor ,angle_bit)
           .minimise_param(dglow,dghigh,dgnew,glow,ghigh,gnew)
         end
 
-        if ( .dchidx( .scale_factor, ZERO,angle_bit) > ZERO) then
+        if ( .dchidx(Fc, .scale_factor, ZERO,angle_bit) > ZERO) then
           .get_scale_factor
           exit outer_loop
         end
         xlow=0
         do j=-15,0
-          xhigh=10.0d0**(j-1)
-          if (.dchidx( .scale_factor, TEN**(j),angle_bit) >= ZERO) then
+          xhigh=TEN**(j-1)
+          if (.dchidx(Fc, .scale_factor, TEN**(j),angle_bit) >= ZERO) then
             exit
           end
         end
@@ -878,10 +884,10 @@ contains
         do                                    ! get x which minimises dchi2/dx
           xnew=(xlow+xhigh)/TWO
           .ext_factor=xnew
-          dxnew  = .dchidx( .scale_factor,xnew,angle_bit)
+          dxnew  = .dchidx(Fc, .scale_factor,xnew,angle_bit)
           if (abs(dxnew) <= ONE) exit
-          dxlow  = .dchidx( .scale_factor,xlow,angle_bit)
-          dxhigh = .dchidx( .scale_factor,xhigh,angle_bit)
+          dxlow  = .dchidx(Fc, .scale_factor,xlow,angle_bit)
+          dxhigh = .dchidx(Fc, .scale_factor,xhigh,angle_bit)
           .minimise_param(dxlow,dxhigh,dxnew,xlow,xhigh,xnew)
           if (xnew >= ONE) then
             .get_scale_factor
@@ -895,6 +901,7 @@ contains
       end do outer_loop
       angle_bit.destroy
     end
+    Fc.destroy
   end
 
   minimise_param(dlow,dhigh,dnew,low,high,new)
@@ -915,35 +922,35 @@ contains
     end
   end
 
-  dchidg(gparam,xparam,angle_bit) result (res)
+  dchidg(Fc,gparam,xparam,angle_bit) result (res)
   ! Derivative of the chi^2 with respect to g.
   ! (c) Daniel Grimwood, UWA, April 1997
+    VEC, IN :: Fc,angle_bit
     DBL, IN :: gparam, xparam
-    VEC, PTR :: angle_bit
+    VEC, PTR :: Fexp,sig
     DBL :: res
     DBL :: factor,totalg,temp
-    VEC, PTR :: Fc,Fexp,sig
     INT :: j
-    Fc => .F_calc;     Fexp => .F_exp;     sig => .sigma
+    Fexp => .F_exp;     sig => .sigma
     totalg=ZERO
     do j=1, .n_refl
       factor=1 + xparam * Fc(j) * Fc(j) * angle_bit(j)
-      temp=Fexp(j)*(factor**(-0.25d0))-gparam*abs(Fc(j))*(factor**(-0.5d0))
+      temp=Fexp(j)*(factor**(-0.25d0))-gparam*Fc(j)*(factor**(-0.5d0))
       totalg=totalg - TWO * abs(Fc(j)) * temp / (sig(j) * sig(j))
     end
     res=totalg / .n_refl
   end
 
-  dchidx(gparam,xparam,angle_bit) result (res)
+  dchidx(Fc,gparam,xparam,angle_bit) result (res)
   ! Derivative of the chi^2 with respect to x.
   ! (c) Daniel Grimwood, UWA, April 1997
+    VEC, IN :: Fc,angle_bit
     DBL, IN :: gparam, xparam
-    VEC, PTR :: angle_bit
     DBL :: res
     DBL :: factor,totalx,temp
-    VEC, PTR :: Fc,Fexp,sig
+    VEC, PTR :: Fexp,sig
     INT :: j
-    Fc => .F_calc;     Fexp => .F_exp;     sig => .sigma
+    Fexp => .F_exp;     sig => .sigma
     totalx=ZERO
     do j=1, .n_refl
       factor=1 + xparam * Fc(j) * Fc(j) * angle_bit(j)
@@ -2138,63 +2145,73 @@ contains
       end
       out.show("Correct dispersion?         =", .correct_dispersion)
       out.show("No of fit parameters        =", .n_param)
-      out.show("Scaled F_calc?              =", .F_calc_scaled)
    end
 
    put_reflection_data(output)
    ! Output the reflection data to file "output"
       TEXTFILE, target, optional :: output
       TEXTFILE, PTR :: out
+      VEC, PTR :: Fc
       INT :: n
-      BIN :: skip
+      RETURN_IF(.no_reflection_data)
       if (present(output)) then
         out => output
       else
         out => stdout
       end
-      skip = .no_reflection_data
-      if (skip) return
       out.flush
       out.text("Reflection data:",flush=2)
       out.show("No. of reflections =",.n_refl)
       if (.F_calc_exists AND .F_exp_exists) then
          .put_gof_data(out)
-         out.dash(int_fields=3,dbl_fields=3)
+         out.dash(int_fields=3,dbl_fields=5)
          out.put("h", int_width=TRUE)
          out.put("k", int_width=TRUE)
          out.put("l", int_width=TRUE)
+         out.put("Re(F_calc)")
+         out.put("Im(F_calc)")
+         out.put("scaled |F_calc|")
          out.put("F_exp")
-         out.put("F_calc")
          out.put("sigma")
          out.flush
-         out.dash(int_fields=3,dbl_fields=3)
+         out.dash(int_fields=3,dbl_fields=5)
+         Fc.create(.n_refl)
+         Fc = .scaled_F_mag
          do n = 1,.n_refl
             out.put(.h(n))
             out.put(.k(n))
             out.put(.l(n))
-            out.put(.F_exp(n))
             out.put(.F_calc(n))
+            out.put(Fc(n))
+            out.put(.F_exp(n))
             out.put(.sigma(n))
             out.flush
          end
-         out.dash(int_fields=3,dbl_fields=3)
+         Fc.destroy
+         out.dash(int_fields=3,dbl_fields=5)
       else if (.F_calc_exists) then
          out.flush
-         out.dash(int_fields=3,dbl_fields=1)
+         out.dash(int_fields=3,dbl_fields=3)
          out.put("h", int_width=TRUE)
          out.put("k", int_width=TRUE)
          out.put("l", int_width=TRUE)
-         out.put("F_calc")
+         out.put("Re(F_calc)")
+         out.put("Im(F_calc)")
+         out.put("scaled |F_calc|")
          out.flush
-         out.dash(int_fields=3,dbl_fields=1)
+         out.dash(int_fields=3,dbl_fields=3)
+         Fc.create(.n_refl)
+         Fc = .scaled_F_mag
          do n = 1,.n_refl
             out.put(.h(n))
             out.put(.k(n))
             out.put(.l(n))
             out.put(.F_calc(n))
+            out.put(Fc(n))
             out.flush
          end
-         out.dash(int_fields=3,dbl_fields=1)
+         Fc.destroy
+         out.dash(int_fields=3,dbl_fields=3)
       else if (.F_exp_exists) then
          out.flush
          out.dash(int_fields=3,dbl_fields=2)
@@ -2236,7 +2253,7 @@ contains
   ! It is a plot of the experimental quantile vs expected quantile.
   ! grid(1,:) contains d0j, grid(2,:) contains dj.
     MAT :: grid
-    VEC, PTR :: d
+    VEC, PTR :: d,Fc
     DBL :: temp
     INT :: n,j
     n = .n_refl
@@ -2246,18 +2263,21 @@ contains
     ENSURE( .F_exp.created, "no experimental structure factors")
     ENSURE( .sigma.created, "no experimental errors")
     d.create(n)                      ! experimental quantile
+    Fc.create(n)                     ! calculated quantile
+    Fc = .scaled_F_mag
     select case (trim(.kind))
       case ("x-ray","xray")
         do j=1,n                         ! dj = (Fobs - Fcalc)/sigma
-          d(j)  = (sign(.F_exp(j),.F_calc(j)) - .F_calc(j)) / .sigma(j)
+          d(j)  = (sign(.F_exp(j),Fc(j)) - Fc(j)) / .sigma(j)
         end
       case ("neutron")
         do j=1,n                         ! dj = (Fobs - Fcalc)/sigma
-          d(j)  = (.F_exp(j) - .F_calc(j)) / .sigma(j)
+          d(j)  = (.F_exp(j) - Fc(j)) / .sigma(j)
         end
     end
     d.sort                           ! sort array from lowest to highest.
     grid(2,:) = d
+    Fc.destroy
     d.destroy
 
     do j=1,n                           ! expected quantile, d0j
