@@ -28,16 +28,17 @@ module SYSTEM
    
    use TYPES
 
-    implicit none
+   implicit none
 
 #  include "macros"
-#  undef STACK
+#  include "system.int"
+
+#  undef STACK(X)
 #  undef UNSTACK
 #  undef CHECK
 #  define STACK(X)
 #  define UNSTACK
 #  define CHECK
-#  include "system.int"
 
 !   type system_type
 !
@@ -83,6 +84,10 @@ module SYSTEM
 !
 !   STRVEC* :: call_stack
 !   ! Stores the name of each subroutine at each call-level for tracebacks
+!
+!   BIN :: show_call_stack
+!   ! Whether to show the complete call stack as the program runs.
+!   ! Be warned, this produces copious output.
 ! 
 !   STR :: io_file_name
 !   ! Last file used
@@ -101,9 +106,7 @@ module SYSTEM
 !
 !   end
 
-   SYSTEM, target, public, save :: tonto &
-      SYSTEM_TONTO1 
-      SYSTEM_TONTO2 
+   SYSTEM, target, public, save :: tonto 
 
 contains
 
@@ -190,6 +193,7 @@ contains
       .io_file_pos    = 0
       nullify(.call_stack)
       nullify(.used_stack) 
+      .show_call_stack = FALSE
       if (present(mem_limit)) .mem_limit = mem_limit
    end
 
@@ -231,7 +235,7 @@ contains
 
    die(message,iostat)
    ! Set the error flag to 1 and terminate the program with a message
-      CHR(*) :: message
+      STR(*) :: message
       INT, IN, optional :: iostat
       .error_status = 1
       write(.error_unit,*)
@@ -256,20 +260,22 @@ contains
    ! Set the error flag to 1 and terminate the program with a message
    ! provided "condition" is TRUE
       BIN :: condition
-      CHR(*) :: message
+      STR(*) :: message
       INT, IN, optional :: iostat
       if (condition) .die(message,iostat)
    end 
 
    warn(message,iostat)
    ! Set the error flag to -1 and issue a warning message
-      CHR(*) :: message
+      STR(*) :: message
       INT, IN, optional :: iostat
+      STR :: name 
       .error_status = -1
       write(.error_unit,*)
       if (associated(.call_stack)) then
+         name = .call_stack(.stack_level)
          write(.error_unit,"(a)") &
-         "Warning in routine "// trim(.call_stack(.stack_level)) // " ... " // trim(message)
+         "Warning in routine "// trim(name) // " ... " // trim(message)
       else
          write(.error_unit,"(a)") &
          "Warning ... " // trim(message)
@@ -285,7 +291,7 @@ contains
    ! If "condition" is true, issue a warning and continue, but set the error
    ! flag to -1 and 
       BIN :: condition
-      CHR(*) :: message
+      STR(*) :: message
       INT, IN, optional :: iostat
       if (condition) .warn(message,iostat)
    end
@@ -294,7 +300,7 @@ contains
    ! Ensure "condition" is true, otherwise set the error flag to 1 and 
    ! terminate the program with a "message"
       BIN :: condition
-      CHR(*) :: message
+      STR(*) :: message
       INT, IN, optional :: iostat
       if (NOT condition) .die(message,iostat)
    end 
@@ -325,7 +331,7 @@ contains
 
    stack(routine_name) 
    ! Add another level to the call stack. Placed at the start of every
-   ! non-pure routine
+   ! non-pure routine. (Pure routines may not have I/O which this has).
       INOUT :: self
       STR(*), optional :: routine_name
       .stack_level = .stack_level + 1
@@ -336,6 +342,9 @@ contains
       else
         .call_stack(.stack_level) = "Unknown routine"
       end
+      if (.show_call_stack) then
+        write(.error_unit,"(a)") repeat("   ",.stack_level)//trim(routine_name)
+      end
    end
 
    unstack
@@ -344,9 +353,28 @@ contains
    ! current level does not exceed the check_level set by start_leak_test.
    ! AND if there is a memory leak.
      INOUT :: self
-     if (.used_stack(.stack_level)/=0 AND .stack_level<=.stack_check_level) then
+     STR :: routine_name
+     if (.stack_level<=0) then
+        write(.error_unit,*)
+        write(.error_unit,"(a,I2)") &
+        "Warning in routine SYSTEM:unstack ... stack level is not positive, ", &
+        .stack_level
+        .report_io_file_info
+        .report_stack_info(full_report=TRUE)
+        stop    
+     else if (.stack_level>.stack_max_level) then
+        write(.error_unit,*)
+        write(.error_unit,"(a,2I2)") &
+        "Warning in routine SYSTEM:unstack ... stack level greater than max, ", &
+        .stack_level,.stack_max_level
+        stop    
+     else if (.used_stack(.stack_level)/=0 AND .stack_level<=.stack_check_level) then
         .warn("memory leak")
         .report_stack_info
+     end
+     if (.show_call_stack) then
+        routine_name = .call_stack(.stack_level)
+        write(.error_unit,"(a)") repeat("   ",.stack_level)//trim(routine_name)
      end
      .call_stack(.stack_level) = " "
      .stack_level = .stack_level - 1
@@ -358,6 +386,15 @@ contains
    ! if the level is greater than the check_level set by start_leak_test (since 
    ! for levels less or equal to than the check_level, unstack produces a stack
    ! report).
+      if (.stack_level<=0) then
+        write(.error_unit,*)
+        write(.error_unit,"(a,I2)") &
+        "Warning in routine SYSTEM:check ... stack level is not positive, ", &
+        .stack_level
+        .report_io_file_info
+        .report_stack_info(full_report=TRUE)
+        stop    
+      end
       .check_exceeded
       if (.used_stack(.stack_level) >0) .warn("memory leak")
       if (.used_stack(.stack_level) <0) .warn("memory sink")
@@ -422,7 +459,7 @@ contains
         .used_stack(n+1:n+dim) = 0
         deallocate(old)
      end
-  end
+   end
 
    expand_call_stack(dim)
    ! Expands call_stack by amount "dim".  Contents are retained.
