@@ -1,8 +1,8 @@
-! $Id$
 !-------------------------------------------------------------------------------
 !
 ! MOL: scf routines.
 !
+! $Id$
 !-------------------------------------------------------------------------------
 module MOL_SCF
 
@@ -54,6 +54,10 @@ module MOL_SCF
 
 contains
 
+!**********
+! SCF setup
+!**********
+
    set_scf_defaults [leaky]
    ! Set up scf defaults for molecule
       .scfdata.destroy
@@ -80,6 +84,735 @@ contains
       mol.set_basis_info
       mol.set_scf_defaults
    end
+
+!************
+! SCF routine
+!************
+
+  scf    [recursive] [leaky]
+  ! Do an SCF calculation. The following :
+  !   .molecular_orbitals, .orbital_energies, .density_matrix  
+  ! are produced as results.
+    select case (.scfdata%kind)
+      case ("xray_rhf","xray_constrained_restricted_hartree_fock")
+        .constrained_scf_rhf
+      case default;
+        .hf_scf
+    end
+  end
+
+  hf_scf [recursive] [leaky]
+  ! Do a Hartree-Fock SCF calculation. The following :
+  !   .molecular_orbitals, .orbital_energies, .density_matrix  
+  ! are produced as results.
+    MAT, PTR :: S
+    STR :: kind
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.basis_resolved, "no basis set")
+    .get_initial_guess
+    .make_fock_matrix
+    .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
+    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
+    .scfdata.put_banner
+    kind = .scfdata.spinorbital_kind
+    S.create( .n_bf, .n_bf)
+    .get_overlap_matrix(S)
+    do
+      .extrapolate_scf
+      .update_molecular_orbitals
+      if (kind == "restricted") then
+        .molecular_orbitals%restricted.schmidt_orthonormalise(S)
+      end
+      .make_scf_density_matrix
+      .save_scf_results
+      .make_fock_matrix
+      .scfdata.update( energy=.scf_energy, kinetic_energy=.kinetic_energy )
+      .scfdata.put_results
+      if (.scfdata.scf_done) exit
+    end
+    .scfdata.cleanup_diis
+    S.destroy
+    .fock_matrix.destroy(kind)
+  end
+
+  update_molecular_orbitals
+  ! Solve for the molecular orbitals.  Requires a set of old molecular orbitals.
+  ! The new molecular orbitals "cU" are found from the old MOs "c" by solving :
+  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
+    STR :: kind
+    BIN :: mos_exist
+    VEC, PTR :: e
+    CMAT, PTR :: MOc,Fc
+    kind = .scfdata%kind
+    mos_exist = .molecular_orbitals.created
+    ENSURE(mos_exist, "need old MOs for initial guess")
+    select case (kind)
+       case ("rhf","restricted_hartree_fock", &
+             "rohf","restricted_open_shell_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock", &
+             "xray_fit","xray_constrained")
+          .update_r_MO(.orbital_energies%restricted,.molecular_orbitals%restricted,.fock_matrix%restricted)
+       case ("uhf","unrestricted_hartree_fock")
+          .update_r_MO(.orbital_energies%alpha,.molecular_orbitals%alpha, .fock_matrix%alpha)
+          .update_r_MO(.orbital_energies%beta ,.molecular_orbitals%beta , .fock_matrix%beta )
+       case ("gchf","cghf","general_complex_hartree_fock","complex_general_hartree_fock")
+          e   => .orbital_energies%general
+          MOc => .molecular_orbitals%general_complex
+          Fc  => .fock_matrix%general_complex
+          .update_gc_MO(e,MOc,Fc)
+    end
+  end
+
+  update_r_MO(MO_energies,MO,F)
+  ! Solve for the new molecular orbital energies "MO_energies" and the new 
+  ! molecular orbitals "MO", given an initial old set (in "MO") and a fock matrix "F".
+  ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by solving :
+  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
+    VEC :: MO_energies
+    MAT :: MO,F
+    MAT, PTR :: G,U
+    INT :: i
+
+    G.create(.n_bf,.n_bf)
+    U.create(.n_bf,.n_bf)
+    G = F
+    G.change_basis(MO)
+
+    ! Level shifting
+    if ( .scfdata.apply_level_shifting) then
+      do i = .n_a + 1, .n_bf
+        G(i,i) = .scfdata%level_shift + G(i,i)
+      end
+    end
+
+    G.solve_eigenproblem(MO_energies,U)
+    G.to_product(MO,U)
+    MO = G
+    U.destroy
+    G.destroy
+  end
+
+  update_gc_MO(MO_energies,MO,F)
+  ! Solve for the new molecular orbital energies "MO_energies" and the new 
+  ! molecular orbitals "MO", given an initial old set (in "MO") and a fock matrix "F".
+  ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by solving :
+  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
+    VEC :: MO_energies
+    CMAT :: MO,F
+    CMAT, PTR :: G,U
+    INT :: i
+    G.create(2*.n_bf,2*.n_bf)
+    U.create(2*.n_bf,2*.n_bf)
+    G = F
+    G.change_basis(MO)
+      !  .out.text("F in MO basis, real")
+      !  .out.put( real(G))
+      !  .out.text("F in MO basis, imag")
+      !  .out.put( aimag(G))
+    ! Level shifting
+    if ( .scfdata.apply_level_shifting) then
+      do i = .n_e + 1, 2*.n_bf
+        G(i,i) = .scfdata%level_shift + G(i,i)
+      end
+    end
+    G.solve_eigenproblem(MO_energies,U)
+      !  .out.text("MO energies")
+      !  .out.put( MO_energies, format="column")
+    G.to_product(MO,U)
+    MO = G
+    U.destroy
+    G.destroy
+  end
+
+  kinetic_energy result (res)
+  ! Evaluates the SCF kinetic energy as a trace of ".density_matrix" with the
+  ! ".kinetic matrix". 
+    DBL :: res
+    STR :: kind
+    MAT, PTR :: H
+    CMAT, PTR :: HH
+    kind = .scfdata%kind
+    ENSURE( .density_matrix.any_created, "no density matrix")
+    select case (kind)
+       case ("rhf","restricted_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock", &
+             "xray_fit","xray_constrained")
+          H.create(.n_bf,.n_bf); .get_kinetic_matrix(H)
+          res = - .density_matrix%restricted.trace_of_product(H)
+          H.destroy
+       case ("uhf","unrestricted_hartree_fock","rohf","restricted_open_shell_hartree_fock")
+          H.create(.n_bf,.n_bf); .get_kinetic_matrix(H)
+          res = - .density_matrix%alpha.trace_of_product(H)
+          res = - .density_matrix%beta.trace_of_product(H) + res
+          H.destroy
+       case ("cghf","gchf","general_complex_hartree_fock","complex_general_hartree_fock")
+          HH.create(2*.n_bf,2*.n_bf); HH=ZERO
+          H.create(.n_bf,.n_bf)
+          .get_kinetic_matrix(H)
+          HH.alpha_alpha_set_to(H)
+          HH.beta_beta_set_to(H)
+          H.destroy
+          res = - .density_matrix%general_complex.trace_of_product(HH)
+          HH.destroy
+       case default; DIE("don't know what to do with " // .scfdata%kind)
+    end
+  end
+
+  scf_energy result (res)
+  ! Evaluates the total SCF energy (including nuclear) as a trace of 
+  ! ".density_matrix" with the ".fock matrix". 
+    DBL :: res
+    res = .scf_electronic_energy(.density_matrix) + .nuclear_energy
+  end
+
+  scf_electronic_energy(P,core) result (res)
+  ! Evaluates the SCF electronic energy as a trace of "D" with the ".fock matrix". 
+  ! If "core" is present and FALSE, the core contribution is not added
+    OPMAT, target :: P
+    BIN, optional :: core
+    BIN :: add_core
+    DBL :: res
+    STR :: kind
+    MAT, PTR :: F
+    CMAT, PTR :: FF
+    kind = .scfdata%kind
+    ENSURE( .fock_matrix.any_created,    "no fock matrix")
+    ENSURE( .density_matrix.any_created, "no density matrix")
+    add_core = TRUE
+    if (present(core)) add_core = core
+    select case (kind)
+       case ("rhf","restricted_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock")
+          F.create(.n_bf,.n_bf)
+          F = .fock_matrix%restricted
+          if (add_core) .add_core_hamiltonian(F)
+          res = HALF * P%restricted.trace_of_product(F)
+          F.destroy
+       case ("uhf","unrestricted_hartree_fock","rohf","restricted_open_shell_hartree_fock")
+          F.create(.n_bf,.n_bf);
+          F = .fock_matrix%alpha
+          if (add_core) .add_core_hamiltonian(F)
+          res = HALF * P%alpha.trace_of_product(F)
+          F = .fock_matrix%beta
+          if (add_core) .add_core_hamiltonian(F)
+          res = HALF * P%beta.trace_of_product(F) + res
+          F.destroy
+       case ("cghf","gchf","general_complex_hartree_fock","complex_general_hartree_fock")
+          FF.create(2*.n_bf,2*.n_bf);
+          FF = .fock_matrix%general_complex
+          if (add_core) .add_core_hamiltonian(FF)
+          res = HALF * P%general_complex.trace_of_product(FF)
+          FF.destroy
+       case default; DIE("not yet implemented, " // .scfdata%kind)
+    end
+  end
+
+  get_scf_results [leaky]
+  ! Get the SCF results in from archives. Do not get the density matrix, because
+  ! it can/should be generated from the orbitals, depending on the kind of SCF.
+    ARCHIVE :: archive
+    STR :: k
+    k = .scfdata.molecular_orbital_kind
+    archive.set(.name,"molecular_orbitals",kind=k)
+    archive.read(.molecular_orbitals,kind=k)
+    k = .scfdata.orbital_energies_kind
+    archive.set(.name,"orbital_energies",kind=k)
+    archive.read(.orbital_energies,kind=k)
+  end
+
+  save_scf_results
+  ! Save the SCF results in various archives
+    ARCHIVE :: archive
+    archive.set(.name,"density_matrix")
+    archive.write(.density_matrix)
+    archive.set(.name,"molecular_orbitals")
+    archive.write(.molecular_orbitals)
+    archive.set(.name,"orbital_energies")
+    archive.write(.orbital_energies)
+  end
+
+  destroy_scf_results [leaky]
+  ! Destroy the SCF results
+    .density_matrix.destroy
+    .density_matrix.create(.n_bf)
+    .molecular_orbitals.destroy
+    .molecular_orbitals.create(.n_bf)
+    .orbital_energies.destroy
+    .orbital_energies.create(.n_bf)
+  end
+
+!*******************************
+! Initial orbital guess routines
+!*******************************
+
+  get_initial_guess [leaky]
+  ! Get the initial guess for the ".density_matrix" and ".molecular_orbitals"
+  ! If .initial_mos is set, it overides .initial_density.
+     STR :: initial_density,initial_mos
+     ARCHIVE :: archive
+     initial_mos     = .scfdata%initial_mos
+     initial_density = .scfdata%initial_density
+     if (initial_mos/="--not used--") then
+        .make_MO_guess(initial_mos) 
+     else
+        select case (initial_density)
+           case ("core"); .make_core_guess
+           case ("fock"); .make_fock_guess
+           case ("atom"); .make_atom_guess
+           case("restricted","unrestricted","general", &
+                "restricted_complex","unrestricted_complex","general_complex", &
+                "complex_restricted","complex_unrestricted","complex_general")
+              .make_density_guess(initial_density)
+           case default; DIE("unknown initial guess density, "// initial_density.trim)
+        end
+     end
+  end
+
+  make_MO_guess(initial_mos) [leaky]
+  ! Read old .molecular_orbitals of type "initial_mos" and use it to
+  ! make initial .density_matrix to start the scf calculation.
+  ! Convert the .molecular_orbitals, if neccesary.
+     STR :: initial_mos
+     ARCHIVE :: archive
+     archive.set(.name,"molecular_orbitals",kind=initial_mos)
+     archive.read(.molecular_orbitals)
+     .molecular_orbitals.convert_to( .scfdata.molecular_orbital_kind,.n_bf,.n_a,.n_b)
+     .make_scf_density_matrix
+     .orbital_energies.create(kind=.scfdata.orbital_energies_kind)
+  end
+
+  make_density_guess(initial_density) [leaky]
+  ! Read an old .density_matrix of type "initial_guess" and use it to
+  ! make initial .molecular_orbitals to start an scf calculation.
+  ! Convert the .density_matrix, if neccesary.
+     STR :: initial_density
+     ARCHIVE :: archive
+     archive.set(.name,"density_matrix")
+     archive.read(.density_matrix,kind=initial_density)
+     .density_matrix.convert_to(newkind = .scfdata.spinorbital_kind)
+     .make_fock_matrix  ! Make a fock matrix
+     .make_fock_guess   ! Get a reasonable set of starting MO's
+  end
+
+  make_core_guess [leaky]
+  ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and ".orbital_energies"
+    STR :: kind
+    .destroy_scf_results
+    .orbital_energies.destroy("restricted")
+    .orbital_energies.create("restricted")
+    .molecular_orbitals.destroy("restricted")
+    .molecular_orbitals.create("restricted")
+    .make_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
+    kind = .scfdata.orbital_energies_kind
+    .orbital_energies.convert_to(kind)
+    kind = .scfdata.molecular_orbital_kind
+    .molecular_orbitals.convert_to(kind,factor=HALF)
+    .make_scf_density_matrix
+    .make_fock_matrix  ! Make a fock matrix
+    .make_fock_guess   ! Get a reasonable set of starting MO's
+!    select case (kind)
+!       case ("rhf","restricted_hartree_fock","rohf","restricted_open_shell_hartree_fock", &
+!             "xray_rhf","xray_constrained_restricted_hartree_fock", &
+!             "xray_fit","xray_constrained")
+!          .orbital_energies.destroy("restricted")
+!          .orbital_energies.create("restricted")
+!          .molecular_orbitals.destroy("restricted")
+!          .molecular_orbitals.create("restricted")
+!          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
+!       case ("uhf","unrestricted_hartree_fock")
+!          .orbital_energies.destroy("unrestricted")
+!          .orbital_energies.create("unrestricted")
+!          .molecular_orbitals.destroy("unrestricted")
+!          .molecular_orbitals.create("unrestricted")
+!          .get_r_core_guess(.orbital_energies%alpha,.molecular_orbitals%alpha)
+!          .orbital_energies%beta   = .orbital_energies%alpha
+!          .molecular_orbitals%beta = .molecular_orbitals%alpha
+!       case ("gchf","cghf","general_complex_hartree_fock","complex_general_hartree_fock")
+!          .orbital_energies.destroy("restricted")
+!          .orbital_energies.create("restricted")
+!          .molecular_orbitals.destroy("restricted")
+!          .molecular_orbitals.create("restricted")
+!          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
+!          .orbital_energies.destroy("general")
+!          .orbital_energies.create("general")
+!          eg  => .orbital_energies%general
+!          er  => .orbital_energies%restricted
+!          eg(1:2*.n_b-1:2)  = er(1:.n_b)
+!          eg(2:2*.n_b  :2)  = er(1:.n_b)
+!          eg(2*.n_b+1:.n_e) = er(.n_b+1:.n_a)
+!          eg(.n_e+1:2*.n_a)        = er(.n_b+1:.n_a)
+!          eg(2*.n_a+1:2*.n_bf-1:2) = er(.n_a+1:.n_bf)
+!          eg(2*.n_a+2:2*.n_bf  :2) = er(.n_a+1:.n_bf)
+!          .orbital_energies.destroy("restricted")
+!          .molecular_orbitals.destroy("general_complex")
+!          .molecular_orbitals.create("general_complex")
+!          MOg => .molecular_orbitals%general_complex
+!          MOr => .molecular_orbitals%restricted
+!          MOg = ZERO
+!          MOg(1:.n_bf ,1:2*.n_b-1:2)  = MOr(:,1:.n_b)
+!          MOg(.n_bf+1:,2:2*.n_b  :2)  = MOr(:,1:.n_b)
+!          MOg(1:.n_bf ,2*.n_b+1:.n_e) = MOr(:,.n_b+1:.n_a)
+!          MOg(.n_bf+1:,.n_e+1:2*.n_a) = MOr(:,.n_b+1:.n_a)
+!          MOg(1:.n_bf ,2*.n_a+1:2*.n_bf-1:2) = MOr(:,.n_a+1:.n_bf)
+!          MOg(.n_bf+1:,2*.n_a+2:2*.n_bf  :2) = MOr(:,.n_a+1:.n_bf)
+!          .molecular_orbitals.destroy("restricted")
+!       case default; DIE("don't know what to do for " // kind)
+!    end
+!    .make_scf_density_matrix
+!    .save_scf_results
+  end
+
+  make_r_core_guess(MO_energies,MO)
+  ! Do a real core scf for the molecular orbital energies  "MO_energies" 
+  ! and the molecular_orbitals "MO"
+    VEC :: MO_energies
+    MAT :: MO
+    MAT, PTR :: S,R,H
+    !  H~ = S^-1/2 H S^-1/2
+    !  c  = S^-1/2 c~
+    S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+    R.create(.n_bf,.n_bf); R.to_inverse_sqrt(S)
+    H.create(.n_bf,.n_bf); .get_core_matrix(H)
+    S.to_product(R,H)
+    H.to_product(S,R)
+    H.solve_eigenproblem(MO_energies,MO)
+    H.to_product(R,MO)
+    MO = H
+    H.destroy
+    R.destroy
+    S.destroy
+  end
+
+  make_atom_guess [leaky]
+  ! Make a ".density matrix" and fock matrix from the sum of atomic densities
+     .get_atom_density
+     .make_fock_matrix  ! Make a fock matrix
+     .make_fock_guess   ! Get a reasonable set of starting MO's
+  end
+
+  get_atom_density [leaky]
+  ! Reads ".density_matrix" from the archive, otherwise makes it and
+  ! writes to the archive.
+    ARCHIVE :: archive
+    archive.set(.name,"atom_density_matrix", kind="restricted")
+    if ( archive.exists) then
+       archive.read(.density_matrix)
+       .density_matrix.convert_to( .scfdata.spinorbital_kind,factor=HALF)
+    else
+       .make_atom_density
+    end
+  end
+
+  make_atom_density [leaky]
+  ! Make a ".density matrix" from the sum of atomic densities
+    INT :: k,n_k,l,kl,a,b
+    MOL, PTR :: mol
+    IVEC, PTR :: first,last
+    IVECVEC, PTR :: atom_kind
+    ARCHIVE :: archive
+    ENSURE( .scfdata.created, "no scf data present.")
+    .density_matrix.destroy("restricted")
+    .density_matrix.create("restricted")
+    .density_matrix%restricted = ZERO
+    .atom.make_atom_basis_fn_limits(first,last)
+    .atom.make_atom_kind_list(atom_kind)
+    n_k = size(atom_kind)
+    do k = 1,n_k ! Do an SCF for every different kind of atom
+      mol.create
+      l = atom_kind(k)%vec(1)
+      .make_molecule_from_atom(l,mol)
+      if (mol.no_of_electrons >= 1) then
+        mol%scfdata%convergence = 0.0001
+        mol%scfdata%output = FALSE
+        mol.scf
+        mol.make_ao_density_matrix
+        mol%pointgroup.create("oh")
+        mol.symmetrise(mol%density_matrix)
+        do l = 1,size(atom_kind(k)%vec) ! Copy this atom density 
+          kl = atom_kind(k)%vec(l)
+          a = first(kl); b = last(kl)
+         .density_matrix%restricted(a:b,a:b) = &
+         .density_matrix%restricted(a:b,a:b) &
+         + mol%density_matrix%restricted
+        end
+      end
+      mol%atom.nullify_ptr_part ! do not destroy these
+      nullify(mol%basis)        ! do not destroy this
+      mol.destroy
+    end
+    archive.set(.name,"atom_density_matrix", kind="restricted")
+    archive.write(.density_matrix, kind="restricted")
+    .density_matrix.convert_to( .scfdata.spinorbital_kind,factor=HALF)
+    atom_kind.destroy
+    last.destroy
+    first.destroy
+  end
+
+  make_fock_guess [leaky]
+  ! Make the .density_matrix, .molecular_orbitals, and .orbital_energies
+  ! from an initial .fock_matrix; destroy .fock_matrix afterwards
+    STR :: kind
+    VEC, PTR :: e
+    MAT, PTR :: S,R,H,MO,F
+    CMAT, PTR :: MOc,Fc
+    kind = .scfdata.spinorbital_kind
+    ENSURE( .fock_matrix.created(kind),"need an initial fock matrix")
+    .destroy_scf_results
+    kind = .scfdata%kind
+    select case (kind)
+    !  F~ = S^-1/2 F S^-1/2
+    !  c  = S^-1/2 c~
+       case ("rhf","restricted_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock", &
+             "xray_fit","xray_constrained")
+          .orbital_energies.destroy("restricted")
+          .orbital_energies.create("restricted")
+          .molecular_orbitals.destroy("restricted")
+          .molecular_orbitals.create("restricted")
+          e  => .orbital_energies%restricted
+          MO => .molecular_orbitals%restricted
+          F  => .fock_matrix%restricted
+          .make_r_fock_guess(e,MO,F)
+       case ("uhf","unrestricted_hartree_fock")
+          .orbital_energies.destroy("unrestricted")
+          .orbital_energies.create("unrestricted")
+          .molecular_orbitals.destroy("unrestricted")
+          .molecular_orbitals.create("unrestricted")
+          e  => .orbital_energies%alpha
+          MO => .molecular_orbitals%alpha
+          F  => .fock_matrix%alpha
+          .make_r_fock_guess(e,MO,F)
+          e  => .orbital_energies%beta
+          MO => .molecular_orbitals%beta
+          F  => .fock_matrix%beta
+          .make_r_fock_guess(e,MO,F)
+       case ("cghf","gchf","general_complex_hartree_fock","complex_general_hartree_fock")
+          .orbital_energies.destroy("general")
+          .orbital_energies.create("general")
+          .molecular_orbitals.destroy("general_complex")
+          .molecular_orbitals.create("general_complex")
+          e   => .orbital_energies%general
+          MOc => .molecular_orbitals%general_complex
+          Fc  => .fock_matrix%general_complex
+          .make_gc_fock_guess(e,MOc,Fc)
+       case default; DIE("unknown spinorbital kind, " // kind.trim)
+    end
+    H.destroy
+    R.destroy
+    S.destroy
+    kind = .scfdata.spinorbital_kind
+    .fock_matrix.destroy(kind)
+    .make_scf_density_matrix
+    .save_scf_results
+  end
+
+  make_r_fock_guess(MO_energies,MO,fock_matrix) 
+  ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
+  ! a given real restricted "fock_matrix".
+    VEC :: MO_energies
+    MAT :: MO, fock_matrix
+    STR :: kind
+    MAT, PTR :: S,R,H
+    !  F~ = S^-1/2 F S^-1/2
+    !  c  = S^-1/2 c~
+    S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
+    R.create(.n_bf,.n_bf); R.to_inverse_sqrt(S)
+    H.create(.n_bf,.n_bf); H = fock_matrix
+    S.to_product(R,H)
+    H.to_product(S,R)
+    H.solve_eigenproblem(MO_energies,MO)
+    H.to_product(R,MO)
+    MO = H
+    H.destroy
+    R.destroy
+    S.destroy
+  end
+
+  make_gc_fock_guess(MO_energies,MO,fock_matrix) 
+  ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
+  ! a given complex general "fock_matrix".
+    VEC :: MO_energies
+    CMAT :: MO, fock_matrix
+    STR :: kind
+    MAT, PTR :: S,R
+    CMAT, PTR :: H,W
+    !  F~ = S^-1/2 F S^-1/2
+    !  c  = S^-1/2 c~
+    S.create(.n_bf,.n_bf)
+    R.create(.n_bf,.n_bf)
+    .get_overlap_matrix(R)
+    S.to_inverse_sqrt(R)
+    R.destroy
+    R.create(2*.n_bf,2*.n_bf); R=ZERO
+    R.alpha_alpha_set_to(S)
+    R.beta_beta_set_to(S)
+    S.destroy
+    H.create(2*.n_bf,2*.n_bf); H = fock_matrix
+    W.create(2*.n_bf,2*.n_bf)
+    W = matmul(R,H)
+    H = matmul(W,R)
+    W.destroy
+    H.solve_eigenproblem(MO_energies,MO)
+    H = matmul(R,MO)
+    MO = H
+    H.destroy
+    R.destroy
+  end
+ 
+! ******************
+! DIIS extrapolation 
+! ******************
+
+   extrapolate_scf 
+   ! Extrapolate the scf objects
+      STR :: kind
+      OPMAT, PTR :: error
+      CMAT, PTR :: err,F,P
+      if ( .scfdata.skip_diis) return
+      kind = .scfdata%kind
+      select case (kind)
+         case ("rhf","restricted_hartree_fock", &
+               "xray_rhf","xray_constrained_restricted_hartree_fock", &
+               "xray_fit","xray_constrained")
+            error.create(.n_bf,"restricted")
+            .make_r_diis_error(error%restricted,.fock_matrix%restricted,.density_matrix%restricted)
+            error.compress
+            .fock_matrix.compress
+            .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
+            .fock_matrix.uncompress
+            error.destroy
+         case ("rohf","restricted_open_shell_hartree_fock")
+            error.create(.n_bf,"restricted")
+            .make_r_diis_error(error%restricted,.fock_matrix%restricted,.density_matrix%alpha)
+            error.compress
+            .fock_matrix.compress("restricted")
+            .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
+            .fock_matrix.uncompress
+            error.destroy
+         case ("uhf","unrestricted_hartree_fock")
+            error.create(.n_bf,"unrestricted")
+            .make_r_diis_error(error%alpha,.fock_matrix%alpha,.density_matrix%alpha)
+            .make_r_diis_error(error%beta, .fock_matrix%beta, .density_matrix%beta)
+            error.compress
+            .fock_matrix.compress
+            .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
+            .fock_matrix.uncompress
+            error.destroy
+         case ("gchf","cghf","complex_general_hartree_fock","general_complex_hartree_fock")
+            error.create(.n_bf,"general_complex")
+            err => error%general_complex
+            F   => .fock_matrix%general_complex
+            P   => .density_matrix%general_complex
+            .make_gc_diis_error(err,F,P)
+            error.compress
+            .fock_matrix.compress
+            .scfdata%diis.extrapolate(.fock_matrix%square,error%square)
+            .fock_matrix.uncompress
+            error.destroy
+      end
+   end
+
+   make_r_diis_error(error,F,P)
+   ! Make the real DIIS error matrix, error = FPS - SPF
+      MAT :: error,F,P
+      MAT, PTR :: S,W
+      W.create(.n_bf, .n_bf)
+      S.create(.n_bf, .n_bf); .get_overlap_matrix(S)
+      W.to_product(P,S)
+      S.destroy
+      error.to_product(F,W)
+      W.destroy
+      error.antisymmetric_fold
+      error.make_antisymmetric
+   end
+
+   make_gc_diis_error(error,F,P)
+   ! Make the complex general DIIS error matrix, error = FPS - SPF
+      CMAT :: error,F,P
+      MAT, PTR :: R
+      CMAT, PTR :: S,W
+      W.create(2*.n_bf, 2*.n_bf)
+      S.create(2*.n_bf,2*.n_bf); S=ZERO
+      R.create(.n_bf,.n_bf)
+      .get_overlap_matrix(R)
+      S.alpha_alpha_set_to(R)
+      S.beta_beta_set_to(R)
+      R.destroy
+      W.to_product(P,S)
+      S.destroy
+      error.to_product(F,W)
+      W.destroy
+      error.antihermitian_fold
+      error.make_antihermitian
+   end
+ 
+! *******************
+! Pairwise SCF energy
+! *******************
+
+   put_scf_energy_in_mo_pairs
+   ! Analyse the SCF energy into MO pairs
+      OPMAT, PTR :: Di
+      VEC, PTR :: core_energy
+      MAT, PTR :: pair_energy
+      INT :: i,j
+      DBL :: energy,fac
+      BIN :: direct
+      core_energy.create(.n_a)
+      pair_energy.create(.n_a,.n_a)
+      core_energy = ZERO
+      pair_energy = ZERO
+      Di.create(.n_bf)
+      direct = .scfdata%direct
+      .scfdata%direct = TRUE 
+      do i = 1,.n_a
+         .make_scf_density_matrix(i) 
+         Di.set_to(.density_matrix)
+         .make_fock_matrix(core=TRUE,r12=FALSE)
+         core_energy(i) = .scf_electronic_energy(Di,core=TRUE)
+         do j = 1,i
+            .make_scf_density_matrix(j)
+            .make_fock_matrix(core=FALSE,r12=TRUE)
+            fac = TWO
+            if (i==j) fac = ONE
+            pair_energy(i,j) = fac*.scf_electronic_energy(Di,core=FALSE)
+         end
+      end  
+      Di.destroy
+      .scfdata%direct = direct
+      .out.flush
+      .out.text("SCF MO pair energy decomposition:",flush=1)
+      energy = sum(core_energy)+sum(transfer(pair_energy,(/ONE/)))+.nuclear_energy
+      .out.show("SCF energy =",energy)
+      .out.text("Core energies:",flush=1)
+      .out.flush
+      .out.dash(int_fields=1,dbl_fields=1)
+      .out.put("MO_i",int_width=TRUE)
+      .out.put("Core energy")
+      .out.flush
+      .out.dash(int_fields=1,dbl_fields=1)
+      do i = 1,.n_a
+         .out.put(i)
+         .out.put(core_energy(i),flush=1)
+      end 
+      .out.dash(int_fields=1,dbl_fields=1)
+      .out.flush
+      .out.text("Orbital pair energies:",flush=1)
+      .out.dash(int_fields=2,dbl_fields=1)
+      .out.put("MO_i",int_width=TRUE)
+      .out.put("MO_j",int_width=TRUE)
+      .out.put("Pair energy",flush=1)
+      .out.dash(int_fields=2,dbl_fields=1)
+      do i = 1,.n_a
+      do j = 1,i
+         .out.put(i)
+         .out.put(j)
+         .out.put(pair_energy(i,j),flush=1)
+      end 
+      end 
+      .out.dash(int_fields=2,dbl_fields=1)
+      .out.flush
+  end
 
 !*********************
 ! Fock matrix routines
@@ -115,6 +848,7 @@ contains
        case("gchf","cghf", &
             "general_complex_hartree_fock","complex_general_hartree_fock")
                                                             .make_gc_fock(direct,core,r12) 
+                                                            .make_gc_so_fock 
        case default; DIE("unknown scf kind, "// scf_kind.trim)
     end
   end
@@ -125,18 +859,134 @@ contains
      MAT, PTR :: H
      H.create( .n_bf, .n_bf)
      .get_core_matrix(H)
-     F = H + F
+     F = F + H
      H.destroy
   end
 
   add_core_hamiltonian(F)
-  ! Add the core hamiltonain to "F"
+  ! Add the core hamiltonain to a general complex "F"
      CMAT :: F
-     MAT, PTR :: H
+     CMAT,PTR :: HH
+     MAT, PTR :: H, S, T, xx,yy,zz,xy,xz,yz, Lx,Ly,Lz, yx,zx,zy
+     MAT(3,3) :: BB
+     INT :: k,l
+     DBL :: fac
+     CDBL :: I
+     HH.create( 2*.n_bf, 2*.n_bf); HH = ZERO
      H.create( .n_bf, .n_bf)
      .get_core_matrix(H)
-     F = H + F
+     HH.alpha_alpha_plus(H)
+     HH.beta_beta_plus(H)
      H.destroy
+     I = (ZERO,ONE)
+     if ( .scfdata%using_1e_sl_term) then
+           Lx.create(.n_bf,.n_bf)
+           Ly.create(.n_bf,.n_bf)
+           Lz.create(.n_bf,.n_bf)
+           .get_spin_orbit_matrices(Lx,Ly,Lz) 
+           fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
+           fac = fac * .scfdata%sl_1e_factor
+           HH.beta_alpha_plus(Lx,factor=-fac*I)
+           HH.beta_alpha_plus(Ly,factor=fac)
+           HH.alpha_alpha_plus(Lz,factor=-fac*I)
+           HH.beta_beta_plus(Lz,factor=fac*I)
+           Lz.destroy; Ly.destroy; Lx.destroy
+     else if ( .scfdata%using_1e_zora_term) then
+           T.create(.n_bf,.n_bf)
+           Lx.create(.n_bf,.n_bf)
+           Ly.create(.n_bf,.n_bf)
+           Lz.create(.n_bf,.n_bf)
+           .get_1e_ZORA_matrices(T,Lx,Ly,Lz) 
+           HH.alpha_alpha_plus(T)
+           HH.beta_beta_plus(T)
+           .get_kinetic_matrix(T) ! remove normal kinetic energy
+           HH.alpha_alpha_plus(T,factor=-ONE)
+           HH.beta_beta_plus(T,factor=-ONE)
+           fac = -G_FACTOR/TWO  ! minus factor to be consistent with above
+           fac = fac * .scfdata%sl_1e_factor
+           HH.beta_alpha_plus(Lx,factor=-fac*I)
+           HH.beta_alpha_plus(Ly,factor=fac)
+           HH.alpha_alpha_plus(Lz,factor=-fac*I)
+           HH.beta_beta_plus(Lz,factor=fac*I)
+           T.destroy
+           Lz.destroy; Ly.destroy; Lx.destroy
+     end
+     if ( .B_field.is_not_zero) then
+        if ( .scfdata%using_bs_term) then
+           S.create(.n_bf,.n_bf)
+           .get_overlap_matrix(S) 
+           fac = G_FACTOR/FOUR
+           HH.alpha_alpha_plus(S,factor=fac*.B_field(3))
+           HH.beta_beta_plus(S,factor=-fac*.B_field(3))
+           HH.beta_alpha_plus(S,factor=fac*.B_field(1))
+           HH.beta_alpha_plus(S,factor=fac*.B_field(2)*I)
+           S.destroy
+        end
+        if ( .scfdata%using_bs_t_term) then
+           T.create(.n_bf,.n_bf)
+           .get_kinetic_matrix(T) 
+           fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
+           HH.alpha_alpha_plus(T,factor=fac*.B_field(3))
+           HH.beta_beta_plus(T,factor=-fac*.B_field(3))
+           HH.beta_alpha_plus(T,factor=fac*.B_field(1))
+           HH.beta_alpha_plus(T,factor=fac*.B_field(2)*I)
+           T.destroy
+        end
+        if ( .scfdata%using_bl_term) then
+           Lx.create(.n_bf,.n_bf)
+           Ly.create(.n_bf,.n_bf)
+           Lz.create(.n_bf,.n_bf)
+           .get_L_matrices(Lx,Ly,Lz) 
+           Lx = Lx*.B_field(1) + Ly*.B_field(2) + Lz*.B_field(3)
+           fac = HALF
+           HH.alpha_alpha_plus(Lx,factor=fac*I)
+           HH.beta_beta_plus(Lx,factor=fac*I)
+           Lz.destroy; Ly.destroy; Lx.destroy
+        end
+        if ( .scfdata%using_aa_term) then
+           xx.create(.n_bf,.n_bf); yy.create(.n_bf,.n_bf); zz.create(.n_bf,.n_bf)
+           xy.create(.n_bf,.n_bf); xz.create(.n_bf,.n_bf); yz.create(.n_bf,.n_bf)
+           .get_quadrupole_matrices(xx,yy,zz,xy,xz,yz) 
+           fac = ONE/EIGHT
+           do k = 1,3
+              BB(k,k) = fac*(sum(.B_field*.B_field) - .B_field(k)*.B_field(k))
+           end
+           do k = 1,3
+           do l = k+1,3
+              BB(k,l) = -TWO*fac*.B_field(k)*.B_field(l)
+           end
+           end
+           xx =      BB(1,1)*xx; xx = xx + BB(2,2)*yy; xx = xx + BB(3,3)*zz
+           xx = xx + BB(1,2)*xy; xx = xx + BB(1,3)*xz; xx = xx + BB(2,3)*yz
+           HH.alpha_alpha_plus(xx)
+           HH.beta_beta_plus(xx)
+           yz.destroy; xz.destroy; xy.destroy
+           zz.destroy; yy.destroy; xx.destroy
+        end
+        if ( .scfdata%using_1e_srxa_term) then
+           Lx.create(.n_bf,.n_bf)
+           Ly.create(.n_bf,.n_bf)
+           Lz.create(.n_bf,.n_bf)
+           .get_spin_orbit_B_matrices(Lx,Ly,Lz) 
+           fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
+           HH.beta_alpha_plus(Lx,factor=fac)
+           HH.beta_alpha_plus(Ly,factor=fac*I)
+           HH.alpha_alpha_plus(Lz,factor=fac)
+           HH.beta_beta_plus(Lz,factor=-fac)
+           Lz.destroy; Ly.destroy; Lx.destroy
+        end
+     end
+     HH.make_hermitian
+     F = HH + F
+        ! .out.set_dbl_width(15)
+        ! .out.set_dbl_precision(8)
+        ! .out.set_fields(7)
+        ! .out.text("h, real")
+        ! .out.put(real(HH))
+        ! .out.text("h, imag")
+        ! .out.put(aimag(HH))
+        ! stop
+     HH.destroy
   end
 
   make_r_fock(direct,core,r12) [leaky]
@@ -268,8 +1118,8 @@ contains
        Ka.create(.n_bf,.n_bf)
        Kb.create(.n_bf,.n_bf)
        Kba.create(.n_bf,.n_bf)
-       Pa.create(.n_bf,.n_bf); .density_matrix%general_complex.alpha_alpha_put_to(Pa)
-       Pb.create(.n_bf,.n_bf); .density_matrix%general_complex.beta_beta_put_to(Pb)
+       Pa.create(.n_bf,.n_bf);  .density_matrix%general_complex.alpha_alpha_put_to(Pa)
+       Pb.create(.n_bf,.n_bf);  .density_matrix%general_complex.beta_beta_put_to(Pb)
        Pba.create(.n_bf,.n_bf); .density_matrix%general_complex.beta_alpha_put_to(Pba)
        P.create(.n_bf,.n_bf)
        P  = Pa + Pb
@@ -297,6 +1147,154 @@ contains
         ! .out.put( aimag(F) )
   end
 
+  make_gc_so_fock [leaky]
+  ! Make the general complex two electron spin orbit contribution to the Fock matrix. 
+    CMAT5, PTR :: JS,KS,JO,KO
+    CMAT4, PTR :: P
+    CMAT, PTR  :: F,Faa,Fbb,Fba
+    ARCHIVE    :: SOx_archive,SOy_archive,SOz_archive,ind_archive
+    CDBL :: I
+    DBL :: fac
+    INT :: a,b,x,y,z
+    if (NOT .scfdata%using_2e_sl_term) return
+    .get_spin_orbit_integrals
+    Faa.create(.n_bf,.n_bf)
+    Fbb.create(.n_bf,.n_bf)
+    Fba.create(.n_bf,.n_bf)
+    JS.create(.n_bf,.n_bf,2,2,3); KS.create(.n_bf,.n_bf,2,2,3)
+    JO.create(.n_bf,.n_bf,2,2,3); KO.create(.n_bf,.n_bf,2,2,3)
+    P.create(.n_bf,.n_bf,2,2)
+    .density_matrix%general_complex.alpha_alpha_put_to(P(:,:,1,1))
+    .density_matrix%general_complex.beta_alpha_put_to(P(:,:,2,1))
+    .density_matrix%general_complex.alpha_beta_put_to(P(:,:,1,2))
+    .density_matrix%general_complex.beta_beta_put_to(P(:,:,2,2))
+    SOx_archive.set(.name,"SOx_integrals")
+    SOy_archive.set(.name,"SOy_integrals")
+    SOz_archive.set(.name,"SOz_integrals")
+    ind_archive.set(.name,"SO_indices")
+    .make_gc_so_JK_disk(JS(:,:,:,:,1),KS(:,:,:,:,1),JO(:,:,:,:,1),KO(:,:,:,:,1),P,SOx_archive,ind_archive)
+    .make_gc_so_JK_disk(JS(:,:,:,:,2),KS(:,:,:,:,2),JO(:,:,:,:,2),KO(:,:,:,:,2),P,SOy_archive,ind_archive)
+    .make_gc_so_JK_disk(JS(:,:,:,:,3),KS(:,:,:,:,3),JO(:,:,:,:,3),KO(:,:,:,:,3),P,SOz_archive,ind_archive)
+    P.destroy
+    I = (ZERO,ONE)
+    a = 1; b = 2; x = 1; y = 2; z = 3
+    Faa =  THREE*JO(:,:,a,a,z) +       JO(:,:,b,b,z) + THREE*JS(:,:,a,a,z) -   JS(:,:,b,b,z) &
+        +    TWO*JS(:,:,a,b,x) +   TWO*JS(:,:,b,a,x) +       JO(:,:,a,b,x) +   JO(:,:,b,a,x) &
+        +  I*TWO*JS(:,:,a,b,y) - I*TWO*JS(:,:,b,a,y) +     I*JO(:,:,a,b,y) - I*JO(:,:,b,a,y) &
+        -    TWO*KO(:,:,b,a,x) -       KO(:,:,a,b,x) -   TWO*KS(:,:,a,b,x) -   KS(:,:,b,a,x) &
+        +  I*TWO*KO(:,:,b,a,y) -     I*KO(:,:,a,b,y) - I*TWO*KS(:,:,a,b,y) + I*KS(:,:,b,a,y) &
+        -  THREE*KO(:,:,a,a,z) - THREE*KS(:,:,a,a,z)
+    Fbb = -THREE*JO(:,:,b,b,z) -       JO(:,:,a,a,z) - THREE*JS(:,:,b,b,z) +   JS(:,:,a,a,z) &
+        +    TWO*JS(:,:,a,b,x) +   TWO*JS(:,:,b,a,x) +       JO(:,:,a,b,x) +   JO(:,:,b,a,x) &
+        +  I*TWO*JS(:,:,a,b,y) - I*TWO*JS(:,:,b,a,y) +     I*JO(:,:,a,b,y) - I*JO(:,:,b,a,y) &
+        -    TWO*KO(:,:,a,b,x) -       KO(:,:,b,a,x) -   TWO*KS(:,:,b,a,x) -   KS(:,:,a,b,x) &
+        -  I*TWO*KO(:,:,a,b,y) + I*KO(:,:,b,a,y)     + I*TWO*KS(:,:,b,a,y) - I*KS(:,:,a,b,y) &
+        +  THREE*KO(:,:,b,b,z) + THREE*KS(:,:,b,b,z)
+    Fba =    TWO*JO(:,:,a,a,x) +   TWO*JO(:,:,b,b,x) +       JS(:,:,a,a,x) +   JS(:,:,b,b,x) &
+        +  I*TWO*JO(:,:,a,a,y) + I*TWO*JO(:,:,b,b,y) +     I*JS(:,:,a,a,y) + I*JS(:,:,b,b,y) &
+        -    TWO*KO(:,:,a,a,x) -       KO(:,:,b,b,x) -   TWO*KS(:,:,b,b,x) -   KS(:,:,a,a,x) &
+        -  I*TWO*KO(:,:,a,a,y) -     I*KO(:,:,b,b,y) - I*TWO*KS(:,:,b,b,y) - I*KS(:,:,a,a,y) &
+        +        KO(:,:,b,a,z) -       KS(:,:,b,a,z)
+    KO.destroy; JO.destroy; KS.destroy; JS.destroy
+    F => .fock_matrix%general_complex
+    fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
+    fac = fac * .scfdata%sl_2e_factor
+    F.alpha_alpha_plus(Faa,factor=I*fac)
+    F.beta_beta_plus(Fbb,factor=I*fac)
+    F.beta_alpha_plus(Fba,factor=I*fac)
+    Fbb = conjg(transpose(Fba))
+    F.alpha_beta_plus(Fbb,factor=-I*fac)
+    Fba.destroy; Fbb.destroy; Faa.destroy
+        ! .out.set_dbl_width(15)
+        ! .out.set_dbl_precision(8)
+        ! .out.set_fields(7)
+        ! .out.text("F, real:")
+        ! .out.put( real(F) )
+        ! .out.text("F, imag:")
+        ! .out.put( aimag(F) )
+        ! stop
+  end
+
+  make_gc_so_JK_disk(JS,KS,JO,KO,P,SO_archive,ind_archive)
+  ! Make the general complex spin orbit cLassical and Exchange matrices.
+    CMAT4 :: JS,KS,JO,KO,P
+    ARCHIVE :: SO_archive,ind_archive
+    MAT4, PTR   :: S,O
+    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,n_quartets, m,n
+    DBL :: S_abcd,O_abcd
+    CDBL :: I
+    ENSURE( .atom.created,  "no atom list")
+    ENSURE( .atom.basis_resolved, "no basis set")
+    ENSURE( SO_archive.exists,  "no spin orbit integral file!")
+    ENSURE( ind_archive.exists, "no spin orbit integral index file")
+    SO_archive.open(for="read-only",buffered=TRUE,type="dbl")
+    ind_archive.open(for="read-only",buffered=TRUE,type="int")
+    JS = ZERO; KS = ZERO; JO = ZERO; KO = ZERO
+    I = (ZERO,ONE)
+    n_quartets = .n_shell_quartets
+    do
+       ind_archive%file.read(q)
+       if (q > n_quartets) exit
+       .get_shell_quartet(q,fa,la,fb,lb,fc,lc,fd,ld)
+       S.create(fa,la,fb,lb,fc,lc,fd,ld)
+       O.create(fa,la,fb,lb,fc,lc,fd,ld)
+       SO_archive%file.read(S)
+       SO_archive%file.read(O)
+       do a = fa,la
+       do b = fb,lb
+       do c = fc,lc
+       do d = fd,ld
+          S_abcd = S(a,b,c,d)
+          O_abcd = O(a,b,c,d)
+          do m = 1,2
+          do n = 1,2
+             !
+             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(d,c, m,n)
+             JS(a,b, m,n) = JS(a,b, m,n) + S_abcd*P(c,d, m,n)
+             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(d,c, m,n)
+             JS(b,a, m,n) = JS(b,a, m,n) - S_abcd*P(c,d, m,n)
+             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(b,a, m,n)
+             JS(c,d, m,n) = JS(c,d, m,n) + O_abcd*P(a,b, m,n)
+             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(b,a, m,n)
+             JS(d,c, m,n) = JS(d,c, m,n) - O_abcd*P(a,b, m,n)
+             !
+             JO(a,b, m,n) = JO(a,b, m,n) + O_abcd*P(d,c, m,n)
+             JO(a,b, m,n) = JO(a,b, m,n) - O_abcd*P(c,d, m,n)
+             JO(b,a, m,n) = JO(b,a, m,n) + O_abcd*P(d,c, m,n)
+             JO(b,a, m,n) = JO(b,a, m,n) - O_abcd*P(c,d, m,n)
+             JO(c,d, m,n) = JO(c,d, m,n) + S_abcd*P(b,a, m,n)
+             JO(c,d, m,n) = JO(c,d, m,n) - S_abcd*P(a,b, m,n)
+             JO(d,c, m,n) = JO(d,c, m,n) + S_abcd*P(b,a, m,n)
+             JO(d,c, m,n) = JO(d,c, m,n) - S_abcd*P(a,b, m,n)
+             !
+             KS(a,d, m,n) = KS(a,d, m,n) + S_abcd*P(b,c, m,n)
+             KS(a,c, m,n) = KS(a,c, m,n) + S_abcd*P(b,d, m,n)
+             KS(b,d, m,n) = KS(b,d, m,n) - S_abcd*P(a,c, m,n)
+             KS(b,c, m,n) = KS(b,c, m,n) - S_abcd*P(a,d, m,n)
+             KS(c,b, m,n) = KS(c,b, m,n) + O_abcd*P(d,a, m,n)
+             KS(c,a, m,n) = KS(c,a, m,n) + O_abcd*P(d,b, m,n)
+             KS(d,b, m,n) = KS(d,b, m,n) - O_abcd*P(c,a, m,n)
+             KS(d,a, m,n) = KS(d,a, m,n) - O_abcd*P(c,b, m,n)
+             !
+             KO(a,d, m,n) = KO(a,d, m,n) + O_abcd*P(b,c, m,n)
+             KO(a,c, m,n) = KO(a,c, m,n) - O_abcd*P(b,d, m,n)
+             KO(b,d, m,n) = KO(b,d, m,n) + O_abcd*P(a,c, m,n)
+             KO(b,c, m,n) = KO(b,c, m,n) - O_abcd*P(a,d, m,n)
+             KO(c,b, m,n) = KO(c,b, m,n) + S_abcd*P(d,a, m,n)
+             KO(c,a, m,n) = KO(c,a, m,n) - S_abcd*P(d,b, m,n)
+             KO(d,b, m,n) = KO(d,b, m,n) + S_abcd*P(c,a, m,n)
+             KO(d,a, m,n) = KO(d,a, m,n) - S_abcd*P(c,b, m,n)
+          end
+          end
+       end
+       end
+       end
+       end
+       O.destroy; S.destroy
+    end
+    SO_archive.close
+    ind_archive.close
+  end
 
 !**********************
 ! J & K matrix routines
@@ -314,10 +1312,12 @@ contains
     K = ZERO
     shell4.create
     do q = 1,.n_shell_quartets
-       if (.scfdata%NDDO) then
+       if (.scfdata%nddo) then
          .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b OR atom_c==atom_d) cycle
+         if (atom_a==atom_b AND atom_c==atom_d) then
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
+         else; cycle
+         end
        else
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
        end
@@ -420,10 +1420,12 @@ contains
     Kb = ZERO
     shell4.create
     do q = 1,.n_shell_quartets
-       if (.scfdata%NDDO) then
+       if (.scfdata%nddo) then
          .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b OR atom_c==atom_d) cycle
+         if (atom_a==atom_b AND atom_c==atom_d) then
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
+         else; cycle
+         end
        else
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
        end
@@ -540,10 +1542,12 @@ contains
     Kba = ZERO
     shell4.create
     do q = 1,.n_shell_quartets
-       if (.scfdata%NDDO) then
+       if (.scfdata%nddo) then
          .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b OR atom_c==atom_d) cycle
+         if (atom_a==atom_b AND atom_c==atom_d) then
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
+         else; cycle
+         end
        else
          .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
        end
@@ -560,24 +1564,24 @@ contains
        do c = fc,lc
        do d = fd,ld
           I_abcd = I(a,b,c,d)
-          J(a,b)   = J(a,b)   + I_abcd*P(d,c)
+          J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
           J(c,d)   = J(c,d)   + I_abcd*P(b,a)
-          Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(d,b)
-          Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(c,b)
-          Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(d,a)
-          Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(c,a)
-          Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(d,b)
-          Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(c,b)
-          Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(d,a)
-          Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(c,a)
-          Kba(a,c) = Kba(a,c) + I_abcd*Pba(d,b)
-          Kba(a,d) = Kba(a,d) + I_abcd*Pba(c,b)
-          Kba(b,c) = Kba(b,c) + I_abcd*Pba(d,a)
-          Kba(b,d) = Kba(b,d) + I_abcd*Pba(c,a)
-          Kba(c,a) = Kba(c,a) + I_abcd*Pba(b,d)
-          Kba(d,a) = Kba(d,a) + I_abcd*Pba(b,c)
-          Kba(c,b) = Kba(c,b) + I_abcd*Pba(a,d)
-          Kba(d,b) = Kba(d,b) + I_abcd*Pba(a,c)
+          Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric but must be folded
+          Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  
+          Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+          Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+          Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric but must be folded
+          Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  
+          Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+          Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+          Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+          Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
+          Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+          Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+          Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+          Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+          Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+          Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
        end
        end
        end
@@ -627,24 +1631,24 @@ contains
       do c = fc,lc
       do d = fd,ld
           I_abcd = I(a,b,c,d)
-          J(a,b)   = J(a,b)   + I_abcd*P(d,c)
+          J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
           J(c,d)   = J(c,d)   + I_abcd*P(b,a)
-          Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(d,b)
-          Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(c,b)
-          Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(d,a)
-          Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(c,a)
-          Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(d,b)
-          Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(c,b)
-          Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(d,a)
-          Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(c,a)
-          Kba(a,c) = Kba(a,c) + I_abcd*Pba(d,b)
-          Kba(a,d) = Kba(a,d) + I_abcd*Pba(c,b)
-          Kba(b,c) = Kba(b,c) + I_abcd*Pba(d,a)
-          Kba(b,d) = Kba(b,d) + I_abcd*Pba(c,a)
-          Kba(c,a) = Kba(c,a) + I_abcd*Pba(b,d)
-          Kba(d,a) = Kba(d,a) + I_abcd*Pba(b,c)
-          Kba(c,b) = Kba(c,b) + I_abcd*Pba(a,d)
-          Kba(d,b) = Kba(d,b) + I_abcd*Pba(a,c)
+          Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric but must be folded
+          Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  
+          Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+          Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+          Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric but must be folded
+          Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  
+          Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+          Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+          Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+          Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
+          Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+          Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+          Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+          Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+          Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+          Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
       end
       end
       end
@@ -666,6 +1670,19 @@ contains
   ! Weight the diagonal blocks of matrix "X" by "fac"
      IN :: self
      MAT, INOUT :: X
+     DBL, IN :: fac
+     INT :: n,f,l
+     do n = 1,.n_shell
+        f = .first_basis_fn_for_shell(n)
+        l = .last_basis_fn_for_shell(n)
+        X(f:l,f:l) = fac*X(f:l,f:l)
+     end
+  end
+ 
+  weight_diagonal_blocks(X,fac) [pure]
+  ! Weight the diagonal blocks of matrix "X" by "fac"
+     IN :: self
+     CMAT, INOUT :: X
      DBL, IN :: fac
      INT :: n,f,l
      do n = 1,.n_shell
@@ -716,753 +1733,6 @@ contains
         X(fa:la,fb:lb) = X(fa:la,fb:lb) + transpose(conjg(X(fb:lb,fa:la)))
      end
      end
-  end
-
-!************
-! SCF routine
-!************
-
-  scf [leaky]
-  ! Do an SCF calculation. The following :
-  !   .molecular_orbitals, .orbital_energies, .density_matrix  
-  ! are produced as results.
-    select case (.scfdata%kind)
-      case ("xray_rhf","xray_constrained_restricted_hartree_fock")
-        .constrained_scf_rhf
-      case default;
-        .hf_scf
-    end
-  end
-
-  hf_scf [leaky]
-  ! Do a Hartree-Fock SCF calculation. The following :
-  !   .molecular_orbitals, .orbital_energies, .density_matrix  
-  ! are produced as results.
-    MAT, PTR :: S
-    STR :: kind
-    ENSURE( .atom.created,  "no atom list")
-    ENSURE( .atom.basis_resolved, "no basis set")
-    .get_initial_guess
-    .make_fock_matrix
-
-    .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
-    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
-
-    kind = .scfdata.spinorbital_kind
-    if ( .molecular_orbitals.destroyed(kind) ) .make_fock_guess
-    S.create( .n_bf, .n_bf)
-    .get_overlap_matrix(S)
-    .scfdata.put_banner
-    do
-      .extrapolate_scf
-      .update_molecular_orbitals
-      .molecular_orbitals.schmidt_orthonormalise(S)
-      .make_scf_density_matrix
-      .save_scf_results
-      .make_fock_matrix
-      .scfdata.update( energy=.scf_energy, kinetic_energy=.kinetic_energy )
-      .scfdata.put_results
-      if (.scfdata.scf_done) exit
-    end
-    .scfdata.cleanup_diis
-    S.destroy
-    .fock_matrix.destroy(kind)
-  end
-
-  update_molecular_orbitals
-  ! Solve for the molecular orbitals.  Requires a set of old molecular orbitals.
-  ! The new molecular orbitals "cU" are found from the old MOs "c" by solving :
-  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
-    STR :: kind
-    VEC, PTR :: e
-    CMAT, PTR :: MOc,Fc
-    kind = .scfdata.spinorbital_kind
-    ENSURE( .molecular_orbitals.created(kind), "need old MOs")
-    select case (kind)
-      case ("restricted")
-        .update_r_MO(.orbital_energies%restricted,.molecular_orbitals%restricted,.fock_matrix%restricted)
-      case ("unrestricted")
-        .update_r_MO(.orbital_energies%alpha,.molecular_orbitals%alpha, .fock_matrix%alpha)
-        .update_r_MO(.orbital_energies%beta ,.molecular_orbitals%beta , .fock_matrix%beta )
-      case ("general_complex")
-        e   => .orbital_energies%general
-        MOc => .molecular_orbitals%general_complex
-        Fc  => .fock_matrix%general_complex
-        .update_gc_MO(e,MOc,Fc)
-      case default; DIE("don't know what to do with " // trim(kind))
-    end
-  end
-
-  update_r_MO(MO_energies,MO,F)
-  ! Solve for the new molecular orbital energies "MO_energies" and the new 
-  ! molecular orbitals "MO", given an initial old set (in "MO") and a fock matrix "F".
-  ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by solving :
-  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
-    VEC :: MO_energies
-    MAT :: MO,F
-    MAT, PTR :: G,U
-    INT :: i
-
-    G.create(.n_bf,.n_bf)
-    U.create(.n_bf,.n_bf)
-    G = F
-    G.change_basis(MO)
-
-    ! Level shifting
-    if (.scfdata.apply_level_shifting) then
-      do i = .n_a + 1, .n_bf
-        G(i,i) = .scfdata%level_shift + G(i,i)
-      end
-    end
-
-    G.solve_eigenproblem(MO_energies,U)
-    G.to_product(MO,U)
-    MO = G
-    U.destroy
-    G.destroy
-  end
-
-  update_gc_MO(MO_energies,MO,F)
-  ! Solve for the new molecular orbital energies "MO_energies" and the new 
-  ! molecular orbitals "MO", given an initial old set (in "MO") and a fock matrix "F".
-  ! The new molecular orbitals "MO*U" are found from the old MOs "MO" by solving :
-  ! (c^T F c)U = c^T S c U E ...... where U is an orthogonal matrix.
-    VEC :: MO_energies
-    CMAT :: MO,F
-    CMAT, PTR :: G,U
-    INT :: i
-    G.create(2*.n_bf,2*.n_bf)
-    U.create(2*.n_bf,2*.n_bf)
-    G = F
-    G.change_basis(MO)
-    ! Level shifting
-    if (.scfdata.apply_level_shifting) then
-      do i = .n_e + 1, 2*.n_bf
-        G(i,i) = .scfdata%level_shift + G(i,i)
-      end
-    end
-    G.solve_eigenproblem(MO_energies,U)
-    G.to_product(MO,U)
-    MO = G
-    U.destroy
-    G.destroy
-  end
-
-  kinetic_energy result (res)
-  ! Evaluates the SCF kinetic energy as a trace of ".density_matrix" with the
-  ! ".kinetic matrix". 
-    DBL :: res
-    STR :: kind
-    MAT, PTR :: H
-    CMAT, PTR :: HH
-    kind = .scfdata.spinorbital_kind
-    ENSURE( .density_matrix.created(kind), "no density matrix")
-    select case (kind)
-       case ("restricted")
-          H.create(.n_bf,.n_bf); .get_kinetic_matrix(H)
-          res = - .density_matrix%restricted.trace_of_product(H)
-          H.destroy
-       case ("unrestricted")
-          H.create(.n_bf,.n_bf); .get_kinetic_matrix(H)
-          res = - .density_matrix%alpha.trace_of_product(H)
-          res = - .density_matrix%beta.trace_of_product(H) + res
-          H.destroy
-       case ("general_complex")
-          HH.create(2*.n_bf,2*.n_bf); HH=ZERO
-          H.create(.n_bf,.n_bf)
-          .get_kinetic_matrix(H)
-          HH.alpha_alpha_set_to(H)
-          HH.beta_beta_set_to(H)
-          H.destroy
-          res = - .density_matrix%general_complex.trace_of_product(HH)
-          HH.destroy
-       case default; DIE("don't know what to do with " // trim(kind))
-    end
-  end
-
-  scf_energy result (res)
-  ! Evaluates the SCF electronic energy as a trace of ".density_matrix" with the
-  ! ".fock matrix". 
-    DBL :: res
-    MAT, PTR :: H
-    CMAT, PTR :: HH
-    STR :: kind
-    kind = .scfdata.spinorbital_kind
-    ENSURE( .fock_matrix.created(kind),    "no fock matrix")
-    ENSURE( .density_matrix.created(kind), "no density matrix")
-    select case (kind)
-       case ("restricted")
-          H.create(.n_bf,.n_bf); .get_core_matrix(H)
-          H = H + .fock_matrix%restricted
-          res = HALF * .density_matrix%restricted.trace_of_product(H)
-          H.destroy
-       case ("unrestricted")
-          H.create(.n_bf,.n_bf)
-          .get_core_matrix(H)
-          H = H + .fock_matrix%alpha
-          res = HALF * .density_matrix%alpha.trace_of_product(H)
-          .get_core_matrix(H)
-          H = H + .fock_matrix%beta
-          res = HALF * .density_matrix%beta.trace_of_product(H) + res
-          H.destroy
-       case ("general_complex")
-          HH.create(2*.n_bf,2*.n_bf); HH=ZERO
-          H.create(.n_bf,.n_bf)
-          .get_core_matrix(H)
-          HH.alpha_alpha_set_to(H)
-          HH.beta_beta_set_to(H)
-          H.destroy
-          HH = HH + .fock_matrix%general_complex
-          res = HALF * .density_matrix%general_complex.trace_of_product(HH)
-          HH.destroy
-       case default; DIE("don't know what to do with " // trim(kind))
-    end
-    res = res + .nuclear_energy
-  end
-
-  scf_electronic_energy(P,core) result (res)
-  ! Evaluates the SCF electronic energy as a trace of "D" with the ".fock matrix". 
-  ! If "core" is present and FALSE, the core contribution is not added
-    OPMAT, target :: P
-    BIN, optional :: core
-    BIN :: add_core
-    DBL :: res
-    MAT, PTR :: F
-    CMAT, PTR :: FF
-    STR :: kind
-    kind = .scfdata.spinorbital_kind
-    ENSURE( .fock_matrix.created(kind),    "no fock matrix")
-    ENSURE( .density_matrix.created(kind), "no density matrix")
-    add_core = TRUE
-    if (present(core)) add_core = core
-    select case (kind)
-       case ("restricted")
-          F.create(.n_bf,.n_bf)
-          F = .fock_matrix%restricted
-          if (add_core) .add_core_hamiltonian(F)
-          res = HALF * P%restricted.trace_of_product(F)
-          F.destroy
-       case ("unrestricted")
-          F.create(.n_bf,.n_bf);
-          F = .fock_matrix%alpha
-          if (add_core) .add_core_hamiltonian(F)
-          res = HALF * P%alpha.trace_of_product(F)
-          F = .fock_matrix%beta
-          if (add_core) .add_core_hamiltonian(F)
-          res = HALF * P%beta.trace_of_product(F) + res
-          F.destroy
-       case ("general_complex")
-          FF.create(2*.n_bf,2*.n_bf);
-          FF = .fock_matrix%general_complex
-          if (add_core) then
-             .add_core_hamiltonian( FF.alpha_alpha)
-             .add_core_hamiltonian( FF.beta_beta)
-          end
-          res = HALF * P%general_complex.trace_of_product(FF)
-          FF.destroy
-       case default; DIE("don't know what to do with " // trim(kind))
-    end
-  end
-
-  get_scf_results(kind) [leaky]
-  ! Get the SCF results in from archives. Do not get the density matrix, because
-  ! it can/should be generated from the orbitals depending on the kind of SCF.
-    STR(*), optional :: kind
-    ARCHIVE :: archive
-    STR :: k
-    k = .scfdata.spinorbital_kind
-    if (present(kind)) k = kind
-    archive.set(.name,"molecular_orbitals",kind=k)
-    archive.read(.molecular_orbitals,kind=k)
-    archive.set(.name,"orbital_energies",kind=k)
-    archive.read(.orbital_energies,kind=k)
-  end
-
-  save_scf_results
-  ! Save the SCF results in various archives
-    ARCHIVE :: archive
-    archive.set(.name,"density_matrix")
-    archive.write(.density_matrix)
-    archive.set(.name,"molecular_orbitals")
-    archive.write(.molecular_orbitals)
-    archive.set(.name,"orbital_energies")
-    archive.write(.orbital_energies)
-  end
-
-  destroy_scf_results [leaky]
-  ! Destroy the SCF results
-    .density_matrix.destroy
-    .density_matrix.create(.n_bf)
-    .molecular_orbitals.destroy
-    .molecular_orbitals.create(.n_bf)
-    .orbital_energies.destroy
-    .orbital_energies.create(.n_bf)
-  end
-
-  delete_integrals
-  ! Delete all integral files. This is required whenever the geometry is changed.
-     ARCHIVE :: archive
-     archive.set(.name,"overlap_matrix")
-     archive.delete
-     archive.set(.name,"kinetic_matrix")
-     archive.delete
-     archive.set(.name,"nuclear_matrix")
-     archive.delete
-     archive.set(.name,"core_matrix")
-     archive.delete
-     archive.set(.name,"fock_matrix")
-     archive.delete
-     archive.set(.name,"eri_integrals")
-     archive.delete
-     archive.set(.name,"eri_index")
-     archive.delete
-     archive.set(.name,"ft_ints")
-     archive.delete
-  end
-
-  delete_matrices
-  ! Delete any matrices stored on disk.
-     ARCHIVE :: archive
-     archive.set(.name,"density_matrix")
-     archive.delete_all
-     archive.set(.name,"molecular_orbitals")
-     archive.delete_all
-     archive.set(.name,"orbital_energies")
-     archive.delete_all
-  end
-
-  convert_scf_results(kind) [leaky]
-  ! Convert the SCF results to a new basis kind
-    STR :: kind
-    .molecular_orbitals.convert_to(kind)
-    .orbital_energies.convert_to(kind)
-    .make_scf_density_matrix
-  end
-
-!*******************************
-! Initial orbital guess routines
-!*******************************
-
-  get_initial_guess [leaky]
-  ! Get the initial guess for the ".density_matrix"
-     STR :: initial_guess
-     initial_guess = .scfdata%initial_density
-     select case (initial_guess)
-        case ("core")
-           .make_core_guess
-        case ("fock")
-           .make_fock_guess
-        case ("atom")
-           .get_atom_density
-        case("restricted","unrestricted","general", &
-             "restricted_complex","unrestricted_complex","general_complex", &
-             "complex_restricted","complex_unrestricted","complex_general")
-           .get_scf_results(initial_guess)
-           .convert_scf_results( .scfdata.spinorbital_kind)
-           .make_scf_density_matrix
-           .save_scf_results
-        case default; DIE("unknown initial guess, "// initial_guess.trim)
-     end
-  end
-
-  make_core_guess [leaky]
-  ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and ".orbital_energies"
-    STR :: kind
-    VEC, PTR  :: eg,er
-    MAT, PTR  :: MOr
-    CMAT, PTR :: MOg
-    .destroy_scf_results
-    kind = .scfdata.spinorbital_kind
-    select case (kind)
-       case ("restricted")
-          .orbital_energies.destroy("restricted")
-          .orbital_energies.create("restricted")
-          .molecular_orbitals.destroy("restricted")
-          .molecular_orbitals.create("restricted")
-          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
-       case ("unrestricted")
-          .orbital_energies.destroy("unrestricted")
-          .orbital_energies.create("unrestricted")
-          .molecular_orbitals.destroy("unrestricted")
-          .molecular_orbitals.create("unrestricted")
-          .get_r_core_guess(.orbital_energies%alpha,.molecular_orbitals%alpha)
-          .orbital_energies%beta   = .orbital_energies%alpha
-          .molecular_orbitals%beta = .molecular_orbitals%alpha
-       case ("general_complex")
-          .orbital_energies.destroy("restricted")
-          .orbital_energies.create("restricted")
-          .molecular_orbitals.destroy("restricted")
-          .molecular_orbitals.create("restricted")
-          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
-          .orbital_energies.destroy("general")
-          .orbital_energies.create("general")
-          eg  => .orbital_energies%general
-          er  => .orbital_energies%restricted
-          eg(1:2*.n_b-1:2)  = er(1:.n_b)
-          eg(2:2*.n_b  :2)  = er(1:.n_b)
-          eg(2*.n_b+1:.n_e) = er(.n_b+1:.n_a)
-          eg(.n_e+1:2*.n_a)        = er(.n_b+1:.n_a)
-          eg(2*.n_a+1:2*.n_bf-1:2) = er(.n_a+1:.n_bf)
-          eg(2*.n_a+2:2*.n_bf  :2) = er(.n_a+1:.n_bf)
-          .orbital_energies.destroy("restricted")
-          .molecular_orbitals.destroy("general_complex")
-          .molecular_orbitals.create("general_complex")
-          MOg => .molecular_orbitals%general_complex
-          MOr => .molecular_orbitals%restricted
-          MOg(:,1:2*.n_b-1:2)  = MOr(:,1:.n_b)
-          MOg(:,2:2*.n_b  :2)  = MOr(:,1:.n_b)
-          MOg(:,2*.n_b+1:.n_e) = MOr(:,.n_b+1:.n_a)
-          MOg(:,.n_e+1:2*.n_a) = MOr(:,.n_b+1:.n_a)
-          MOg(:,2*.n_a+1:2*.n_bf-1:2) = MOr(:,.n_a+1:.n_bf)
-          MOg(:,2*.n_a+2:2*.n_bf  :2) = MOr(:,.n_a+1:.n_bf)
-          .molecular_orbitals.destroy("restricted")
-       case default; DIE("don't know what to do for " // trim(kind))
-    end
-    .make_scf_density_matrix
-    .save_scf_results
-  end
-
-  get_r_core_guess(MO_energies,MO)
-  ! Do a real core scf for the molecular orbital energies  "MO_energies" 
-  ! and the molecular_orbitals "MO"
-    VEC :: MO_energies
-    MAT :: MO
-    MAT, PTR :: S,R,H
-    !  H~ = S^-1/2 H S^-1/2
-    !  c  = S^-1/2 c~
-    S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
-    R.create(.n_bf,.n_bf); R.to_inverse_sqrt(S)
-    H.create(.n_bf,.n_bf); .get_core_matrix(H)
-    S.to_product(R,H)
-    H.to_product(S,R)
-    H.solve_eigenproblem(MO_energies,MO)
-    H.to_product(R,MO)
-    MO = H
-    H.destroy
-    R.destroy
-    S.destroy
-  end
-
-  get_atom_density [leaky]
-  ! Reads ".density_matrix" from the archive, otherwise makes it and
-  ! writes to the archive.
-    ARCHIVE :: archive
-    archive.set(.name,"atom_density_matrix", &
-             kind = "restricted")
-    if ( archive.exists) then;  archive.read(.density_matrix)
-    else;  .make_atom_density
-    end
-  end
-
-  make_atom_density [leaky]
-  ! Make a ".density matrix" from the sum of atomic densities
-    INT :: k,n_k,l,kl,a,b
-    MOL, PTR :: mol
-    IVEC, PTR :: first,last
-    IVECVEC, PTR :: atom_kind
-    ARCHIVE :: archive
-    ENSURE( .scfdata.created, "no scf data present.")
-    .density_matrix.destroy("restricted")
-    .density_matrix.create("restricted")
-    .density_matrix%restricted = ZERO
-    .atom.make_atom_basis_fn_limits(first,last)
-    .atom.make_atom_kind_list(atom_kind)
-    n_k = size(atom_kind)
-    do k = 1,n_k ! Do an SCF for every different kind of atom
-      mol.create
-      l = atom_kind(k)%vec(1)
-      .make_molecule_from_atom(l,mol)
-      if (mol.no_of_electrons >= 1) then
-        mol%scfdata%convergence = 0.00000001
-        mol%scfdata%output = FALSE
-        mol.scf
-        mol.make_ao_density_matrix
-        mol%pointgroup.create("oh")
-        mol.symmetrise(mol%density_matrix)
-        do l = 1,size(atom_kind(k)%vec) ! Copy this atom density 
-          kl = atom_kind(k)%vec(l)
-          a = first(kl); b = last(kl)
-         .density_matrix%restricted(a:b,a:b) = &
-         .density_matrix%restricted(a:b,a:b) &
-         + mol%density_matrix%restricted
-        end
-      end
-      mol%atom.nullify_ptr_part ! do not destroy these
-      nullify(mol%basis)        ! do not destroy this
-      mol.delete_integrals
-      mol.delete_matrices
-      mol.destroy
-    end
-    .density_matrix.convert_to( .scfdata.spinorbital_kind,factor=HALF)
-    atom_kind.destroy
-    last.destroy
-    first.destroy
-    archive.set(.name,"atom_density_matrix", kind = "restricted")
-    archive.write(.density_matrix)
-  end
-
-  make_atom_guess [leaky]
-  ! Make a ".density matrix" and fock matrix from the sum of atomic densities
-    .get_atom_density
-    .make_fock_matrix  ! Make a fock matrix
-    .make_fock_guess   ! Get a reasonable set of starting MO's
-  end
-
-  make_fock_guess [leaky]
-  ! Make the .density_matrix, .molecular_orbitals, and .orbital_energies
-  ! from an initial .fock_matrix; destroy .fock_matrix afterwards
-    STR :: kind
-    VEC, PTR :: e
-    MAT, PTR :: S,MO,F
-    CMAT, PTR :: MOc,Fc
-    kind = .scfdata.spinorbital_kind
-    ENSURE( .fock_matrix.created(kind),"need an initial fock matrix")
-    .destroy_scf_results
-    select case (kind)
-       case ("restricted")
-          .orbital_energies.destroy("restricted")
-          .orbital_energies.create("restricted")
-          .molecular_orbitals.destroy("restricted")
-          .molecular_orbitals.create("restricted")
-          e  => .orbital_energies%restricted
-          MO => .molecular_orbitals%restricted
-          F  => .fock_matrix%restricted
-          .make_r_fock_guess(e,MO,F)
-       case ("unrestricted")
-          .orbital_energies.destroy("unrestricted")
-          .orbital_energies.create("unrestricted")
-          .molecular_orbitals.destroy("unrestricted")
-          .molecular_orbitals.create("unrestricted")
-          e  => .orbital_energies%alpha
-          MO => .molecular_orbitals%alpha
-          F  => .fock_matrix%alpha
-          .make_r_fock_guess(e,MO,F)
-          e  => .orbital_energies%beta
-          MO => .molecular_orbitals%beta
-          F  => .fock_matrix%beta
-          .make_r_fock_guess(e,MO,F)
-       case ("general_complex")
-          .orbital_energies.destroy("general")
-          .orbital_energies.create("general")
-          .molecular_orbitals.destroy("general_complex")
-          .molecular_orbitals.create("general_complex")
-          e   => .orbital_energies%general
-          MOc => .molecular_orbitals%general_complex
-          Fc  => .fock_matrix%general_complex
-          .make_gc_fock_guess(e,MOc,Fc)
-       case default; DIE("unknown spinorbital kind, " // kind.trim)
-    end
-!    kind = .scfdata.spinorbital_kind
-!    .fock_matrix.destroy(kind)
-    .make_scf_density_matrix
-    .save_scf_results
-  end
-
-  make_r_fock_guess(MO_energies,MO,fock_matrix) 
-  ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-  ! a given real restricted "fock_matrix".
-    VEC :: MO_energies
-    MAT :: MO, fock_matrix
-    MAT, PTR :: S,R,H
-    !  F~ = S^-1/2 F S^-1/2
-    !  c  = S^-1/2 c~
-    S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
-    R.create(.n_bf,.n_bf); R.to_inverse_sqrt(S)
-    H.create(.n_bf,.n_bf); H = fock_matrix
-    S.to_product(R,H)
-    H.to_product(S,R)
-    H.solve_eigenproblem(MO_energies,MO)
-    H.to_product(R,MO)
-    MO = H
-    H.destroy
-    R.destroy
-    S.destroy
-  end
-
-  make_gc_fock_guess(MO_energies,MO,fock_matrix) 
-  ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-  ! a given complex general "fock_matrix".
-    VEC :: MO_energies
-    CMAT :: MO, fock_matrix
-    MAT, PTR :: S,R
-    CMAT, PTR :: H
-    !  F~ = S^-1/2 F S^-1/2
-    !  c  = S^-1/2 c~
-    S.create(.n_bf,.n_bf)
-    R.create(.n_bf,.n_bf)
-    .get_overlap_matrix(R)
-    S.to_inverse_sqrt(R)
-    R.destroy
-    R.create(2*.n_bf,2*.n_bf); R=ZERO
-    R.alpha_alpha_set_to(S)
-    R.beta_beta_set_to(S)
-    S.destroy
-    S.create(2*.n_bf,2*.n_bf)
-    H.create(2*.n_bf,2*.n_bf); H = fock_matrix
-    S = matmul(R,H)
-    H = matmul(S,R)
-    H.solve_eigenproblem(MO_energies,MO)
-    H = matmul(R,MO)
-    MO = H
-    H.destroy
-    S.destroy
-    R.destroy
-  end
- 
-! ******************
-! DIIS extrapolation 
-! ******************
-
-   extrapolate_scf 
-   ! Extrapolate the scf objects
-      STR :: kind
-      OPMAT, PTR :: error
-      CMAT, PTR :: err,F,P
-      if (.scfdata.apply_diis) then
-         kind = .scfdata%kind
-         select case (kind)
-            case ("rhf","restricted_hartree_fock", &
-                  "xray_rhf","xray_constrained_restricted_hartree_fock", &
-                  "xray_fit","xray_constrained")
-               error.create(.n_bf,"restricted")
-               .make_r_diis_error(error%restricted,.fock_matrix%restricted,.density_matrix%restricted)
-               error.compress
-               .fock_matrix.compress
-               .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
-               .fock_matrix.uncompress
-               error.destroy
-            case ("rohf","restricted_open_shell_hartree_fock")
-               error.create(.n_bf,"restricted")
-               .make_r_diis_error(error%restricted,.fock_matrix%restricted,.density_matrix%alpha)
-               error.compress
-               .fock_matrix.compress("restricted")
-               .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
-               .fock_matrix.uncompress
-               error.destroy
-            case ("uhf","unrestricted_hartree_fock")
-               error.create(.n_bf,"unrestricted")
-               .make_r_diis_error(error%alpha,.fock_matrix%alpha,.density_matrix%alpha)
-               .make_r_diis_error(error%beta, .fock_matrix%beta, .density_matrix%beta)
-               error.compress
-               .fock_matrix.compress
-               .scfdata%diis.extrapolate(.fock_matrix%triangle,error%triangle)
-               .fock_matrix.uncompress
-               error.destroy
-            case ("gchf","cghf","complex_general_hartree_fock","general_complex_hartree_fock")
-               error.create(.n_bf,"general_complex")
-               err => error%general_complex
-               F   => .fock_matrix%general_complex
-               P   => .density_matrix%general_complex
-               .make_gc_diis_error(err,F,P)
-               error.compress
-               .fock_matrix.compress
-               .scfdata%diis.extrapolate(.fock_matrix%square,error%square)
-               .fock_matrix.uncompress
-               error.destroy
-         end
-      end
-   end
-
-   make_r_diis_error(error,F,P)
-   ! Make the real DIIS error matrix, error = FPS - SPF
-      MAT :: error,F,P
-      MAT, PTR :: S,W
-      W.create(.n_bf, .n_bf)
-      S.create(.n_bf, .n_bf); .get_overlap_matrix(S)
-      W.to_product(P,S)
-      S.destroy
-      error.to_product(F,W)
-      W.destroy
-      error.antisymmetric_fold
-      error.make_antisymmetric
-   end
-
-   make_gc_diis_error(error,F,P)
-   ! Make the complex general DIIS error matrix, error = FPS - SPF
-      CMAT :: error,F,P
-      MAT, PTR :: R
-      CMAT, PTR :: S,W
-      W.create(2*.n_bf, 2*.n_bf)
-      S.create(2*.n_bf,2*.n_bf); S=ZERO
-      R.create(.n_bf,.n_bf)
-      .get_overlap_matrix(R)
-      S.alpha_alpha_set_to(R)
-      S.beta_beta_set_to(R)
-      R.destroy
-      W.to_product(P,S)
-      S.destroy
-      error.to_product(F,W)
-      W.destroy
-      error.antihermitian_fold
-      error.make_antihermitian
-   end
- 
-! *******************
-! Pairwise SCF energy
-! *******************
-
-   put_scf_energy_in_mo_pairs
-   ! Analyse the SCF energy into MO pairs
-      OPMAT, PTR :: Di
-      VEC, PTR :: core_energy
-      MAT, PTR :: pair_energy
-      INT :: i,j
-      DBL :: energy,fac
-      BIN :: direct
-      core_energy.create(.n_a)
-      pair_energy.create(.n_a,.n_a)
-      core_energy = ZERO
-      pair_energy = ZERO
-      Di.create(.n_bf)
-      direct = .scfdata%direct
-      .scfdata%direct = TRUE 
-      do i = 1,.n_a
-         .make_scf_density_matrix(i) 
-         Di.set_to(.density_matrix)
-         .make_fock_matrix(core=TRUE,r12=FALSE)
-         core_energy(i) = .scf_electronic_energy(Di,core=TRUE)
-         do j = 1,i
-            .make_scf_density_matrix(j)
-            .make_fock_matrix(core=FALSE,r12=TRUE)
-            fac = TWO
-            if (i==j) fac = ONE
-            pair_energy(i,j) = fac*.scf_electronic_energy(Di,core=FALSE)
-         end
-      end  
-      Di.destroy
-      .scfdata%direct = direct
-      .out.flush
-      .out.text("SCF MO pair energy decomposition:",flush=1)
-      energy = sum(core_energy)+sum(transfer(pair_energy,(/ONE/)))+.nuclear_energy
-      .out.show("SCF energy =",energy)
-      .out.text("Core energies:",flush=1)
-      .out.flush
-      .out.dash(int_fields=1,dbl_fields=1)
-      .out.put("MO_i",int_width=TRUE)
-      .out.put("Core energy")
-      .out.flush
-      .out.dash(int_fields=1,dbl_fields=1)
-      do i = 1,.n_a
-         .out.put(i)
-         .out.put(core_energy(i),flush=1)
-      end 
-      .out.dash(int_fields=1,dbl_fields=1)
-      .out.flush
-      .out.text("Orbital pair energies:",flush=1)
-      .out.dash(int_fields=2,dbl_fields=1)
-      .out.put("MO_i",int_width=TRUE)
-      .out.put("MO_j",int_width=TRUE)
-      .out.put("Pair energy",flush=1)
-      .out.dash(int_fields=2,dbl_fields=1)
-      do i = 1,.n_a
-      do j = 1,i
-         .out.put(i)
-         .out.put(j)
-         .out.put(pair_energy(i,j),flush=1)
-      end 
-      end 
-      .out.dash(int_fields=2,dbl_fields=1)
-      .out.flush
   end
 
 
