@@ -20,6 +20,13 @@
 ! which the user can change at run time. Rewind and backtracking
 ! are not allowed for output files.
 !
+! It is possible to redirect the input or output to a new file
+! using the "redirect" command. The previous file can be recovered
+! using "unsave", or it will revert back automatically to the previous
+! file if the redirected file ends. It is also possibile to redirect 
+! input to an internal file. This is useful for processing a list of
+! text as if it were a file. Output to an internal file is not allowed.
+!
 ! Note that the input buffer is limited to size BSTR_SIZE, set in the
 ! "macros" file.
 !
@@ -64,7 +71,7 @@ module TEXTFILE
 !   ! The unit number
 !
 !   INT :: record
-!   ! The current record of the output
+!   ! The current record of the file which is being processed
 !
 !   INT :: io_status DEFAULT(0)
 !   ! Set non-zero if there is an error condition
@@ -100,6 +107,12 @@ module TEXTFILE
 !   BUFFER :: buffer
 !   ! The output buffer which holds one line of output to be flushed
 !
+!   STRVEC, PTR :: internal DEFAULT(NULL)
+!   ! Used to keep a record of of the entire file, internally
+!
+!   TEXTFILE, PTR :: saved DEFAULT(NULL)
+!   ! Used to keep a record of a previous file, say for input redirect
+!
 !   end
 
    interface read
@@ -128,6 +141,7 @@ module TEXTFILE
    end
 
    interface put
+      put_info
       put_str, put_int, put_bin, put_dbl, put_cdbl
       put_ivec, put_strvec, put_vec, put_cvec
       put_imat, put_mat, put_mat3, put_mat4,
@@ -165,6 +179,7 @@ contains
       if (stdin.destroyed) then
          allocate(stdin)
          ADD_MEM(TEXTFILE_SIZE)
+         stdin.nullify_ptr_part
          stdin.name = "stdin"
          stdin.action = "read"
          stdin.record = 0
@@ -184,13 +199,14 @@ contains
       if (stdout.destroyed) then
          allocate(stdout)
          ADD_MEM(TEXTFILE_SIZE)
+         stdout.nullify_ptr_part
          stdout.name = "stdout"
          stdout.action = "write"
          stdout.record = 0
          stdout.unit = TEXTFILE_STD_OUTPUT_UNIT
          stdout.io_status = 0
          stdout.ignore_end_of_file = FALSE
-         stdin.default_units = " "
+         stdout.default_units = " "
          stdout.set_default_format
       end
       stdout.buffer.clear
@@ -206,6 +222,7 @@ contains
       nullify(self)
       allocate(self)
       ADD_MEM(TEXTFILE_SIZE)
+      .nullify_ptr_part
       .name = name
       .action = "unknown"
       .record = 0
@@ -216,14 +233,49 @@ contains
       .buffer.clear
    end
 
+   create(internal)
+   ! Create an internal textfile
+      PTR :: self
+      STRVEC :: internal
+      UNITNUMBER :: unitnumber
+      ENSURE(.internal.destroyed,"internal file already exists")
+      nullify(self)
+      allocate(self)
+      ADD_MEM(TEXTFILE_SIZE)
+      .nullify_ptr_part
+      .name = "internal"
+      .record = 0
+      .io_status = 0
+      .ignore_end_of_file = FALSE
+      .default_units = " "
+      .internal.create(size(internal))
+      .internal = internal
+      .action = "read"    ! only read action allowed
+      .read_line
+   end
+
    destroy
    ! Destroy a textfile
       PTR :: self
       UNITNUMBER :: unitnumber
       if (.destroyed) return
+      .destroy_ptr_part
       unitnumber.free( .unit)
-      DELETE_MEM(INPUT_SIZE)
+      DELETE_MEM(TEXTFILE_SIZE)
       deallocate(self)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of "self". 
+      nullify(.internal)
+      nullify(.saved)
+   end
+
+   destroy_ptr_part
+   ! Destroy the pointer parts of "self", including any saved parts,
+   ! which are destroyed recursively.
+      .internal.destroy
+      .saved.destroy
    end
 
    created result(res)
@@ -240,6 +292,79 @@ contains
       res = NOT associated(self)
    end
 
+!  **********************
+!  Saving and redirection
+!  **********************
+
+   save [leaky]
+   ! Saved everything about the current textfile "self" in ".saved"
+   ! Do not open a new textfile. Can be used to save style settings.
+      PTR :: self
+      TEXTFILE, PTR :: saved
+      saved => self
+      nullify(self)
+      allocate(self)
+      ADD_MEM(TEXTFILE_SIZE)
+      self = saved            ! Keep all settings, even line number
+      .saved => saved
+   end
+
+   redirect(name) [leaky]
+   ! Save all the info for the current file in ".saved", and open a new textfile.
+   ! This is used for input, or output redirection. The new file retains
+   ! the style settings of the saved file
+      PTR :: self
+      STR(*) :: name
+      TEXTFILE, PTR :: saved
+      saved => self
+      .create(name)
+      .saved => saved
+      .use_saved_style
+   end
+
+   redirect(internal) [leaky]
+   ! Save all the info for the current file in ".saved", and open a new 
+   ! internal textfile. This is used for input, or output redirection. 
+   ! The new file retains the style settings of the saved file
+      PTR :: self
+      STRVEC :: internal
+      TEXTFILE, PTR :: saved
+      saved => self
+      .create(internal)
+      .saved => saved
+      .use_saved_style
+   end
+
+   use_saved_style
+   ! Revert to the previously saved style settings
+      ENSURE(.saved.created,"no previous settings")
+      .default_units = .saved.default_units
+      .labels        = .saved.labels
+      .margin        = .saved.margin
+      .fields        = .saved.fields
+      .int_width     = .saved.int_width
+      .dbl_width     = .saved.dbl_width
+      .dbl_precision = .saved.dbl_precision
+      .dbl_style     = .saved.dbl_style
+   end
+
+   unsave [leaky]
+   ! Revert to the previously saved textfile
+      TEXTFILE, PTR :: saved
+      UNITNUMBER :: unitnumber
+      ENSURE(.saved.created,"no previous settings")
+      saved => .saved
+      .internal.destroy         ! Do not destroy .saved recursively ...
+      unitnumber.free(.unit)
+      self  = saved
+      DELETE_MEM(TEXTFILE_SIZE)
+      deallocate(saved)         ! instead, just deallocate it
+   end
+
+!  ******************************
+!  Opening, closing, and deletion
+!  ******************************
+
    open(for)
    ! Open the textfile "for" either "read" or "write".
      STR(*) :: for
@@ -249,10 +374,10 @@ contains
         case default; DIE("unknown open option, "//trim(for))
      end
    end
-
+ 
    open_for_read
    ! Open the input file. The input file object must already be created
-      .system_update
+      ENSURE(.internal.destroyed,"no need to open an internal file")
       .action = "read"
       if (.exists) then
          open(unit=.unit,      &
@@ -261,15 +386,16 @@ contains
               access="sequential", &
               form="formatted",    &
               iostat=.io_status)
-         DIE_IF(.io_status>0,"error opening old file "//.name)
+         DIE_IF(.io_status>0,"error opening old file "//trim(.name))
       else
-         DIE("opening new file "//.name//"for read!")
+         DIE("opening new file "//trim(.name)//" for read!")
       end
+      .read_line
    end
 
    open_for_write
    ! Open the output file associated with the output object
-      .system_update
+      ENSURE(.internal.destroyed,"no need to open an internal file")
       .action = "write"
       if (.exists) then
          open(unit=.unit,      &
@@ -278,7 +404,7 @@ contains
               access="sequential", &
               form="formatted",    &
               iostat=.io_status)
-         DIE_IF(.io_status>0,"error opening old file"//.name)
+         DIE_IF(.io_status>0,"error opening old file "//trim(.name))
       else
          open(unit=.unit,      &
               file=.name,      &
@@ -286,7 +412,7 @@ contains
               access="sequential", &
               form="formatted",    &
               iostat=.io_status)
-         DIE_IF(.io_status>0,"error opening new file"//.name)
+         DIE_IF(.io_status>0,"error opening new file "//trim(.name))
       end
       .set_default_format
       .put_margin
@@ -294,24 +420,18 @@ contains
 
    close
    ! Close the input file
-      .system_update
       close(unit=.unit)
-      .system_done
    end
 
    close_and_delete
    ! Close the input file and delete it from the file system
-      .system_update
       close(unit=.unit,status="delete")
-      .system_done
    end
 
    delete
    ! Delete the input file from the file system
-      .system_update
       if (.is_not_open) .open(for="read")
       .close_and_delete
-      .system_done
    end
 
   read_output_style_options(in)
@@ -319,7 +439,6 @@ contains
     TEXTFILE :: in
     STR :: word
     ENSURE(in.action=="read",'file "in" is not an input file')
-    .system_update
     read_loop : do
       in.read(word); word.to_lower_case
       select case (word)
@@ -334,11 +453,43 @@ contains
     end do read_loop
   end
 
-!  **************************
-!  Data input type operations
-!  **************************
+!  **********************************
+!  Line repositioning type operations
+!  **********************************
 
-   read_line
+   read_line [leaky]
+   ! Read a line into the buffer
+      if (.internal.created) then; .read_line_internal
+      else;                        .read_line_external
+      end
+   end
+
+   read_line_internal [leaky]
+   ! Read a line into the buffer from the internal file
+   ! If ".ignore_end_of_file" is  TRUE, it is not
+   ! an error to try to real a line.
+      INT :: fail
+      BSTR :: string
+      ENSURE(.internal.created,"no internal file")
+      .update_system_info
+      if (.record<size(.internal)) then ! No errors.  
+         .record = .record+1
+         string = .internal(.record)
+         .buffer.set(string)
+         .update_system_info
+      else                                   ! At end of file.
+         .io_status = 1
+         if (NOT .ignore_end_of_file) then
+            if(.saved.created) then          ! Automatically return to saved file
+               .unsave
+             else
+               DIE("End of file")
+             end
+         end
+      end
+   end
+
+   read_line_external [leaky]
    ! Read a line into the buffer from the input file
    ! If ".ignore_end_of_file" is  TRUE, it is not
    ! an error to try to real a line.
@@ -346,7 +497,7 @@ contains
       BSTR :: string
       ENSURE(.is_open,"file is not open")
       ENSURE(.action=="read","file does not have read action!")
-      .system_update
+      .update_system_info
       string = ""
       fail = 2
       read(unit=.unit,fmt="(a)",end=20,err=10) string
@@ -354,58 +505,61 @@ contains
 20    fail = fail-1
 10    continue
       select case (fail)
-        case (0)   ! No errors.  Let's read a line into the buffer.
-          .buffer.set(string)
+        case (0)                             ! No errors.  
+          .buffer.set(string)                ! Read a line into the buffer.
           .record = .record+1
-          .system_update
-        case (1)   ! At end of file.
+          .update_system_info
+        case (1)                             ! At end of file.
           .io_status = 1
-           DIE_IF(NOT .ignore_end_of_file,"End of file")
-        case (2)   ! Some error, but not end of file.
+           if (NOT .ignore_end_of_file) then ! This end shouldnt be ignored
+             if(.saved.created) then         ! It's OK, go back to saved file
+               .unsave
+             else                            ! This is an error
+               DIE("End of file")
+             end
+           end
+        case (2)                             ! Some error, but not end of file.
            DIE("read error")
       end
    end
 
-   move_to_next_item
-   ! Move to the next item. Get a new line if the current buffer is exhausted
-      .system_update
-      if (.buffer.exhausted) then            ! No more line items to read
-         .move_to_next_nonblank_line
+   update_line [leaky]
+   ! Get the next non-exhausted line if the current one is exhausted;
+   ! and in this case, the buffer pointer is positioned before the 
+   ! first line item.
+      do
+         if (.buffer.not_exhausted) exit
+         .read_line
       end
+   end
+
+   revert_line
+   ! Revert back to the previous non-exhausted line in the input file if the 
+   ! current buffer pointer is before the first item; and in this case, 
+   ! the buffer pointer is repositioned *after* the last line item.
+      do
+         if (.buffer.next_item>1) exit
+         .backspace_line
+         .move_to_line_item(.last_line_item+1)
+      end
+   end
+
+   skip_next_item [leaky]
+   ! Move to the next item in the input file.
+      .update_line
+      .buffer.skip_item
+      .update_system_info
    end
 
    move_to_previous_item
    ! Move to the previous item in the input file. Backspace a line if required.
-      .system_update
-      if (.next_line_item==1) then          ! If next item to be read is item 1
-         .move_to_previous_nonblank_line
-         .move_to_last_item_on_line         ! move to last item on previous line
-      else
-         .move_to_previous_item_on_line     ! move to the last read item
-      end
-   end
-
-   move_to_next_nonblank_line
-   ! Move to the next non blank line in the file
-      do
-         .read_line
-         if (.buffer.not_empty) exit
-      end
-   end
-
-   move_to_previous_nonblank_line
-   ! Move to the last non blank line in the file
-      do
-         .backspace_line
-         .system_update
-         if (.buffer.not_empty) exit
-      end
+      .revert_line
+      .move_to_previous_item_on_line     ! move to the last read item
    end
 
    move_to_last_item_on_line
    ! Move the cursor over to the beginning of the last item on the line
       INT :: item
-      .system_update
       item = .last_line_item
       .move_to_line_item(item)
    end
@@ -413,7 +567,6 @@ contains
    move_to_previous_item_on_line
    ! Move the cursor over to the beginning of the previous item on the
       INT :: item
-      .system_update
       item = .previous_line_item
       .move_to_line_item(item)
    end
@@ -423,9 +576,10 @@ contains
    ! on the current line
       INT :: number
       INT :: n
-      .system_update
+      .update_system_info
       n = number
       .buffer.move_to_item(n)
+      .update_system_info
    end
 
    look_for( search, from_update)
@@ -434,7 +588,6 @@ contains
       STR(*) :: search
       STR, optional :: from_update
       INT :: update_record
-      .system_update
       update_record = .record
       if (present(from_update)) .rewind
       .ignore_end_of_file = TRUE
@@ -449,15 +602,14 @@ contains
       .ignore_end_of_file = FALSE
    end
 
-  rest_of_line(res)
+  rest_of_line(res) 
   ! If there is anything left on the input line, then it is returned, else
   ! nothing is returned.  Pointer moves to next line.
     INOUT :: self
     STR :: res
     ENSURE(.action=="read","file does not have read action!")
-    .system_update
     if ( .buffer.not_empty ) then
-      .move_to_next_item
+      .update_line
       res = .buffer.buffer_str( .buffer.pos : )
       .read_line
     else
@@ -466,38 +618,153 @@ contains
     end
   end
 
-   get_next_item(word)
-   ! Get the next item in the file
-      STR :: word
-      .system_update
-      .move_to_next_item
-      .buffer.get(word)
+   rewind
+   ! Rewind the input file
+      if (.internal.created) then; .rewind_internal
+      else;                        .rewind_external
+      end
    end
 
-  read_str(word)
+   rewind_internal
+   ! Rewind the input file
+      .record = 0
+      .read_line
+   end
+
+   rewind_external
+   ! Rewind the input file
+      .update_system_info
+      rewind(unit=.unit,iostat=.io_status)
+      DIE_IF(.io_status>0,"rewind error")
+      .record = 0
+      .read_line
+   end
+
+   move_to_end
+   ! Move to the end of the input file
+      if (.internal.created) then; .move_to_end_internal
+      else;                        .move_to_end_external
+      end
+   end
+
+   move_to_end_internal
+   ! Move to the end of the input file
+      .record = size(.internal)-1
+      .read_line
+   end
+
+   move_to_end_external
+   ! Move to the end of the input file
+      .update_system_info
+      do
+         read(unit=.unit, fmt="()", iostat=.io_status)
+         if (.io_status/=0) exit
+         .record = .record + 1
+         .update_system_info
+      end
+      backspace(unit=.unit,iostat=.io_status)
+      backspace(unit=.unit,iostat=.io_status)
+      .record = max(0,.record-1)
+      .read_line
+   end
+
+   backspace_line
+   ! Reprocess previously input line
+      .move_to_record(.record-1)
+   end
+
+   skip_line
+   ! Skip the next line in the input file
+      .move_to_record(.record+1)
+   end
+
+   move_to_line(line)
+   ! Make sure that "line" was the last one processed
+   ! in the input file
+      INT :: line
+      ENSURE(line>=0,"line number must be non-negative")
+      .move_to_record(line)
+   end
+
+   move_to_record(rec)
+   ! Move to the requested record "rec" in the input file.
+   ! Remember: .record is the last processed record.
+      INT :: rec
+      if (.internal.created) then; .move_to_record_internal(rec)
+      else;                        .move_to_record_external(rec)
+      end
+   end
+
+   move_to_record_internal(rec)
+   ! Move to the requested record "rec" in the internal file.
+   ! Remember: .record is the last processed record.
+      INT :: rec
+      ENSURE(rec>=0,"record number must be non-negative")
+      ENSURE(rec<=size(.internal),"record outside file range")
+      .record = rec-1
+      .read_line
+   end
+
+   move_to_record_external(rec)
+   ! Move to the requested record "rec" in the input file.
+   ! Remember: .record is the last processed record.
+      INT :: rec
+      ENSURE(rec>=0,"record number must be non-negative")
+      .update_system_info
+      if (rec<(.record+1)) then
+         do
+            backspace(unit=.unit,iostat=.io_status)
+            DIE_IF(.io_status>0,"backspace error")
+            .record = .record-1
+            .update_system_info
+            if (rec==(.record+1)) exit
+         end
+      else if (rec>(.record+1)) then
+         do
+            read(unit=.unit,fmt="()",iostat=.io_status)
+            DIE_IF(.io_status>0,"read error")
+            .record = .record + 1
+            .update_system_info
+            if (rec==(.record+1)) exit
+         end
+      end
+      .read_line
+   end
+
+!  **************************
+!  Data input type operations
+!  **************************
+
+   get_next_item(word) 
+   ! Get the next item in the file
+      STR :: word
+      .update_line
+      .buffer.get(word)
+      .update_system_info
+   end
+
+  read_str(word) [leaky]
   ! Read a str into "word"
     STR :: word
     ENSURE(.action=="read","file does not have read action!")
-    .system_update
-    .move_to_next_item
+    .update_line
     .buffer.get(word)
+    .update_system_info
   end
 
-  read_chr(chr)
+  read_chr(chr) 
   ! Read a character into "chr"
     CHR :: chr
     STR :: word
     ENSURE(.action=="read","file does not have read action!")
-    .system_update
     .read_str(word)
     if (len_trim(word)>1) then
-      .system_update
       DIE("Expecting 1 character, not this: "// word.trim)
     end
     chr = word
   end
 
-  read_dbl_quantity(value)
+  read_dbl_quantity(value) 
   ! Read a dbl quantity into "value". Will convert the value of the quantity
   ! from atomic units, if followed by a unit specifier.
     DBL :: value
@@ -515,75 +782,78 @@ contains
     .ignore_end_of_file = FALSE
   end
 
-  read_dbl(value)
+  read_dbl(value) 
   ! Read a dbl into "value"
     DBL :: value
     ENSURE(.action=="read","file does not have read action!")
-    .system_update
-    .move_to_next_item
+    .update_line
     .buffer.get(value)
+    .update_system_info
   end
 
-  read_formatted_dbl(value,format)
+  read_formatted_dbl(value,format) 
   ! Read a formatted dbl into "value". Does not check the end of line!
     DBL :: value
     CHR(*), IN :: format
     ENSURE(.action=="read","file does not have read action!")
-    .system_update
+    .update_line
     .buffer.get(value,format)
+    .update_system_info
   end
 
-   read_cdbl(value)
+   read_cdbl(value) 
    ! Read a cdbl into "value"
       CDBL :: value
       DBL :: real,imag
       ENSURE(.action=="read","file does not have read action!")
-      .system_update
-      .move_to_next_item
+      .update_line
       .buffer.get(real)
-      .move_to_next_item
+      .update_system_info
+      .update_line
       .buffer.get(imag)
+      .update_system_info
       value = cmplx(real,imag)
    end
 
-   read_int(value)
+   read_int(value) 
    ! Read an integer into "value"
       INT :: value
       ENSURE(.action=="read","file does not have read action!")
-      .system_update
-      .move_to_next_item
+      .update_line
       .buffer.get(value)
+      .update_system_info
    end
 
-   read_bin(value)
+   read_bin(value) 
    ! Read a logical into "value"
       BIN :: value
       ENSURE(.action=="read","file does not have read action!")
-      .system_update
-      .move_to_next_item
+      .update_line
       .buffer.get(value)
+      .update_system_info
    end
 
-   read_binvec(v)
+   read_binvec(v) 
    ! Read in a BIN vector sequentially. Line breaks are not significant.
       BINVEC :: v
       INT :: dim,i
-      .system_update
       dim = size(v)
       do i = 1,dim
          .read_bin(v(i))
       end
    end
 
-   list_length result (res)
+   list_length result (res) [leaky]
    ! Return the size of the list, by reading the input until an 
    ! "end" token is found. Line breaks are not significant. 
       INT :: res
       INT :: line,item,dim
       STR :: word
+      .read(word)
+      ENSURE(word/="end","empty list")
       line = .line_number
-      item = .next_line_item
-      res = 0
+      item = .previous_line_item
+      res = 1
       do
          .read(word)
          if (word=="end") exit 
@@ -601,14 +871,13 @@ contains
       dim = .list_length
       v.create(dim)
       .read_binvec(v)
-      .move_to_next_item  ! Remember to read trailing "end" token
+      .skip_next_item  ! Remember to read trailing "end" token
    end
 
-   read_strvec(v)
+   read_strvec(v) 
    ! Read in an string vector sequentially. Line breaks are not significant.
       STRVEC :: v
       INT :: dim,i
-      .system_update
       dim = size(v)
       do i = 1,dim
          .read_str(v(i))
@@ -623,14 +892,13 @@ contains
       dim = .list_length
       v.create(dim)
       .read_strvec(v)
-      .move_to_next_item  ! Remember to read trailing "end" token
+      .skip_next_item  ! Remember to read trailing "end" token
    end
 
-   read_ivec(v)
+   read_ivec(v) 
    ! Read in an integer vector sequentially. Line breaks are not significant.
       IVEC :: v
       INT :: dim,i
-      .system_update
       dim = size(v)
       do i = 1,dim
          .read_int(v(i))
@@ -645,10 +913,10 @@ contains
       dim = .list_length
       v.create(dim)
       .read_ivec(v)
-      .move_to_next_item  ! Remember to read trailing "end" token
+      .skip_next_item  ! Remember to read trailing "end" token
    end
 
-   read_vec_quantity(v)
+   read_vec_quantity(v) 
    ! Read in a vector sequentially. Line breaks are not significant.
       VEC :: v
       STR :: units
@@ -664,11 +932,10 @@ contains
       .ignore_end_of_file = FALSE
    end
 
-   read_vec(v)
+   read_vec(v) 
    ! Read in a vector sequentially. Line breaks are not significant.
       VEC :: v
       INT :: dim,i
-      .system_update
       dim = size(v)
       do i = 1,dim
          .read_dbl(v(i))
@@ -683,14 +950,13 @@ contains
       dim = .list_length
       v.create(dim)
       .read_vec(v)
-      .move_to_next_item  ! Remember to read trailing "end" token
+      .skip_next_item  ! Remember to read trailing "end" token
    end
 
-   read_cvec(v)
+   read_cvec(v) 
    ! Read in a complex vector sequentially. Line breaks are not significant.
       CVEC :: v
       INT :: dim,i
-      .system_update
       dim = size(v)
       do i = 1,dim
          .read_cdbl(v(i))
@@ -703,12 +969,14 @@ contains
       CVEC, PTR :: v
       INT :: dim
       dim = .list_length
+      ENSURE(dim.is_even,"vector must have even number of elements")
+      dim = dim/2
       v.create(dim)
       .read_cvec(v)
-      .move_to_next_item  ! Remember to read trailing "end" token
+      .skip_next_item  ! Remember to read trailing "end" token
    end
 
-   read_mat_quantity(m,order)
+   read_mat_quantity(m,order) 
    ! Read in a matrix sequentially by row (default) or by column.
    ! If a units string appears after the matrix, the elements are
    ! converted into atomic units or generic units.
@@ -728,14 +996,13 @@ contains
       .ignore_end_of_file = FALSE
    end
 
-   read_mat(m,order)
+   read_mat(m,order) 
    ! Read in a complex matrix sequentially by row (default) or by column.
    ! Line breaks are not significant.
       MAT :: m
       STR(*), optional :: order
       INT :: dim1,dim2,i,j
       STR :: print_order
-      .system_update
       dim1 = size(m,1)
       dim2 = size(m,2)
       print_order = "by_row"
@@ -758,11 +1025,10 @@ contains
       end
    end
 
-   read_mat3(mx)
+   read_mat3(mx) 
    ! Read a MAT3 from the input buffer flat style
      MAT3 :: mx
      INT :: a,b,c,aub,bub,cub,tmp
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -781,11 +1047,10 @@ contains
      end
    end
 
-   read_mat4(mx)
+   read_mat4(mx) 
    ! Read a MAT4 from the input buffer flat style
      MAT4 :: mx
      INT :: a,b,c,d,aub,bub,cub,dub,tmp
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -809,14 +1074,13 @@ contains
      end
    end
 
-  read_formatted_mat(m,format,items_per_line)
+  read_formatted_mat(m,format,items_per_line) 
   ! Read a formatted matrix "m" with fortran "format" and a given
   ! number of "items_per_line".
     MAT, OUT :: m
     CHR(*), IN :: format
     INT, IN :: items_per_line
     INT :: i,j,d,count
-    .system_update
     .buffer.pos = 0
     d = size(m,1)
     count=0
@@ -839,7 +1103,6 @@ contains
   ! Read in a matrix produced by the constraint part of cadpac.
     IN :: self
     MAT, OUT :: m
-    .system_update
     .read_formatted_mat(m,"5D16.8",5)
   end
 
@@ -850,7 +1113,6 @@ contains
       STR, optional :: order
       INT :: dim1,dim2,i,j
       STR :: print_order
-      .system_update
       dim1 = size(m,1)
       dim2 = size(m,2)
       print_order = "by_row"
@@ -877,7 +1139,6 @@ contains
    ! Read a CMAT3 from the input buffer flat style
      CMAT3 :: mx
      INT :: a,b,c,aub,bub,cub,tmp
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -900,7 +1161,6 @@ contains
    ! Read a CMAT4 from the input buffer flat style
      CMAT4 :: mx
      INT :: a,b,c,d,aub,bub,cub,dub,tmp
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -928,7 +1188,6 @@ contains
    ! Read a CMAT5 from the input buffer flat style
      CMAT5 :: mx
      INT :: a,b,c,d,e,aub,bub,cub,dub,eub,tmp
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -957,45 +1216,39 @@ contains
      end
    end
 
-  next_str result(word)
+  next_str result(word) [leaky]
   ! Read a str from the input file and return it
     STR :: word
-    .system_update
     .read_str(word)
   end
 
   next_dbl result(value)
   ! Read a dbl from the input file and return it
     DBL :: value
-    .system_update
     .read_dbl(value)
   end
 
   next_cdbl result(value)
   ! Read a cdbl from the input file and return it
     CDBL :: value
-    .system_update
     .read_cdbl(value)
   end
 
   next_int result(value)
   ! Read a integer from the input file and return it
     INT :: value
-    .system_update
     .read_int(value)
   end
 
   next_bin result(value)
   ! Read a logical from the input file and return it
     BIN :: value
-    .system_update
     .read_bin(value)
   end
 
   next_chr result(chr)
   ! Read a character from the input file and return it
     CHR :: chr
-    .system_update
     .read_chr(chr)
   end
 
@@ -1004,85 +1257,8 @@ contains
   ! Does not check the end of line!
     DBL :: value
     CHR(*), IN :: format
-    .system_update
     .read_formatted_dbl(value,format)
   end
-
-!  **********************************
-!  Line repositioning type operations
-!  **********************************
-
-   rewind
-   ! Rewind the input file
-      .system_update
-      rewind(unit=.unit,iostat=.io_status)
-      DIE_IF(.io_status>0,"rewind error")
-      .record = 0
-      .system_update
-      .read_line
-   end
-
-   move_to_end
-   ! Move to the end of the input file
-      .system_update
-      do
-         read(unit=.unit, fmt="()", iostat=.io_status)
-         if (.io_status/=0) exit
-         .record = .record + 1
-         .system_update
-      end
-      backspace(unit=.unit,iostat=.io_status)
-      backspace(unit=.unit,iostat=.io_status)
-      .record = max(0,.record-1)
-      .system_update
-      .read_line
-   end
-
-   backspace_line
-   ! Reprocess previously input line
-      .system_update
-      .move_to_record(.record-1)
-   end
-
-   skip_line
-   ! Skip the next line in the input file
-      .system_update
-      .move_to_record(.record+1)
-   end
-
-   move_to_line(line)
-   ! Move to be positioned *before* the start of the requested "line"
-   ! in the input file
-      INT :: line
-      ENSURE(line>=1,"line number must be non-negative")
-      .move_to_record(line-1)
-   end
-
-   move_to_record(rec)
-   ! Move to the requested record "rec" in the input file.
-   ! Remember: .record is the last processed record.
-      INT :: rec
-      ENSURE(rec>=0,"record number must be non-negative")
-      .system_update
-      if (rec<(.record+1)) then
-         do
-            backspace(unit=.unit,iostat=.io_status)
-            DIE_IF(.io_status>0,"backspace error")
-            .record = .record-1
-            .system_update
-            if (rec==(.record+1)) exit
-         end
-      else if (rec>(.record+1)) then
-         do
-            read(unit=.unit,fmt="()",iostat=.io_status)
-            DIE_IF(.io_status>0,"read error")
-            .record = .record + 1
-            .system_update
-            if (rec==(.record+1)) exit
-         end
-      end
-      .read_line
-   end
 
 !  ********************
 !  Data output routines
@@ -1090,27 +1266,27 @@ contains
 
    put_margin
    ! Put a margin into the buffer of the output object
-      .system_update
+      .update_system_info
       .buffer.put(repeat(" ",.margin))
+      .update_system_info
    end
 
    flush
    ! Flush the buffer to the output file
       ENSURE(.is_open,"file is not open!")
       ENSURE(.action=="write","file does not have write action!")
-      .system_update
+      .update_system_info
       write(.unit,'(a)') trim( .buffer_str )
       .buffer.clear
       .put_margin
       .record = .record + 1
-      .system_update
+      .update_system_info
    end
 
    flush(times)
    ! Flush the buffer multiple times to get extra carriage returns
      INT :: times
      INT :: i
-     .system_update
      do i=1,times
         .flush
      end
@@ -1122,7 +1298,7 @@ contains
    ! dbl, integer and logical fields to tab; "width" is the width of spaces
    ! to tab.
       INT, optional :: dbl_fields,int_fields,bin_fields,width
-      .system_update
+      .update_system_info
       if (present(dbl_fields)) &
          .buffer.put(repeat(repeat(" ",.dbl_width),dbl_fields))
       if (present(int_fields)) &
@@ -1131,6 +1307,7 @@ contains
          .buffer.put(repeat(repeat(" ",.int_width),bin_fields))
       if (present(width)) &
          .buffer.put(repeat(" ",width))
+      .update_system_info
    end
 
    dash(dbl_fields,int_fields,bin_fields,width)
@@ -1139,7 +1316,6 @@ contains
    ! to draw the line over; "width" is the width of characters to draw the
    ! dashed line.
       INT, optional :: dbl_fields,int_fields,bin_fields,width
-      .system_update
       .put_dash(dbl_fields,int_fields,bin_fields,width,flush=1)
    end
 
@@ -1149,7 +1325,7 @@ contains
    ! to draw the line over; "width" is the width of characters to draw the
    ! dashed line.
       INT, optional :: dbl_fields,int_fields,bin_fields,width,flush
-      .system_update
+      .update_system_info
       if (present(dbl_fields)) &
          .buffer.put(repeat(repeat("-",.dbl_width),dbl_fields))
       if (present(int_fields)) &
@@ -1158,6 +1334,7 @@ contains
          .buffer.put(repeat(repeat("-",.int_width),bin_fields))
       if (present(width)) &
          .buffer.put(repeat("-",width))
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1166,7 +1343,6 @@ contains
       CHR(*) :: pretext
       CHR(*) :: string
       BIN, optional :: int_width
-      .system_update
       .put_text(pretext)
       .put_str(string,int_width,flush=1)
    end
@@ -1176,7 +1352,6 @@ contains
       CHR(*) :: pretext
       BIN, optional :: dbl_width
       INT :: value
-      .system_update
       .put_text(pretext)
       .put(value,dbl_width,flush=1)
    end
@@ -1186,7 +1361,6 @@ contains
       CHR(*) :: pretext
       BIN, optional :: dbl_width
       BIN :: value
-      .system_update
       .put_text(pretext)
       .put(value,dbl_width,flush=1)
    end
@@ -1195,7 +1369,6 @@ contains
    ! Put a formatted DBL into the output buffer with descriptive "pretext".
       CHR(*) :: pretext
       DBL :: value
-      .system_update
       .put_text(pretext)
       .put(value,flush=1)
    end
@@ -1204,7 +1377,6 @@ contains
    ! Put a formatted DBL's into the output buffer with descriptive "pretext".
       CHR(*) :: pretext
       DBL :: val1,val2,val3
-      .system_update
       .put_text(pretext)
       .put(val1)
       .put(val2)
@@ -1217,7 +1389,6 @@ contains
       CHR(*) :: pretext
       VEC :: value
       BIN :: labels
-      .system_update
       .put_text(pretext)
       labels = .labels
       .set_labels(FALSE)
@@ -1232,7 +1403,6 @@ contains
       CHR(*) :: string
       BIN, optional :: dbl_width,int_width
       INT, optional :: flush
-      .system_update
       if (present(flush)) then
          .put_text(string,dbl_width,int_width,flush)
       else
@@ -1247,7 +1417,7 @@ contains
       INT, optional :: flush
       CHR( .int_width ) :: int_string
       CHR( .dbl_width ) :: dbl_string
-      .system_update
+      .update_system_info
       if (present(dbl_width) AND (len(string) <= .dbl_width )) then
         dbl_string = string
         .buffer.put( dbl_string )
@@ -1257,6 +1427,7 @@ contains
       else
         .buffer.put( string )
       end
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1269,7 +1440,7 @@ contains
       BIN, optional :: int_width
       STR :: form
       INT :: wid
-      .system_update
+      .update_system_info
       wid = .dbl_width
       if (present(int_width)) wid = .int_width
       if (len_trim(string)>wid) then
@@ -1278,6 +1449,7 @@ contains
          form = "a" // trim( wid.to_str)
          .buffer.put(trim(string),form)
       end
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1286,7 +1458,7 @@ contains
      INT, IN :: value
      STR, IN :: units
      STR :: format
-     .system_update
+     .update_system_info
      format = .format_for_int( .nice_field_width_for(value) )
      .buffer.put(value,format)
      .put_text( " " // units.trim)
@@ -1302,12 +1474,13 @@ contains
       INT, optional :: flush
       BIN, optional :: dbl_width
       STR :: format
-      .system_update
+      .update_system_info
       format = .format_for_int( .int_width)
       if (present(dbl_width)) then
         if (dbl_width) format = .format_for_int( .dbl_width)
       end
       .buffer.put(value,format)
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1316,7 +1489,7 @@ contains
      INT, optional :: flush
      INT :: int_width
      STR :: format
-     .system_update
+     .update_system_info
      int_width = .nice_field_width_for(int)
      if (int<0) then
        .buffer.put("-")
@@ -1326,6 +1499,7 @@ contains
      end
      .buffer.put(repeat("0",width-int_width))
      .buffer.put(abs(int),format)
+     .update_system_info
      if (present(flush)) .flush(flush)
    end
 
@@ -1337,13 +1511,14 @@ contains
       INT, optional :: flush
       BIN, optional :: dbl_width
       STR :: format
-      .system_update
+      .update_system_info
       format = .format_for_bin( .int_width)
       if (present(dbl_width)) then
         if (dbl_width) format = .format_for_bin( .dbl_width)
       end
       .buffer.put(value,format)
-     if (present(flush)) .flush(flush)
+      .update_system_info
+      if (present(flush)) .flush(flush)
    end
 
    put_dbl(value,flush)
@@ -1353,9 +1528,10 @@ contains
       DBL :: value
       STR :: format
       INT, optional :: flush
-      .system_update
+      .update_system_info
       format = .format_for_dbl( .dbl_style, .dbl_width, .dbl_precision)
       .buffer.put(value,format)
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1366,9 +1542,10 @@ contains
       CDBL :: value
       STR :: format
       INT, optional :: flush
-      .system_update
+      .update_system_info
       format = .format_for_dbl( .dbl_style, .dbl_width, .dbl_precision)
       .buffer.put(value,format)
+      .update_system_info
       if (present(flush)) .flush(flush)
    end
 
@@ -1377,7 +1554,6 @@ contains
       IVEC :: vec
       CHR(*), optional :: format
       STR :: fmt
-      .system_update
       fmt = "as_row"
       if (present(format)) fmt = format
       select case (fmt)
@@ -1394,7 +1570,6 @@ contains
    ! Put a formatted integer vector into the output buffer
       IVEC :: vec
       INT :: dim,i
-      .system_update
       dim = size(vec)
       do i = 1,dim
          if (.labels_used) then
@@ -1408,7 +1583,6 @@ contains
    ! Put a formatted integer vector into the output buffer
       IVEC :: vec
       INT :: dim,block,nb,f,l,i,fields
-      .system_update
       dim = size(vec)
       fields = .fields
       nb = (dim-0.1)/fields+1
@@ -1436,7 +1610,6 @@ contains
       STRVEC :: vec
       CHR(*), optional :: format
       STR :: fmt
-      .system_update
       fmt = "as_row"
       if (present(format)) fmt = format
       select case (fmt)
@@ -1453,7 +1626,6 @@ contains
    ! Put a formatted integer vector into the output buffer
       STRVEC :: vec
       INT :: dim,i
-      .system_update
       dim = size(vec)
       do i = 1,dim
          if (.labels_used) then
@@ -1468,7 +1640,6 @@ contains
    ! Put a formatted string vector into the output buffer
       STRVEC :: vec
       INT :: dim,block,nb,f,l,i,fields
-      .system_update
       dim = size(vec)
       fields = .fields
       nb = (dim-0.1)/fields+1
@@ -1496,7 +1667,6 @@ contains
       VEC :: vec
       CHR(*), optional :: format
       STR :: fmt
-      .system_update
       fmt = "as_row"
       if (present(format)) fmt = format
       select case (fmt)
@@ -1513,7 +1683,6 @@ contains
    ! Put a formatted integer vector into the output buffer
       VEC :: vec
       INT :: dim,i
-      .system_update
       dim = size(vec)
       WARN_IF(dim==0,"zero length vector!")
       do i = 1,dim
@@ -1529,7 +1698,6 @@ contains
    ! Put a formatted DBL vector into the output buffer
       VEC :: vec
       INT :: dim,block,nb,f,l,i,fields
-      .system_update
       dim = size(vec)
       WARN_IF(dim==0,"zero length vector!")
       fields = .fields
@@ -1558,7 +1726,6 @@ contains
       CVEC :: vec
       CHR(*), optional :: format
       STR :: fmt
-      .system_update
       fmt = "as_row"
       if (present(format)) fmt = format
       select case (fmt)
@@ -1575,7 +1742,6 @@ contains
    ! Put a formatted complex vector into the output buffer
       CVEC :: vec
       INT :: dim,i
-      .system_update
       dim = size(vec)
       WARN_IF(dim==0,"zero length vector!")
       do i = 1,dim
@@ -1590,7 +1756,6 @@ contains
    ! Put a formatted DBL vector into the output buffer
       CVEC :: vec
       INT :: dim,block,nb,f,l,i,fields
-      .system_update
       dim = size(vec)
       WARN_IF(dim==0,"zero length vector!")
       fields = .fields/2
@@ -1621,7 +1786,6 @@ contains
       IMAT :: mx
       CHR(*), optional :: order
       INT :: i,j,block,nb,f,l,dim1,dim2,fields
-      .system_update
       dim1 = size(mx,1)
       dim2 = size(mx,2)
       WARN_IF(dim1==0,"zero sized 1st dimension!")
@@ -1677,7 +1841,6 @@ contains
       MAT :: mx
       STR, optional :: order
       INT :: i,j,block,nb,f,l,dim1,dim2,fields
-      .system_update
       dim1 = size(mx,1)
       dim2 = size(mx,2)
       WARN_IF(dim1==0,"zero sized 1st dimension!")
@@ -1754,7 +1917,7 @@ contains
      CHR(*), IN :: form
      INT :: columns,first,last,i,j,nbasis,count,old_margin
      STR :: forma,formb
-     .system_update
+     .update_system_info
      i = form.scan("FfEe")
      form.get_next_item_position(first,last)
      DIE_IF( i==0, "incorrect format specification")
@@ -1765,7 +1928,7 @@ contains
      formb=" "
      formb(1:last-i+1) = form(i:last)
      .buffer.pos = 0
-     .system_update
+     .update_system_info
      old_margin = .margin
      .margin = 0
      nbasis=size(mx,1)
@@ -1780,6 +1943,7 @@ contains
          end
        end
      end
+     .update_system_info
      if (NOT count == 0) .flush
      .margin = old_margin
    end
@@ -1790,7 +1954,6 @@ contains
       CMAT :: mx
       CHR(*), optional :: order
       INT :: i,j,block,nb,f,l,dim1,dim2,fields
-      .system_update
       dim1 = size(mx,1)
       dim2 = size(mx,2)
       WARN_IF(dim1==0,"zero sized 1st dimension!")
@@ -1845,7 +2008,6 @@ contains
    ! Put a MAT3 into the output buffer flat style
      MAT3 :: mx
      INT :: a,b,c,aub,bub,cub
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -1868,7 +2030,6 @@ contains
    ! Put a MAT4 into the output buffer flat style
      MAT4 :: mx
      INT :: a,b,c,d,aub,bub,cub,dub
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -1896,7 +2057,6 @@ contains
    ! Put a MAT3 into the output buffer flat style
      CMAT3 :: mx
      INT :: a,b,c,aub,bub,cub
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -1919,7 +2079,6 @@ contains
    ! Put a CMAT4 into the output buffer flat style
      CMAT4 :: mx
      INT :: a,b,c,d,aub,bub,cub,dub
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -1947,7 +2106,6 @@ contains
    ! Put a CMAT5 into the output buffer flat style
      CMAT5 :: mx
      INT :: a,b,c,d,e,aub,bub,cub,dub,eub
-     .system_update
      aub=size(mx,1)
      bub=size(mx,2)
      cub=size(mx,3)
@@ -1974,7 +2132,6 @@ contains
    put_gaussian(g)
    ! Output gaussian information
       GAUSSIAN :: g
-      .system_update
       .flush
       .show("L quantum number = ", g.l)
       .show("Position         = ", g.pos(1), g.pos(2), g.pos(3))
@@ -1984,7 +2141,6 @@ contains
    put_gaussian2(g)
    ! Output gaussian information
       GAUSSIAN2 :: g
-      .system_update
       .flush
       .put_text("Shell a:\n")
       .show("L quantum number = ", g.l_a)
@@ -2000,7 +2156,6 @@ contains
   ! Outputs the opvec
     OPVEC, IN :: vec
     CHR(*), optional :: format
-    .system_update
     if (associated( vec.restricted)) then
       .flush
       .put_text("restricted part:",flush=2)
@@ -2027,7 +2182,6 @@ contains
   ! Outputs the opmat
     OPMAT, IN :: mat
     CHR(*), optional :: order
-    .system_update
     if (associated( mat.restricted)) then
       .flush
       .put_text("restricted part:",flush=2)
@@ -2070,6 +2224,20 @@ contains
     end
   end
 
+!  ****************
+!  Output self info
+!  ****************
+
+   put_info
+   ! Put all the available molecule information on file "out"
+      stdout.show("Name       =",.name)
+      stdout.show("I/O action =",.action)
+      stdout.show("Unit       =",.unit)
+      stdout.show("Line       =",.record)
+      stdout.show("Buffer     =",trim(.buffer.buffer_str))
+      stdout.show("Cursor pos =",trim(.buffer.cursor_pointer))
+   end
+
 !  ***************
 !  Set fmt methods
 !  ***************
@@ -2081,14 +2249,12 @@ contains
       value = ONE
       if (units/=" ") &
       ENSURE(value.is_convertible_to(units),"Unknown units for conversion!")
-      .system_update
       .default_units = units
    end
 
    set_labels(labels)
    ! Set whether to use numbered labels on matrix or vector output
       BIN :: labels
-      .system_update
       .labels = labels
    end
 
@@ -2096,10 +2262,10 @@ contains
    ! Set the width of the margin in the buffer. Takes effect at the next
    ! output line
       INT :: margin
-      .system_update
       DIE_IF(margin<0,"margin less than zero")
       DIE_IF(margin>STR_SIZE,"margin too large")
       DIE_IF( .buffer.pos>.margin,"set margin only on empty buffers")
+      .update_system_info
       .margin = margin
       .buffer.clear
       .put_margin
@@ -2112,7 +2278,6 @@ contains
    set_default_format
    ! Set the default settings for the DBL formatting object
    ! Extra functions added compared to inherited code
-      .system_update
       .labels        = TEXTFILE_USE_LABELS
       .margin        = TEXTFILE_MARGIN_WIDTH
       .fields        = TEXTFILE_NO_OF_FIELDS
@@ -2126,7 +2291,6 @@ contains
    ! Set the default number of fields to fit in printer page
       INT, IN :: width
       INT :: fields
-      .system_update
       fields=floor(real(width - .margin,kind=DBL_KIND) / .dbl_width)
       .set_fields(fields)
    end
@@ -2134,7 +2298,6 @@ contains
    set_dbl_width(width)
    ! Set the width in the dblfmt format object
       INT :: width
-      .system_update
       DIE_IF(width<0,"width less than zero")
       DIE_IF(width<.dbl_precision,"width smaller than precision")
       .dbl_width = width
@@ -2143,7 +2306,6 @@ contains
    set_fields(fields)
    ! Set the number of fields in the dblfmt format object
       INT :: fields
-      .system_update
       DIE_IF(fields<1,"not enough fields")
       .fields = fields
    end
@@ -2151,7 +2313,6 @@ contains
    set_dbl_precision(precision)
    ! Set the precision required in the dblfmt format object
       INT :: precision
-      .system_update
       DIE_IF(precision<0,"precision less than zero")
       DIE_IF(precision>.dbl_width,"precision greater than field width")
       .dbl_precision = precision
@@ -2161,7 +2322,6 @@ contains
    ! Set the fortran format style string in the dblfmt format object
       CHR(*) :: dbl_style
       CHR(2) :: style
-      .system_update
       style = adjustl(dbl_style)
       if (style/="f" AND style/="d" AND style/="e" AND style/="en" AND style/="es") &
          DIE("unrecognized style, "//style)
@@ -2173,7 +2333,6 @@ contains
      INT :: res
      INT, IN :: num
      DBL :: temp
-      .system_update
      res=0
      if (num<0) res=res+1
      temp=abs(num)
@@ -2189,7 +2348,6 @@ contains
       STR :: res
       STR, IN :: style
       INT, IN :: width,precision
-      .system_update
       res = trim(style) // trim( width.to_str) // "." // trim( precision.to_str)
    end
 
@@ -2197,7 +2355,6 @@ contains
    ! Format for a INT string
       STR :: res
       INT, IN :: width
-      .system_update
       res = "i" // trim( width.to_str)
    end
 
@@ -2205,7 +2362,6 @@ contains
    ! Format for a INT string
       STR :: res
       INT, IN :: width
-      .system_update
       res = "l" // trim( width.to_str)
    end
 
@@ -2216,43 +2372,41 @@ contains
    exists result(res)
    ! Returns true if the file exists on the file system
       BIN :: res
-      .system_update
+      .update_system_info
       inquire(file=.name,exist=res)
    end
 
    does_not_exist result(res)
    ! Returns true if the file does *not* exist on the file system
       BIN :: res
-      .system_update
       res = NOT (.exists)
    end
 
    is_open result(res)
    ! Returns true if the file has been opened
       BIN :: res
-      .system_update
       ! inquire(unit=.unit,opened=res)
+      .update_system_info
       inquire(file=.name,opened=res)
    end
 
    is_not_open result(res)
    ! Returns true if the file has *not* been opened
       BIN :: res
-      .system_update
       res = NOT (.is_open)
    end
 
    unit_used result(res)
    ! Returns true if the file unit is in use
       BIN :: res
-      .system_update
+      .update_system_info
       inquire(unit=.unit,opened=res)
    end
 
    unit_not_used result(res)
    ! Returns true if the file unit is *not* in use
       BIN :: res
-      .system_update
+      .update_system_info
       inquire(unit=.unit,opened=res)
       res = NOT res
    end
@@ -2284,16 +2438,13 @@ contains
    position result(res)
    ! Return record position of the file
       INT :: res
-      .system_update
       res = .record
    end
 
    line_number result(res)
-   ! Return the input file line number which is being processed,
-   ! or will be processed next.
+   ! Return the input file line number which is being processed
       INT :: res
-      .system_update
-      res = .record + 1
+      res = .record
    end
 
    buffer_str result(res)
@@ -2303,13 +2454,14 @@ contains
    end
 
    end_of_file result(res)
-   ! See if .io_status==1, indicating the end of file.
-   ! Reset .io_status to zero, if so.
+   ! See if .io_status==1, indicating the end of file. Reset .io_status 
+   ! to zero if the .ignore_end_of_file was set, indicating that the end 
+   ! of file was anticipated as a possibility.
       BIN :: res
       res = FALSE
       if (.io_status==1) then
          res = TRUE
-         .io_status = 0
+         if (.ignore_end_of_file) .io_status = 0
       end
    end
 
@@ -2321,7 +2473,7 @@ contains
       BIN :: res
       BSTR :: string
       ENSURE(.action=="read","file does not have read status")
-      .system_update
+      .update_system_info
       fail = 2
       read(unit=.unit,fmt="(a)",end=20,err=10) string
       fail = fail-1
@@ -2337,19 +2489,18 @@ contains
         case (2)
           DIE("unknown read error")
       end
+      .update_system_info
    end
 
    labels_used result(res)
    ! Return true if labels are used on matrix output
       BIN :: res
-      .system_update
       res = .labels
    end
 
    labels_not_used result(res)
    ! Return true if labels are not used on matrix output
       BIN :: res
-      .system_update
       res = NOT (.labels)
    end
 
@@ -2357,18 +2508,13 @@ contains
 ! System routines
 ! ***************
 
-  system_update
+  update_system_info
   ! Lets the system know info about the file being read, in case of error.
-    std_system.file_name = .name
-    std_system.file_record = .record
-    std_system.file_operation = "read"
-  end
-
-  system_done
-  ! Lets the system know the file has suspended being used.
-    std_system.file_name = ""
-    std_system.file_record = 0
-    std_system.file_operation = ""
+    std_system.io_file_name   = .name
+    std_system.io_file_action = .action
+    std_system.io_file_record = .record
+    std_system.io_file_buffer = .buffer.buffer_str
+    std_system.io_file_pos    = .buffer.pos
   end
 
 end
