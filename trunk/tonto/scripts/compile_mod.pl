@@ -46,6 +46,7 @@
 #*******************************************************************************
 
 use File::Copy;  # use the native file copy/move mechanisms.
+use File::Basename; # to extract the base part of a filename.
 
 #*******************************************************************************
 # Default value
@@ -181,10 +182,7 @@ sub REAL_COMPILE {
   # perhaps the compiler put it into the current directory instead of the module
   # directory.
   foreach $item (@provides_mods) {
-    $basemod = $item;
-    if ($basemod =~ m'(.*)/') {
-      $basemod = $';
-    }
+    $basemod = basename($item);
     -e $basemod && move($basemod,$item);
   }
 
