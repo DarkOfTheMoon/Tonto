@@ -1,0 +1,2071 @@
+!-----------------------------------------------------------------------
+!
+! TEXTFILE : Line-oriented formatted sequential advancing file 
+! input/output, including input from standard input, and output to 
+! standard output. 
+!
+! The TEXTFILE object is a FILE with a BUFFER and a DBLFMT formatting
+! object. The input/output proceeds via a line buffer. It is forbidden
+! to open a TEXTFILE simultaneously for input and output.
+!
+! There is a default internal standard input object, "std_input",
+! and a default standard output object, "std_output".
+!
+! A line count is maintained to allow back-tracking to previous lines,
+! and particular items on each line. This is useful for input. 
+!
+! For output, items can be put in columns of a specified width, with 
+! double precision numbers having a specified precision and "style" 
+! (set using fortran conventions). This is useful for dynamic tables,
+! which the user can change at run time. Rewind and backtracking
+! are not allowed for output files.
+!
+! Note that the input buffer is limited to size BSTR_SIZE, set in the
+! "macros" file.
+!
+! Updates the entry in std_system at start of every routine.
+! Update the entry in std_system whenever record number is changed.
+! Create and destory routines excepted.
+!
+! (c) dylan jayatilaka, university of western australia, december 1999
+!
+! $Id$
+!---------------------------------------------------------------------------
+module TEXTFILE
+
+   use TYPES
+   use SYSTEM
+   use STR
+   use INT
+   use DBL
+   use BUFFER
+   use UNITNUMBER
+   use VEC
+   use MAT
+   use INPUT
+   use OUTPUT
+
+   implicit none         
+
+#  include "macros"
+#  include "textfile.int"
+
+!   type output_type
+!
+!   STR :: name
+!   ! The name of the file
+!
+!   STR :: action
+!   ! The action status of the file, "read" or "write"
+!
+!   INT :: unit
+!   ! The unit number
+!
+!   INT :: record
+!   ! The current record of the output
+!
+!   INT :: io_status
+!   ! Set non-zero if there is an error condition
+!
+!   INT :: fields
+!   ! No of fields (i.e. columns) to use for outputting the variable
+!
+!   INT :: int_width
+!   ! Width of an integer field
+!
+!   INT :: dbl_width
+!   ! Width of a dbl field
+!
+!   INT :: dbl_precision
+!   ! No. of decimal places to use for outputing a dbl variable
+!
+!   STR :: dbl_style
+!   ! Fortran style character for a dbl variable
+!
+!   INT :: margin
+!   ! Margin width
+!
+!   BIN :: labels
+!   ! Whether to use column and row labels on vectors and matrices
+!
+!   STR :: default_units
+!   ! Each DBL number is assumed to have "default_units", and are converted
+!   ! into generic (internal) units, usually A.U.
+!
+!   BUFFER :: buffer
+!   ! The output buffer which holds one line of output to be flushed
+!   end
+
+   interface read
+      read_str, read_dbl_quantity, read_formatted_dbl, read_cdbl, 
+      read_int, read_bin, read_ivec, read_vec_quantity, read_cvec, 
+      read_mat_quantity, read_cmat
+   end
+
+   interface get
+      read_str, read_dbl_quantity, read_formatted_dbl, read_cdbl, 
+      read_int, read_bin, read_ivec, read_vec_quantity, read_cvec, 
+      read_mat_quantity, read_cmat
+   end
+
+   interface put
+      put_str, put_int, put_bin, put_dbl, put_cdbl
+      put_ivec, put_strvec, put_vec, put_cvec 
+      put_imat, put_mat, put_mat3, put_mat4,
+      put_cmat, put_cmat3, put_cmat4, put_cmat5
+      put_gaussian, put_gaussian2, put_opvec, put_opmat
+   end
+  
+   interface show
+      show_str, show_int, show_bin, show_dbl_1, show_dbl_3, show_vec
+   end
+
+   INPUT, PTR, public :: std_input DEFAULT_NULL
+
+   OUTPUT, PTR, public :: std_output DEFAULT_NULL
+ 
+contains
+
+!  *****************************
+!  File creation type operations
+!  *****************************
+
+   create_std_input
+   ! Create a the standard input file object, if needed.
+   ! Return a pointer to it if already created
+      PTR :: self
+      if (std_input.destroyed) then
+         allocate(std_input)
+         ADD_MEM(TEXTFILE_SIZE)
+         std_input.name = "std_input"
+         std_input.record = 0
+         std_input.unit = TEXTFILE_STD_INPUT_UNIT
+         std_input.io_status = 0
+      end
+      std_input.buffer.clear
+      self => std_input
+   end
+
+   create_std_output
+   ! Create a standard output file object.
+   ! Return a pointer to it if already created
+      PTR :: self
+      if (std_output.destroyed) then
+         allocate(std_output)
+         ADD_MEM(TEXTFILE_SIZE)
+         std_output.name = "std_output"
+         std_output.record = 0
+         std_output.unit = TEXTFILE_STD_OUTPUT_UNIT
+         std_output.io_status = 0
+         std_output.set_default_format
+      end
+      std_output.buffer.clear
+      std_output.put_margin
+      self => std_output
+   end
+
+   create(name) 
+   ! Create a textfile. Does not open the file.
+      PTR :: self
+      CHR(*) :: name
+      UNITNUMBER :: unitnumber
+      nullify(self)
+      allocate(self)
+      ADD_MEM(TEXTFILE_SIZE)
+      .name = name
+      .record = 0
+      .io_status = 0
+      unitnumber.get( .unit)
+      .buffer.clear
+      ! WARNING
+      .set_default_format
+      .put_margin
+   end
+
+   destroy
+   ! Destroy a textfile
+      PTR :: self
+      UNITNUMBER :: unitnumber
+      if (.destroyed) return
+      unitnumber.free( .unit)
+      DELETE_MEM(INPUT_SIZE)
+      deallocate(self)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   open(for)
+   ! Open the textfile "for" either "read" or "write".
+     STR(*) :: for
+     select case (for)
+        case("read","reading","read-only","reading-only");    .open_for_read
+        case("write","writing","write-only","writing-only");  .open_for_write
+        case default; DIE("unknown open option, "//trim(for))
+     end
+   end
+
+   open_for_read
+   ! Open the input file. The input file object must already be created
+      .system_update
+      .action = "read"
+      if (.exists) then
+         open(unit=.unit,      &
+              file=.name,      &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=.io_status)
+         DIE_IF(.io_status>0,"error opening old file "//.name)
+      else
+         DIE("opening new file "//.name//"for read!")
+      end
+   end
+
+   open_for_write 
+   ! Open the output file associated with the output object
+      .system_update
+      .action = "write"
+      if (.file_exists) then
+         open(unit=.unit,      &
+              file=.name,      &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=.io_status)
+         DIE_IF(.io_status>0,"error opening old file"//.name)
+      else
+         open(unit=.unit,      &
+              file=.name,      &
+              status="new",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=.io_status)
+         DIE_IF(.io_status>0,"error opening new file"//.name)
+      end
+   end
+
+   close
+   ! Close the input file
+      .system_update
+      close(unit=.unit)
+      .system_done
+   end
+
+   close_and_delete
+   ! Close the input file and delete it from the file system
+      .system_update
+      close(unit=.unit,status="delete")
+      .system_done
+   end
+
+   delete
+   ! Delete the input file from the file system
+      .system_update
+      if (.is_not_open) .open
+      .close_and_delete
+      .system_done
+   end
+
+  read(in)
+  ! Read defaults from the textfile "in"
+    TEXTFILE :: in
+    STR :: word
+    ENSURE(in.action=="read",'file "in" is not an input file')
+    .system_update
+    read_loop : do
+      in.read(word); word.to_lower_case
+      select case (word)
+        case("labels");      in.read( .labels )
+        case("margin");      in.read( .margin )
+        case("fields");      in.read( .fields )
+        case("width");       in.read( .dbl_width )
+        case("precision");   in.read( .dbl_precision )
+        case("dbl_style");   in.read( .dbl_style )
+        case default;        DIE("unknown directive, "//word.trim)
+      end
+    end do read_loop
+  end
+      
+!  **************************
+!  Data input type operations
+!  **************************
+
+   read_line(ignore_end_of_file) 
+   ! Read a line into the buffer from the input file
+   ! If "ignore_end_of_file" is present and TRUE, it is not
+   ! an error to try to real a line.
+      BIN, optional :: ignore_end_of_file
+      BIN :: ignore_eof
+      INT :: fail
+      BSTR :: string
+      ENSURE(.is_open,"file is not open")
+      ENSURE(.action=="read","file does not have read action!")
+      .system_update
+      ignore_eof = FALSE
+      if (present(ignore_end_of_file)) ignore_eof = ignore_end_of_file
+      string = ""
+      fail = 2
+      read(unit=.unit,fmt="(a)",end=20,err=10) string
+      fail = fail-1
+20    fail = fail-1
+10    continue
+      select case (fail)
+        case (0)   ! No errors.  Let's read a line into the buffer.
+          .buffer.set(string)
+          .record = .record+1 
+          .system_update
+        case (1)   ! At end of file.
+          .io_status = 1
+           DIE_IF(NOT ignore_eof,"End of file")
+        case (2)   ! Some error, but not end of file.
+           DIE("read error")
+      end
+   end
+
+   move_to_next_item 
+   ! Move to the next item. Get a new line if the current buffer is exhausted
+      .system_update
+      if (.buffer.exhausted) then            ! No more line items to read
+         .move_to_next_nonblank_line
+      end
+   end
+
+   move_to_previous_item 
+   ! Move to the previous item in the input file. Backspace a line if required.
+      .system_update
+      if (.next_line_item==1) then           ! If next item to be read is item 1
+         .move_to_previous_nonblank_line
+         .move_to_last_item_on_line          ! move to last item on previous line
+      else
+         .move_to_previous_item_on_line      ! move to the last read item
+      end
+   end
+      
+   move_to_next_nonblank_line
+   ! Move to the next non blank line in the file
+      do
+         .read_line
+         if (.buffer.not_empty) exit
+      end
+   end
+      
+   move_to_previous_nonblank_line
+   ! Move to the last non blank line in the file
+      do
+         .backspace_line
+         .system_update
+         if (.buffer.not_empty) exit
+      end
+   end
+
+   move_to_last_item_on_line
+   ! Move the cursor over to the beginning of the last item on the line
+      INT :: item
+      .system_update
+      item = .last_line_item
+      .move_to_line_item(item) 
+   end
+      
+   move_to_previous_item_on_line
+   ! Move the cursor over to the beginning of the previous item on the
+      INT :: item
+      .system_update
+      item = .previous_line_item
+      .move_to_line_item(item) 
+   end
+      
+   move_to_line_item(number) 
+   ! Move the cursor over to the beginning of the item with index "number"
+   ! on the current line
+      INT :: number
+      INT :: n
+      .system_update
+      n = number
+      .buffer.move_to_item(n)
+   end
+
+   look_for( search, from_update)
+   ! sets record to the line updateing with "search" string
+   ! if from_update is present then the search is updateed from the beginning
+   STR(*) :: search
+   STR, optional :: from_update
+   INT :: update_record, end_record
+      .system_update
+      update_record = .record
+      if (present(from_update)) self.rewind
+      do
+         if (search.is_included_in( .buffer_str)) exit
+         end_record = .record
+         .read_line(ignore_end_of_file=TRUE)
+         if (.record == end_record) then
+            .move_to_record(update_record)
+            exit
+         end
+      end
+   end
+
+   get_next_item(word)
+   ! Get the next item in the file
+      STR :: word
+      .system_update
+      .move_to_next_item
+      .buffer.get(word)
+   end
+
+  read_str(word) 
+  ! Read a str into "word"
+    STR :: word
+    ENSURE(.action=="read","file does not have read action!")
+    .system_update
+    .move_to_next_item
+    .buffer.get(word)
+  end
+
+  read_chr(chr) 
+  ! Read a character into "chr"
+    CHR :: chr
+    STR :: word
+    ENSURE(.action=="read","file does not have read action!")
+    .system_update
+    .read_str(word)
+    if (len_trim(word)>1) then
+      .system_update
+      DIE("Expecting 1 character, not this: "// word.trim)
+    end
+    chr = word
+  end
+
+  read_dbl_quantity(value)
+  ! Read a dbl quantity into "value". Will convert the value of the quantity
+  ! from atomic units, if followed by a unit specifier.
+    DBL :: value
+    STR :: units
+    ENSURE(.action=="read","file does not have read action!")
+    .read_dbl(value)
+    .read_str(units)                              ! Read possible unit string
+    value.convert_from(units)                       
+    if (units=="unknown") .move_to_previous_item  ! No units, move back one item
+    if (.default_units/=" " AND units=="unknown") &
+    value.convert_from(.default_units)
+  end
+
+  read_dbl(value)
+  ! Read a dbl into "value"
+    DBL :: value
+    ENSURE(.action=="read","file does not have read action!")
+    .system_update
+    .move_to_next_item
+    .buffer.get(value)
+  end
+
+  read_formatted_dbl(value,format)
+  ! Read a formatted dbl into "value". Does not check the end of line!
+    DBL :: value
+    CHR(*), IN :: format
+    ENSURE(.action=="read","file does not have read action!")
+    .system_update
+    .buffer.get(value,format)
+  end
+
+   read_cdbl(value)
+   ! Read a cdbl into "value"
+      CDBL :: value
+      DBL :: real,imag
+      ENSURE(.action=="read","file does not have read action!")
+      .system_update
+      .move_to_next_item
+      .buffer.get(real)
+      .move_to_next_item
+      .buffer.get(imag)
+      value = cmplx(real,imag)
+   end
+
+   read_int(value) 
+   ! Read an integer into "value"
+      INT :: value
+      ENSURE(.action=="read","file does not have read action!")
+      .system_update
+      .move_to_next_item
+      .buffer.get(value)
+   end
+
+   read_bin(value) 
+   ! Read a logical into "value"
+      BIN :: value
+      ENSURE(.action=="read","file does not have read action!")
+      .system_update
+      .move_to_next_item
+      .buffer.get(value)
+   end
+
+   read_ivec(v)
+   ! Read in an integer vector sequentially. Line breaks are not significant.
+      IVEC :: v
+      INT :: dim,i
+      .system_update
+      dim = size(v)
+      do i = 1,dim
+         .read_int(v(i))
+      end
+   end
+      
+   read_vec_quantity(v)
+   ! Read in a vector sequentially. Line breaks are not significant.
+      VEC :: v
+      STR :: units
+      .read_vec(v)
+      .read_str(units)                              ! Read possible unit string
+      v.convert_from(units)                       
+      if (units=="unknown") .move_to_previous_item  ! No units, move back one item
+      if (.default_units/=" " AND units=="unknown") &
+      value.convert_from(.default_units)
+   end
+      
+   read_vec(v)
+   ! Read in a vector sequentially. Line breaks are not significant.
+      VEC :: v
+      INT :: dim,i
+      .system_update
+      dim = size(v)
+      do i = 1,dim
+         .read_dbl(v(i))
+      end
+   end
+      
+  rest_of_line(res)
+  ! If there is anything left on the input line, then it is returned, else
+  ! nothing is returned.  Pointer moves to next line.
+    INOUT :: self
+    STR :: res
+    ENSURE(.action=="read","file does not have read action!")
+    .system_update
+    if ( .buffer.not_empty ) then
+      .move_to_next_item
+      res = .buffer_str( .buffer.pos : )
+      .read_line
+    else
+      res = ""
+      .read_line
+    end
+  end
+
+   read_cvec(v)
+   ! Read in a complex vector sequentially. Line breaks are not significant.
+      CVEC :: v
+      INT :: dim,i
+      .system_update
+      dim = size(v)
+      do i = 1,dim
+         .read_cdbl(v(i))
+      end
+   end
+
+   read_mat_quantity(m,order)
+   ! Read in a matrix sequentially by row (default) or by column. 
+   ! If a units string appears after the matrix, the elements are
+   ! converted into atomic units or generic units.
+   ! Line breaks are not significant.
+      MAT :: m
+      STR(*), optional :: order
+      STR :: units
+      .read_mat(m,order)
+      .read_str(units)                              ! Read possible unit string
+      m.convert_from(units)                       
+      if (units=="unknown") .move_to_previous_item  ! No units, move back one item
+      if (.default_units/=" " AND units=="unknown") &
+      value.convert_from(.default_units)
+   end
+
+   read_mat(m,order)
+   ! Read in a complex matrix sequentially by row (default) or by column. 
+   ! Line breaks are not significant.
+      MAT :: m
+      STR(*), optional :: order
+      INT :: dim1,dim2,i,j
+      STR :: print_order
+      .system_update
+      dim1 = size(m,1)
+      dim2 = size(m,2)
+      print_order = "by_row"
+      if (present(order)) print_order = order
+      select case (print_order)
+         case ("by_column","column_major")
+            do j = 1,dim2
+            do i = 1,dim1
+              .read_dbl(m(i,j))
+            end
+            end
+         case ("by_row","row_major")
+            do i = 1,dim1
+            do j = 1,dim2
+              .read_dbl(m(i,j))
+            end
+            end
+         case default
+            DIE("unknown print order, "//print_order.trim)
+      end
+   end
+
+  read_formatted_mat(m,format,items_per_line)
+  ! Read a formatted matrix "m" with fortran "format" and a given
+  ! number of "items_per_line".
+    MAT, OUT :: m
+    CHR(*), IN :: format
+    INT, IN :: items_per_line
+    INT :: i,j,d,count
+    .system_update
+    .buffer.pos = 0
+    d = size(m,1)
+    count=0
+    do i=1,d
+      do j=1,d
+        .read_formatted_dbl(m(i,j),format)
+        count = count + 1
+         if (count==items_per_line) then
+           do
+              .read_line
+              if (.buffer.not_empty) exit
+           end
+           count=0
+         end
+      end
+    end
+  end
+
+  read_cadpac_mat(m)
+  ! Read in a matrix produced by the constraint part of cadpac.
+    IN :: self
+    MAT, OUT :: m
+    .system_update
+    .read_formatted_mat(m,"5D16.8",5)
+  end
+
+   read_cmat(m,order)
+   ! Read in a complex matrix sequentially by row (default) or by column. 
+   ! Line breaks are not significant.
+      CMAT :: m
+      STR, optional :: order
+      INT :: dim1,dim2,i,j
+      STR :: print_order
+      .system_update
+      dim1 = size(m,1)
+      dim2 = size(m,2)
+      print_order = "by_row"
+      if (present(order)) print_order = order
+      select case (print_order)
+         case ("by_column","column_major")
+            do j = 1,dim2
+            do i = 1,dim1
+              .read_cdbl(m(i,j))
+            end
+            end
+         case ("by_row","row_major")
+            do i = 1,dim1
+            do j = 1,dim2
+              .read_cdbl(m(i,j))
+            end
+            end
+         case default
+            DIE("unknown print order, "//print_order.trim)
+      end
+   end
+
+  next_str result(word) 
+  ! Read a str from the input file and return it
+    STR :: word
+    .system_update
+    .read_str(word)
+  end
+
+  next_dbl result(value)
+  ! Read a dbl from the input file and return it
+    DBL :: value
+    .system_update
+    .read_dbl(value)
+  end
+
+  next_cdbl result(value)
+  ! Read a cdbl from the input file and return it
+    CDBL :: value
+    .system_update
+    .read_cdbl(value)
+  end
+
+  next_int result(value)
+  ! Read a integer from the input file and return it
+    INT :: value
+    .system_update
+    .read_int(value)
+  end
+ 
+  next_bin result(value)
+  ! Read a logical from the input file and return it
+    BIN :: value
+    .system_update
+    .read_bin(value)
+  end
+
+  next_chr result(chr)
+  ! Read a character from the input file and return it
+    CHR :: chr
+    .system_update
+    .read_chr(chr)
+  end
+
+  next_formatted_dbl(format) result(value)
+  ! Read a formatted dbl from the input file and return it. 
+  ! Does not check the end of line!
+    DBL :: value
+    CHR(*), IN :: format
+    .system_update
+    .read_formatted_dbl(value,format)
+  end
+
+!  **********************************
+!  Line repositioning type operations
+!  **********************************
+
+   rewind
+   ! Rewind the input file
+      .system_update
+      rewind(unit=.unit,iostat=.io_status)
+      DIE_IF(.io_status>0,"rewind error")
+      .record = 0
+      .system_update
+      .read_line
+   end
+
+   move_to_end
+   ! Move to the end of the input file
+      .system_update
+      do
+         read(unit=.unit, fmt="()", iostat=.io_status)
+         if (.io_status/=0) exit
+         .record = .record + 1
+         .system_update
+      end
+      backspace(unit=.unit,iostat=.io_status)
+      backspace(unit=.unit,iostat=.io_status)
+      .record = max(0,.record-1)
+      .system_update
+      .read_line
+   end
+
+   backspace_line 
+   ! Reprocess previously input line
+      .system_update
+      .move_to_record(.record-1) 
+   end
+
+   skip_line
+   ! Skip the next line in the input file
+      .system_update
+      .move_to_record(.record+1) 
+   end
+
+   move_to_line(line) 
+   ! Move to be positioned *before* the start of the requested "line"
+   ! in the input file
+      INT :: line
+      ENSURE(line>=1,"line number must be non-negative")
+      .move_to_record(line-1)
+   end
+
+   move_to_record(rec) 
+   ! Move to the requested record "rec" in the input file.
+   ! Remember: .record is the last processed record.
+      INT :: rec 
+      ENSURE(rec>=0,"record number must be non-negative")
+      .system_update
+      if (rec<(.record+1)) then
+         do 
+            backspace(unit=.unit,iostat=.io_status)
+            DIE_IF(.io_status>0,"backspace error")
+         !  .record = max(0,.record-1)
+            .record = .record-1
+            .system_update
+            if (rec==(.record+1)) exit
+         end
+      else if (rec>(.record+1)) then
+         do 
+            read(unit=.unit,fmt="()",iostat=.io_status)
+            DIE_IF(.io_status>0,"read error")
+            .record = .record + 1
+            .system_update
+            if (rec==(.record+1)) exit
+         end
+      end
+      .read_line
+   end
+
+!  ********************
+!  Data output routines
+!  ********************
+
+   put_margin
+   ! Put a margin into the buffer of the output object
+      .system_update
+      .buffer.put(repeat(" ",.margin))
+   end
+
+   flush
+   ! Flush the buffer to the output file
+      ENSURE(.is_open,"file is not open!")
+      ENSURE(.action="write","file does not have write action!")
+      .system_update
+      write(.unit,'(a)') trim( .buffer_str )
+      .buffer.clear
+      .put_margin
+      .record = .record + 1
+      .system_update
+   end
+
+   flush(times)
+   ! Flush the buffer multiple times to get extra carriage returns
+     INT :: times
+     INT :: i
+     .system_update
+     do i=1,times
+        .flush
+     end
+   end
+
+   tab(dbl_fields,int_fields,bin_fields,width)
+   ! Tab across the specified number of fields in the output buffer
+   ! "dbl_fields", "int_fields" and "bin_fields" refer to the number of 
+   ! dbl, integer and logical fields to tab; "width" is the width of spaces
+   ! to tab.
+      INT, optional :: dbl_fields,int_fields,bin_fields,width
+      .system_update
+      if (present(dbl_fields)) &
+         .buffer.put(repeat(repeat(" ",.dbl_width),dbl_fields)) 
+      if (present(int_fields)) &
+         .buffer.put(repeat(repeat(" ",.int_width),int_fields)) 
+      if (present(bin_fields)) &
+         .buffer.put(repeat(repeat(" ",.int_width),bin_fields)) 
+      if (present(width)) &
+         .buffer.put(repeat(" ",width)) 
+   end
+     
+   dash(dbl_fields,int_fields,bin_fields,width)
+   ! Put a dashed line into the buffer. "dbl_fields", "int_fields" and 
+   ! "bin_fields" refer to the number of dbl, integer and logical fields 
+   ! to draw the line over; "width" is the width of characters to draw the dashed line
+      INT, optional :: dbl_fields,int_fields,bin_fields,width
+      .system_update
+      .put_dash(dbl_fields,int_fields,bin_fields,width,flush=1)
+   end
+
+   put_dash(dbl_fields,int_fields,bin_fields,width,flush)
+   ! Put a dashed line into the buffer. "dbl_fields", "int_fields" and 
+   ! "bin_fields" refer to the number of dbl, integer and logical fields 
+   ! to draw the line over; "width" is the width of characters to draw the dashed line
+      INT, optional :: dbl_fields,int_fields,bin_fields,width,flush
+      .system_update
+      if (present(dbl_fields)) &
+         .buffer.put(repeat(repeat("-",.dbl_width),dbl_fields)) 
+      if (present(int_fields)) &
+         .buffer.put(repeat(repeat("-",.int_width),int_fields)) 
+      if (present(bin_fields)) &
+         .buffer.put(repeat(repeat("-",.int_width),bin_fields)) 
+      if (present(width)) &
+         .buffer.put(repeat("-",width)) 
+      if (present(flush)) .flush(flush)
+   end
+ 
+   show_str(pretext,string,int_width)
+   ! Put a formatted STR into the output buffer with descriptive "pretext"
+      CHR(*) :: pretext
+      CHR(*) :: string
+      BIN, optional :: int_width
+      .system_update
+      .put_text(pretext)
+      .put_str(string,int_width,flush=1)
+   end
+ 
+   show_int(pretext,value,dbl_width) 
+   ! Put a formatted INT into the output buffer with descriptive "pretext".
+      CHR(*) :: pretext
+      BIN, optional :: dbl_width
+      INT :: value
+      .system_update
+      .put_text(pretext)
+      .put(value,dbl_width,flush=1)
+   end
+ 
+   show_bin(pretext,value,dbl_width)
+   ! Put a formatted BIN into the output buffer with descriptive "pretext".
+      CHR(*) :: pretext
+      BIN, optional :: dbl_width
+      BIN :: value
+      .system_update
+      .put_text(pretext)
+      .put(value,dbl_width,flush=1)
+   end
+ 
+   show_dbl_1(pretext,value)
+   ! Put a formatted DBL into the output buffer with descriptive "pretext".
+      CHR(*) :: pretext
+      DBL :: value
+      .system_update
+      .put_text(pretext)
+      .put(value,flush=1)
+   end
+ 
+   show_dbl_3(pretext,val1,val2,val3)
+   ! Put a formatted DBL's into the output buffer with descriptive "pretext".
+      CHR(*) :: pretext
+      DBL :: val1,val2,val3
+      .system_update
+      .put_text(pretext)
+      .put(val1)
+      .put(val2)
+      .put(val3,flush=1)
+   end
+ 
+   show_vec(pretext,value)
+   ! Put a formatted DBL "value" into the output buffer with descriptive "pretext"
+      CHR(*) :: pretext
+      VEC :: value
+      BIN :: labels
+      .system_update
+      .put_text(pretext)
+      labels = .labels
+      .set_labels(FALSE) 
+      .put(value)
+      .set_labels(labels)
+      .flush
+   end
+
+   text(string,dbl_width,int_width,flush)
+   ! Put text into the output buffer as is and flush,
+   ! unless an explicit flush is present
+      CHR(*) :: string
+      BIN, optional :: dbl_width,int_width
+      INT, optional :: flush
+      .system_update
+      if (present(flush)) then
+         .put_text(string,dbl_width,int_width,flush)
+      else
+         .put_text(string,dbl_width,int_width,flush=1)
+      end
+   end
+
+   put_text(string,dbl_width,int_width,flush)
+   ! Put text into the output buffer as is.
+      CHR(*) :: string
+      BIN, optional :: dbl_width,int_width
+      INT, optional :: flush
+      CHR( .int_width ) :: int_string
+      CHR( .dbl_width ) :: dbl_string
+      .system_update
+      if (present(dbl_width) AND (len(string) <= .dbl_width )) then
+        dbl_string = string
+        .buffer.put( dbl_string ) 
+      else if (present(int_width) AND (len(string) <= .int_width )) then
+        int_string = string
+        .buffer.put( int_string ) 
+      else
+        .buffer.put( string ) 
+      end
+      if (present(flush)) .flush(flush)
+   end
+ 
+   put_str(string,int_width,flush)
+   ! Put a formatted STR into the output buffer; if too big, put as is.
+   ! if present and TRUE, "int_width" says to use field width of int_width
+   ! if present, flush is how many times to flush the buffer. 
+      CHR(*) :: string
+      INT, optional :: flush
+      BIN, optional :: int_width
+      STR :: form
+      INT :: wid
+      .system_update
+      wid = .dbl_width
+      if (present(int_width)) wid = .int_width
+      if (len_trim(string)>wid) then
+         .buffer.put(trim(string)) 
+      else if (len_trim(string)/=0) then
+         form = "a" // trim( wid.to_str)
+         .buffer.put(trim(string),form) 
+      end
+      if (present(flush)) .flush(flush)
+   end
+
+   put_unit(value,units)
+   ! Put a formatted value and its units into the output buffer.
+     INT, IN :: value
+     STR, IN :: units
+     STR :: format
+     .system_update
+     format = .format_for_int( .nice_field_width_for(value) )
+     .buffer.put(value,format) 
+     .put_text( " " // units.trim)
+     if (value /= 1) .put_text("s")
+   end
+
+   put_int(value,dbl_width,flush)
+   ! Put a formatted integer into the output buffer; the field width used is int_width, 
+   ! usually the length of the nondecimal part of a formatted DBL number.
+   ! Can override the width and use dbl_width if "dbl_width" is set to TRUE
+      INT :: value
+      INT, optional :: flush
+      BIN, optional :: dbl_width
+      STR :: format
+      .system_update
+      format = .format_for_int( .int_width)
+      if (present(dbl_width)) then
+        if (dbl_width) format = .format_for_int( .dbl_width)
+      end
+      .buffer.put(value,format) 
+      if (present(flush)) .flush(flush)
+   end
+
+   put_int_with_zeros(int,width,flush)
+     INT, IN :: int, width
+     INT, optional :: flush
+     INT :: int_width
+     STR :: format
+     .system_update
+     int_width = .nice_field_width_for(int)
+     if (int<0) then
+       .buffer.put("-")
+       format = .format_for_int(int_width-1)
+     else
+       format = .format_for_int(int_width)
+     end
+     .buffer.put(repeat("0",width-int_width)) 
+     .buffer.put(abs(int),format)
+     if (present(flush)) .flush(flush)
+   end
+
+   put_bin(value,dbl_width,flush)
+   ! Put a formatted logical into the output buffer; can specify the width of
+   ! the field if desired. Otherwise, the field with used is int_width, or
+   ! the length of the nondecimal part of a formatted DBL number
+      BIN :: value
+      INT, optional :: flush
+      BIN, optional :: dbl_width
+      STR :: format
+      .system_update
+      format = .format_for_bin( .int_width)
+      if (present(dbl_width)) then
+        if (dbl_width) format = .format_for_bin( .dbl_width)
+      end
+      .buffer.put(value,form) 
+     if (present(flush)) .flush(flush)
+   end
+
+   put_dbl(value,flush)
+   ! Put a formatted DBL into the output buffer
+   ! The field with used is int_width, or
+   ! the length of the nondecimal part of a formatted DBL number
+      DBL :: value
+      STR :: format
+      INT, optional :: flush
+      .system_update
+      format = .format_for_dbl( .dbl_style, .dbl_width, .dbl_precision)
+      .buffer.put(value,format) 
+      if (present(flush)) .flush(flush)
+   end
+      
+   put_cdbl(value,flush) 
+   ! Put a formatted CDBL into the output buffer
+   ! The field with used is int_width, or
+   ! the length of the nondecimal part of a formatted DBL number
+      CDBL :: value
+      STR :: format
+      INT, optional :: flush
+      .system_update
+      format = .format_for_dbl( .dbl_style, .dbl_width, .dbl_precision)
+      .buffer.put(value,format) 
+      if (present(flush)) .flush(flush)
+   end
+
+   put_ivec(vec,format)
+   ! Put a formatted integer vector into the output buffer
+      IVEC :: vec
+      CHR(*), optional :: format
+      STR :: fmt
+      .system_update
+      fmt = "as_row"
+      if (present(format)) fmt = format
+      select case (fmt)
+         case("as_row","by_row","row_wise","row")
+            .put_ivec_by_row(vec)
+         case("as_column","by_column","column_wise","column")
+            .put_ivec_by_column(vec)
+         case default
+            DIE("unknown format, "// fmt.trim)
+      end
+   end
+
+   put_ivec_by_column(vec)
+   ! Put a formatted integer vector into the output buffer
+      IVEC :: vec
+      INT :: dim,i
+      .system_update
+      dim = size(vec)
+      do i = 1,dim
+         if (.labels_used) then
+            .put_int(i)
+         end
+         .put_int(vec(i),flush=1)
+      end
+   end
+
+   put_ivec_by_row(vec)
+   ! Put a formatted integer vector into the output buffer
+      IVEC :: vec
+      INT :: dim,block,nb,f,l,i,fields
+      .system_update
+      dim = size(vec)
+      fields = .fields
+      nb = (dim-0.1)/fields+1
+      do block = 1,nb
+         f = 1+fields*(block-1)
+         l = min(f+fields-1,dim)
+         if (block>1) .flush
+         if (.labels_used) then
+!           .tab(int_fields=1)
+            do i = f,l
+               .put_int(i)
+            end
+            .flush(2)
+!           .tab(int_fields=1)
+         end
+         do i = f,l
+            .put_int(vec(i))
+         end
+         .flush
+      end
+   end
+
+   put_strvec(vec,format)
+   ! Put a formatted dbl vector into the output buffer
+      STRVEC :: vec
+      CHR(*), optional :: format
+      STR :: fmt
+      .system_update
+      fmt = "as_row"
+      if (present(format)) fmt = format
+      select case (fmt)
+         case("as_row","by_row","row_wise","row")
+            .put_strvec_by_row(vec)
+         case("as_column","by_column","column_wise","column")
+            .put_strvec_by_column(vec)
+         case default
+            DIE("unknown format, "// fmt.trim)
+      end
+   end
+
+   put_strvec_by_column(vec)
+   ! Put a formatted integer vector into the output buffer
+      STRVEC :: vec
+      INT :: dim,i
+      .system_update
+      dim = size(vec)
+      do i = 1,dim
+         if (.labels_used) then
+            .put_int(i)
+         end
+         .put(vec(i))
+         .flush
+      end
+   end
+
+   put_strvec_by_row(vec)
+   ! Put a formatted string vector into the output buffer
+      STRVEC :: vec
+      INT :: dim,block,nb,f,l,i,fields
+      .system_update
+      dim = size(vec)
+      fields = .fields
+      nb = (dim-0.1)/fields+1
+      do block = 1,nb
+         f = 1+fields*(block-1)
+         l = min(f+fields-1,dim)
+         if (block>1) .flush
+         if (.labels_used) then
+!           .tab(dbl_fields=1)
+            do i = f,l
+               .put_int(i,dbl_width=TRUE)
+            end
+            .flush(2)
+!           .tab(dbl_fields=1)
+         end
+         do i = f,l
+            .put_str(vec(i))
+         end
+         .flush
+      end
+   end
+
+   put_vec(vec,format)
+   ! Put a formatted dbl vector into the output buffer
+      VEC :: vec
+      CHR(*), optional :: format
+      STR :: fmt
+      .system_update
+      fmt = "as_row"
+      if (present(format)) fmt = format
+      select case (fmt)
+         case("as_row","by_row","row_wise","row")
+            .put_vec_by_row(vec)
+         case("as_column","by_column","column_wise","column")
+            .put_vec_by_column(vec)
+         case default
+            DIE("unknown format, "// fmt.trim)
+      end
+   end
+
+   put_vec_by_column(vec)
+   ! Put a formatted integer vector into the output buffer
+      VEC :: vec
+      INT :: dim,i
+      .system_update
+      dim = size(vec)
+      WARN_IF(dim==0,"zero length vector!")
+      do i = 1,dim
+         if (.labels_used) then
+!           .put_int(i,dbl_width=TRUE)
+            .put_int(i)
+         end
+         .put(vec(i),flush=1)
+      end
+   end
+
+   put_vec_by_row(vec)
+   ! Put a formatted DBL vector into the output buffer
+      VEC :: vec
+      INT :: dim,block,nb,f,l,i,fields
+      .system_update
+      dim = size(vec)
+      WARN_IF(dim==0,"zero length vector!")
+      fields = .fields
+      nb = (dim-0.1)/fields+1
+      do block = 1,nb
+         f = 1+fields*(block-1)
+         l = min(f+fields-1,dim)
+!         if (block>1) .flush
+         if (.labels_used) then
+!           .tab(int_fields=1)
+            do i = f,l
+               .put_int(i,dbl_width=TRUE)
+            end
+            .flush(2)
+!           .tab(int_fields=1)
+         end
+         do i = f,l
+            .put(vec(i))
+         end
+         .flush
+      end
+   end
+
+   put_cvec(vec,format)
+   ! Put a formatted dbl vector into the output buffer
+      CVEC :: vec
+      CHR(*), optional :: format
+      STR :: fmt
+      .system_update
+      fmt = "as_row"
+      if (present(format)) fmt = format
+      select case (fmt)
+         case("as_row","by_row","row_wise","row")
+            .put_cvec_by_row(vec)
+         case("as_column","by_column","column_wise","column")
+            .put_cvec_by_column(vec)
+         case default
+            DIE("unknown format, "// fmt.trim)
+      end
+   end
+
+   put_cvec_by_column(vec)
+   ! Put a formatted complex vector into the output buffer
+      CVEC :: vec
+      INT :: dim,i
+      .system_update
+      dim = size(vec)
+      WARN_IF(dim==0,"zero length vector!")
+      do i = 1,dim
+         if (.labels_used) then
+            .put_int(i,dbl_width=TRUE)
+         end
+         .put(vec(i),flush=1)
+      end
+   end
+
+   put_cvec_by_row(vec)
+   ! Put a formatted DBL vector into the output buffer
+      CVEC :: vec
+      INT :: dim,block,nb,f,l,i,fields
+      .system_update
+      dim = size(vec)
+      WARN_IF(dim==0,"zero length vector!")
+      fields = .fields/2
+      nb = (dim-0.1)/fields+1
+      do block = 1,nb
+         f = 1+fields*(block-1)
+         l = min(f+fields-1,dim)
+         if (block>1) .flush
+         if (.labels_used) then
+!           .tab(int_fields=1)
+            do i = f,l
+               .tab(dbl_fields=1)
+               .put_int(i,dbl_width=TRUE)
+            end
+            .flush(2)
+!           .tab(int_fields=1)
+         end
+         do i = f,l
+            .put(vec(i))
+         end
+         .flush
+      end
+   end
+
+   put_imat(mx,order)
+   ! Put a formatted integer matrix into the output buffer
+   ! If "order" is present use unformatted output suitable for ASCII archive
+      IMAT :: mx
+      CHR(*), optional :: order
+      INT :: i,j,block,nb,f,l,dim1,dim2,fields
+      .system_update
+      dim1 = size(mx,1)
+      dim2 = size(mx,2)
+      WARN_IF(dim1==0,"zero sized 1st dimension!")
+      WARN_IF(dim2==0,"zero sized 2nd dimension!")
+      fields = .fields
+      if (NOT present(order)) then     ! formatted output
+         nb = (dim2-0.1)/fields+1
+         do block = 1,nb
+            f = 1+fields*(block-1)
+            l = min(f+fields-1,dim2)
+            if (block>1) .flush
+            if (.labels_used) then
+               .tab(int_fields=1)
+               do j = f,l
+                  .put_int(j)
+               end
+               .flush(2)
+            end
+            do i = 1,dim1
+               if (.labels_used)     .put_int(i)
+               if (.labels_not_used) .tab(int_fields=1)
+               do j = f,l
+                  .put_int(mx(i,j))
+               end
+               .flush
+            end
+         end
+      else                             ! unformatted output
+         select case (order)
+            case ("by_column","column_wise","transpose")
+               do j = 1,dim2
+               do i = 1,dim1
+                  .put_int(mx(i,j))
+                  if(mod(i,fields)==0) .flush
+               end
+               .flush
+               end
+            case ("by_row","row_wise","normal")
+               do i = 1,dim1
+               do j = 1,dim2
+                  .put_int(mx(i,j))
+                  if(mod(j,fields)==0) .flush
+               end
+               .flush
+               end
+         end
+      end
+   end
+
+   put_mat(mx,order)
+   ! Put a formatted DBL matrix into the output buffer
+   ! If "order" is present use unformatted output suitable for ASCII archive
+      MAT :: mx
+      STR, optional :: order
+      INT :: i,j,block,nb,f,l,dim1,dim2,fields
+      .system_update
+      dim1 = size(mx,1)
+      dim2 = size(mx,2)
+      WARN_IF(dim1==0,"zero sized 1st dimension!")
+      WARN_IF(dim2==0,"zero sized 2nd dimension!")
+      fields = .fields
+      if (NOT present(order)) then
+         nb = (dim2-0.1)/fields+1
+         do block = 1,nb
+            f = 1+fields*(block-1)
+            l = min(f+fields-1,dim2)
+            if (block>1) .flush
+            if (.labels_used) then
+               .tab(int_fields=1)
+               do j = f,l
+                  .put_int(j,dbl_width=TRUE)
+               end
+               .flush(2)
+            end
+            do i = 1,dim1
+               if (.labels_used)     .put_int(i)
+               if (.labels_not_used) .tab(int_fields=1)
+               do j = f,l
+                  .put_dbl(mx(i,j))
+               end
+               .flush
+            end
+         end
+      else
+         select case (order)
+            case ("by_column","column_wise","transpose"); .put_mat_by_column(mx)
+            case ("by_row","row_wise","normal");          .put_mat_by_row(mx)
+         end
+      end
+   end
+
+   put_mat_by_column(mx)
+   ! Put a DBL matrix into the output buffer by column, without labels
+      MAT :: mx
+      INT :: i,j,dim1,dim2
+      dim1 = size(mx,1)
+      dim2 = size(mx,2)
+      WARN_IF(dim1==0,"zero sized 1st dimension!")
+      WARN_IF(dim2==0,"zero sized 2nd dimension!")
+      do j = 1,dim2
+      do i = 1,dim1
+         .put_dbl(mx(i,j))
+         if(mod(i,.fields)==0) .flush
+      end
+      .flush
+      end
+   end
+
+   put_mat_by_row(mx)
+   ! Put a DBL matrix into the output buffer by row, without labels
+      MAT :: mx
+      INT :: i,j,dim1,dim2
+      dim1 = size(mx,1)
+      dim2 = size(mx,2)
+      WARN_IF(dim1==0,"zero sized 1st dimension!")
+      WARN_IF(dim2==0,"zero sized 2nd dimension!")
+      do i = 1,dim1
+      do j = 1,dim2
+         .put_dbl(mx(i,j))
+         if(mod(j,.fields)==0) .flush
+      end
+      .flush
+      end
+   end
+
+   put_formatted_mat(mx,form)
+   ! Put out a matrix suitable to be read in by other programs.
+   ! Will overwrite the current buffer.
+     MAT, IN :: mx
+     CHR(*), IN :: form
+     INT :: columns,first,last,i,j,nbasis,count,old_margin
+     STR :: forma,formb
+     .system_update
+     i = form.scan("FfEe")
+     form.get_next_item_position(first,last)
+     DIE_IF( i==0, "incorrect format specification")
+     forma=" "
+     forma(1:i-first)=form(first:i-1)
+     DIE_IF( forma.is_not_int, "incorrect format specification")
+     columns = forma.to_int
+     formb=" "
+     formb(1:last-i+1) = form(i:last)
+     .buffer.pos = 0
+     .system_update
+     old_margin = .margin
+     .margin = 0
+     nbasis=size(mx,1)
+     count=0
+     do i=1,nbasis
+       do j=1,nbasis
+         .buffer.put(mx(i,j), formb.trim) 
+         count=count+1
+         if (count==columns) then
+           .flush
+           count=0
+         end
+       end
+     end
+     if (NOT count == 0) .flush
+     .margin = old_margin
+   end
+
+   put_cmat(mx,order)
+   ! Put a formatted CDBL matrix into the output buffer
+   ! If "order" is present use unformatted output suitable for ASCII archive
+      CMAT :: mx
+      CHR(*), optional :: order
+      INT :: i,j,block,nb,f,l,dim1,dim2,fields
+      .system_update
+      dim1 = size(mx,1)
+      dim2 = size(mx,2)
+      WARN_IF(dim1==0,"zero sized 1st dimension!")
+      WARN_IF(dim2==0,"zero sized 2nd dimension!")
+      fields = .fields/2
+      if (NOT present(order)) then
+         nb = (dim2-0.1)/fields+1
+         do block = 1,nb
+            f = 1+fields*(block-1)
+            l = min(f+fields-1,dim2)
+            if (block>1) .flush
+            if (.labels_used) then
+               .tab(int_fields=1)
+               do j = f,l
+                  .tab(dbl_fields=1)
+                  .put_int(j,dbl_width=TRUE)
+               end
+               .flush(2)
+            end
+            do i = 1,dim1
+               if (.labels_used)     .put_int(i)
+               if (.labels_not_used) .tab(int_fields=1)
+               do j = f,l
+                  .put(mx(i,j))
+               end
+               .flush
+            end
+         end
+      else
+         select case (order)
+            case ("by_column","column_wise","transpose")
+               do j = 1,dim2
+               do i = 1,dim1
+                  .put(mx(i,j))
+                  if(mod(i,fields)==0) .flush
+               end
+               .flush
+               end
+            case ("by_row","row_wise","normal")
+               do i = 1,dim1
+               do j = 1,dim2
+                  .put(mx(i,j))
+                 if(mod(j,fields)==0) .flush
+               end
+               .flush
+               end
+         end
+      end
+   end
+
+   put_mat3(mx)
+   ! Put a MAT3 into the output buffer flat style
+     MAT3 :: mx
+     INT :: a,b,c,aub,bub,cub
+     .system_update
+     aub=size(mx,1)
+     bub=size(mx,2)
+     cub=size(mx,3)
+     WARN_IF(aub==0,"zero sized 1st dimension!")
+     WARN_IF(bub==0,"zero sized 2nd dimension!")
+     WARN_IF(cub==0,"zero sized 3rd dimension!")
+     do a=1,aub
+       do b=1,bub
+         do c=1,cub
+           .put(a)
+           .put(b)
+           .put(c)
+           .put_dbl(mx(a,b,c),flush=1)
+         end
+       end
+     end
+   end
+
+   put_mat4(mx)
+   ! Put a MAT4 into the output buffer flat style
+     MAT4 :: mx
+     INT :: a,b,c,d,aub,bub,cub,dub
+     .system_update
+     aub=size(mx,1)
+     bub=size(mx,2)
+     cub=size(mx,3)
+     dub=size(mx,4)
+     WARN_IF(aub==0,"zero sized 1st dimension!")
+     WARN_IF(bub==0,"zero sized 2nd dimension!")
+     WARN_IF(cub==0,"zero sized 3rd dimension!")
+     WARN_IF(dub==0,"zero sized 4th dimension!")
+     do a=1,aub
+       do b=1,bub
+         do c=1,cub
+           do d=1,dub
+             .put(a)
+             .put(b)
+             .put(c)
+             .put(d)
+             .put_dbl(mx(a,b,c,d),flush=1)
+           end
+         end
+       end
+     end
+   end
+
+   put_cmat3(mx)
+   ! Put a MAT3 into the output buffer flat style
+     CMAT3 :: mx
+     INT :: a,b,c,aub,bub,cub
+     .system_update
+     aub=size(mx,1)
+     bub=size(mx,2)
+     cub=size(mx,3)
+     WARN_IF(aub==0,"zero sized 1st dimension!")
+     WARN_IF(bub==0,"zero sized 2nd dimension!")
+     WARN_IF(cub==0,"zero sized 3rd dimension!")
+     do a=1,aub
+       do b=1,bub
+         do c=1,cub
+           .put(a)
+           .put(b)
+           .put(c)
+           .put(mx(a,b,c),flush=1)
+         end
+       end
+     end
+   end
+
+   put_cmat4(mx)
+   ! Put a CMAT4 into the output buffer flat style
+     CMAT4 :: mx
+     INT :: a,b,c,d,aub,bub,cub,dub
+     .system_update
+     aub=size(mx,1)
+     bub=size(mx,2)
+     cub=size(mx,3)
+     dub=size(mx,4)
+     WARN_IF(aub==0,"zero sized 1st dimension!")
+     WARN_IF(bub==0,"zero sized 2nd dimension!")
+     WARN_IF(cub==0,"zero sized 3rd dimension!")
+     WARN_IF(dub==0,"zero sized 4th dimension!")
+     do a=1,aub
+       do b=1,bub
+         do c=1,cub
+           do d=1,dub
+             .put(a)
+             .put(b)
+             .put(c)
+             .put(d)
+             .put(mx(a,b,c,d),flush=1)
+           end
+         end
+       end
+     end
+   end
+
+   put_cmat5(mx)
+   ! Put a CMAT5 into the output buffer flat style
+     CMAT5 :: mx
+     INT :: a,b,c,d,e,aub,bub,cub,dub,eub
+     .system_update
+     aub=size(mx,1)
+     bub=size(mx,2)
+     cub=size(mx,3)
+     dub=size(mx,4)
+     eub=size(mx,5)
+     do a=1,aub
+     do b=1,bub
+     do c=1,cub
+     do d=1,dub
+     do e=1,eub
+        .put(a)
+        .put(b)
+        .put(c)
+        .put(d)
+        .put(e)
+        .put(mx(a,b,c,d,e),flush=1)
+     end
+     end
+     end
+     end
+     end
+   end
+
+   put_gaussian(g)
+   ! Output gaussian information
+      GAUSSIAN :: g
+      .system_update
+      .flush
+      .show("L quantum number = ", g.l)
+      .show("Position         = ", g.pos(1), g.pos(2), g.pos(3))
+      .show("Exponent         = ", g.ex)
+   end
+
+   put_gaussian2(g)
+   ! Output gaussian information
+      GAUSSIAN2 :: g
+      .system_update
+      .flush
+      .put_text("Shell a:\n")
+      .show("L quantum number = ", g.l_a)
+      .show("Position         = ", g.pos_a(1), g.pos_a(2), g.pos_a(3))
+      .show("Exponent         = ", g.ex_a)
+      .put_text("Shell b:\n")
+      .show("L quantum number = ", g.l_b)
+      .show("Position         = ", g.pos_b(1), g.pos_b(2), g.pos_b(3))
+      .show("Exponent         = ", g.ex_b)
+   end
+
+  put_opvec(vec,format)
+  ! Outputs the opvec
+    OPVEC, IN :: vec
+    CHR(*), optional :: format
+    .system_update
+    if (associated( vec.restricted)) then
+      .flush
+      .put_text("restricted part:",flush=2)
+      .put( vec.restricted,format)
+    end
+    if (associated( vec.alpha)) then
+      .flush
+      .put_text("alpha part:",flush=2)
+      .put( vec.alpha,format)
+    end
+    if (associated( vec.beta)) then
+      .flush
+      .put_text("beta part:",flush=2)
+      .put( vec.beta,format)
+    end
+    if (associated( vec.general)) then
+      .flush
+      .put_text("general part:",flush=2)
+      .put( vec.general,format)
+    end
+  end
+
+  put_opmat(mat,order)
+  ! Outputs the opmat
+    OPMAT, IN :: mat
+    CHR(*), optional :: order
+    .system_update
+    if (associated( mat.restricted)) then
+      .flush
+      .put_text("restricted part:",flush=2)
+      .put( mat.restricted,order)
+    end
+    if (associated( mat.alpha)) then
+      .flush
+      .put_text("alpha part:",flush=2)
+      .put( mat.alpha,order)
+    end
+    if (associated( mat.beta)) then
+      .flush
+      .put_text("beta part:",flush=2)
+      .put( mat.beta,order)
+    end
+    if (associated( mat.general)) then
+      .flush
+      .put_text("general part:",flush=2)
+      .put( mat.general,order)
+    end
+    if (associated( mat.restricted_complex)) then
+      .flush
+      .put_text("complex restricted part:",flush=2)
+      .put( mat.restricted_complex,order)
+    end
+    if (associated( mat.alpha_complex)) then
+      .flush
+      .put_text("complex alpha part:",flush=2)
+      .put( mat.alpha_complex,order)
+    end
+    if (associated( mat.beta_complex)) then
+      .flush
+      .put_text("beta part:",flush=2)
+      .put( mat.beta_complex,order)
+    end
+    if (associated( mat.general_complex)) then
+      .flush
+      .put_text("complex general part:",flush=2)
+      .put( mat.general_complex,order)
+    end
+  end
+
+!  ***************
+!  Set fmt methods
+!  ***************
+
+   set_labels(labels) 
+   ! Set whether to use numbered labels on matrix or vector output
+      BIN :: labels
+      .system_update
+      .labels = labels
+   end
+
+   set_margin(margin) 
+   ! Set the width of the margin in the buffer. Takes effect at the next
+   ! output line
+      INT :: margin
+      .system_update
+      DIE_IF(margin<0,"margin less than zero")
+      DIE_IF(margin>STR_SIZE,"margin too large")
+      DIE_IF( .buffer.pos>.margin,"set margin only on empty buffers")
+      .margin = margin
+      .buffer.clear
+      .put_margin
+   end
+
+!  ************************
+!  Inherited dblfmt methods
+!  ************************
+      
+   set_default_format 
+   ! Set the default settings for the DBL formatting object
+   ! Extra functions added compared to inherited code
+      .system_update
+      .labels        = TEXTFILE_USE_LABELS
+      .margin        = TEXTFILE_MARGIN_WIDTH
+      .fields        = TEXTFILE_NO_OF_FIELDS
+      .int_width     = TEXTFILE_INT_WIDTH
+      .dbl_width     = TEXTFILE_DBL_WIDTH
+      .dbl_precision = TEXTFILE_PRECISION
+      .dbl_style     = TEXTFILE_DBL_STYLE
+   end
+
+   set_page_width(width)
+   ! Set the default number of fields to fit in printer page
+      INT, IN :: width
+      INT :: fields
+      .system_update
+      fields=floor(real(width - .margin,kind=DBL_KIND) / .dbl_width)
+      .set_fields(fields)
+   end
+
+   set_dbl_width(width) 
+   ! Set the width in the dblfmt format object
+      INT :: width
+      .system_update
+      DIE_IF(width<0,"width less than zero")
+      DIE_IF(width<.dbl_precision,"width smaller than precision")
+      .dbl_width = width
+   end
+      
+   set_fields(fields) 
+   ! Set the number of fields in the dblfmt format object
+      INT :: fields
+      .system_update
+      DIE_IF(fields<1,"not enough fields")
+      .fields = fields
+   end
+      
+   set_dbl_precision(precision) 
+   ! Set the precision required in the dblfmt format object
+      INT :: precision
+      .system_update
+      DIE_IF(precision<0,"precision less than zero")
+      DIE_IF(precision>.dbl_width,"precision greater than field width")
+      .dbl_precision = precision
+   end
+      
+   set_dbl_style(dbl_style) 
+   ! Set the fortran format style string in the dblfmt format object
+      CHR(*) :: dbl_style
+      CHR(2) :: style
+      .system_update
+      style = adjustl(dbl_style)
+      if (style/="f" AND style/="d" AND style/="e" AND style/="en" AND style/="es") &
+         DIE("unrecognized style, "//style)
+      .dbl_style = style
+   end
+
+   nice_field_width_for(num) result (res)
+   ! Return the field width that would look nice
+     INT :: res
+     INT, IN :: num
+     DBL :: temp
+      .system_update
+     res=0
+     if (num<0) res=res+1
+     temp=abs(num)
+     do
+       res=res+1
+       temp=temp/10
+       if (temp < 1.0d0) exit
+     end
+   end
+
+   format_for_dbl(style,width,precision) result (res)
+   ! Format for a DBL string
+      STR :: res
+      STR, IN :: style
+      INT, IN :: width,precision
+      .system_update
+      res = trim(style) // trim( width.to_str) // "." // trim( precision.to_str)
+   end
+
+   format_for_int(width) result (res)
+   ! Format for a INT string
+      STR :: res
+      INT, IN :: width
+      .system_update
+      res = "i" // trim( width.to_str)
+   end
+
+   format_for_bin(width) result (res)
+   ! Format for a INT string
+      STR :: res
+      INT, IN :: width
+      .system_update
+      res = "l" // trim( width.to_str)
+   end
+
+!  ***************
+!  Inquiry methods
+!  ***************
+
+   exists result(res)
+   ! Returns true if the file exists on the file system
+      BIN :: res
+      .system_update
+      inquire(file=.name,exist=res)
+   end
+
+   does_not_exist result(res)
+   ! Returns true if the file does *not* exist on the file system
+      BIN :: res
+      .system_update
+      res = NOT (.exists)
+   end
+
+   is_open result(res)
+   ! Returns true if the file has been opened
+      BIN :: res
+      .system_update
+      ! inquire(unit=.unit,opened=res)
+      inquire(file=.name,opened=res)
+   end
+
+   is_not_open result(res)
+   ! Returns true if the file has *not* been opened
+      BIN :: res
+      .system_update
+      res = NOT (.is_open)
+   end
+
+   unit_used result(res)
+   ! Returns true if the file unit is in use
+      BIN :: res
+      .system_update
+      inquire(unit=.unit,opened=res)
+   end
+
+   unit_not_used result(res)
+   ! Returns true if the file unit is *not* in use
+      BIN :: res
+      .system_update
+      inquire(unit=.unit,opened=res)
+      res = NOT res
+   end
+
+   next_line_item result (res)
+   ! Return the index of the next item to be processed on the line
+      INT :: res
+      res = .buffer.next_item
+   end
+
+   previous_line_item  result (res)
+   ! Return the index of the previous item to be processed on the line
+      INT :: res
+      res = .buffer.item
+   end
+
+   last_line_item  result (res)
+   ! Return the index of the final item on the line
+      INT :: res
+      res = .buffer.n_items
+   end
+
+   n_line_items result (res)
+   ! Return the number of items on the line
+      INT :: res
+      res = .buffer.n_items
+   end
+
+   position result(res) 
+   ! Return record position of the file
+      INT :: res
+      .system_update
+      res = .record
+   end
+
+   line_number result(res) 
+   ! Return the input file line number which is being processed,
+   ! or will be processed next.
+      INT :: res
+      .system_update
+      res = .record + 1
+   end
+   
+   buffer_str result(res)
+   ! Put a string into the buffer
+      BSTR :: res
+      res = .buffer.buffer_str
+   end
+
+   at_end_of_file result(res)
+   ! Read a line into the buffer from the input file
+      INT :: fail
+      BIN :: res
+      BSTR :: string
+      .system_update
+      fail = 2
+      read(unit=.unit,fmt="(a)",end=20,err=10) string
+      fail = fail-1
+20    fail = fail-1
+10    continue
+      select case (fail)
+        case (0)
+          res = FALSE
+          backspace(unit=.unit,iostat=.io_status)
+          DIE_IF(.io_status>0,"backspace error")
+        case (1)
+          res = TRUE
+        case (2)
+          DIE("unknown read error")
+      end
+   end
+
+   labels_used result(res)
+   ! Return true if labels are used on matrix output
+      BIN :: res
+      .system_update
+      res = .labels
+   end
+      
+   labels_not_used result(res)
+   ! Return true if labels are not used on matrix output
+      BIN :: res
+      .system_update
+      res = NOT (.labels)
+   end
+
+! ***************
+! System routines
+! ***************
+
+  system_update
+  ! Lets the system know info about the file being read, in case of error.
+    std_system.file_name = .name
+    std_system.file_record = .record
+    std_system.file_operation = "read"
+  end
+
+  system_done
+  ! Lets the system know the file has suspended being used.
+    std_system.file_name = ""
+    std_system.file_record = 0
+    std_system.file_operation = ""
+  end
+
+end 
