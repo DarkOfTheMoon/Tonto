@@ -110,7 +110,6 @@ contains
     STR :: kind
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.basis_resolved, "no basis set")
-    .make_ab_ab_ERI                   ! get the ab|ab eri's
     .get_initial_guess
 
     .make_fock_matrix(core=TRUE)
@@ -1395,25 +1394,30 @@ contains
     VEC, PTR :: max_I
     SHELL4 :: shell4
     INT :: ab,cd,i_a,i_b,i_c,i_d,n_comp_a,n_comp_b
-    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,a1,b1,c1,d1
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd,factor,P_dc,P_db,P_cb,k_ab,k_cd,cutoff
-    DBL :: Jcd,Kbc,Kbd,Iab,Icd,Pmax,Imax,Ptemp
+    DBL :: Jcd,Kbc,Kbd,Iab,Icd,Pmax,Imax
     BIN :: do_it
 
-    ENSURE( .ab_ab_ERI.created, "ab|ab integrals not made")
     J = ZERO
     K = ZERO
-    cutoff = .scfdata%eri_cutoff
+    cutoff = .scfdata.eri_cutoff
+
     max_I.create( .n_shell_pairs )
-    do ab = 1, .n_shell_pairs
-      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
+      .get_shell_pair(ab,i_a,i_b)          ! shell pair ab|ab
       fa = .first_basis_fn_for_shell(i_a)
       fb = .first_basis_fn_for_shell(i_b)
       la = .last_basis_fn_for_shell(i_a)
       lb = .last_basis_fn_for_shell(i_b)
-      Iabab => .ab_ab_ERI(ab)%mat4
       n_comp_a = la-fa+1
       n_comp_b = lb-fb+1
+      .set_shell_quartet_ab(shell4,i_a,i_b)
+      .set_shell_quartet_cd(shell4,i_a,i_b)
+      Iabab.create(n_comp_a,n_comp_b,n_comp_a,n_comp_b)
+      shell4.get_ERI(Iabab)
+      shell4.destroy_ptr_part
+
       Imax = ZERO
       do a=1,n_comp_a
         do b=1,n_comp_b
@@ -1422,6 +1426,7 @@ contains
         end
       end
       max_I(ab) = sqrt(Imax)
+      Iabab.destroy
     end
 
     do ab = 1, .n_shell_pairs
@@ -1439,7 +1444,7 @@ contains
         lc = .last_basis_fn_for_shell(i_c)
         ld = .last_basis_fn_for_shell(i_d)
 
-        Pmax = ZERO
+        Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
         do d = fd,ld
           do c = fc,lc
             Pmax = max(abs(P(d,c)),Pmax)
@@ -1457,7 +1462,7 @@ contains
           do_it = FALSE
         end
 
-        if (do_it) then                ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+        if (do_it) then                        ! calculate ab|cd
           fc = .first_basis_fn_for_shell(i_c)
           fd = .first_basis_fn_for_shell(i_d)
           lc = .last_basis_fn_for_shell(i_c)
@@ -1507,25 +1512,6 @@ contains
     J.make_symmetric
     K.make_symmetric
     J = TWO*J 
-  end
-
-  make_ab_ab_ERI [leaky]
-  ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a 
-  ! symmetric density matrix "P" directly. 
-  ! ab_ab should be already created, and of size .n_shell_pairs.
-    SHELL4 :: shell4
-    INT :: ab,i_a,i_b
-    INT :: a,b
-    .ab_ab_ERI.create( .n_shell_pairs )
-    do ab = 1, .n_shell_pairs
-      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
-      .set_shell_quartet_ab(shell4,i_a,i_b)
-      .set_shell_quartet_cd(shell4,i_a,i_b)
-      .ab_ab_ERI(ab)%mat4.create(shell4%a%n_comp, shell4%b%n_comp, &
-                       shell4%c%n_comp, shell4%d%n_comp)
-      shell4.get_ERI(.ab_ab_ERI(ab)%mat4)
-      shell4.destroy_ptr_part
-    end
   end
 
   make_r_JK_disk(J,K,P)
@@ -1588,62 +1574,82 @@ contains
     MAT,target :: J,Ka,Kb,P,Pa,Pb
     MAT4, PTR   :: Iabab,Icdcd,I
     MAT, PTR :: abs_P
+    VEC, PTR :: max_I
     SHELL4 :: shell4
-    VEC, PTR :: Kac,Kad,Kbc,Kbd
-    INT :: ab,cd,i_a,i_b,i_c,i_d
-    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,a1,b1,c1,d1
+    INT :: ab,cd,i_a,i_b,i_c,i_d,n_comp_a,n_comp_b
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd,factor,Pa_db,Pa_cb,Pa_dc,Pb_db,Pb_cb,Pb_dc,cutoff
-    DBL :: P_dc,P_db,P_cb,Iab,Icd,Pmax,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd
+    DBL :: P_dc,P_db,P_cb,Iab,Icd,Pmax,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd,Imax
     BIN :: do_it
-    ENSURE( .ab_ab_ERI.created, "ab|ab integrals not made")
+
     J  = ZERO
     Ka = ZERO
     Kb = ZERO
-    cutoff = .scfdata%eri_cutoff
+    cutoff = .scfdata.eri_cutoff
     abs_P.create( .n_bf, .n_bf)
     abs_P = max(abs(P),abs(Pa),abs(Pb))
 
-    do ab = 1, .n_shell_pairs
-      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+    max_I.create( .n_shell_pairs )
+    do ab = 1, .n_shell_pairs              ! Store the largest integral for each
+      .get_shell_pair(ab,i_a,i_b)          ! shell pair ab|ab
       fa = .first_basis_fn_for_shell(i_a)
       fb = .first_basis_fn_for_shell(i_b)
       la = .last_basis_fn_for_shell(i_a)
       lb = .last_basis_fn_for_shell(i_b)
-      Iabab => .ab_ab_ERI(ab)%mat4
+      n_comp_a = la-fa+1
+      n_comp_b = lb-fb+1
       .set_shell_quartet_ab(shell4,i_a,i_b)
+      .set_shell_quartet_cd(shell4,i_a,i_b)
+      Iabab.create(n_comp_a,n_comp_b,n_comp_a,n_comp_b)
+      shell4.get_ERI(Iabab)
+      shell4.destroy_ptr_part
+
+      Imax = ZERO
+      do a=1,n_comp_a
+        do b=1,n_comp_b
+          Iab = abs(Iabab(a,b,a,b))
+          Imax = max(Iab,Imax)
+        end
+      end
+      max_I(ab) = sqrt(Imax)
+      Iabab.destroy
+    end
+
+    do ab = 1, .n_shell_pairs
+      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      .set_shell_quartet_ab(shell4,i_a,i_b)
+      fa = .first_basis_fn_for_shell(i_a)
+      fb = .first_basis_fn_for_shell(i_b)
+      la = .last_basis_fn_for_shell(i_a)
+      lb = .last_basis_fn_for_shell(i_b)
+
       do cd = 1,ab
         .get_shell_pair(cd,i_c,i_d)                    ! c & d shell indices.
-        Icdcd => .ab_ab_ERI(cd)%mat4
 
         fc = .first_basis_fn_for_shell(i_c)
         fd = .first_basis_fn_for_shell(i_d)
         lc = .last_basis_fn_for_shell(i_c)
         ld = .last_basis_fn_for_shell(i_d)
 
-        do_it = FALSE                ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+        Pmax = ZERO                    ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
         do d = fd,ld
-          d1 = d-fd+1
           do c = fc,lc
-            c1 = c-fc+1
-            Icd = Icdcd(c1,d1,c1,d1)
-            P_dc = abs_P(d,c)
+            Pmax = max(abs_P(d,c),Pmax)
             do b = fb,lb
-              b1 = b-fb+1
-              P_db = abs_P(d,b)
-              P_cb = abs_P(c,b)
+              Pmax = max(abs_P(d,b),abs_P(c,b),Pmax)
               do a = fa,la
-                a1 = a-fa+1
-                Iab = Iabab(a1,b1,a1,b1)
-                Pmax = max(P_dc,abs_P(b,a),P_db,P_cb,abs_P(d,a),abs_P(c,a))
-                if (Pmax * sqrt(Iab * Icd) > cutoff) then
-                  do_it = TRUE
-                end
+                Pmax = max(abs_P(b,a),abs_P(d,a),abs_P(c,a),Pmax)
               end
             end
           end
         end
+        if (Pmax * max_I(ab) * max_I(cd) > cutoff) then
+          do_it = TRUE
+        else
+          do_it = FALSE
+        end
 
-        if (do_it) then            ! do the ab|cd integrals
+        if (do_it) then                        ! calculate ab|cd
           fc = .first_basis_fn_for_shell(i_c)
           fd = .first_basis_fn_for_shell(i_d)
           lc = .last_basis_fn_for_shell(i_c)
@@ -1658,12 +1664,8 @@ contains
           I.create(fa,la,fb,lb,fc,lc,fd,ld)
           shell4.get_ERI(I)
           do d = fd,ld
-            Kad => Ka(:,d)
-            Kbd => Kb(:,d)
             do c = fc,lc
               P_dc = P(d,c)
-              Kac => Ka(:,c)
-              Kbc => Kb(:,c)
               Jcd = ZERO
               do b = fb,lb
                 Pa_db = Pa(d,b)
@@ -1675,17 +1677,17 @@ contains
                 Ka_bd = ZERO
                 Kb_bd = ZERO
                 do a = fa,la
-                  I_abcd = factor * I(a,b,c,d)
-                  J(a,b) = J(a,b) + I_abcd*P_dc
-                  Jcd    = Jcd    + I_abcd*P(b,a)
-                  Kac(a) = Kac(a) + I_abcd*Pa_db
-                  Kad(a) = Kad(a) + I_abcd*Pa_cb
-                  Ka_bc  = Ka_bc  + I_abcd*Pa(d,a)
-                  Ka_bd  = Ka_bd  + I_abcd*Pa(c,a)
-                  Kbc(a) = Kbc(a) + I_abcd*Pb_db
-                  Kbd(a) = Kbd(a) + I_abcd*Pb_cb
-                  Kb_bc  = Kb_bc  + I_abcd*Pb(d,a)
-                  Kb_bd  = Kb_bd  + I_abcd*Pb(c,a)
+                  I_abcd  = factor  * I(a,b,c,d)
+                  J(a,b)  = J(a,b)  + I_abcd*P_dc
+                  Jcd     = Jcd     + I_abcd*P(b,a)
+                  Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
+                  Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
+                  Ka_bc   = Ka_bc   + I_abcd*Pa(d,a)
+                  Ka_bd   = Ka_bd   + I_abcd*Pa(c,a)
+                  Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
+                  Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
+                  Kb_bc   = Kb_bc   + I_abcd*Pb(d,a)
+                  Kb_bd   = Kb_bd   + I_abcd*Pb(c,a)
                 end
                 Ka(b,c) = Ka(b,c) + Ka_bc
                 Ka(b,d) = Ka(b,d) + Ka_bd
@@ -1701,6 +1703,7 @@ contains
       end
       shell4.destroy_ab
     end
+    max_I.destroy
     abs_P.destroy
     .weight_diagonal_blocks(J,TWO)
     .blockwise_symmetric_fold(Ka)
@@ -2027,11 +2030,8 @@ contains
     .xtal.update_scaled_gof_parameters
 
     .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
-    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
-                   chi2=.xtal%chi2, gof=.xtal%gof, r_factor=.xtal%r_factor, &
-                   weighted_r_factor=.xtal%weighted_r_factor)
-    .scfdata.update(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
-                    chi2=.xtal%chi2, chi2_in_F2=.xtal%chi2_in_F2, &
+    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
+    .scfdata.set( chi2=.xtal%chi2, chi2_in_F2=.xtal%chi2_in_F2, &
                     gof=.xtal%gof, r_factor=.xtal%r_factor, &
                     weighted_r_factor=.xtal%weighted_r_factor)
     .scfdata.put_banner
@@ -2154,7 +2154,6 @@ contains
 
     archive.set(.name,"ft_ints")
     archive.open(for="read-only",buffered=TRUE,type="cdbl")
-!    constraint=ZERO
     do q=1, .n_shell_pairs
       .get_shell_pair(q,a,b,fa,la,fb,lb)
       ft_ints.create((/1,n_refl/),(/fa,la/),(/fb,lb/))
