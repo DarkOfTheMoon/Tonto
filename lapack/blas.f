@@ -1176,7 +1176,7 @@ c
 *     .. Local Scalars ..
       LOGICAL            FIRST
       INTEGER            COUNT, I
-      DOUBLE PRECISION   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE
+      DOUBLE PRECISION   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE, RAD
 *     ..
 *     .. Intrinsic Functions ..
       INTRINSIC          ABS, INT, LOG, MAX, SQRT
@@ -1192,9 +1192,9 @@ c
       IF( FIRST ) THEN
          FIRST = .FALSE.
          SAFMIN = tiny(ZERO)
-         EPS = epsilon(ZERO)/radix(ZERO)
-         SAFMN2 = radix(ZERO)**INT( LOG( SAFMIN / EPS ) /
-     $            LOG( real(radix(ZERO)) ) / TWO )
+         RAD = radix(ZERO)
+         EPS = epsilon(ZERO)/RAD
+         SAFMN2 = RAD**INT( LOG( SAFMIN / EPS ) / LOG(RAD) / TWO )
          SAFMX2 = ONE / SAFMN2
       END IF
       IF( G.EQ.ZERO ) THEN
