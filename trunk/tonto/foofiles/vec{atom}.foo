@@ -107,8 +107,8 @@ contains
    ! Destroy the pointer parts of self
       a :: INT
       ! avoid double destroying
-      if (.coppens_interpolators_exist) .destroy_coppens_interpolators 
-      if (.slater_interpolators_exist)  .destroy_slater_interpolators 
+      if (.has_all_coppens_interpolators) .destroy_coppens_interpolators 
+      if (.has_all_slater_interpolators)  .destroy_slater_interpolators 
       .nullify_bases
       do a = 1,.dim ! Now we can safely destroy everything .....
          self(a).destroy_ptr_part
@@ -1351,6 +1351,31 @@ contains
      end
    end
 
+   put_atom_groups
+   ! Out out the atom group information
+   ENSURE(.groups_defined,"no atom group information")
+      n,i :: INT
+      list :: VEC{VEC_{INT}}*
+      .make_atom_group_lists(list)
+      stdout.save
+      stdout.set_int_width(3)
+      stdout.set_n_fields(25)
+      stdout.set_use_labels(FALSE)
+      stdout.flush
+      stdout.text("Atom group information")
+      stdout.flush
+      stdout.show("n_groups =",list.dim)
+      do n = 1,list.dim
+         stdout.put_text("group "// trim(n.to_str) //"  =")
+         do i = 1,list(n).element.dim
+            stdout.put(list(n).element(i))
+         end
+         stdout.flush
+      end
+      stdout.unsave
+      list.destroy
+   end
+
 !  *************************
 !  Geometry unit conversions
 !  *************************
@@ -2228,7 +2253,76 @@ contains
       a :: INT
       has = TRUE
       do a = 1,.n_atom
-         has = has AND self(a).has_ANO_data
+         has = self(a).has_ANO_data
+         if (NOT has) exit
+      end
+   end
+
+   has_all_slater_bases result(has)
+   ! Return TRUE if all atom slater basis data exists
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.n_atom
+         has = self(a).slaterbasis.created
+         if (NOT has) exit
+      end
+   end
+
+   has_all_coppens_bases result(has)
+   ! Return TRUE if all atom slater basis data exists
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.n_atom
+         has = self(a).coppensbasis.created
+         if (NOT has) exit
+      end
+   end
+
+   has_all_density_data result(has)
+   ! Return TRUE if all atoms have some kind of atom density data, either
+   ! slaterbasis, coppensbasis or gausian ANO data. This routine does NOT check
+   ! that they are all the same kind of data!
+      self :: IN
+      has :: BIN
+      has = .has_all_slater_bases OR .has_all_coppens_bases OR .has_all_ANO_data
+   end
+
+   has_all_interpolators result(has)
+   ! Return TRUE if all atoms have slaterbases which have interpolators, or all
+   ! atoms have coppensbases with interpolators.
+      self :: IN
+      has :: BIN
+      has = .has_all_slater_interpolators OR .has_all_coppens_interpolators
+   end
+
+   has_all_slater_interpolators result(has)
+   ! Return TRUE if all atoms have slaterbases which have interpolators.
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.n_atom
+         has = self(a).slaterbasis.created
+         if (NOT has) exit
+         has = self(a).slaterbasis.interpolator.created
+         if (NOT has) exit
+      end
+   end
+
+   has_all_coppens_interpolators result(has)
+   ! Return TRUE if all atoms have coppensbases which have interpolators.
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.n_atom
+         has = self(a).coppensbasis.created
+         if (NOT has) exit
+         has = self(a).coppensbasis.interpolator.created
          if (NOT has) exit
       end
    end
@@ -2280,7 +2374,7 @@ contains
 
    numbered_chemical_symbols result(res)
    ! Return an array of the chemical symbols for each atom with a number
-   ! at the end in brackets
+   ! at the end in brackets, which is the number of the atom in thge list.
       res :: VEC{STR}(size(self))
        a :: INT
       do a = 1,.n_atom
@@ -2318,14 +2412,6 @@ contains
          end
       end
       labels.remove_repetitions
-   end
-
-   groups_defined result(res)
-   ! Return TRUE if atom groups have been defined
-      res :: BIN
-      if (any(self(:).group>0)) then; res = TRUE
-      else;                           res = FALSE
-      end
    end
 
    atom_index_from_pos(pos) result(res)
@@ -2466,6 +2552,68 @@ contains
       end
       end
       atom_kind.destroy
+   end
+
+   groups_defined result(res)
+   ! Return TRUE if all atom groups have been defined
+      res :: BIN
+      if (all(self(:).group>0)) then; res = TRUE
+      else;                           res = FALSE
+      end
+   end
+
+   find_connected_groups
+   ! This routine searches through the list of atoms as assigns each atom the
+   ! same group number if the atom is a part of the same connected molecule.
+      n,a,b :: INT
+      found :: BIN
+      n = 1
+      a = 1
+      self(a).group = n  ! atom 1 is in group 1
+      do a = 2,.dim
+         found = FALSE
+         do b = 1,a-1
+            if (NOT self(a).is_bonded_to(self(b))) cycle
+            found = TRUE
+            exit
+         end
+         if (found) then
+            self(a).group = self(b).group
+         else
+            n = n + 1
+            self(a).group = n
+         end
+      end
+   end
+
+   make_atom_group_lists(list) ::: leaky
+   ! This routine finds all the atoms in the same group and makes their indices
+   ! as a list of integers. The result is a "list" of list of integers. NOTE
+   ! that "list" is created.
+      list :: VEC{VEC_{INT}}*
+   ENSURE(.groups_defined,"no group info supplied in atoms=")
+      n_group,m_group,a,g,n,i :: INT
+      group_indices :: VEC{INT}*
+      group_indices.create(.dim)
+      group_indices = self(:).group
+      n_group = group_indices.no_of_unique_elements
+      list.create(n_group)
+      if (n_group==1) then
+         list(1).element.create(.dim)
+         list(1).element = [ (i, i=1,.dim) ]
+      else
+        m_group = maxval(group_indices)
+        g = 0
+        do a = 1,m_group
+           n = count(group_indices==a)
+           if (n==0) cycle
+           g = g + 1
+           list(g).element.create(n)
+           list(g).element = pack( [ (i, i=1,.n_atom) ], group_indices==a)
+        end
+        ! .put_atom_groups
+      end
+      group_indices.destroy
    end
 
 !  *************************
@@ -3496,15 +3644,18 @@ contains
      index_info_created = FALSE
    end
 
-   make_coppens_interpolators ::: leaky
+   make_coppens_interpolators(interpolator) ::: leaky
    ! Make a unique set of coppensbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
    ! NOTE: This requires careful destroying.
+   ! NOTE: any existing interpolators are destroyed first
+      interpolator :: INTERPOLATOR*, optional
       unique_atom,atom_kind :: VEC{INT}*
       n_kind,k,u,j :: INT
       .make_unique_atom_list(unique_atom,atom_kind,n_kind)
       do k = 1,n_kind   ! Get interpolators only for unique atoms
         u = unique_atom(k)
-        self(u).coppensbasis.make_interpolator
+        self(u).coppensbasis.make_interpolator(interpolator)
       ! self(u).coppensbasis.interpolator.put
         do j = u+1,.dim ! ... pointer assign the rest
            if (atom_kind(j)/=k) cycle
@@ -3520,7 +3671,7 @@ contains
    ! they were created only by the routine "make_coppens_interpolators".
       unique_atom,atom_kind :: VEC{INT}*
       n_kind,k,u,j :: INT
-      if (NOT .coppens_interpolators_exist) return
+      if (NOT .has_all_coppens_interpolators) return
       .make_unique_atom_list(unique_atom,atom_kind,n_kind)
       do k = 1,n_kind   ! Destroy interpolators only for unique atoms
         u = unique_atom(k)
@@ -3534,32 +3685,18 @@ contains
       atom_kind.destroy
    end
 
-   coppens_interpolators_exist result (res)
-   ! Returns TRUE if all the interpolators exist. If so, it is assumed they were
-   ! created by make_coppens_interpolators.
-      res :: BIN
-      i :: INT
-      res = TRUE
-      do i = 1,.dim
-         if (associated(self(i).coppensbasis)) then
-            if (associated(self(i).coppensbasis.interpolator)) then
-               cycle
-            end
-         end
-         res = FALSE
-         exit
-      end
-   end
-
-   make_slater_interpolators ::: leaky
+   make_slater_interpolators(interpolator) ::: leaky
    ! Make a unique set of slaterbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
    ! NOTE: This requires careful destroying.
+   ! NOTE: any existing interpolators are destroyed first
+      interpolator :: INTERPOLATOR*, optional
       unique_atom,atom_kind :: VEC{INT}*
       n_kind,k,u,j :: INT
       .make_unique_atom_list(unique_atom,atom_kind,n_kind)
       do k = 1,n_kind   ! Get interpolators only for unique atoms
         u = unique_atom(k)
-        self(u).slaterbasis.make_interpolator
+        self(u).slaterbasis.make_interpolator(interpolator)
       ! self(u).slaterbasis.interpolator.put
         do j = u+1,.dim ! ... pointer assign the rest
            if (atom_kind(j)/=k) cycle
@@ -3575,7 +3712,7 @@ contains
    ! they were created only by the routine "make_slater_interpolators".
       unique_atom,atom_kind :: VEC{INT}*
       n_kind,k,u,j :: INT
-      if (NOT .slater_interpolators_exist) return
+      if (NOT .has_all_slater_interpolators) return
       .make_unique_atom_list(unique_atom,atom_kind,n_kind)
       do k = 1,n_kind   ! Destroy interpolators only for unique atoms
         u = unique_atom(k)
@@ -3589,20 +3726,27 @@ contains
       atom_kind.destroy
    end
 
-   slater_interpolators_exist result (res)
-   ! Returns TRUE if all the interpolators exist. If so, it is assumed they were
-   ! created by make_slater_interpolators.
-      res :: BIN
+   max_interpolator_table_length result (res)
+   ! Returns the maximum interpolator table length. The table length depends on
+   ! the table cutoff value that was used when the interpolator was generated.
+   ! This table length is used for setting the cluster radius, for calculations
+   ! where the cluster size must be determined so that the Hirshfeld surface is
+   ! accurate.
+      res :: REAL
+   ENSURE(.has_all_interpolators,"interpolators are missing")
+      last :: REAL
       i :: INT
-      res = TRUE
-      do i = 1,.dim
-         if (associated(self(i).slaterbasis)) then
-            if (associated(self(i).slaterbasis.interpolator)) then
-               cycle
-            end
+      res = ZERO
+      if      (.has_all_slater_interpolators) then
+         do i = 1,.dim
+            last = self(i).slaterbasis.interpolator.last_data_point
+            res = max(res,last)
          end
-         res = FALSE
-         exit
+      else if (.has_all_coppens_interpolators) then
+         do i = 1,.dim
+            last = self(i).coppensbasis.interpolator.last_data_point
+            res = max(res,last)
+         end
       end
    end
 

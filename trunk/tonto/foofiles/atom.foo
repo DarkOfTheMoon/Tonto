@@ -396,6 +396,7 @@ contains
        case ("group=                       "); .read_group
        case ("junk=                        "); .read_junk
        case ("label=                       "); .read_label
+       case ("make_slater_interpolator     "); .make_slater_interpolator
        case ("mm_atom_type=                "); .read_mm_atom_type
        case ("mm_charge=                   "); .read_mm_charge
        case ("mm_forcefield_name=          "); .read_mm_forcefield_name
@@ -404,6 +405,8 @@ contains
        case ("pos=                         "); .read_pos
        case ("position=                    "); .read_pos
        case ("put                          "); .put
+       case ("put_interpolator             "); .put_interpolator
+       case ("read_library_data            "); .read_library_data
        case ("residue_atom_name=           "); .read_residue_atom_name
        case ("residue_name=                "); .read_residue_name
        case ("restraining_position=        "); .read_restraining_position
@@ -1342,6 +1345,39 @@ contains
 !      .coppensbasis.resolve_by_label(label,basis,clobber,found)
 !   end
 
+   read_library_data ::: leaky
+   ! Read the basis from the library. The library directory is as currenly
+   ! specified in the BASIS module. The basis_set_kind is extracted from the
+   ! atom .basis_label.
+   ENSURE(.basis_label/=" ","There is no basis label")
+   ENSURE(.basis_label.includes(":"),"The basis_label has no colon, hence no kind part")
+      basis :: VEC{BASIS}*
+      slaterbasis :: VEC{SLATERBASIS}*
+      coppensbasis :: VEC{COPPENSBASIS}*
+      basis_set_kind :: STR
+      basis_set_kind = .basis_label(.basis_label.index_of(":")+1:)
+      select case (.basis_label)
+         case ("Coppens")
+            coppensbasis.destroy
+            nullify(coppensbasis)
+            coppensbasis.read_library_data(coppensbasis.library_directory(basis_set_kind),[.basis_label])
+            .coppensbasis.create_copy(coppensbasis(1))
+            coppensbasis.destroy
+         case ("Thakkar","Clementi-Roetti")
+            slaterbasis.destroy
+            nullify(slaterbasis)
+            slaterbasis.read_library_data(slaterbasis.library_directory(basis_set_kind),[.basis_label])
+            .slaterbasis.create_copy(slaterbasis(1))
+            slaterbasis.destroy
+         case default
+            basis.destroy
+            nullify(basis)
+            basis.read_library_data(basis.library_directory(basis_set_kind),[.basis_label])
+            .basis.create_copy(basis(1))
+            basis.destroy
+      end
+   end
+
 !  ***************
 !  Inquiry methods
 !  ***************
@@ -1353,20 +1389,25 @@ contains
    ! label is used.
       atom :: ATOM
       res :: BIN
-      bases_created,coppens_created,bases_destroyed,coppens_destroyed :: BIN
+      bases_created,coppens_created,slater_created :: BIN
+      bases_destroyed,coppens_destroyed,slater_destroyed :: BIN
       mixed :: BIN
-      bases_created = .basis.created AND atom.basis.created
-      coppens_created = .coppensbasis.created AND atom.coppensbasis.created
-      bases_destroyed = .basis.destroyed AND atom.basis.destroyed
+      bases_created     = .basis.created AND atom.basis.created
+      coppens_created   = .coppensbasis.created AND atom.coppensbasis.created
+      slater_created    = .slaterbasis.created  AND atom.slaterbasis.created
+      bases_destroyed   = .basis.destroyed AND atom.basis.destroyed
       coppens_destroyed = .coppensbasis.destroyed AND atom.coppensbasis.destroyed
-      mixed = NOT (bases_created OR bases_destroyed) OR &
-              NOT (coppens_created OR coppens_destroyed) 
+      slater_destroyed  = .slaterbasis.destroyed   AND atom.slaterbasis.destroyed
+      mixed = NOT (bases_created   OR bases_destroyed)   OR &
+              NOT (coppens_created OR coppens_destroyed) OR &
+              NOT (slater_created  OR slater_destroyed) 
       if (mixed) then
          res = FALSE
       else
          res = .atomic_number==atom.atomic_number 
          if (bases_created)   res = res AND .basis.label==atom.basis.label 
          if (coppens_created) res = res AND .coppensbasis.label==atom.coppensbasis.label 
+         if (slater_created)  res = res AND .slaterbasis.label==atom.slaterbasis.label 
       end
    end
 
@@ -1693,6 +1734,43 @@ contains
      end
    end
 
+   is_bonded_to(b,scale_factor) result(res)
+   ! Return true if "self" is bonded to "b".  If present, "scale_factor" is used
+   ! to determine a multiple of the sum of the Bragg-Slater radii within which
+   ! the atoms are regarded to be bonded.
+      b :: ATOM
+      scale_factor :: REAL, optional
+      res :: BIN
+      bond_max,fac :: REAL
+      fac = VEC_ATOM_BONDED_SCALE_FACTOR
+      if (present(scale_factor)) fac = scale_factor
+      bond_max = fac*(self.bragg_slater_radius + b.bragg_slater_radius)
+      bond_max = bond_max*BOHR_PER_ANGSTROM
+      res = .is_nearby_to(b,bond_max)
+   end
+
+   is_nearby_to(b,dist) result(res)
+   ! Return TRUE if atom "self" and atom "b" are nearby, i.e. within length
+   ! "dist".
+      b :: ATOM
+      dist :: REAL
+      res :: BIN
+      tmp :: VEC{REAL}(3)
+      r2 :: REAL
+      tmp = .pos - b.pos
+      tmp = abs(tmp)
+      if      (tmp(1)>dist) then
+         res = FALSE
+      else if (tmp(2)>dist) then
+         res = FALSE
+      else if (tmp(3)>dist) then
+         res = FALSE
+      else
+         r2 = dot_product(tmp,tmp)
+         res = (r2 < dist*dist)
+      end
+   end
+
 !  *************************
 !  Density plotting routines
 !  *************************
@@ -1704,10 +1782,10 @@ contains
       density_grid :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
    ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-      if      (.coppensbasis.created) then
-         .coppensbasis.make_density_grid(density_grid,pt,.pos)
-      else if (.slaterbasis.created) then
+      if      (.slaterbasis.created) then
          .slaterbasis.make_density_grid(density_grid,pt,.pos)
+      else if (.coppensbasis.created) then
+         .coppensbasis.make_density_grid(density_grid,pt,.pos)
       else if (.basis.created AND .natural_orbitals.created) then
          if (.natural_orbitals.number_kind == "real") then
             .make_density_grid_r(density_grid,pt)
@@ -1719,6 +1797,24 @@ contains
       end
       if (NOT .site_occupancy.same_as(ONE)) &
          density_grid = .site_occupancy*density_grid
+   end
+
+   skip_density_grid(pt) result (res)
+   ! Work out whether we can skip this density grid because all the points are
+   ! so far away that the density values will be zero.
+      self :: IN
+      pt :: MAT{REAL}, IN
+      res :: BIN
+      res = FALSE
+      if    (.slaterbasis.created) then
+         if (.slaterbasis.interpolator.created) then
+         res = .slaterbasis.skip_interpolated_density_grid(pt,.pos)
+         end
+      else if (.coppensbasis.created) then
+         if   (.coppensbasis.interpolator.created) then
+         res = .coppensbasis.skip_interpolated_density_grid(pt,.pos)
+         end
+      end
    end
 
    make_density_grid_r(density_grid,pt)
@@ -1838,7 +1934,9 @@ contains
       R,res :: REAL
       density_grid :: VEC{REAL}(1)
       pt :: MAT{REAL}(3,1)
-      if (.coppensbasis.created AND .coppensbasis.orbital.created) then
+      if      (.slaterbasis.created AND .slaterbasis.shell.created) then
+         res = .slaterbasis.density_at_radius(R)
+      else if (.coppensbasis.created AND .coppensbasis.orbital.created) then
          res = .coppensbasis.density_at_radius(R)
       else if (.basis.created) then
          pt(:,1) = .pos + [R,ZERO,ZERO]
@@ -1849,6 +1947,12 @@ contains
          end
          res = density_grid(1)
       end
+   end
+
+   make_slater_interpolator ::: leaky
+   ! Make a the slaterbasis interpolator.
+   ENSURE(.slaterbasis.created,"no slater basis")
+      .slaterbasis.make_interpolator
    end
 
 !  ***************************
@@ -1936,12 +2040,28 @@ contains
 
    put_natural_orbitals
    ! Put out the current associated molecular orbitals to file "out"
+   ENSURE(.natural_orbitals.created,"no natural orbitals")
+   ENSURE(.occupation_numbers.created,"no natural orbital occupations")
       stdout.flush
       stdout.text("Natural orbital occupations:")
       stdout.put( .occupation_numbers, format="column")
       stdout.flush
       stdout.text("Natural orbitals:")
       stdout.put( .natural_orbitals)
+   end
+
+   put_interpolator
+   ! Put out the atom information to file "stdout"
+      if (.slaterbasis.created) then
+         stdout.flush
+         stdout.text("Atom slaterbasis info:")
+         if (.slaterbasis.interpolator.created) .slaterbasis.interpolator.put
+      end
+      if (.coppensbasis.created) then
+         stdout.flush
+         stdout.text("Atom coppensbasis info:")
+         if (.coppensbasis.interpolator.created) .coppensbasis.interpolator.put
+      end
    end
 
 end
