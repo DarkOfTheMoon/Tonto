@@ -1658,6 +1658,16 @@ sub analyse_module_interface_scope {
 sub analyse_routine_scope {
   my($X);
 
+  # Check if/forall/where syntax.
+  if ($_[0] =~ m'^\s*if\s*'o) { # if
+    $_[0] =~ m'^\s*if\s*[(].*[)]\s*\S+'o || &report_error("if syntax not recognised.");
+  } elsif ($_[0] =~ m'^\s*forall\s*'o) { # forall
+    $_[0] =~ m'^\s*forall\s*[(].*[)]'o || &report_error("forall syntax not recognised.");
+  } elsif ($_[0] =~ m'^\s*where\s*'o) { # where
+    $_[0] =~ m'^\s*where\s*[(].*[)]'o || &report_error("where syntax not recognised.");
+  }
+
+
   if (defined $routine{$current_rout_name}{template} &&
               $routine{$current_rout_name}{template} == 1) { 
      return; }
