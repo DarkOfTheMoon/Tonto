@@ -8405,6 +8405,7 @@ contains
   camp_king(MO_old,F_old,E_HF,E_K)
   ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
   ! lambda should be between 0 and 1.
+  ! E_HF and E_K are only changed if the orbitals are changed.
     OPMAT, IN :: MO_old,F_old
     OPMAT* :: F_backup,MO_backup,P_backup,constraint
     MAT* :: old_MO,new_MO,old_F
@@ -8412,8 +8413,29 @@ contains
     DBL, INOUT :: E_HF,E_K
     VEC* :: theta
     INT :: minpq,n,n_p,n_q,i,k,j
-    DBL :: ded0,ded1,ded1a,E0,E1,El,lambda
+    DBL :: ded0,ded1,ded1a,E1,El,lambda
     DBL :: tol,diis0,diis1,diisl
+
+    F_backup.create_copy(.fock_matrix)
+    MO_backup.create_copy(.molecular_orbitals)
+    P_backup.create_copy(.density_matrix)
+    .fock_matrix.restricted = F_backup.restricted
+    .molecular_orbitals.restricted = MO_backup.restricted
+    .make_scf_density_matrix(damp=FALSE)
+    .make_diis_error(diis1)
+    .fock_matrix.restricted = F_old.restricted
+    .molecular_orbitals.restricted = MO_old.restricted
+    .make_scf_density_matrix(damp=FALSE)
+    .make_diis_error(diis0)
+    .fock_matrix.set_to(F_backup)
+    .molecular_orbitals.set_to(MO_backup)
+    .density_matrix.set_to(P_backup)
+    if (diis1 < diis0) then
+      F_backup.destroy
+      P_backup.destroy
+      MO_backup.destroy
+      RETURN ! the new orbitals are better than the old.
+    end
 
     n_p = .n_e/2
     n_q = .n_bf - n_p
@@ -8437,10 +8459,6 @@ contains
     Cj1.to_product(Q1,new_MO)
     Q1.destroy
 
-    F_backup.create_copy(.fock_matrix)
-    MO_backup.create_copy(.molecular_orbitals)
-    P_backup.create_copy(.density_matrix)
-
     V.create(.n_bf,.n_bf)
     W.create(.n_bf,.n_bf)
     theta.create(minpq)
@@ -8461,7 +8479,6 @@ contains
     Cj.destroy
 
     F.create(.n_bf,.n_bf)
-
     !get de/dl at l=1
     F=F_backup.restricted                          ! Fbar at lambda=1
     F.change_basis(Q)                              ! F = Q^t Fbar Q
@@ -8472,31 +8489,21 @@ contains
       ded1 = ded1 + theta(n)*F(n+n_p,n)
     end
     ded1 = -FOUR * ded1
-    .fock_matrix.restricted = F_backup.restricted
-    .molecular_orbitals.restricted = MO_backup.restricted
-    .make_scf_density_matrix(damp=FALSE)
-    E_HF = .scf_energy
-    E_K = .kinetic_energy
-    .make_diis_error(diis1)
 
-    if (ded1 > ZERO) then ! minimum is at a lambda less than lambda=1.
-      !get de/dl at l=0
-      F=old_F                                        ! Fbar at lambda=0
-      F.change_basis(Q)                              ! F = Q^t Fbar Q
-      F.change_basis(CV)                             ! eqn 27.
-      ded0 = ZERO
-      do n=1,n_p
-        ded0 = ded0 + theta(n)*F(n+n_p,n)
-      end
+    !get de/dl at l=0
+    F=old_F                                        ! Fbar at lambda=0
+    F.change_basis(Q)                              ! F = Q^t Fbar Q
+    F.change_basis(CV)                             ! eqn 27.
+    ded0 = ZERO
+    do n=1,n_p
+      ded0 = ded0 + theta(n)*F(n+n_p,n)
+    end
+    ded0 = -FOUR * ded0
+    F.destroy
+
  n=0
-      ded0 = -FOUR * ded0
-      .fock_matrix.restricted = old_F
-      .molecular_orbitals.restricted = old_MO
-      .make_scf_density_matrix(damp=FALSE)
-      E0 = .scf_energy
-      .make_diis_error(diis0)
-
-      if (ded0<ZERO OR diis1>0.9*diis0) then ! minimum is at a lambda greater than lambda=0.
+    if (ded1 > ZERO) then ! minimum is at a lambda less than lambda=1.
+      if (ded0<ZERO) then ! minimum is at a lambda greater than lambda=0.
         if (abs(ded1) > TEN*abs(ded0)) then
           lambda = 0.1
         else
@@ -8504,12 +8511,18 @@ contains
         end
         .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,n,diis0)
         .make_diis_error(diisl)
+      else
+        lambda = ZERO
+        diisl = diis0
+      end
+      if (diisl < diis1) then ! it's convergence that counts.
         Uh.create(.n_bf,.n_bf)
         .make_Camp_King_U_hat(Uh,lambda,theta)
         Cl.create(.n_bf,.n_bf)
         Cl.to_product(CV,Uh)
         Uh.destroy
         .molecular_orbitals.restricted.to_product(Q,Cl)
+        Cl.destroy
         .schmidt_orthonormalise(.molecular_orbitals)
         .make_scf_density_matrix(damp=FALSE)
         .make_fock_matrix
@@ -8524,23 +8537,23 @@ contains
           constraint.destroy
         end
       else
- n=0
         .fock_matrix.set_to(F_backup)
         .molecular_orbitals.set_to(MO_backup)
         .density_matrix.set_to(P_backup)
       end
     else
- n=0
       .fock_matrix.set_to(F_backup)
       .molecular_orbitals.set_to(MO_backup)
       .density_matrix.set_to(P_backup)
     end
  write(*,*) n
 
-    F.destroy
     CV.destroy
     theta.destroy
     Q.destroy
+    F_backup.destroy
+    P_backup.destroy
+    MO_backup.destroy
   end
 
   minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,n,diis0) [private]
@@ -8573,7 +8586,7 @@ contains
       xm=HALF*(a+b)
       tol1=tol*abs(x)+TOL(10)
       tol2=TWO*tol1
-      if (diisl < 0.9*diis0) exit
+      if (diisl < diis0) exit
       if (abs(x-xm)<=(tol2-HALF*(b-a))) exit
       if (abs(e)>tol1) then
         d1=TWO*(b-a)
