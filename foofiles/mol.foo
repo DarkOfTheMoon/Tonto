@@ -2761,208 +2761,154 @@ contains
   end
 
   fit_thermal_parameters [leaky]
-  ! Make the structure factors for this molecule.
-    VEC, PTR :: deriv,deriv_old,U,U_old,direction,temp_U,deriv_temp,lambda
-    MAT, PTR :: hessian
-    DBL :: chi2,old_chi2,start_lambda,max_deriv
-    VECDIIS :: diis
+  ! Fit the thermal parameters to the calculated structure factors.
+  ! Uses a line search method.
+    target :: self
+    VEC, PTR :: dU,U,direction,old_U,old_dU,lambda
+    MAT, PTR :: therm
+    DBL :: chi2,old_chi2,max_dU,old_norm,norm
     BINVEC, PTR :: ok
-    INT :: i,j,dim,total,old_n,n,base,max_atom
+    INT :: i,j,dim,total,n,base
     ENSURE( .crystal.created, "no crystal")
     ENSURE( .atom.created, "no atoms to fit")
 
     dim = .n_atom * 6
-    direction.create(dim)
-    deriv_old.create(dim)
-    deriv.create(dim)
-    U_old.create(dim)
     U.create(dim)
-    hessian.create(dim,dim)
-    hessian.to_unit_mat
+    dU.create(dim)
+    old_U.create(dim)
+    old_dU.create(dim)
+    direction.create(dim)
     ok.create(dim)
-    deriv_temp.create(dim)
-    temp_U.create(dim)
     lambda.create(dim)
 
-    if (.crystal.no_F_calc) .make_structure_factors
+!    .atom(1).thermal_tensor(1,1) = .atom(1).thermal_tensor(1,1) - 0.01d0
+!    do j=1,10
+!      .atom(1).thermal_tensor(1,1) = .atom(1).thermal_tensor(1,1) + 0.002d0
+!      .make_structure_factors
+!      .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+!      .make_d_chi2_d_U(dU)
+!
+!      .out.put(.atom(1).thermal_tensor(1,1))
+!      .out.put(du(1),flush=1)
+!    end
 
-    .crystal.update_scaled_gof_parameters;      chi2 = .crystal.chi2
-    .make_d_chi2_d_U(deriv)
+    .make_structure_factors
+    .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+    .make_d_chi2_d_U(dU);                   max_dU = dU.largest_value
 
     .out.text("Fitting thermal parameters.")
-    .out.put("iter",int_width=TRUE)
+    .out.show("Old chi2         = ",chi2)
+    .out.show("Largest gradient = ",max_dU)
+    .out.flush
+
     .out.put("steps",int_width=TRUE)
-    .out.put("slope")
     .out.put("chi2")
+    .out.put("ave gradient")
+    .out.put("max gradient")
     .out.flush
 
     .out.put(0)
-    .out.put(0)
-    .out.put(deriv.norm / sqrt(dim*ONE))
     .out.put(chi2)
+    .out.put(dU.norm / sqrt(dim*ONE))
+    .out.put(max_dU)
     .out.flush
 
-    ! Make the next value using dx = - f(x) / f'(x).  We go the wrong direction
-    ! so we know for sure that f(x) < f(x+dx)
-    do n=1, .n_atom
-      base = (n-1) * 6
-      U(base+1) = .atom(n).thermal_tensor(1,1)
-      U(base+2) = .atom(n).thermal_tensor(1,2)
-      U(base+3) = .atom(n).thermal_tensor(1,3)
-      U(base+4) = .atom(n).thermal_tensor(2,2)
-      U(base+5) = .atom(n).thermal_tensor(2,3)
-      U(base+6) = .atom(n).thermal_tensor(3,3)
-    end
-    do n = 1, dim
-      if (abs(deriv(n)) > 0.000000001d0) then ! so we don't divide by zero
-         U_old(n) = U(n) + 0.001d0 * chi2 / deriv(n)
-      else
-         U_old(n) = U(n)
-      end
-    end
-    do n=1, .n_atom
-      base = (n-1) * 6
-      .atom(n).thermal_tensor(1,1) = U_old(base+1)
-      .atom(n).thermal_tensor(1,2) = U_old(base+2)
-      .atom(n).thermal_tensor(1,3) = U_old(base+3)
-      .atom(n).thermal_tensor(2,1) = U_old(base+2)
-      .atom(n).thermal_tensor(2,2) = U_old(base+4)
-      .atom(n).thermal_tensor(2,3) = U_old(base+5)
-      .atom(n).thermal_tensor(3,1) = U_old(base+3)
-      .atom(n).thermal_tensor(3,2) = U_old(base+5)
-      .atom(n).thermal_tensor(3,3) = U_old(base+6)
-    end
-    .make_structure_factors
-    .crystal.update_scaled_gof_parameters;      chi2 = .crystal.chi2
-    .make_d_chi2_d_U(deriv_old)
-
-    do n=1, .n_atom                                   ! Put back original U.
-      base = (n-1) * 6
-      .atom(n).thermal_tensor(1,1) = U(base+1)
-      .atom(n).thermal_tensor(1,2) = U(base+2)
-      .atom(n).thermal_tensor(1,3) = U(base+3)
-      .atom(n).thermal_tensor(2,1) = U(base+2)
-      .atom(n).thermal_tensor(2,2) = U(base+4)
-      .atom(n).thermal_tensor(2,3) = U(base+5)
-      .atom(n).thermal_tensor(3,1) = U(base+3)
-      .atom(n).thermal_tensor(3,2) = U(base+5)
-      .atom(n).thermal_tensor(3,3) = U(base+6)
-    end
-
-    .make_structure_factors
-    .crystal.update_scaled_gof_parameters;      chi2 = .crystal.chi2
-    .make_d_chi2_d_U(deriv)
-
-    start_lambda = 0.1d0
     total = 0
-    old_n = 0
-    diis.set_default
-    diis.set(keep=10,start=1)
-    diis.set_archive_root_name(.name)
-    diis.set_archive_name("thermal_parameters,DIIS")
+    old_chi2 = chi2
+    old_norm = dU.norm / sqrt(ONE*dim)
 
     do i=1,100! loop until converged to minimum.
-      do n=1, .n_atom                        ! get thermal parameters into array
+      do n=1, .n_atom                 ! get thermal parameters into array
         base = (n-1) * 6
-        U(base+1) = .atom(n).thermal_tensor(1,1)
-        U(base+2) = .atom(n).thermal_tensor(1,2)
-        U(base+3) = .atom(n).thermal_tensor(1,3)
-        U(base+4) = .atom(n).thermal_tensor(2,2)
-        U(base+5) = .atom(n).thermal_tensor(2,3)
-        U(base+6) = .atom(n).thermal_tensor(3,3)
+        therm => .atom(n).thermal_tensor
+        U(base+1) = therm(1,1)
+        U(base+2) = therm(1,2)
+        U(base+3) = therm(1,3)
+        U(base+4) = therm(2,2)
+        U(base+5) = therm(2,3)
+        U(base+6) = therm(3,3)
       end
-      direction = - deriv                                  ! dU = - dchi2/dU.
-      direction = sign(min(abs(direction),HALF),direction) ! limit size of dU.
+      direction = - dU                                     ! dU = - dchi2/dU.
+      direction = direction * TOL(4)
+      direction = sign(min(abs(direction),TOL(2)),direction) ! limit size of dU.
 
-      temp_U = U
-      deriv_temp = deriv
+      old_U = U
+      old_dU = dU
       ok = FALSE
-      if (old_n >1) start_lambda = start_lambda / TEN
-      lambda = start_lambda
-      old_chi2 = chi2
+      lambda = TEN
 
       do j=1,10
-        do n=1,dim                      ! decrease the step size where necessary
+        do n=1,dim                    ! decrease the step size where necessary
           if (NOT ok(n)) then
             lambda(n) = lambda(n) / TEN
-            U(n) = temp_U(n) + lambda(n) * direction(n)
+            U(n) = old_U(n) + lambda(n) * direction(n)
           end
         end
         do n=1, .n_atom               ! replace thermal parameters with new ones
           base = (n-1) * 6
-          .atom(n).thermal_tensor(1,1) = U(base+1)
-          .atom(n).thermal_tensor(1,2) = U(base+2)
-          .atom(n).thermal_tensor(1,3) = U(base+3)
-          .atom(n).thermal_tensor(2,1) = .atom(n).thermal_tensor(1,2)
-          .atom(n).thermal_tensor(2,2) = U(base+4)
-          .atom(n).thermal_tensor(2,3) = U(base+5)
-          .atom(n).thermal_tensor(3,1) = .atom(n).thermal_tensor(1,3)
-          .atom(n).thermal_tensor(3,2) = .atom(n).thermal_tensor(2,3)
-          .atom(n).thermal_tensor(3,3) = U(base+6)
+          therm => .atom(n).thermal_tensor
+          therm(1,1) = U(base+1)
+          therm(1,2) = U(base+2)
+          therm(1,3) = U(base+3)
+          therm(2,1) = therm(1,2)
+          therm(2,2) = U(base+4)
+          therm(2,3) = U(base+5)
+          therm(3,1) = therm(1,3)
+          therm(3,2) = therm(2,3)
+          therm(3,3) = U(base+6)
         end
         .make_structure_factors
-        .crystal.update_scaled_gof_parameters;      chi2 = .crystal.chi2
-        .make_d_chi2_d_U(deriv)
+        .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+        .make_d_chi2_d_U(dU)
 
-        ok = abs(deriv) < abs(deriv_temp)
-        if (chi2 < old_chi2) exit
-        if (2*count(ok)>dim) exit
+        norm = dU.norm / sqrt(ONE*dim)
+        ok = abs(dU) < abs(old_dU)
+
+write(*,*) total+j,chi2,norm,count(ok)
+        if (norm < old_norm) exit
+        if (count(ok)==dim) exit
       end
       total = total + j
-      old_n = j
 
-      diis.extrapolate(U,deriv)      ! get better thermals using DIIS.
-      do n=1, .n_atom                ! replace thermal parameters with new ones
-        base = (n-1) * 6
-        .atom(n).thermal_tensor(1,1) = U(base+1)
-        .atom(n).thermal_tensor(1,2) = U(base+2)
-        .atom(n).thermal_tensor(1,3) = U(base+3)
-        .atom(n).thermal_tensor(2,1) = .atom(n).thermal_tensor(1,2)
-        .atom(n).thermal_tensor(2,2) = U(base+4)
-        .atom(n).thermal_tensor(2,3) = U(base+5)
-        .atom(n).thermal_tensor(3,1) = .atom(n).thermal_tensor(1,3)
-        .atom(n).thermal_tensor(3,2) = .atom(n).thermal_tensor(2,3)
-        .atom(n).thermal_tensor(3,3) = U(base+6)
-      end
-      .make_structure_factors
-      .crystal.update_scaled_gof_parameters;      chi2 = .crystal.chi2
-      .make_d_chi2_d_U(deriv)
-
-      max_deriv = ZERO
-      do n=1,dim                      ! decrease the step size where necessary
-        if (abs(deriv(n)) > max_deriv) then
-          max_deriv = abs(deriv(n))
-          max_atom = n
+      do n=1,dim                      ! put back ones we didn't improve
+        if (NOT ok(n)) then
+          U(n) = old_U(n)
         end
       end
-      max_atom = (max_atom / 6) + 1
+      .make_structure_factors
+      .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+      .make_d_chi2_d_U(dU);                   max_dU = dU.largest_value
 
-      .out.put(i)
-      .out.put(total)
-      .out.put(deriv.norm / sqrt(ONE*dim))
-      .out.put(chi2)
-      .out.flush
-      if (deriv.norm / sqrt(ONE*dim) < 0.1) exit ! if near the minimum
-      if (chi2 > old_chi2) exit              ! we're having convergence problems
+      old_norm = dU.norm / sqrt(ONE*dim)
+      old_chi2 = chi2
 
+      if (old_norm < TOL(1)) exit     ! if near the minimum
     end
-    .out.text("Finished fitting thermal parameters.")
-    .out.show("New chi2 is ",chi2)
-    .out.show("Largest gradient is ",max_deriv)
-    .out.show("Largest gradient is for atom ",max_atom)
-    .put_atom_thermal_tensors
 
-    diis.delete_archives
+    .out.text("Finished fitting thermal parameters.")
+    .out.show("New chi2         = ",chi2)
+    .out.show("Largest gradient = ",max_dU)
+    .out.show("Average gradient = ",old_norm)
+    .out.show("Iterations       = ",total)
+
+    .atom(1).thermal_tensor(1,1) = .atom(1).thermal_tensor(1,1) - 0.01d0
+    do j=1,10
+      .atom(1).thermal_tensor(1,1) = .atom(1).thermal_tensor(1,1) + 0.002d0
+      .make_structure_factors
+      .crystal.update_scaled_gof_parameters;  chi2 = .crystal.chi2
+      .make_d_chi2_d_U(dU)
+
+      .out.put(.atom(1).thermal_tensor(1,1))
+      .out.put(du(1),flush=1)
+    end
+
     lambda.destroy
-    temp_U.destroy
     ok.destroy
-    deriv_temp.destroy
-    hessian.destroy
-    U.destroy
-    U_old.destroy
-    deriv.destroy
-    deriv_old.destroy
     direction.destroy
+    old_dU.destroy
+    old_U.destroy
+    dU.destroy
+    U.destroy
   end
 
   make_d_chi2_d_U(res)
@@ -3001,8 +2947,7 @@ contains
     do k = 1, .crystal.n_refl
       temp = ( sign(.crystal.F_exp(k),F_c(k)) - F_c(k)) &
              / ( .crystal.sigma(k) * .crystal.sigma(k) )
-!      res = res + ext(k) * real(sf_deriv(k,:)) * temp
-      res = res + real(sf_deriv(k,:)) * temp
+      res = res + ext(k) * real(sf_deriv(k,:)) * temp
     end
 
     ext.destroy
@@ -6507,7 +6452,6 @@ contains
       .crystal.update_scaled_gof_parameters
     end
 
-
     .scfdata.set(nuclear_energy=.nuclear_energy)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
     .scfdata.set( chi2=.crystal.chi2, gof=.crystal.gof, &
@@ -6553,13 +6497,8 @@ contains
         .make_scf_density_matrix
         .save_scf_results
         .make_fock_matrix                      ! To get new Hartree-Fock energy.
-
-        if (.optimise_thermals) then
-          .fit_thermal_parameters
-        else
-          .make_structure_factors
-          .crystal.update_scaled_gof_parameters
-        end
+        .make_structure_factors
+        .crystal.update_scaled_gof_parameters
 
         .scfdata.update(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
              chi2=.crystal.chi2, gof=.crystal.gof, r_factor=.crystal.r_factor, &
@@ -6568,6 +6507,13 @@ contains
         if (.scfdata.scf_done) exit
       end
       .scfdata.update_lambda
+
+      if (.optimise_thermals) then
+        .fit_thermal_parameters
+      else
+        .make_structure_factors
+        .crystal.update_scaled_gof_parameters
+      end
 
 !      ! You can comment this section out if you want.  It is self contained.
 !      if (.scfdata.lambda_iteration == 1) then
@@ -7987,35 +7933,35 @@ contains
     pot_grid.destroy
   end
 
-   make_electric_potential_grid(pot_grid,dens)
-   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
-   ! "dens"
-      VEC :: pot_grid
-      MAT, target :: dens
-      VEC, PTR :: pot_grid_q
-      MAT, PTR :: pt,Vab,Dba
-      INT :: q,a,b,fa,fb,la,lb,k
-      SHELL2 :: shell
-      ENSURE( .grid.created,  "no grid")
-      ENSURE( .atom.created,  "no atom list")
-      ENSURE( .atom.bases_are_all_resolved, "no basis set")
-      pt.create(.grid.n_pt,3); .grid.points(pt)
-      pot_grid = ZERO
-      pot_grid_q.create(.grid.n_pt)
-      do q = 1,.n_shell_pairs
-         .get_shell_pair(q,shell,a,b,fa,la,fb,lb)
-         Dba => dens(fb:lb,fa:la)
-         shell.make_electric_potential_grid(pot_grid_q,Dba,pt)
-         if (a==b) then     ! fac=ONE
-           pot_grid(:) = pot_grid(:) - pot_grid_q(:)
-         else               ! fac=TWO
-           pot_grid(:) = pot_grid(:) - TWO * pot_grid_q(:)
-         end
-         shell.destroy_ptr_part
-      end
-      pot_grid_q.destroy
-      pt.destroy
-   end
+!   make_electric_potential_grid(pot_grid,dens)
+!   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
+!   ! "dens"
+!      VEC :: pot_grid
+!      MAT, target :: dens
+!      VEC, PTR :: pot_grid_q
+!      MAT, PTR :: pt,Vab,Dba
+!      INT :: q,a,b,fa,fb,la,lb,k
+!      SHELL2 :: shell
+!      ENSURE( .grid.created,  "no grid")
+!      ENSURE( .atom.created,  "no atom list")
+!      ENSURE( .atom.bases_are_all_resolved, "no basis set")
+!      pt.create(.grid.n_pt,3); .grid.points(pt)
+!      pot_grid = ZERO
+!      pot_grid_q.create(.grid.n_pt)
+!      do q = 1,.n_shell_pairs
+!         .get_shell_pair(q,shell,a,b,fa,la,fb,lb)
+!         Dba => dens(fb:lb,fa:la)
+!         shell.make_electric_potential_grid(pot_grid_q,Dba,pt)
+!         if (a==b) then     ! fac=ONE
+!           pot_grid(:) = pot_grid(:) - pot_grid_q(:)
+!         else               ! fac=TWO
+!           pot_grid(:) = pot_grid(:) - TWO * pot_grid_q(:)
+!         end
+!         shell.destroy_ptr_part
+!      end
+!      pot_grid_q.destroy
+!      pt.destroy
+!   end
 
    make_electric_potential_grid(pot_grid,dens)
    ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
@@ -8039,6 +7985,36 @@ contains
          Vab.create(shell.a.n_comp,shell.b.n_comp)
          do k = 1,.grid.n_pt
             shell.make_nuclear_attraction_ints(Vab,pt(k,:))
+            pot_grid(k) = pot_grid(k) - fac*Vab.trace_of_product(real(Dba,kind=DBL_KIND))
+         end
+         Vab.destroy
+         shell.destroy_ptr_part
+      end
+      pt.destroy
+   end
+
+   make_electric_potential_grid(pot_grid,dens)
+   ! Make the electric potential "pot_grid" on ".grid" using AO density matrix
+   ! "dens"
+      VEC :: pot_grid
+      MAT, target :: dens
+      MAT, PTR :: pt,Vab
+      MAT, PTR :: Dba
+      INT :: q,a,b,fa,fb,la,lb,k
+      DBL :: fac
+      SHELL2 :: shell
+      ENSURE( .grid.created,  "no grid")
+      ENSURE( .atom.created,  "no atom list")
+      ENSURE( .atom.bases_are_all_resolved, "no basis set")
+      pt.create(.grid.n_pt,3); .grid.points(pt)
+      pot_grid = ZERO
+      do q = 1,.n_shell_pairs
+         .get_shell_pair(q,shell,a,b,fa,la,fb,lb)
+         Dba => dens(fb:lb,fa:la)
+         fac = TWO; if (a==b) fac=ONE
+         Vab.create(shell.a.n_comp,shell.b.n_comp)
+         do k = 1,.grid.n_pt
+            shell.get_nuc(Vab,ONE,pt(k,:))
             pot_grid(k) = pot_grid(k) - fac*Vab.trace_of_product(real(Dba,kind=DBL_KIND))
          end
          Vab.destroy
