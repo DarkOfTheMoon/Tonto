@@ -16,24 +16,7 @@
 # Argument checking.
 #
 $argerr=0;
-$n_arg=$#ARGV+1;
-$n_arg >= 2 || do {print STDERR "Error : need at least two arguments\n"; $argerr=1; };
-@ARGS = @ARGV[0 .. $n_arg-3];
-$file1 = $ARGV[$n_arg-2];
-$file2 = $ARGV[$n_arg-1];
-
-while (@ARGS) {
-  $arg=shift @ARGS;
-  for ($arg) {
-    /^-compiler/ && do {
-      $fc=shift @ARGS;
-      defined $fc || do {print STDERR "Error : no compiler specified\n"; $argerr=1};
-      last;
-    };
-    print STDERR ("Error : unexpected argument $arg\n");
-    $argerr=1;
-  }
-}
+$#ARGV+1 == 2 || do {print STDERR "Error : need two arguments\n"; $argerr=1; };
 
 if ($argerr==1) {
   warn(
@@ -46,6 +29,9 @@ if ($argerr==1) {
    exit 1;
 }
 
+$file1 = shift;
+$file2 = shift;
+
 #*******************************************************************************
 # check whether files exist.
 #
@@ -57,10 +43,12 @@ if ($argerr==1) {
 #
 $size1 = (stat($file1))[7];
 $size2 = (stat($file2))[7];
-($size1 == $size2) or exit 1;
+$size1 == $size2 or die "File sizes are different\n";
 
 open(FILE1,$file1) or die "Cannot open $file1\n";
 open(FILE2,$file2) or die "Cannot open $file2\n";
+binmode(FILE1);
+binmode(FILE2);
 
 @offsets = ();  # initialise the array to nothing. (not really necessary).
 
@@ -86,14 +74,14 @@ sub printout {
   print STDERR "\nNumber of different bytes is ",$#offsets+1,".\n";
 
   if ($#offsets > -1) {
-    print STDERR "\nBytes offsets from the start of file:\n";
+    print STDERR "\nByte offsets from the start of file:\n";
     $i=0;
     while ($i <= $#offsets) {
       print STDERR $offsets[$i],"\n";
       $i++;
     }
 
-    print STDERR "\nBytes offsets starting from the end of file:\n";
+    print STDERR "\nByte offsets starting from the end of file:\n";
     $i=0;
     while ($i <= $#offsets) {
       print STDERR $size1-$offsets[$i]+1,"\n";
