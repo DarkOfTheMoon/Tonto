@@ -1,0 +1,1362 @@
+! $Id$
+!-------------------------------------------------------------------------------
+!
+! SHELL2 : pair of SHELLs
+! (c) Daniel Grimwood, 1998
+!
+! Given two shells, can calculate
+!  - Fourier transform of their product, evaluated on a grid
+!  - overlap integrals
+!  - kinetic energy integrals
+!  - nuclear attraction integrals
+!
+! Based on the Rys method, as described by Lindh et al,
+! J. Chem. Phys 84(7) 3963-3974
+!
+! - overlap (non rys version) and kinetic energy integrals work at least
+!   up to (q|q).
+! - methods using the rys module are limited up to about (m|m) due to
+!   the general rys method algorithm failing.  (As tested with atoms on the
+!   same center.  Different centers can go higher, but not recommended).
+! - Accuracy at higher than (d|d) has not been tested.
+!
+!-------------------------------------------------------------------------------
+
+module SHELL2
+
+   use TYPES
+   use ERROR
+   use MM
+   use INT
+   use VEC
+   use IVEC
+   use IMAT
+   use IMAT3
+   use MAT
+   use MAT3
+   use CMAT
+   use CMAT3
+   use OUTPUT
+   use SHELL
+   use SHELL1
+   use RYS
+   use GAUSSIAN2
+
+   implicit none         
+
+#include "macros"
+#include "shell2.int"
+
+! type shell2_type
+!   SHELL1 :: a
+!   SHELL1 :: b
+! end
+
+contains
+
+  create
+  ! Creates a shell2 object
+    PTR :: self
+    nullify(self)
+    allocate(self)
+    std_mm.add(SHELL2_SIZE)
+    .nullify_ptr_part
+  end
+
+  create(shell_a,shell_b)
+  ! Create a copy of a shell1 objects
+    PTR :: self
+    SHELL1, IN :: shell_a,shell_b
+    .create
+    .copy(shell_a,shell_b)
+  end
+
+  create(shell_a,shell_b,pos_a,pos_b) [leaky]
+  ! Create a copy of a shell1 objects with positions
+    PTR :: self
+    SHELL, IN :: shell_a,shell_b
+    VEC(3), IN :: pos_a,pos_b
+    .create
+    .copy(shell_a,shell_b,pos_a,pos_b)
+  end
+
+  destroy
+  ! Destroys a shell2 object
+    PTR :: self
+    if (.destroyed) return
+    .destroy_ptr_part
+    std_mm.delete(SHELL2_SIZE)
+    deallocate(self)
+  end
+
+  nullify_ptr_part
+  ! Nullify the pointer parts of self
+     .a.nullify_ptr_part
+     .b.nullify_ptr_part
+  end
+
+  destroy_ptr_part
+  ! Destroy the pointer parts of self
+     .a.destroy_ptr_part
+     .b.destroy_ptr_part
+  end
+
+  created result(res)
+  ! Returns true if self has been created
+    PTR :: self
+    BIN :: res
+    res = associated(self)
+  end
+
+  destroyed result(res)
+  ! Returns true if self has *not* been created
+    PTR :: self
+    BIN :: res
+    res = NOT associated(self)
+  end
+
+  put(out)
+  ! Put the shell2 information on file "out"
+    OUTPUT :: out
+    out.put("Shell a:",flush=1)
+    .a.put(out)
+    out.put("Shell b:",flush=1)
+    .b.put(out)
+    out.flush
+  end
+
+  copy(shell_a,shell_b) [leaky]
+  ! Copy the shell2 using shell1 objects
+    SHELL1, IN :: shell_a,shell_b
+    .a.copy(shell_a)
+    .b.copy(shell_b)
+  end
+
+  copy(shell_a,shell_b,pos_a,pos_b) [leaky]
+  ! Copy the shell2 using shell objects and positions
+    SHELL, IN :: shell_a,shell_b
+    VEC, IN :: pos_a,pos_b
+    .a.copy(shell_a,pos_a)
+    .b.copy(shell_b,pos_b)
+  end
+
+  set(shell_a,shell_b)
+  ! Set the shell2 using shell1 objects
+    SHELL1, IN :: shell_a,shell_b
+    .a.set(shell_a)
+    .b.set(shell_b)
+  end
+
+  set(shell_a,shell_b,pos_a,pos_b)
+  ! Copy the shell2 using shell objects
+    SHELL, IN :: shell_a,shell_b
+    VEC, IN :: pos_a,pos_b
+    .a.set(shell_a,pos_a)
+    .b.set(shell_b,pos_b)
+  end
+
+   make_ft(res,k_pts)
+   ! Calculates the Fourier transform for a product of two contracted
+   ! gaussian shells, evaluated at a series of k points k_pts
+   ! Dimensions of res are [k_max,.a%n_comp,.b%n_comp].
+      MAT, IN :: k_pts
+      CMAT3, OUT :: res
+      GAUSSIAN2 :: G_ab
+      CMAT3, PTR :: ft_ab
+      VEC, PTR :: fac_a,fac_b
+      INT :: a,b,k,k_max
+      DBL :: ca,cb,cacb
+      k_max  = size(k_pts,1)
+      res = ZERO
+      G_ab.set(.a%l,.a%pos,ZERO,.b%l,.b%pos,ZERO)
+      fac_a.create( .a%n_comp ); fac_a.normalizing_factors( .a%l )
+      fac_b.create( .b%n_comp ); fac_b.normalizing_factors( .b%l )
+      do a = 1, .a%n_cc
+         G_ab.set(ex_a=.a%ex(a))
+         ca = .a%cc(a)
+         do b = 1, .b%n_cc
+            G_ab.set(ex_b=.b%ex(b))
+            cb = .b%cc(b)
+            cacb = ca*cb
+            ft_ab.create(k_max, .a%n_comp, .b%n_comp)
+            G_ab.make_ft(ft_ab,k_pts)
+            ft_ab = ft_ab*cacb
+            do k = 1,k_max
+               ft_ab(k,:,:).change_basis(fac_a,fac_b)
+            end
+            res = res + ft_ab
+            ft_ab.destroy
+         end
+      end
+      fac_a.destroy
+      fac_b.destroy
+   end
+
+   make_ft(res,k_pts,thermal,dispersion,partition)
+   ! Calculates the Fourier transform for a product of two contracted
+   ! gaussian shells, evaluated at a series of k points k_pts
+   ! Dimensions of res are [k_max,.a%n_comp,.b%n_comp].
+   ! Also adds in some corrections, thermal and dispersion.
+   ! Partition factors also included.
+      CMAT3, OUT :: res
+      MAT, IN :: k_pts,partition
+      MAT3, IN :: thermal
+      CMAT, IN :: dispersion
+      GAUSSIAN2 :: G_ab
+      CMAT3, PTR :: ft_ab
+      VEC, PTR :: fac_a,fac_b
+      INT :: a,b,k,k_max
+      DBL :: ca,cb,fac
+      k_max  = size(k_pts,1)
+      res = ZERO
+      G_ab.set(.a%l,.a%pos,ZERO,.b%l,.b%pos,ZERO)
+      fac_a.create( .a%n_comp ); fac_a.normalizing_factors( .a%l )
+      fac_b.create( .b%n_comp ); fac_b.normalizing_factors( .b%l )
+      do a = 1, .a%n_cc
+         G_ab.set(ex_a=.a%ex(a))
+         ca = .a%cc(a)
+         do b = 1, .b%n_cc
+            G_ab.set(ex_b=.b%ex(b))
+            cb = .b%cc(b)
+            ft_ab.create(k_max, .a%n_comp, .b%n_comp)
+            G_ab.make_ft(ft_ab,k_pts)
+            ft_ab = ft_ab + dispersion(a,b)
+            fac = ca * cb * partition(a,b)
+            ft_ab = ft_ab * fac
+            do k = 1,k_max
+               ft_ab(k,:,:).change_basis(fac_a,fac_b)
+               ft_ab(k,:,:) = ft_ab(k,:,:) * thermal(k,a,b)
+            end
+            res = res + ft_ab
+            ft_ab.destroy
+         end
+      end
+      fac_a.destroy
+      fac_b.destroy
+   end
+
+  make_gaussian_partition(res,factor_a,factor_b)
+  ! Make the factors for partitioning the density contribution from
+  ! each atom.
+  ! Dimensions of res are [.a%n_cc,.b%n_cc].
+    MAT, OUT :: res
+    DBL, IN :: factor_a,factor_b
+    INT :: a,b
+    DBL :: ex_a,ex_b
+    do a = 1, .a%n_cc
+      ex_a = .a%ex(a)
+      do b = 1, .b%n_cc
+        ex_b = .b%ex(b)
+        res(a,b) = (ex_a * factor_a + ex_b * factor_b) / (ex_a + ex_b)
+      end
+    end
+  end
+
+  make_gaussian_partition(res,factor_a,factor_b)
+  ! Make the factors for partitioning the density contribution from
+  ! each atom.
+  ! Dimensions of res are [.a%n_cc,.b%n_cc].
+    CMAT, OUT :: res
+    CDBL, IN :: factor_a,factor_b
+    INT :: a,b
+    DBL :: ex_a,ex_b
+    do a = 1, .a%n_cc
+      ex_a = .a%ex(a)
+      do b = 1, .b%n_cc
+        ex_b = .b%ex(b)
+        res(a,b) = (ex_b * factor_a + ex_a * factor_b) / (ex_a + ex_b)
+      end
+    end
+  end
+
+  make_tanaka_thermal_smearing(res,k_pts,Ua,Ub)
+  ! Make the thermal smearing correction according to Tanaka.
+  ! Dimensions of "res" are [k_max,.a%n_cc,.b%n_cc].
+  ! "res" contains the correction for each pair of primitives.
+    MAT3, OUT :: res
+    MAT, IN :: k_pts,Ua,Ub
+    MAT(3,3) :: Ua_ea,Ub_eb,U
+    VEC(3) :: S,Utemp
+    INT :: a,b,k,k_max
+    DBL :: ea,eb
+    k_max  = size(k_pts,1)
+    do a = 1, .a%n_cc
+      ea = .a%ex(a)
+      Ua_ea = ea * Ua
+      do b = 1, .b%n_cc
+        eb = .b%ex(b)
+        Ub_eb = eb * Ub
+        U = (Ua_ea + Ub_eb) / (ea + eb)
+        do k = 1,k_max
+          S = k_pts(k,:)
+          Utemp = matmul(U,S)         ! Change coordinates of the U matrix.
+          res(k,a,b) = exp(-HALF*dot_product(S,Utemp))
+        end
+      end
+    end
+  end
+
+   make_ft_nabla(res,k_pts)
+   ! Calculates the Fourier transform for a product of two contracted
+   ! gaussian shells, evaluated at a series of k points k_pts
+   ! Dimensions of res are [k_max,.n_comp_a,.n_comp_b,3].
+      MAT, IN :: k_pts
+      CMAT4 :: res
+      GAUSSIAN2 :: G_ab
+      CMAT4, PTR :: ft_ab
+      VEC, PTR :: fac_a,fac_b
+      INT :: a,b,k,k_max
+      DBL :: ca,cb,cacb
+      k_max  = size(k_pts,1)
+      res = ZERO
+      G_ab.set(.a%l,.a%pos,ZERO,.b%l,.b%pos,ZERO)
+      fac_a.create( .a%n_comp ); fac_a.normalizing_factors( .a%l )
+      fac_b.create( .b%n_comp ); fac_b.normalizing_factors( .b%l )
+      do a = 1, .a%n_cc
+         G_ab.set(ex_a=.a%ex(a))
+         ca = .a%cc(a)
+         do b = 1, .b%n_cc
+            G_ab.set(ex_b=.b%ex(b))
+            cb = .b%cc(b)
+            cacb = ca*cb
+            ft_ab.create(k_max,.a%n_comp,.b%n_comp,3)
+            G_ab.make_ft_nabla(ft_ab,k_pts)
+            ft_ab = ft_ab*cacb
+            if (.a%l>=2 OR .b%l>=2) then
+            do k = 1,k_max
+               ft_ab(k,:,:,1).change_basis(fac_a,fac_b)
+               ft_ab(k,:,:,2).change_basis(fac_a,fac_b)
+               ft_ab(k,:,:,3).change_basis(fac_a,fac_b)
+            end
+            end
+            res = res + ft_ab
+            ft_ab.destroy
+         end
+      end
+      fac_a.destroy
+      fac_b.destroy
+   end
+
+   make_ft_r(res,k_pts)
+   ! Calculates the Fourier transform for a product of two contracted
+   ! gaussian shells, evaluated at a series of k points k_pts
+   ! Dimensions of res are [k_max,.n_comp_a,.n_comp_b,3].
+      MAT, IN :: k_pts
+      CMAT4 :: res
+      GAUSSIAN2 :: G_ab
+      CMAT4, PTR :: ft_ab
+      VEC, PTR :: fac_a,fac_b
+      INT :: a,b,k,k_max
+      DBL :: ca,cb,cacb
+      k_max  = size(k_pts,1)
+      res = ZERO
+      G_ab.set(.a%l,.a%pos,ZERO,.b%l,.b%pos,ZERO)
+      fac_a.create( .a%n_comp ); fac_a.normalizing_factors( .a%l )
+      fac_b.create( .b%n_comp ); fac_b.normalizing_factors( .b%l )
+      do a = 1, .a%n_cc
+         G_ab.set(ex_a=.a%ex(a))
+         ca = .a%cc(a)
+         do b = 1, .b%n_cc
+            G_ab.set(ex_b=.b%ex(b))
+            cb = .b%cc(b)
+            cacb = ca*cb
+            ft_ab.create(k_max,.a%n_comp,.b%n_comp,3)
+            G_ab.make_ft_r(ft_ab,k_pts)
+            ft_ab = ft_ab*cacb
+            if (.a%l>=2 OR .b%l>=2) then
+            do k = 1,k_max
+               ft_ab(k,:,:,1).change_basis(fac_a,fac_b)
+               ft_ab(k,:,:,2).change_basis(fac_a,fac_b)
+               ft_ab(k,:,:,3).change_basis(fac_a,fac_b)
+            end
+            end
+            res = res + ft_ab
+            ft_ab.destroy
+         end
+      end
+      fac_a.destroy
+      fac_b.destroy
+   end
+
+!  **********************
+!  CADPAC-style integrals
+!  **********************
+
+   make_overlap_ints(S)
+   ! Calculates overlap integral matrix, using Gauss-Hermite quadrature, like in CADPAC
+      MAT :: S
+      MAT, PTR :: SS
+      GAUSSIAN2 :: G
+      INT :: a,b
+      DBL :: ca,cb,cacb
+      S = ZERO
+      SS.create(.a%n_comp,.b%n_comp)
+      G%l_a   = .a%l;   G%l_b   = .b%l
+      G%pos_a = .a%pos; G%pos_b = .b%pos
+      do a = 1,.a%n_cc
+         G%ex_a = .a%ex(a)
+         ca = .a%cc(a)
+         do b = 1,.b%n_cc
+            G%ex_b = .b%ex(b)
+            cb = .b%cc(b)
+            cacb = ca*cb
+            G.make_overlap_ints(SS)
+            S = S + SS*cacb
+         end
+      end
+      SS.destroy
+      .normalize(S)
+   end
+
+   make_nuclear_attraction_ints(N,c)
+   ! Make the nuclear attraction integral matrix "N" for nucleus at position "c"
+      MAT :: N
+      VEC(3) :: c
+      MAT, PTR :: NN
+      GAUSSIAN2 :: G
+      INT :: a,b
+      DBL :: ca,cb,cacb
+      N = ZERO
+      NN.create(.a%n_comp,.b%n_comp)
+      G%l_a   = .a%l;   G%l_b   = .b%l
+      G%pos_a = .a%pos; G%pos_b = .b%pos
+      do a = 1,.a%n_cc
+         G%ex_a = .a%ex(a)
+         ca = .a%cc(a)
+         do b = 1,.b%n_cc
+            G%ex_b = .b%ex(b)
+            cb = .b%cc(b)
+            cacb = ca*cb
+            G.make_nuclear_attraction_ints(NN,c)
+            N = N + NN*cacb
+         end
+      end
+      NN.destroy
+      .normalize(N)
+   end
+
+   make_solenoidal_jp_ints(Jx,Jy,Jz,c)
+   ! Make the solenoidal "Ji" integral matrices evaluated at position "c"
+      MAT :: Jx,Jy,Jz
+      VEC(3) :: c
+      MAT, PTR :: Ix,Iy,Iz
+      GAUSSIAN2 :: G
+      INT :: a,b
+      DBL :: ca,cb,cacb
+      Jx = ZERO
+      Jy = ZERO
+      Jz = ZERO
+      Ix.create(.a%n_comp,.b%n_comp)
+      Iy.create(.a%n_comp,.b%n_comp)
+      Iz.create(.a%n_comp,.b%n_comp)
+      G%l_a   = .a%l;   G%l_b   = .b%l
+      G%pos_a = .a%pos; G%pos_b = .b%pos
+      do a = 1,.a%n_cc
+         G%ex_a = .a%ex(a)
+         ca = .a%cc(a)
+         do b = 1,.b%n_cc
+            G%ex_b = .b%ex(b)
+            cb = .b%cc(b)
+            cacb = ca*cb
+            G.make_solenoidal_jp_ints(Ix,Iy,Iz,c)
+            Jx = Jx + Ix*cacb
+            Jy = Jy + Iy*cacb
+            Jz = Jz + Iz*cacb
+         end
+      end
+      Ix.destroy
+      Iy.destroy
+      Iz.destroy
+      .normalize(Jx)
+      .normalize(Jy)
+      .normalize(Jz)
+   end
+
+   make_irrotational_jp_ints(Jx,Jy,Jz,c)
+   ! Make the irrotational "Ji" integral matrices evaluated at position "c"
+      MAT :: Jx,Jy,Jz
+      VEC(3) :: c
+      MAT, PTR :: Ix,Iy,Iz
+      GAUSSIAN2 :: G
+      INT :: a,b
+      DBL :: ca,cb,cacb
+      Jx = ZERO
+      Jy = ZERO
+      Jz = ZERO
+      Ix.create(.a%n_comp,.b%n_comp)
+      Iy.create(.a%n_comp,.b%n_comp)
+      Iz.create(.a%n_comp,.b%n_comp)
+      G%l_a   = .a%l;   G%l_b   = .b%l
+      G%pos_a = .a%pos; G%pos_b = .b%pos
+      do a = 1,.a%n_cc
+         G%ex_a = .a%ex(a)
+         ca = .a%cc(a)
+         do b = 1,.b%n_cc
+            G%ex_b = .b%ex(b)
+            cb = .b%cc(b)
+            cacb = ca*cb
+            G.make_irrotational_jp_ints(Ix,Iy,Iz,c)
+            Jx = Jx + Ix*cacb
+            Jy = Jy + Iy*cacb
+            Jz = Jz + Iz*cacb
+         end
+      end
+      Ix.destroy
+      Iy.destroy
+      Iz.destroy
+      .normalize(Jx)
+      .normalize(Jy)
+      .normalize(Jz)
+   end
+
+!  ******************************
+!  Roland Lindh's style integrals
+!  ******************************
+
+  s_overlap(zeta,zz,r2) result (res) [elemental]
+  ! Calculate the overlap of two s functions.
+    IN :: self
+    DBL, IN :: zeta,zz,r2
+    DBL :: res
+    res=(PI/zeta)**(3.0/2.0) * exp(-zz*r2)
+  end
+
+  make_overlap(ab)
+  ! Calculate the overlap matrix for the two shells
+    MAT :: ab
+    VEC, PTR :: es
+    INT :: n
+    n = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
+    es.create(n)
+    .make_overlap_es(es)
+    .transfer(es,ab)
+    es.destroy
+    .to_normalize(ab)
+  end
+
+  make_overlap_es(es) [pure]
+  ! Make the (es) overlap integrals, summed over primitives
+    IN :: self
+    VEC, OUT :: es
+    VEC, allocatable :: temp
+    VEC(3) :: AB
+    INT :: a,b,templb,tempub,n_e
+    DBL :: r2ab,ea,eb
+
+    n_e    = .a%l + .b%l
+    tempub = n_e.n_comp_sum
+    templb = (max(.a%l,.b%l)-1).n_comp_sum + 1
+    allocate(temp(tempub))
+
+    AB = .a%pos - .b%pos
+    r2ab = dot_product(AB,AB)
+
+    es=ZERO
+    do a=1, .a%n_cc
+      ea=.a%ex(a)
+      do b=1, .b%n_cc
+        eb=.b%ex(b)
+        .form_overlap_es(temp,ea,eb,r2ab,n_e)
+        es=es + .a%cc(a) * .b%cc(b) * temp(templb:tempub)
+      end
+    end
+    deallocate(temp)
+  end
+
+  form_overlap_es(es,ea,eb,r2ab,n_e) [pure]
+  ! Form the (es) overlap integrals for a pair of primitives
+    IN :: self
+    VEC, INOUT :: es
+    INT, IN :: n_e
+    DBL, IN :: r2ab,ea,eb
+    VEC(3) :: PE
+    IVEC(3) :: a_momenta
+    IMAT3, allocatable :: index
+    IMAT, allocatable :: momenta
+    DBL :: zinv2,zeta,zz,PEi
+    INT :: j,z,lz,a1,a2
+
+    zeta=ea+eb
+    zz=ea*eb/zeta
+
+    es=ZERO
+    es(1)=.s_overlap(zeta,zz,r2ab)
+
+    if (n_e > 0) then
+      zinv2=HALF/zeta
+      if (.a%l > .b%l) then
+        PE=(eb*.b%pos + ea*.a%pos)*TWO*zinv2 - .a%pos
+      else
+        PE=(eb*.b%pos + ea*.a%pos)*TWO*zinv2 - .b%pos
+      end
+
+      es(2) = PE(1) * es(1)                                ! p||s
+      es(3) = PE(2) * es(1)
+      es(4) = PE(3) * es(1)
+
+      if (n_e > 1) then
+        allocate(momenta(3, n_e.n_comp_sum))
+        momenta.make_cartesian_components(0,n_e)
+        allocate(index(0:n_e, 0:n_e, 0:n_e))
+        index.make_index_of_components(momenta)
+
+        do j=5, n_e.n_comp_sum                               ! d||s to n_e||s
+          a_momenta = momenta(:,j)
+          z = a_momenta.first_nonzero_component
+          lz = a_momenta(z)
+          a_momenta(z) = a_momenta(z)-1
+          a1 = index(a_momenta(1),a_momenta(2),a_momenta(3))
+          PEi=PE(z)
+          if (lz < 2) then
+            es(j) = PEi * es(a1)
+          else
+            a_momenta(z) = a_momenta(z)-1
+            a2 = index(a_momenta(1),a_momenta(2),a_momenta(3))
+            es(j) = PEi * es(a1) + zinv2 * (lz-1) * es(a2)
+          end
+        end
+        deallocate(index)
+        deallocate(momenta)
+      end
+    end
+  end
+
+  get_kei(kei,overlap) [pure]
+  ! Calculate the kinetic energy and overlap (optional) integrals.
+  ! (More efficient than making them separate).
+    IN :: self
+    MAT, INOUT :: kei
+    MAT, INOUT, optional :: overlap
+
+    .make_kei(kei,overlap)
+    if (present(overlap)) .to_normalize(overlap)
+    .to_normalize(kei)
+  end
+
+  make_kei(kei,overlap) [pure]
+  ! Makes the kei and overlap matrics, summed over primitives
+  ! Is called by kei, but does not do the orbital normalization corrections
+    IN :: self
+    MAT, INOUT :: kei
+    MAT, INOUT, optional :: overlap
+    MAT, allocatable :: temp_kei,temp_overlap
+    VEC(3) :: P,PA,PB,ara,brb,AB
+    INT :: a,b,alb,aub,blb,bub
+    DBL :: ca,ea,eb,zeta,zinv2,r2ab
+    alb = (.a%l-1).n_comp_sum + 1; aub = alb + .a%n_comp
+    blb = (.b%l-1).n_comp_sum + 1; bub = blb + .b%n_comp
+    allocate(temp_kei(aub,bub))
+    allocate(temp_overlap(aub,bub))
+    kei=ZERO
+    if (present(overlap)) overlap=ZERO
+    AB = .a%pos - .b%pos
+    r2ab = dot_product(AB,AB)
+    do a=1, .a%n_cc
+      ca=.a%cc(a)
+      ea=.a%ex(a)
+      ara=ea*.a%pos
+      do b=1, .b%n_cc
+        eb    = .b%ex(b)
+        brb   = eb * .b%pos
+        zeta  = ea + eb
+        zinv2 = HALF / zeta
+        P     = (ara + brb) * TWO * zinv2
+        PA    = P - .a%pos
+        PB    = P - .b%pos
+        if (.a%l > .b%l) then
+          .form_overlap_mat_a(temp_kei,temp_overlap,PA,PB,zinv2,zeta,ea,eb,r2ab)
+        else
+          .form_overlap_mat_b(temp_kei,temp_overlap,PA,PB,zinv2,zeta,ea,eb,r2ab)
+        end
+        if (present(overlap)) &
+          overlap = overlap + ca * .b%cc(b) * temp_overlap(alb:aub,blb:bub)
+        kei = kei + ca * .b%cc(b) * temp_kei(alb:aub,blb:bub)
+      end
+    end
+    deallocate(temp_kei)
+    deallocate(temp_overlap)
+  end
+
+  form_overlap_mat_a(kei,overlap,PA,PB,zinv2,zeta,ea,eb,r2ab) [pure]
+  ! Makes the kinetic energy and overlap matrices for a primitive pair
+  ! if .a%l > .b%l
+    IN :: self
+    MAT, INOUT :: overlap,kei
+    VEC(3), IN :: PA,PB
+    IVEC(3) :: a_momenta, b_momenta
+    IMAT3, allocatable :: index
+    IMAT, allocatable :: momenta
+    DBL, IN :: zinv2,zeta,ea,eb,r2ab
+    INT :: j,z,lza,lzb,a,a1,a2,b,b1,laub
+    INT :: la,lb,la1_n_comp_sum,lb1_n_comp_sum,la_n_comp_sum,lb_n_comp_sum
+    INT :: na,b_n_comp_sum
+    DBL :: PAi,PBi,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_ea_na
+
+    zz       = ea * eb / zeta
+    zz2      = 2 * zz
+    zz_ea    = zz / ea
+    zz_eb    = zz / eb
+    b_n_comp_sum = .b%l.n_comp_sum
+
+    overlap(1,1) = .s_overlap(zeta,zz,r2ab)
+    kei(1,1)     = zz * (3.0-zz2 * r2ab) * overlap(1,1)
+
+    allocate(momenta(3, .a%l.n_comp_sum))
+    momenta.make_cartesian_components(0, .a%l)
+    allocate(index(0:.a%l, 0:.a%l, 0:.a%l))
+    index.make_index_of_components(momenta)
+
+    do j = 2, b_n_comp_sum                                ! s||p to s||lb
+      a_momenta    = momenta(:,j)                         ! p||s to lb||s
+      z            = a_momenta.first_nonzero_component
+      lza          = a_momenta(z)
+      a_momenta(z) = a_momenta(z) - 1
+      a1           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+      PBi          = PB(z)
+      PAi          = PA(z)
+      if (lza < 2) then
+        overlap(1,j) = PBi * overlap(1,a1)
+        kei(1,j)     = PBi * kei(1,a1) + zz2 * overlap(1,j)
+        overlap(j,1) = PAi * overlap(a1,1)
+        kei(j,1)     = PAi * kei(a1,1) + zz2 * overlap(j,1)
+      else
+        na           = lza - 1
+        zinv2_na     = zinv2 * na
+        a_momenta(z) = a_momenta(z) - 1
+        a2           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+        overlap(1,j) = PBi * overlap(1,a1) + zinv2_na * overlap(1,a2)
+        kei(1,j)     = PBi * kei(1,a1) + zinv2_na * kei(1,a2) + &
+                       zz2 * overlap(1,j) - zz_eb * na * overlap(1,a2)
+        overlap(j,1) = PAi * overlap(a1,1) + zinv2_na * overlap(a2,1)
+        kei(j,1)     = PAi * kei(a1,1) + zinv2_na * kei(a2,1) + &
+                       zz2 * overlap(j,1) - zz_ea * na * overlap(a2,1)
+      end
+    end
+
+    do j = b_n_comp_sum + 1, (.a%l-.b%l).n_comp_sum   ! lb||s to la-lb||s
+      a_momenta    = momenta(:,j)
+      z            = a_momenta.first_nonzero_component
+      lza          = a_momenta(z)
+      a_momenta(z) = a_momenta(z) - 1
+      a1           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+      PAi          = PA(z)
+      if (lza < 2) then
+        overlap(j,1) = PAi * overlap(a1,1)
+        kei(j,1)     = PAi * kei(a1,1) + zz2 * overlap(j,1)
+      else
+        na           = lza - 1
+        zinv2_na     = zinv2 * na
+        a_momenta(z) = a_momenta(z) - 1
+        a2           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+        overlap(j,1) = PAi * overlap(a1,1) + zinv2_na * overlap(a2,1)
+        kei(j,1)     = PAi * kei(a1,1) + zinv2_na * kei(a2,1) + &
+                       zz2 * overlap(j,1) - zz_ea * na * overlap(a2,1)
+      end
+    end
+
+    laub = .a%l - .b%l
+    do lb = 1, .b%l
+      lb1_n_comp_sum = (lb-1).n_comp_sum + 1
+      lb_n_comp_sum  = lb.n_comp_sum
+      laub           = laub + 1
+      do la = 1, laub
+        la1_n_comp_sum = (la-1).n_comp_sum + 1
+        la_n_comp_sum  = la.n_comp_sum
+        do a = la1_n_comp_sum, la_n_comp_sum
+          a_momenta    = momenta(:,a)
+          z            = a_momenta.first_nonzero_component
+          lza          = a_momenta(z)
+          a_momenta(z) = a_momenta(z) - 1
+          a1           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+          PAi          = PA(z)
+          if (lza==1) then
+            do b = lb1_n_comp_sum,lb_n_comp_sum
+              lzb = momenta(z,b)
+              if (lzb==0) then
+                overlap(a,b) = PAi * overlap(a1,b)
+                kei(a,b)     = PAi * kei(a1,b) + zz2 * overlap(a,b)
+              else
+                b_momenta    = momenta(:,b)
+                b_momenta(z) = b_momenta(z) - 1
+                b1           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+                zinv2_nb     = zinv2 * lzb
+                overlap(a,b) = PAi * overlap(a1,b) + zinv2_nb * overlap(a1,b1)
+                kei(a,b)     = PAi * kei(a1,b) + zinv2_nb * kei(a1,b1) + &
+                               zz2 * overlap(a,b)
+              end
+            end
+          else
+            na           = lza - 1
+            zinv2_na     = zinv2 * na
+            zz_ea_na    = zz_ea * na
+            a_momenta(z) = a_momenta(z) - 1
+            a2           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+            do b = lb1_n_comp_sum, lb_n_comp_sum
+              lzb = momenta(z,b)
+              if (lzb==0) then
+                overlap(a,b) = PAi * overlap(a1,b) + zinv2_na * overlap(a2,b)
+                kei(a,b)     = PAi * kei(a1,b) + zinv2_na * kei(a2,b) + &
+                               zz2 * overlap(a,b) - zz_ea_na * overlap(a2,b)
+              else
+                zinv2_nb     = zinv2 * lzb
+                b_momenta    = momenta(:,b)
+                b_momenta(z) = b_momenta(z) - 1
+                b1           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+                overlap(a,b) = PAi * overlap(a1,b) + zinv2_na * overlap(a2,b) +&
+                               zinv2_nb * overlap(a1,b1)
+                kei(a,b)     = PAi * kei(a1,b) + zinv2_na * kei(a2,b) + &
+                               zinv2_nb * kei(a1,b1) + &
+                               zz2 * overlap(a,b) - zz_ea_na * overlap(a2,b)
+              end
+            end
+          end
+        end
+      end
+    end
+    deallocate(momenta)
+    deallocate(index)
+  end
+
+  form_overlap_mat_b(kei,overlap,PA,PB,zinv2,zeta,ea,eb,r2ab) [pure]
+  ! Makes the kinetic energy and overlap matrices for a primitive pair
+  ! if .b%l > .a%l
+    IN :: self
+    MAT, INOUT :: overlap,kei
+    VEC(3), IN :: PA,PB
+    IVEC(3) :: b_momenta, a_momenta
+    IMAT3, allocatable :: index
+    IMAT, allocatable :: momenta
+    DBL, IN :: zinv2,zeta,ea,eb,r2ab
+    INT :: j,z,lza,lzb,a,a1,b,b1,b2,lbub,la,lb
+    INT :: la1_n_comp_sum,lb1_n_comp_sum,la_n_comp_sum,lb_n_comp_sum
+    INT :: nb,a_n_comp_sum
+    DBL :: PAi,PBi,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_eb_nb
+
+    zz      = ea * eb / zeta
+    zz2     = 2 * zz
+    zz_ea    = zz / ea
+    zz_eb    = zz / eb
+    a_n_comp_sum  = .a%l.n_comp_sum
+
+    overlap(1,1) = .s_overlap(zeta,zz,r2ab)
+    kei(1,1)     = zz * (3.0-zz2 * r2ab) * overlap(1,1)
+
+    allocate(momenta(3, .b%l.n_comp_sum))
+    momenta.make_cartesian_components(0, .b%l)
+    allocate(index(0:.b%l, 0:.b%l, 0:.b%l))
+    index.make_index_of_components(momenta)
+
+    do j=2, a_n_comp_sum                               ! p||s to la||s
+      b_momenta    = momenta(:,j)                      ! s||p to s||la
+      z            = b_momenta.first_nonzero_component
+      lzb          = b_momenta(z)
+      b_momenta(z) = b_momenta(z)-1
+      b1           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+      PBi          = PB(z)
+      PAi          = PA(z)
+      if (lzb < 2) then
+        overlap(j,1) = PAi * overlap(b1,1)
+        kei(j,1)     = PAi * kei(b1,1) + zz2 * overlap(j,1)
+        overlap(1,j) = PBi * overlap(1,b1)
+        kei(1,j)     = PBi * kei(1,b1) + zz2 * overlap(1,j)
+      else
+        nb           = lzb - 1
+        zinv2_nb     = zinv2 * nb
+        b_momenta(z) = b_momenta(z) - 1
+        b2           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+        overlap(j,1) = PAi * overlap(b1,1) + zinv2_nb * overlap(b2,1)
+        kei(j,1)     = PAi * kei(b1,1) + zinv2_nb * kei(b2,1) + &
+                       zz2 * overlap(j,1) - zz_ea * nb * overlap(b2,1)
+        overlap(1,j) = PBi * overlap(1,b1) + zinv2_nb * overlap(1,b2)
+        kei(1,j)     = PBi * kei(1,b1) + zinv2_nb * kei(1,b2) + &
+                       zz2 * overlap(1,j) - zz_eb * nb * overlap(1,b2)
+      end
+    end
+
+    do j= a_n_comp_sum + 1, (.b%l-.a%l).n_comp_sum      ! s||lb to s||lb-la
+      b_momenta    = momenta(:,j)                       ! s||p to s||la
+      z            = b_momenta.first_nonzero_component
+      lzb          = b_momenta(z)
+      b_momenta(z) = b_momenta(z) - 1
+      b1           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+      PBi          = PB(z)
+      if (lzb < 2) then
+        overlap(1,j) = PBi * overlap(1,b1)
+        kei(1,j)     = PBi * kei(1,b1) + zz2 * overlap(1,j)
+      else
+        nb           = lzb - 1
+        zinv2_nb     = zinv2 * nb
+        b_momenta(z) = b_momenta(z) - 1
+        b2           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+        overlap(1,j) = PBi * overlap(1,b1) + zinv2_nb * overlap(1,b2)
+        kei(1,j)     = PBi * kei(1,b1) + zinv2_nb * kei(1,b2) + &
+                       zz2 * overlap(1,j) - zz_eb * nb * overlap(1,b2)
+      end
+    end
+
+    lbub = .b%l - .a%l
+    do la = 1, .a%l
+      la1_n_comp_sum = (la-1).n_comp_sum + 1
+      la_n_comp_sum  = la.n_comp_sum
+      lbub           = lbub + 1
+      do lb = 1, lbub
+        lb1_n_comp_sum = (lb-1).n_comp_sum+1
+        lb_n_comp_sum  = lb.n_comp_sum
+        do b = lb1_n_comp_sum, lb_n_comp_sum
+          b_momenta    = momenta(:,b)
+          z            = b_momenta.first_nonzero_component
+          lzb          = b_momenta(z)
+          b_momenta(z) = b_momenta(z) - 1
+          b1           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+          PBi          = PB(z)
+          if (lzb == 1) then
+            do a = la1_n_comp_sum, la_n_comp_sum
+              lza = momenta(z,a)
+              if (lza == 0) then
+                overlap(a,b) = PBi * overlap(a,b1)
+                kei(a,b)     = PBi * kei(a,b1) + zz2 * overlap(a,b)
+              else
+                a_momenta    = momenta(:,a)
+                a_momenta(z) = a_momenta(z) - 1
+                a1           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+                zinv2_na     = zinv2 * lza
+                overlap(a,b) = PBi * overlap(a,b1) + zinv2_na * overlap(a1,b1)
+                kei(a,b)     = PBi * kei(a,b1) + zinv2_na * kei(a1,b1) + &
+                               zz2 * overlap(a,b)
+              end
+            end
+          else
+            nb           = lzb - 1
+            zinv2_nb     = zinv2 * nb
+            zz_eb_nb     = zz_eb * nb
+            b_momenta(z) = b_momenta(z) - 1
+            b2           = index(b_momenta(1),b_momenta(2),b_momenta(3))
+            do a = la1_n_comp_sum, la_n_comp_sum
+              lza = momenta(z,a)
+              if (lza==0) then
+                overlap(a,b) = PBi * overlap(a,b1) + zinv2_nb * overlap(a,b2)
+                kei(a,b)     = PBi * kei(a,b1) + zinv2_nb * kei(a,b2)+ &
+                               zz2 * overlap(a,b) - zz_eb_nb * overlap(a,b2)
+              else
+                zinv2_na     = zinv2 * lza
+                a_momenta    = momenta(:,a)
+                a_momenta(z) = a_momenta(z) - 1
+                a1           = index(a_momenta(1),a_momenta(2),a_momenta(3))
+                overlap(a,b) = PBi * overlap(a,b1) + zinv2_nb * overlap(a,b2) +&
+                               zinv2_na * overlap(a1,b1)
+                kei(a,b)     = PBi * kei(a,b1) + zinv2_nb * kei(a,b2) + &
+                               zinv2_na * kei(a1,b1) + &
+                               zz2 * overlap(a,b) - zz_eb_nb * overlap(a,b2)
+              end
+            end
+          end
+        end
+      end
+    end
+    deallocate(momenta)
+    deallocate(index)
+  end
+
+  get_nuc(ab,mass_c,pos_c)
+  ! Calculate the nuclear attraction matrix for the two shells with the
+  ! nucleus at c.
+    IN :: self
+    MAT, OUT :: ab
+    DBL, IN :: mass_c
+    VEC(3), IN :: pos_c
+    VEC, PTR :: es
+    INT :: n
+    n = (.a%l+.b%l).n_comp_sum - (max(.a%l,.b%l)-1).n_comp_sum
+    es.create(n)
+    .make_nuc_es(es,mass_c,pos_c)
+    .transfer(es,ab)
+    es.destroy
+    .to_normalize(ab)
+  end
+
+  make_nuc_es(es,mass_c,pos_c)
+  ! Make the (es) nuclear attraction integrals, summed over primitives
+  ! Numbers may be slightly different to cadpac due to a relativistic correction
+  ! term.
+    IN :: self
+    VEC, OUT :: es
+    DBL, IN :: mass_c
+    VEC(3), IN :: pos_c
+    VEC, PTR :: esadd
+    MAT, PTR :: Ix,Iy,Iz
+    RYS, PTR :: rysa
+    VEC, PTR :: rzt,ce
+    IMAT, PTR :: momenta
+    VEC(3) :: P,PA,PB,QP,ara,AB
+    DBL :: QP2,a,b,zeta,zinv,kab,rho,xx,eta_c
+    INT :: ag,bg,e,eub,nroots,n_e
+    DBL :: norma,normb,norm,r2ab
+
+    eub  = size(es)
+    n_e  = .a%l + .b%l
+    AB   = .a%pos - .b%pos
+    r2ab = dot_product(AB,AB)
+
+    if (mass_c < TOL(15)) then
+      eta_c=1.0d30  ! Very big.
+    else
+      eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+    end
+   eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
+    esadd.create(eub)
+    es=ZERO
+    nroots=(n_e+2)/2
+    rysa.create(nroots)
+    Ix.create(nroots,n_e+1)
+    Iy.create(nroots,n_e+1)
+    Iz.create(nroots,n_e+1)
+    rzt.create(nroots)
+    ce.create(nroots)
+
+    momenta.create(3, eub)
+    momenta.make_cartesian_components(max(.a%l,.b%l),n_e)
+    momenta = momenta + 1
+
+    norm=TWO*PI
+    do ag = 1, .a%n_cc
+      a     = .a%ex(ag)
+      norma = norm * .a%cc(ag)
+      ara   = a * .a%pos
+      do bg = 1, .b%n_cc
+        b     = .b%ex(bg)
+        zeta  = a + b
+        zinv  = ONE / zeta
+        kab   = exp(-a * b * r2ab * zinv)
+        rho   = zeta * eta_c / (zeta + eta_c)
+        P     = (ara + b * .b%pos) * zinv
+        PA    = P - .a%pos
+        PB    = P - .b%pos
+        QP    = pos_c - P
+        QP2   = dot_product(QP,QP)
+        normb = norma * .b%cc(bg) * sqrt(rho*zinv) * kab * zinv
+        xx    = rho * QP2
+        rysa.get_weights(xx)
+        .nuc_form_2d_ints(Ix,Iy,Iz,rysa%r,rho,zinv,PA,PB,QP,rzt,ce,n_e)
+        do e=1,eub
+          esadd(e) = sum(Ix(:,momenta(1,e)) * Iy(:,momenta(2,e)) * &
+                                      Iz(:,momenta(3,e)) * rysa%w)
+        end
+        es=es+normb*esadd
+      end
+    end
+    momenta.destroy
+    Ix.destroy
+    Iy.destroy
+    Iz.destroy
+    rysa.destroy
+    esadd.destroy
+    rzt.destroy
+    ce.destroy
+  end
+
+  nuc_form_2d_ints(Ix,Iy,Iz,t2,rho,zinv,PA,PB,QP,rzt,ce,n_e) [pure]
+  ! Forms the two dimentional integrals
+    IN :: self
+    MAT, INOUT :: Ix,Iy,Iz
+    VEC, IN :: t2
+    DBL, IN :: rho,zinv
+    INT, IN :: n_e
+    VEC(3), IN :: PA,PB,QP
+    VEC, INOUT :: rzt,ce
+    INT :: e,e1,ep1
+    Ix(:,1) = ONE
+    Iy(:,1) = ONE
+    Iz(:,1) = ONE
+    if (n_e/=0) then
+       rzt = rho*t2*zinv
+       if (.a%l > .b%l) then
+         Ix(:,2)=PA(1)+rzt(:)*QP(1)
+         Iy(:,2)=PA(2)+rzt(:)*QP(2)
+         Iz(:,2)=PA(3)+rzt(:)*QP(3)
+       else
+         Ix(:,2)=PB(1)+rzt(:)*QP(1)
+         Iy(:,2)=PB(2)+rzt(:)*QP(2)
+         Iz(:,2)=PB(3)+rzt(:)*QP(3)
+       end
+       ce = (ONE-rzt)*HALF*zinv
+       if (n_e>1) then
+         do e = 2,n_e
+           e1=e-1
+           ep1=e+1
+           Ix(:,ep1)=Ix(:,2)*Ix(:,e)+e1*ce(:)*Ix(:,e1)
+           Iy(:,ep1)=Iy(:,2)*Iy(:,e)+e1*ce(:)*Iy(:,e1)
+           Iz(:,ep1)=Iz(:,2)*Iz(:,e)+e1*ce(:)*Iz(:,e1)
+         end
+       end
+    end
+  end
+
+  transfer(es,ab) [pure]
+  ! Applies the transfer equation to (e|s) to give (a|b)
+    IN :: self
+    VEC, IN :: es
+    MAT, OUT :: ab
+    if (.a%l > .b%l) then
+      .transfer_l_a_highest(es,ab)
+    else
+      .transfer_l_b_highest(es,ab)
+    end
+  end
+
+  transfer_l_a_highest(es,ab) [pure]
+  ! Applies the transfer equation to (e|s) to give (a|b)
+  ! where a has the higher angular momentum.
+    IN :: self
+    VEC, IN :: es
+    MAT, OUT :: ab
+    VEC(3) :: ABvec
+    IMAT, allocatable :: momenta
+    IMAT3, allocatable :: index
+    IVEC(3) :: a_momenta,b_momenta
+    MAT, PTR :: int_new,int_old
+    INT :: a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum
+    INT :: a1,b1,z,n_e,eadd
+    DBL :: ABi
+
+    select case (.b%l)
+      case (0)
+        ab(:,1)=es
+
+      case (1)
+        ABvec = .a%pos - .b%pos
+        eadd  = (.a%l-1).n_comp_sum
+        n_e   = .a%l + .b%l
+        aub   = (n_e-1).n_comp_sum - eadd
+
+        allocate(momenta(3, n_e.n_comp_sum))
+        momenta.make_cartesian_components(0,n_e)
+        allocate(index(0:n_e, 0:n_e, 0:n_e))
+        index.make_index_of_components(momenta)
+
+        do b=1,3
+          z   = momenta(:,b+1).first_nonzero_component
+          ABi = ABvec(z)
+          do a=1,aub
+            a_momenta    = momenta(:, a + eadd)
+            a_momenta(z) = a_momenta(z) + 1
+            a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+            ab(a,b)      = es(a1) + ABi * es(a)
+          end
+        end
+        deallocate(index)
+        deallocate(momenta)
+
+      case default
+        ABvec = .a%pos - .b%pos
+        n_e   = .a%l + .b%l
+        eadd  = (max(.a%l,.b%l)-1).n_comp_sum
+        aub   = (n_e-1).n_comp_sum - eadd
+
+        allocate(momenta(3, n_e.n_comp_sum))
+        momenta.make_cartesian_components(0,n_e)
+        allocate(index(0:n_e, 0:n_e, 0:n_e))
+        index.make_index_of_components(momenta)
+
+        allocate(int_new(aub,3))
+        do b=1,3
+          z   = momenta(:,b+1).first_nonzero_component
+          ABi = ABvec(z)
+          do a=1,aub
+            a_momenta    = momenta(:, a + eadd)
+            a_momenta(z) = a_momenta(z) + 1
+            a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+            int_new(a,b) = es(a1) + ABi * es(a)
+          end
+        end
+
+        do lb=2, .b%l-1
+          lb1_n_comp_sum = (lb-1).n_comp_sum
+          lb2_n_comp_sum = (lb-2).n_comp_sum
+          bub            = lb.n_comp_sum - lb1_n_comp_sum
+          aub            = (n_e-lb).n_comp_sum - eadd
+          int_old        => int_new
+          nullify(int_new)
+          allocate(int_new(aub,bub))
+          do b=1,bub
+            b_momenta    = momenta(:, b + lb1_n_comp_sum)
+            z            = b_momenta.first_nonzero_component
+            b_momenta(z) = b_momenta(z) - 1
+            b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+            ABi          = ABvec(z)
+            do a=1,aub
+              a_momenta    = momenta(:, a + eadd)
+              a_momenta(z) = a_momenta(z) + 1
+              a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+              int_new(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
+            end
+          end
+          deallocate(int_old)
+        end
+
+        lb1_n_comp_sum = (.b%l-1).n_comp_sum
+        lb2_n_comp_sum = (.b%l-2).n_comp_sum
+        bub            = .b%l.n_comp_sum - lb1_n_comp_sum
+        aub            = (n_e-.b%l).n_comp_sum - eadd
+        int_old        => int_new
+        do b=1,bub
+          b_momenta    = momenta(:, b + lb1_n_comp_sum)
+          z            = b_momenta.first_nonzero_component
+          b_momenta(z) = b_momenta(z) - 1
+          b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+          ABi          = ABvec(z)
+          do a=1,aub
+            a_momenta    = momenta(:, a + eadd)
+            a_momenta(z) = a_momenta(z) + 1
+            a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+            ab(a,b)      = int_old(a1,b1) + ABi * int_old(a,b1)
+          end
+        end
+        deallocate(int_old)
+        deallocate(index)
+        deallocate(momenta)
+    end
+  end
+
+  transfer_l_b_highest(es,ab) [pure]
+  ! Applies the transfer equation to (e|s) to give (a|b)
+  ! where b has the higher angular momentum.
+    IN :: self
+    VEC, IN :: es
+    MAT, OUT :: ab
+    VEC(3) :: BAvec
+    MAT, PTR :: int_new,int_old
+    IMAT, allocatable :: momenta
+    IMAT3, allocatable :: index
+    IVEC(3) :: a_momenta,b_momenta
+    INT :: a,b,la,aub,bub,la1_n_comp_sum,la2_n_comp_sum
+    INT :: a1,b1,z,n_e,eadd
+    DBL :: BAi
+
+    select case (.a%l)
+      case (0)
+        ab(1,:)=es
+
+      case (1)
+        n_e   = .a%l + .b%l
+        BAvec = .b%pos - .a%pos
+        eadd  = (.b%l-1).n_comp_sum
+        bub   = (n_e-1).n_comp_sum - eadd
+
+        allocate(momenta(3, n_e.n_comp_sum))
+        momenta.make_cartesian_components(0,n_e)
+        allocate(index(0:n_e, 0:n_e, 0:n_e))
+        index.make_index_of_components(momenta)
+
+        do a=1,3
+          z   = momenta(:,a+1).first_nonzero_component
+          BAi = BAvec(z)
+          do b=1, bub
+            b_momenta    = momenta(:, b + eadd)
+            b_momenta(z) = b_momenta(z) + 1
+            b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+            ab(a,b)      = es(b1) + BAi * es(b)
+          end
+        end
+        deallocate(index)
+        deallocate(momenta)
+
+      case default
+        BAvec = .b%pos - .a%pos
+        n_e   = .a%l + .b%l
+        eadd  = (.b%l-1).n_comp_sum
+        bub   = (n_e-1).n_comp_sum - eadd
+
+        allocate(momenta(3, n_e.n_comp_sum))
+        momenta.make_cartesian_components(0,n_e)
+        allocate(index(0:n_e, 0:n_e, 0:n_e))
+        index.make_index_of_components(momenta)
+
+        allocate(int_new(3,bub))
+        do a = 1, 3
+          z   = momenta(:,a+1).first_nonzero_component
+          BAi = BAvec(z)
+          do b = 1, bub
+            b_momenta    = momenta(:, b + eadd)
+            b_momenta(z) = b_momenta(z) + 1
+            b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+            int_new(a,b) = es(b1) + BAi * es(b)
+          end
+        end
+
+        do la=2, .a%l - 1
+          la1_n_comp_sum = (la-1).n_comp_sum
+          la2_n_comp_sum = (la-2).n_comp_sum
+          aub            = la.n_comp_sum - la1_n_comp_sum
+          bub            = (n_e-la).n_comp_sum - eadd
+          int_old=>int_new
+          nullify(int_new)
+          allocate(int_new(aub,bub))
+          do a=1,aub
+            a_momenta    = momenta(:,a + la1_n_comp_sum)
+            z            = a_momenta.first_nonzero_component
+            a_momenta(z) = a_momenta(z) - 1
+            a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
+            BAi          = BAvec(z)
+            do b=1,bub
+              b_momenta    = momenta(:,b + eadd)
+              b_momenta(z) = b_momenta(z) + 1
+              b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+              int_new(a,b) = int_old(a1,b1) + BAi * int_old(a1,b)
+            end
+          end
+          deallocate(int_old)
+        end
+
+        la1_n_comp_sum = (.a%l-1).n_comp_sum
+        la2_n_comp_sum = (.a%l-2).n_comp_sum
+        aub            = .a%l.n_comp_sum - la1_n_comp_sum
+        bub            = (n_e-.a%l).n_comp_sum - eadd
+        int_old=>int_new
+        do a=1,aub
+          a_momenta    = momenta(:,a + la1_n_comp_sum)
+          z            = a_momenta.first_nonzero_component
+          a_momenta(z) = a_momenta(z) - 1
+          a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
+          BAi          = BAvec(z)
+          do b=1,bub
+            b_momenta    = momenta(:,b + eadd)
+            b_momenta(z) = b_momenta(z) + 1
+            b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+            ab(a,b)      = int_old(a1,b1) + BAi * int_old(a1,b)
+          end
+        end
+        deallocate(int_old)
+        deallocate(index)
+        deallocate(momenta)
+    end
+  end
+
+! Normalization routines and functions
+
+  normalize(ab) [pure]
+  ! Multiply the matrix by the orbital normalization coefficients
+  ! for orbitals a and b.
+    IN :: self
+    MAT, INOUT :: ab
+    .to_normalize(ab)
+  end
+
+  to_normalize(ab) [pure]
+  ! Multiply the matrix by the orbital normalization coefficients
+  ! for orbitals a and b.
+    IN :: self
+    MAT, INOUT :: ab
+    VEC, allocatable :: anorm,bnorm
+    INT :: a,b
+    allocate(anorm( .a%n_comp ));    anorm.normalizing_factors( .a%l )
+    allocate(bnorm( .b%n_comp ));    bnorm.normalizing_factors( .b%l )
+    do a = 1, .a%n_comp
+      do b = 1, .b%n_comp
+        ab(a,b)=ab(a,b)*anorm(a)*bnorm(b)
+      end
+    end
+    deallocate(bnorm)
+    deallocate(anorm)
+  end
+
+end

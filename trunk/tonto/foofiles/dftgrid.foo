@@ -1,0 +1,1232 @@
+!-------------------------------------------------------------------------------
+!
+! DFTGRID: Numerical integration grid for DFT calculations
+!
+! This routine gets a 3-D grid which is a combination of a 
+! radial grid and a spherical grid.
+!
+! In getting a complete molecular grid array, firstly a grid at the 
+! origin is made. This is the purpose of the routine "make_atom_grid".  
+! This grid is then effectively copied to each atom of the molecule.
+! More exactly, for each atom in the molecule, this grid at the origin 
+! is copied, re-scaled depending on the Bragg-Slater radii,
+! and then displaced so that its origin is now centred on the atom.  
+!
+! Each re-scaled, displaced grid is then "partitioned".  The partitioning modifies 
+! the weights of the displaced grid so that effectively it doesn't overlap 
+! with the displaced grids on all the other atoms.
+!
+! The displace and partition of the original "atom" grid is done by
+! the routine "rescale_displace_partition".
+!
+! (c) s. k. wolff, university of western australia (1999)
+!     hacked by dylan, 10 minutes later.
+!
+! $Id$
+!
+!-------------------------------------------------------------------------------
+module DFTGRID     
+
+   use TYPES
+   use ERROR
+   use MM
+   use INPUT
+   use OUTPUT
+   use IVEC
+   use MAT
+   use ATOM
+   use ATOMVEC
+
+   implicit none
+
+#  include "macros"
+#  include "dftgrid.int"
+
+!  type dftgrid_type
+!     STR :: spherical_grid_kind              ! Type of spherical grid
+!     STR :: radial_grid_kind                 ! Type of radial grid
+!     INT :: spherical_grid_order             ! Order of the spherical grid
+!     INT :: radial_grid_order                ! Order of the radial grid
+!     INT :: n_spherical_pts                  ! No of spherical grid points
+!     INT :: n_radial_pts                     ! No of radial grid points
+!     INT :: n_atom_pts                       ! No of atom grid points = n_spherical_pts*n_radial_pts
+!     DBL :: becke_m_partition_power = FIVE   ! Used in smoothing the partition boundary
+!     DBL :: gauss_chebyshev_alpha   = ONE    ! Gauss-Chebyshev radial grid scale parameter
+!     DBL :: gauss_chebyshev_m       = ONE    ! Gauss-Chebyshev radial grid power parameter
+!     DBL :: euler_maclaurin_alpha   = ONE    ! Euler-Maclaurin radial grid scale parameter
+!     DBL :: euler_maclaurin_m       = ONE    ! Euler-Maclaurin radial grid power parameter
+!  end
+
+contains
+
+
+!  **************************
+!  Create and destroy methods
+!  **************************
+
+   create
+   ! Create an object
+      PTR :: self
+      nullify(self)
+      allocate(self)
+      std_mm.add(DFTGRID_SIZE)
+      .set_default
+   end
+
+   destroy 
+   ! Destroy an object
+      PTR :: self
+      if (.destroyed) return
+      std_mm.delete(DFTGRID_SIZE)
+      deallocate(self)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   set_default
+   ! Set up a default crystal object
+      .spherical_grid_kind = 'lebedev'
+      .spherical_grid_order = 19
+      .radial_grid_kind = 'gauss_chebyshev'
+      .radial_grid_order = 30
+      .becke_m_partition_power = TWO
+      .gauss_chebyshev_m       = ONE
+      .gauss_chebyshev_alpha   = THREE
+      .euler_maclaurin_m       = TWO
+      .euler_maclaurin_alpha   = TWO
+      .set_grid_data
+   end
+
+!  ************
+!  Read methods
+!  ************
+
+   read(in) 
+   ! Read an DFTGRID object from file "in"
+      INPUT :: in
+      STR :: word
+      read_loop : do
+         in.read(word)
+         select case (word)
+            case("end");                     exit read_loop
+            case("spherical_grid_kind");     in.read(.spherical_grid_kind)
+            case("spherical_grid_order");    in.read(.spherical_grid_order)
+            case("radial_grid_kind");        in.read(.radial_grid_kind)
+            case("radial_grid_order");       in.read(.radial_grid_order)
+            case("becke_m_partition_power"); in.read(.becke_m_partition_power)
+            case("gauss_chebyshev_m");       in.read(.gauss_chebyshev_m)
+            case("gauss-chebyshev_m");       in.read(.gauss_chebyshev_m)
+            case("gauss_chebyshev_alpha");   in.read(.gauss_chebyshev_alpha)
+            case("gauss-chebyshev_alpha");   in.read(.gauss_chebyshev_alpha)
+            case("euler_maclaurin_m");       in.read(.euler_maclaurin_m)
+            case("euler-maclaurin_m");       in.read(.euler_maclaurin_m)
+            case("euler_maclaurin_alpha");   in.read(.euler_maclaurin_alpha)
+            case("euler-maclaurin_alpha");   in.read(.euler_maclaurin_alpha)
+            case default;                    DIE("unknown option, "// word.trim)
+         end 
+      end do read_loop
+      .set_grid_data
+   end
+
+!  *****************************************************************
+!  Routines which evaulate the number of grid points for each scheme
+!  *****************************************************************
+
+   set_grid_data
+   ! Set all the grid data preliminary to grid generation
+      .set_radial_grid_data
+      .set_spherical_grid_data
+      .n_atom_pts = .n_spherical_pts*.n_radial_pts
+   end
+  
+   set_radial_grid_data
+   ! Set the radial grid data
+      select case (.radial_grid_kind)
+         case ("gauss_chebyshev");   .n_radial_pts = .radial_grid_order
+         case ("euler_maclaurin");   .n_radial_pts = .radial_grid_order
+         case default;               DIE("Unknown radial grid kind")
+      end 
+   end 
+
+   set_spherical_grid_data
+   ! Set any spherical grid data parameters. At the moment 
+   ! only spherical Lebedev grids are available
+      select case (.spherical_grid_kind)
+         case ("lebedev");  .set_lebedev_data
+         case default;      DIE("Unknown spherical type")
+      end select
+   end 
+
+   set_lebedev_data(mm1,mm2,mm3,nn1,nn2,nn3)
+   ! Sets the Lebedev grid parameters
+   ! NOTE: This should match "get_lebedev_wxyz"
+      INT, OUT, optional :: mm1, mm2, mm3, nn1, nn2, nn3
+      INT :: m1, m2, m3, n1, n2, n3
+      ! NOTE: If ai = ZERO, then .mi  = 0, for i = 1, 2, 3.
+      m1 = 6; m2 = 12; m3 = 8
+      select case (.spherical_grid_order)
+         case (9);  m2 = 0;         n1 =  0; n2 =  1; n3 =  0
+         case (11);                 n1 =  1; n2 =  0; n3 =  0
+         case (13); m2 = 0; m3 = 0; n1 =  2; n2 =  1; n3 =  0
+         case (15); m2 = 0;         n1 =  2; n2 =  1; n3 =  0
+         case (17); m1 = 0;         n1 =  3; n2 =  1; n3 =  0
+         case (19);                 n1 =  3; n2 =  0; n3 =  1 
+         case (23);                 n1 =  4; n2 =  1; n3 =  1
+         case (25); m2 = 0;         n1 =  5; n2 =  2; n3 =  1
+         case (27);                 n1 =  5; n2 =  1; n3 =  2
+         case (29); m2 = 0;         n1 =  6; n2 =  2; n3 =  2
+         case (35);                 n1 =  7; n2 =  2; n3 =  4
+         case (41); m2 = 0;         n1 =  9; n2 =  3; n3 =  6
+         case (47);                 n1 = 10; n2 =  3; n3 =  9
+         case (53); m2 = 0;         n1 = 12; n2 =  4; n3 = 12
+         case (59);                 n1 = 13; n2 =  4; n3 = 16
+         case default; DIE("Lebedev grid order number doesn't exist")
+      end 
+      .n_spherical_pts = m1 + m2 + m3 + 24*n1 + 24*n2 + 48*n3
+      if (present(mm1)) mm1 = m1
+      if (present(mm2)) mm2 = m2
+      if (present(mm3)) mm3 = m3
+      if (present(nn1)) nn1 = n1
+      if (present(nn2)) nn2 = n2
+      if (present(nn3)) nn3 = n3
+   end
+
+!  ************************
+!  Grid integration methods
+!  ************************
+
+   integrate(f,atom) result(res)
+   ! Integrate the vector function "f" over grids defined for the atoms
+   ! in the ATOMVEC "atom".
+      interface
+         f(r) result(res)
+            VEC(3) :: r
+            DBL    :: res
+         end
+      end
+      ATOMVEC :: atom
+      DBL     :: res
+      INT :: n_pt, a, n
+      MAT, PTR :: pt0,pt
+      VEC, PTR :: wt0,wt
+      res = ZERO
+      .set_grid_data
+      n_pt = .n_atom_pts
+      pt0.create(n_pt,3)
+      wt0.create(n_pt)
+      pt.create(n_pt,3)
+      wt.create(n_pt)
+      .make_atom_grid(pt0,wt0)
+      do a = 1, atom.n_atom
+         .rescale_displace_partition(pt0,wt0,pt,wt,a,atom)
+         do n = 1,n_pt
+            res = res + wt(n)*f(pt(n,:))
+         end
+      end
+      wt.destroy
+      pt.destroy
+      wt0.destroy
+      pt0.destroy
+   end
+
+!  ************************
+!  Grid generation routines
+!  ************************
+
+   make_grid(pt,wt,atom)
+   ! Make an entire dft integration grid, points and weights ("pt","wt")
+   ! for a given a list of "atom" positions.
+      MAT :: pt
+      VEC :: wt
+      ATOMVEC :: atom
+      MAT, PTR :: pt0
+      VEC, PTR :: wt0
+      INT :: n_pt, a, n, n_atom
+      .set_grid_data
+      n_atom = atom.n_atom
+      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts*n_atom,"pt incorrectly dimensioned")
+      ENSURE(size(wt)==.n_atom_pts*n_atom,"wt incorrectly dimensioned")
+      n_pt = .n_atom_pts
+      pt0.create(n_pt,3)
+      wt0.create(n_pt)
+      .make_atom_grid(pt0,wt0)
+      n = 0
+      do a = 1,n_atom
+         .rescale_displace_partition(pt0,wt0,pt(n+1:n+n_pt,:),wt(n+1:n+n_pt),a,atom)
+         n = n + n_pt
+      end
+      wt0.destroy
+      pt0.destroy
+   end
+
+   rescale_displace_partition(pt0,wt0,pt,wt,a,atom)
+   ! Rescales the grid to adjust it to the atom size, then
+   ! displaces the grid ("pt0","wt0") from the origin to the position
+   ! of "atom" number "a", and partition it to work with all the other
+   ! atoms, returning the grid ("pt","wt") = ("pt0" + disp, partition*"wt0")
+   ! Th weights are altered according to the Becke atomic partition function 
+   ! for the displaced grid centred on atom "a".
+   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+      MAT :: pt0,pt
+      VEC :: wt0,wt
+      INT, IN  :: a
+      ATOMVEC, IN :: atom
+      INT :: n, m, n_atom, i, j, ii
+      VEC(3) :: disp,rij,rni,rnj
+      DBL :: dij,dni,dnj,uij,vij, bsri, bsrj, chi, wij, aij, h, s, alpha
+      MAT, PTR :: partition
+      STR :: symbol
+      .set_grid_data
+      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts,"pt incorrectly dimensioned")
+      ENSURE(size(pt0,2)==3 AND size(pt0,1)==.n_atom_pts,"pt0 incorrectly dimensioned")
+      ENSURE(size(wt)==.n_atom_pts,"wt incorrectly dimensioned")
+      ENSURE(size(wt0)==.n_atom_pts,"wt0 incorrectly dimensioned")
+      ENSURE(a>=1 AND a<= atom.n_atom,"`a' argument out of range")
+      !
+      ! (pt, wt) = (pt0, wt0)
+      pt = pt0; wt = wt0
+      !
+      ! Rescale the grid according to Becke's method
+      symbol = atom(a).chemical_symbol
+      if ( symbol == "H" ) then
+          alpha = atom(a).bragg_slater_radius
+      else 
+          alpha = HALF*atom(a).bragg_slater_radius
+      end
+      wt = alpha*alpha*alpha*wt
+      pt = alpha*pt
+      !
+      ! Displace the grid
+      disp = atom(a)%pos
+      do n = 1,.n_atom_pts 
+          pt(n,:) = pt(n,:) + disp
+      end
+      !
+      ! Partition the grid
+      m = .becke_m_partition_power
+      n_atom = atom.n_atom                 ! Number of atoms
+      partition.create(.n_atom_pts,n_atom) ! Create partition array 
+      partition = ONE
+      do i = 1,n_atom
+          bsri = atom(i).bragg_slater_radius
+          do j = 1,n_atom
+              if (i==j) cycle
+              bsrj = atom(j).bragg_slater_radius
+              chi = bsri/bsrj
+              wij = (chi - ONE)/(chi + ONE)
+              aij = wij/(wij*wij - ONE)
+              rij = atom(i)%pos - atom(j)%pos
+              dij = sqrt(sum(rij*rij))
+              do n = 1,.n_atom_pts
+                  rni = pt(n,:) - atom(i)%pos
+                  rnj = pt(n,:) - atom(j)%pos
+                  dni = sqrt(sum(rni*rni))
+                  dnj = sqrt(sum(rnj*rnj))
+                  uij = (dni - dnj)/dij
+                  vij = uij + aij*(ONE - uij*uij)
+                  h = vij
+                  do ii = 1, m
+                      h = 1.5d0*h - HALF*h*h*h
+                  end
+                  s = HALF*(ONE - h)
+                  ! ===========================================
+                  partition(n,i) = partition(n,i)*s
+              end
+          end
+      end
+      ! Normalize the partitioning function and modify the grid weights
+      do n = 1,.n_atom_pts
+          wt(n) = wt(n)*partition(n,a)/sum(partition(n,:))
+      end
+      partition.destroy
+   end
+
+   make_atom_grid(pt,wt)
+   ! Make the dft grid points "pt", and weights "wt" at the origin
+   ! suitable for integrating a single atom. It is made as the 
+   ! direct product of a spherical grid and radial grid.
+      MAT :: pt
+      VEC :: wt
+      INT :: i, j, k
+      DBL :: pi4, pi4r2w
+      MAT, PTR :: spherical_pt
+      VEC, PTR :: spherical_wt,radial_pt,radial_wt
+      .set_grid_data
+      ENSURE(size(pt,2)==3 AND size(pt,1)==.n_atom_pts,"pt incorrectly dimensioned")
+      ENSURE(size(wt)==.n_atom_pts,"wt incorrectly dimensioned")
+      ! Allocate the spherical and radial grids
+      spherical_pt.create(.n_spherical_pts,3)
+      spherical_wt.create(.n_spherical_pts)
+      radial_pt.create(.n_radial_pts)
+      radial_wt.create(.n_radial_pts)
+      ! Make the grids
+      .make_spherical_grid(spherical_pt,spherical_wt)
+      .make_radial_grid(radial_pt,radial_wt)
+      ! Do the direct product
+      pi4 = FOUR*PI          ! Include the factor 4*pi*r^2 in the weights.
+      k = 0
+      do i = 1,.n_radial_pts
+         pi4r2w = pi4*radial_pt(i)*radial_pt(i)*radial_wt(i)
+         do j = 1,.n_spherical_pts
+            k = k + 1
+            wt(k)   = pi4r2w*spherical_wt(j)
+            pt(k,:) = radial_pt(i)*spherical_pt(j,:)
+         end
+      end
+      radial_wt.destroy
+      radial_pt.destroy
+      spherical_wt.destroy
+      spherical_pt.destroy
+   end 
+
+   make_radial_grid(pt,wt)
+   ! Make a one-dimensional radial array of coordinates "pt"
+   ! and weights "wt"
+     VEC :: pt,wt
+     select case (.radial_grid_kind)
+       case ("gauss_chebyshev");   .make_gauss_chebyshev_grid(pt,wt)
+       case ("euler_maclaurin");   .make_euler_maclaurin_grid(pt,wt)
+       case default;               DIE("Unknown radial type")
+     end select
+   end 
+
+   make_gauss_chebyshev_grid(pt,wt)
+   ! Make a one-dimensional radial Gauss-Chebyshev array of 
+   ! coordinates "pt" and weights "wt".
+      VEC :: pt,wt
+      INT :: i, num
+      DBL :: alpha, m, rm, pm, tm, pf, a, x
+      alpha = .gauss_chebyshev_alpha
+      m     = .gauss_chebyshev_m
+      num   = .radial_grid_order
+      rm = ONE/m
+      pm = ONE + m
+      tm = ONE - m
+      pf = PI/num
+      do i = 1, num
+         a = cos(PI*(2*i-1)/(TWO*num))
+         x = (ONE + a)/(ONE - a)**rm
+         pt(i) = alpha*x
+         wt(i) = alpha*x*pf*(pm + a*tm)/(m*sqrt(ONE - a*a))
+      end
+   end 
+
+   make_euler_maclaurin_grid(pt,wt)
+   ! Make a one-dimensional radial Euler-Maclaurin array of 
+   ! coordinates "pt" and weights "wt"
+      VEC :: pt,wt
+      INT :: i, num
+      DBL :: alpha, m, rm, pm, tm, pf, n1, a, x
+      alpha = .euler_maclaurin_alpha
+      m     = .euler_maclaurin_m
+      num   = .radial_grid_order
+      rm = ONE/m
+      pm = ONE + m
+      tm = ONE - m
+      n1 = ONE + num 
+      pf = m/n1
+      do i = 1, num
+         a = i/n1
+         x = (a**m)/(ONE - a)**m
+         pt(i) = alpha*x
+         wt(i) = alpha*pf*(a**(-tm))/(ONE - a)**pm
+      end
+   end 
+
+   make_spherical_grid(pt,wt)
+   ! Make a three-dimensional spherical array of points "pt" 
+   ! and a one ! dimensional array of weights "wt".  
+   ! At the moment only spherical Lebedev grids are available
+      MAT :: pt
+      VEC :: wt
+      select case (.spherical_grid_kind)
+         case ("lebedev");  .make_lebedev_grid(pt,wt)
+         case default;      DIE("Unknown spherical type")
+      end select
+   end 
+   
+   make_lebedev_grid(pt,wt)
+   ! Make a three-dimensional spherical Lebedev array of points "pt" 
+   ! and a one dimensional array of weights "wt".  
+      MAT :: pt
+      VEC :: wt
+      INT :: m1, m2, m3, n1, n2, n3
+      INT :: k, n
+      DBL :: a1, a2, a3          ! coefficients of quadrature expansion
+      VEC, PTR :: b, c, d        ! coefficients of quadrature expansion
+      VEC, PTR :: l, p, r, s     ! used to generate coordinates of grid
+      DBL :: m, q, w             ! used to generate coordinates of grid
+      DBL :: sr2, sr3
+      pt = ZERO
+      wt = ZERO
+      .set_lebedev_data(m1,m2,m3,n1,n2,n3)
+      b.create(n1); c.create(n2); d.create(n3)
+      l.create(n1)
+      p.create(n2)
+      r.create(n3); s.create(n3)
+      select case (.spherical_grid_order)
+         case (9)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 15 (1975) 48. 
+            !
+            DIE_IF(n1/=0 OR n2/=1 OR n3/=0,"Mismatch of n1, n2, n3.")
+            a1   = 1.0d0/105.0d0
+            a2   = ZERO
+            a3   = 9.0d0/280.0d0
+            c(1) = 1.0d0/35.0d0
+            p(1) = 0.888073833977d0
+         case (11)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 15 (1975) 48. 
+            !
+            DIE_IF(n1/=1 OR n2/=0 OR n3/=0,"Mismatch of n1, n2, n3.")
+            a1   = 4.0d0/315.0d0
+            a2   = 64.0d0/2835.0d0
+            a3   = 27.0d0/1280.0d0
+            b(1) = 11.0d0*11.0d0*11.0d0*11.0d0/725760.0d0
+            l(1) = 0.301511344578d0
+            !
+         case (13)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 15 (1975) 48. 
+            !
+            DIE_IF(n1/=2 OR n2/=1 OR n3/=0,"Mismatch of n1, n2, n3.")
+            a1   = 0.0138665921047d0
+            a2   = ZERO
+            a3   = ZERO
+            b(1) = 0.0130509318626d0
+            b(2) = 0.0132064232231d0
+            c(1) = 0.0119426635549d0
+            l(1) = 0.286640146767d0
+            l(2) = 0.659905001656d0
+            p(1) = 0.841991943785d0
+         case (15)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 15 (1975) 48. 
+            !
+            DIE_IF(n1/=2 OR n2/=1 OR n3/=0,"Mismatch of n1, n2, n3.")
+            a1   = 0.0115440115441d0
+            a2   = ZERO
+            a3   = 0.0119439090859d0
+            b(1) = 0.0111105557106d0
+            b(2) = 0.0118765012945d0
+            c(1) = 0.0118123037469d0
+            l(1) = 0.369602846454d0
+            l(2) = 0.694354006603d0
+            p(1) = 0.927330657151d0
+         case (17)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 15 (1975) 48. 
+            !
+            DIE_IF(n1/=3 OR n2/=1 OR n3/=0,"Mismatch of n1, n2, n3.")
+            a1   = ZERO
+            a2   = 0.00200918797730d0
+            a3   = 0.00988550016044d0
+            b(1) = 0.00844068048232d0
+            b(2) = 0.00987390742389d0
+            b(3) = 0.00935732169000d0
+            l(1) = 0.162263300152d0
+            l(2) = 0.383386152638d0
+            l(3) = 0.686647945709d0
+            c(1) = 0.00969499636166d0
+            p(1) = 0.878158910604d0
+         case (19)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 16 (1976) 293. 
+            !
+            DIE_IF(n1/=3 OR n2/=0 OR n3/=1,"Mismatch of n1, n2, n3.")
+            a1   = 5.99631368862d-4
+            a2   = 7.37299971862d-3
+            a3   = 7.21051536014d-3
+            b(1) = 7.57439415905d-3
+            b(2) = 6.75382948631d-3
+            b(3) = 7.11635549312d-3
+            d(1) = 6.99108735330d-3
+            l(1) = 0.157467667204d0
+            l(2) = 0.417496122797d0
+            l(3) = 0.676441040011d0
+            r(1) = 0.882270011260d0
+            s(1) = 0.140355381171d0
+         case (23)
+            !
+            ! REF: V. I. Lebedev, Zh. Vyshisl. Mat. Mat. Fiz., 16 (1976) 293. 
+            !
+            DIE_IF(n1/=4 OR n2/=1 OR n3/=1,"Mismatch of n1, n2, n3.")
+            a1   = 1.78234044724d-3
+            a2   = 5.71690594998d-3
+            a3   = 5.57338317884d-3
+            b(1) = 5.51877146727d-3
+            b(2) = 5.15823771181d-3
+            b(3) = 5.60870408259d-3
+            b(4) = 4.10677702817d-3
+            c(1) = 5.05184606462d-3
+            d(1) = 5.53024891623d-3
+            l(1) = 0.444693317871d0
+            l(2) = 0.289246562758d0
+            l(3) = 0.671297344270d0
+            l(4) = 0.129933544765d0
+            p(1) = 0.938319218138d0
+            r(1) = 0.836036015482d0
+            s(1) = 0.159041710538d0
+         case (25)
+            !
+            ! REF: V. I. Lebedev, Sibirsk. Mat. Zh. 18 (1977) 132. 
+            !
+            DIE_IF(n1/=5 OR n2/=2 OR n3/=1,"Mismatch of n1, n2, n3.")
+            a1   = -5.52263991974d-2
+            a2   = ZERO
+            a3   = 4.45027460745d-3
+            b(1) = 3.97640801805d-3
+            b(2) = 4.40140065038d-3
+            b(3) = 4.49684106792d-3
+            b(4) = 5.04915345048d-3
+            b(5) = 1.72454435055d-2
+            c(1) = 5.19806986406d-3
+            c(2) = 4.23108309536d-3
+            d(1) = 4.69572097257d-3
+            l(1) = 0.698190665845d0
+            l(2) = 0.658740524346d0
+            l(3) = 0.449204468740d0
+            l(4) = 0.252041949021d0
+            l(5) = 4.03854405009d-2
+            p(1) = 0.935022745881d0
+            p(2) = 0.812913653173d0
+            r(1) = 0.486466535887d0
+            s(1) = 0.843636521069d0
+         case (27)
+            !
+            ! REF: V. I. Lebedev, Sibirsk. Mat. Zh. 18 (1977) 132. 
+            !
+            DIE_IF(n1/=5 OR n2/=1 OR n3/=2,"Mismatch of n1, n2, n3.")
+            a1   = -1.31376912733d-3
+            a2   = -2.52272870489d-3
+            a3   = 4.18685388170d-3
+            b(1) = 5.31516797782d-3
+            b(2) = 4.25613135143d-3
+            b(3) = 4.11248239441d-3
+            b(4) = 3.59558489976d-3
+            b(5) = 4.04714237709d-3
+            c(1) = 4.22958270065d-3
+            d(1) = 4.07146759383d-3
+            d(2) = 4.08091422578d-3
+            l(1) = 0.703937339159d0
+            l(2) = 0.662033866370d0
+            l(3) = 0.464744872642d0
+            l(4) = 0.327742065497d0
+            l(5) = 0.101252624857d0  
+            p(1) = 0.850650808352d0
+            r(1) = 0.819343388819d0
+            r(2) = 0.939227929750d0
+            s(1) = 0.524493924092d0
+            s(2) = 0.323348454269d0
+         case (29)
+            !
+            ! REF: V. I. Lebedev, Sibirsk. Mat. Zh. 18 (1977) 132. 
+            !
+            DIE_IF(n1/=6 OR n2/=2 OR n3/=2,"Mismatch of n1, n2, n3.")
+            a1   = 8.54591172878d-4
+            a2   = ZERO
+            a3   = 3.59911928502d-3
+            b(1) = 3.65004580768d-3
+            b(2) = 3.60482260142d-3
+            b(3) = 3.57672966173d-3
+            b(4) = 3.44978842429d-3
+            b(5) = 3.10895312238d-3
+            b(6) = 2.35210141366d-3
+            c(1) = 3.60082093222d-3
+            c(2) = 2.98234496317d-3
+            d(1) = 3.57154055427d-3
+            d(2) = 3.39231220501d-3
+            l(1) = 0.701176641609d0
+            l(2) = 0.656632941022d0
+            l(3) = 0.472905413258d0
+            l(4) = 0.351564034558d0
+            l(5) = 0.221964523631d0
+            l(6) = 0.0961830852303d0
+            p(1) = 0.820326419828d0
+            p(2) = 0.964408914879d0
+            r(1) = 0.251003475177d0
+            r(2) = 0.902442529533d0
+            s(1) = 0.800072749407d0
+            s(2) = 0.412772408317d0
+         case (35)
+            !
+            ! REF: O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+            !
+            DIE_IF(n1/=7 OR n2/=2 OR n3/=4,"Mismatch of n1, n2, n3.")
+            a1   = 0.52659765761428065d-3
+            a2   = 0.25482199909403521d-2
+            a3   = 0.25123173709441058d-2
+            b(1) = 0.25304038224001323d-2
+            b(2) = 0.25132671684706878d-2
+            b(3) = 0.25017251210647733d-2
+            b(4) = 0.24453733047996786d-2
+            b(5) = 0.23026944325620758d-2
+            b(6) = 0.20142782609526094d-2
+            b(7) = 0.14624950815475142d-2
+            c(1) = 0.19109513147305082d-2
+            c(2) = 0.24174423575419847d-2
+            d(1) = 0.22366077071364263d-2
+            d(2) = 0.24169300107381179d-2
+            d(3) = 0.25122368647336706d-2
+            d(4) = 0.24966440519292456d-2
+            l(1) = 0.69093463105113458d0
+            l(2) = 0.64566647095194987d0
+            l(3) = 0.49143426555639500d0
+            l(4) = 0.39272598223217649d0
+            l(5) = 0.28612891787658218d0
+            l(6) = 0.17748365242374568d0
+            l(7) = 0.07568095866244468d0
+            p(1) = 0.97764280892098723d0
+            p(2) = 0.88181328936054412d0
+            r(1) = 0.09921769971362576d0
+            r(2) = 0.20548237125466495d0
+            r(3) = 0.10680182513533723d0
+            r(4) = 0.31042840327515130d0
+            s(1) = 0.33443631695748371d0
+            s(2) = 0.45023303874296735d0
+            s(3) = 0.59051570309804130d0
+            s(4) = 0.55501523681448068d0
+         case (41)
+            !
+            ! REF: V. I. Lebedev, Russian Acad. Sci. Dokl. Math. 45 (1992) 587.
+            !
+            DIE_IF(n1/=9 OR n2/=3 OR n3/=6,"Mismatch of n1, n2, n3.")
+            a1   = 0.3095121295d-3
+            a2   = ZERO
+            a3   = 0.1852379698d-2
+            b(1) = 0.9764331164d-3
+            b(2) = 0.1384737234d-2
+            b(3) = 0.1617210647d-2
+            b(4) = 0.1749564657d-2
+            b(5) = 0.1818471778d-2
+            b(6) = 0.1846715956d-2
+            b(7) = 0.1852028828d-2
+            b(8) = 0.1858812585d-2
+            b(9) = 0.1871790639d-2
+            c(1) = 0.1300321685d-2
+            c(2) = 0.1705153996d-2
+            c(3) = 0.1857161196d-2
+            d(1) = 0.1555213603d-2
+            d(2) = 0.1802239128d-2
+            d(3) = 0.1849830560d-2
+            d(4) = 0.1713904507d-2
+            d(5) = 0.1802658934d-2
+            d(6) = 0.1842866472d-2
+            l(1) = 0.6095034115d-1
+            l(2) = 0.1459036449d0
+            l(3) = 0.2384736701d0
+            l(4) = 0.3317920736d0
+            l(5) = 0.4215761784d0
+            l(6) = 0.5044419707d0
+            l(7) = 0.6372546939d0
+            l(8) = 0.6807744066d0
+            l(9) = 0.7040954938d0
+            p(1) = 0.9850133350d0
+            p(2) = 0.9180452877d0
+            p(3) = 0.7911019296d0
+            s(1) = 0.8213021581d-1
+            s(2) = 0.8999205842d-1
+            s(3) = 0.1816640840d0
+            s(4) = 0.1720795225d0
+            s(5) = 0.2634716655d0
+            s(6) = 0.3518280927d0
+            r(1) = 0.2778673190d0
+            r(2) = 0.5033564271d0
+            r(3) = 0.5984126497d0
+            r(4) = 0.3791035407d0
+            r(5) = 0.4742392842d0
+            r(6) = 0.5610263808d0
+         case (47)
+            !
+            ! REF: V. I. Lebedev, Russian Acad. Sci. Dokl. Math. 45 (1992) 587.
+            !
+            DIE_IF(n1/=10 OR n2/=3 OR n3/=9,"Mismatch of n1, n2, n3.")
+            a1    = 0.2192942090d-3
+            a2    = 0.1436433617d-2
+            a3    = 0.1421940344d-2
+            b(1)  = 0.6798123510d-3
+            b(2)  = 0.9913184235d-3
+            b(3)  = 0.1180207833d-2
+            b(4)  = 0.1296599602d-2
+            b(5)  = 0.1365871427d-2
+            b(6)  = 0.1402988604d-2
+            b(7)  = 0.1418645563d-2
+            b(8)  = 0.1421376741d-2
+            b(9)  = 0.1423996475d-2
+            b(10) = 0.1431554042d-2
+            c(1)  = 0.9254401499d-3
+            c(2)  = 0.1250239995d-2
+            c(3)  = 0.1394365843d-2
+            d(1)  = 0.1127089094d-2
+            d(2)  = 0.1345753761d-2
+            d(3)  = 0.1424957283d-2
+            d(4)  = 0.1261523341d-2
+            d(5)  = 0.1392547106d-2
+            d(6)  = 0.1418761677d-2
+            d(7)  = 0.1338366684d-2
+            d(8)  = 0.1393700862d-2
+            d(9)  = 0.1415914757d-2
+            l(1)  = 0.5087204410d-1
+            l(2)  = 0.1228198790d0
+            l(3)  = 0.2026890814d0
+            l(4)  = 0.2847745156d0
+            l(5)  = 0.3656719078d0
+            l(6)  = 0.4428264886d0
+            l(7)  = 0.5140619627d0
+            l(8)  = 0.6306401219d0
+            l(9)  = 0.6716883332d0
+            l(10) = 0.6979792685d0
+            p(1)  = 0.9894775374d0
+            p(2)  = 0.9407768787d0
+            p(3)  = 0.8457493051d0
+            s(1)  = 0.6944024393d-1
+            s(2)  = 0.2269004109d0
+            s(3)  = 0.8025574608d-1
+            s(4)  = 0.1467999527d0
+            s(5)  = 0.1571507769d0
+            s(6)  = 0.2365702993d0
+            s(7)  = 0.7714815844d-1
+            s(8)  = 0.3062936666d0
+            s(9)  = 0.3822477379d0
+            r(1)  = 0.2355187894d0
+            r(2)  = 0.4102182474d0
+            r(3)  = 0.6214302417d0
+            r(4)  = 0.3245284345d0
+            r(5)  = 0.5224482189d0
+            r(6)  = 0.6017546634d0
+            r(7)  = 0.4346575516d0
+            r(8)  = 0.4908826589d0
+            r(9)  = 0.5648768149d0
+         case (53)
+            !
+            ! REF: V. I. Lebedev, Russian Acad. Sci. Dokl. Math. 45 (1992) 587.
+            !
+            DIE_IF(n1/=12 OR n2/=4 OR n3/=12,"Mismatch of n1, n2, n3.")
+            a1    = 0.1438294190d-3
+            a2    = 0.0d0               
+            a3    = 0.1125772288d-2
+            b(1)  = 0.4948029342d-3
+            b(2)  = 0.7357990108d-3
+            b(3)  = 0.8889132771d-3
+            b(4)  = 0.9888347838d-3
+            b(5)  = 0.1053299681d-2
+            b(6)  = 0.1092778807d-2
+            b(7)  = 0.1114389394d-2
+            b(8)  = 0.1123724788d-2
+            b(9)  = 0.1125239325d-2
+            b(10) = 0.1126153271d-2
+            b(11) = 0.1130286931d-2
+            b(12) = 0.1134986534d-2
+            c(1)  = 0.6823367927d-3
+            c(2)  = 0.9454158160d-3
+            c(3)  = 0.1074429975d-2
+            c(4)  = 0.1129300086d-2
+            d(1)  = 0.8436884500d-3
+            d(2)  = 0.1075255720d-2
+            d(3)  = 0.1108577236d-2
+            d(4)  = 0.9566475323d-3
+            d(5)  = 0.1080663250d-2
+            d(6)  = 0.1126797131d-2
+            d(7)  = 0.1022568715d-2
+            d(8)  = 0.1108960267d-2
+            d(9)  = 0.1122790653d-2
+            d(10) = 0.1032401847d-2
+            d(11) = 0.1107249382d-2
+            d(12) = 0.1121780048d-2
+            l(1)  = 0.4292963545d-1
+            l(2)  = 0.1051426854d0
+            l(3)  = 0.1750024867d0
+            l(4)  = 0.2477653379d0
+            l(5)  = 0.3206567123d0
+            l(6)  = 0.3916520749d0
+            l(7)  = 0.4590825874d0
+            l(8)  = 0.5214563888d0
+            l(9)  = 0.6253170244d0
+            l(10) = 0.6637926744d0
+            l(11) = 0.6910410398d0
+            l(12) = 0.7052907007d0
+            p(1)  = 0.9923235654d0
+            p(2)  = 0.9557815124d0
+            p(3)  = 0.8827859807d0
+            p(4)  = 0.7737784472d0
+            s(1)  = 0.5974048614d-1
+            s(2)  = 0.1375760408d0
+            s(3)  = 0.3391016526d0
+            s(4)  = 0.1271675191d0
+            s(5)  = 0.2693120740d0
+            s(6)  = 0.1419786452d0
+            s(7)  = 0.6709284600d-1
+            s(8)  = 0.7057738183d-1
+            s(9)  = 0.2783888477d0
+            s(10) = 0.1979578938d0
+            s(11) = 0.2087307061d0
+            s(12) = 0.4055122137d0
+            r(1)  = 0.2029128752d0
+            r(2)  = 0.4602621942d0
+            r(3)  = 0.5030673999d0
+            r(4)  = 0.2817606422d0
+            r(5)  = 0.4331561291d0
+            r(6)  = 0.6256167328d0
+            r(7)  = 0.3798395291d0
+            r(8)  = 0.5517505421d0
+            r(9)  = 0.6029619156d0
+            r(10) = 0.3589606329d0
+            r(11) = 0.5348666438d0
+            r(12) = 0.5674997546d0
+         case (59)
+            !
+            ! REF: V. I. Lebedev, Russian Acad. Sci. Dokl. Math. 50 (1995) 283.
+            !
+            DIE_IF(n1/=13 OR n2/=4 OR n3/=16,"Mismatch of n1, n2, n3.")
+            !
+            ! **** NOTE THIS TABLE IS NOT YET COMPLETE! ****
+            !
+            a1    = 0.110518923327d-3
+            a2    = 0.920523273809d-3               
+            a3    = 0.913315978645d-3
+            b(1)  = 0.369042189802d-3
+            b(2)  = 0.560399092868d-3
+            b(3)  = 0.686529762928d-3
+            b(4)  = 0.772033855115d-3
+            b(5)  = 0.830154595889d-3
+            b(6)  = 0.868669255018d-3
+            b(7)  = 0.892707628585d-3
+            b(8)  = 0.906082023857d-3
+            b(9)  = 0.911977725494d-3
+            b(10) = 0.912872013860d-3
+            b(11) = 0.913071493569d-3
+            b(12) = 0.915287378455d-3
+            b(13) = 0.918743627432d-3
+            c(1)  = 0.517697731297d-3
+            c(2)  = 0.733114368210d-3
+            c(3)  = 0.846323283638d-3         
+            c(4)  = 0.903112269425d-3
+            d(1)  = 0.648577845316d-3
+            d(2)  = 0.743503091098d-3
+            d(3)  = 0.799852789184d-3
+            d(4)  = 0.810173149747d-3
+            d(5)  = 0.848338957459d-3
+            d(6)  = 0.855629925731d-3
+            d(7)  = 0.880320867974d-3
+            d(8)  = 0.881104818243d-3
+            d(9)  = 0.885028234127d-3
+            d(10) = 0.902134229904d-3
+            d(11) = 0.901009167711d-3
+            d(12) = 0.902269293843d-3
+            d(13) = 0.915801617469d-3
+            d(14) = 0.913157800319d-3
+            d(15) = 0.910781357948d-3
+            d(16) = 0.910576025897d-3
+            l(1)  = 0.371263644966d-1
+            l(2)  = 0.914006041226d-1
+            l(3)  = 0.153107785247d0
+            l(4)  = 0.218092889166d0
+            l(5)  = 0.283987453220d0
+            l(6)  = 0.349117600096d0
+            l(7)  = 0.412143146144d0
+            l(8)  = 0.471899362715d0
+            l(9)  = 0.527314545284d0
+            l(10) = 0.620947533244d0
+            l(11) = 0.656972271186d0
+            l(12) = 0.684178830907d0
+            l(13) = 0.701260433012d0
+            p(1)  = 0.107238221548d0
+            p(2)  = 0.258206895950d0
+            p(3)  = 0.417275295531d0
+            p(4)  = 0.570036691179d0
+            s(1)  = 0.982798601826d0
+            s(2)  = 0.962424923033d0
+            s(3)  = 0.940200799413d0
+            s(4)  = 0.932082204014d0
+            s(5)  = 0.904367419939d0
+            s(6)  = 0.891240756007d0
+            s(7)  = 0.867643562846d0
+            s(8)  = 0.858197998604d0
+            s(9)  = 0.839675362405d0
+            s(10) = 0.816528856402d0
+            s(11) = 0.801546937078d0
+            s(12) = 0.777356306907d0
+            s(13) = 0.766162121390d0
+            s(14) = 0.755358414353d0
+            s(15) = 0.734430575756d0
+            s(16) = 0.704383718402d0
+            r(1)  = 0.177177402262d0
+            r(2)  = 0.247571646343d0
+            r(3)  = 0.335461628907d0
+            r(4)  = 0.317361524661d0
+            r(5)  = 0.409026842709d0
+            r(6)  = 0.385429115067d0
+            r(7)  = 0.493222118485d0
+            r(8)  = 0.478532067592d0
+            r(9)  = 0.450742259316d0
+            r(10) = 0.563212302076d0
+            r(11) = 0.543430356969d0
+            r(12) = 0.512351848642d0
+            r(13) = 0.639427963475d0
+            r(14) = 0.626980550902d0
+            r(15) = 0.603116169310d0
+            r(16) = 0.569370249847d0
+         case default
+            DIE("No grid with order "// .spherical_grid_order.to_str.trim)
+      end select
+      n = 0 ! should be the total number of spherical points.  Use this for cross-checking.
+      if (m1 /= 0) then                                    ! Points for a1, number = 6
+        ! point(:) = (/ ONE, ZERO, ZERO /)
+        ! .pm_perm_point(point, set, n)
+        .pm_perm_point_11(ONE, pt(n+1:n+6,:))
+        wt(n+1:n+6) = a1
+        n = n + 6
+      end
+      if (m2 /= 0) then                                    ! Points for a2, number = 12
+        ! point(:) = (/ sr2, sr2, ZERO /)
+        ! .pm_perm_point(point, set, n)
+        sr2 = ONE/sqrt(TWO)
+        .pm_perm_point_12(sr2, pt(n+1:n+12,:))
+        wt(n+1:n+12) = a2
+        n = n + 12
+      end
+      if (m3 /= 0) then                                    ! Points for a3, number = 8
+        ! point(:) = (/ sr3, sr3, sr3 /)
+        ! .pm_perm_point(point, set, n)
+        sr3 = ONE/sqrt(THREE)
+        .pm_perm_point_13(sr3, pt(n+1:n+8,:))
+        wt(n+1:n+8) = a3
+        n = n + 8
+      end
+      do k = 1, n1                                         ! Points for b(k), number = 24
+        m = sqrt(ONE - TWO*l(k)*l(k))
+        ! point(:) = (/ l(k), l(k), m /)
+        ! .pm_perm_point(point, set, n)
+        .pm_perm_point_22(m, l(k), pt(n+1:n+24,:))
+        wt(n+1:n+24) = b(k)
+        n = n + 24
+      end
+      do k = 1, n2                                         ! Points for c(k), number = 24
+        q = sqrt(ONE - p(k)*p(k))
+        ! point(:) = (/ p(k), q, ZERO /)
+        ! .pm_perm_point(point, set, n)
+        .pm_perm_point_21(p(k), q, pt(n+1:n+24,:))
+        wt(n+1:n+24) = c(k)
+        n = n + 24
+      end
+      do k = 1, n3                                         ! Points for d, number = 48
+        w = sqrt(ONE - r(k)*r(k) - s(k)*s(k))
+        ! point(:) = (/ r(k), s(k), w /)
+        ! .pm_perm_point(point, set, n)
+        .pm_perm_point_31(r(k), s(k), w, pt(n+1:n+48,:))
+        wt(n+1:n+48) = d(k)
+        n = n + 48
+      end
+      DIE_IF(n/=.n_spherical_pts,"Incorrect number of Lebedev grid points")
+      b.destroy; c.destroy; d.destroy
+      l.destroy
+      p.destroy
+      r.destroy; s.destroy
+   end
+
+   pm_perm_point_11(a, set)
+   ! Permutates (a, 0, 0) according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:6)
+      DBL, IN :: a
+      MAT(6, 3), OUT :: set
+      set(1,:) = (/    a, ZERO, ZERO /)
+      set(2,:) = (/   -a, ZERO, ZERO /)
+      set(3,:) = (/ ZERO,    a, ZERO /)
+      set(4,:) = (/ ZERO,   -a, ZERO /)
+      set(5,:) = (/ ZERO, ZERO,    a /)
+      set(6,:) = (/ ZERO, ZERO,   -a /)
+   end
+
+   pm_perm_point_12(a, set)
+   ! Permutates (a, a, 0) according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:12)
+      DBL, IN :: a
+      MAT(12, 3), OUT :: set
+      set(1,:)  =  (/    a,    a, ZERO /)
+      set(2,:)  =  (/   -a,    a, ZERO /)
+      set(3,:)  =  (/    a,   -a, ZERO /)
+      set(4,:)  =  (/   -a,   -a, ZERO /)
+      set(5,:)  =  (/    a, ZERO,    a /)
+      set(6,:)  =  (/   -a, ZERO,    a /)
+      set(7,:)  =  (/    a, ZERO,   -a /)
+      set(8,:)  =  (/   -a, ZERO,   -a /)
+      set(9,:)  =  (/ ZERO,    a,    a /)
+      set(10,:) =  (/ ZERO,   -a,    a /)
+      set(11,:) =  (/ ZERO,    a,   -a /)
+      set(12,:) =  (/ ZERO,   -a,   -a /)
+   end 
+
+   pm_perm_point_13(a, set)
+   ! Permutates (a, a, a) according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:8)
+      DBL, IN :: a
+      MAT(8, 3), OUT :: set
+      set(1,:)  =  (/  a,  a,  a /)
+      set(2,:)  =  (/  a, -a,  a /)
+      set(3,:)  =  (/  a,  a, -a /)
+      set(4,:)  =  (/  a, -a, -a /)
+      set(5,:)  =  (/ -a,  a,  a /)
+      set(6,:)  =  (/ -a, -a,  a /)
+      set(7,:)  =  (/ -a,  a, -a /)
+      set(8,:)  =  (/ -a, -a, -a /)
+   end 
+
+   pm_perm_point_21(a, b, set)
+   ! Permutates (a, b, 0), a.ne.b, according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:24)
+      DBL, IN :: a, b
+      MAT(24, 3), OUT :: set
+      set(1,:)  =  (/    a,    b, ZERO /)
+      set(2,:)  =  (/   -a,    b, ZERO /)
+      set(3,:)  =  (/    a,   -b, ZERO /)
+      set(4,:)  =  (/   -a,   -b, ZERO /)
+      set(5,:)  =  (/    b,    a, ZERO /)
+      set(6,:)  =  (/   -b,    a, ZERO /)
+      set(7,:)  =  (/    b,   -a, ZERO /)
+      set(8,:)  =  (/   -b,   -a, ZERO /)
+      set(9,:)  =  (/    a, ZERO,    b /)
+      set(10,:) =  (/   -a, ZERO,    b /)
+      set(11,:) =  (/    a, ZERO,   -b /)
+      set(12,:) =  (/   -a, ZERO,   -b /)
+      set(13,:) =  (/    b, ZERO,    a /)
+      set(14,:) =  (/   -b, ZERO,    a /)
+      set(15,:) =  (/    b, ZERO,   -a /)
+      set(16,:) =  (/   -b, ZERO,   -a /)
+      set(17,:) =  (/ ZERO,    a,    b /)
+      set(18,:) =  (/ ZERO,   -a,    b /)
+      set(19,:) =  (/ ZERO,    a,   -b /)
+      set(20,:) =  (/ ZERO,   -a,   -b /)
+      set(21,:) =  (/ ZERO,    b,    a /)
+      set(22,:) =  (/ ZERO,   -b,    a /)
+      set(23,:) =  (/ ZERO,    b,   -a /)
+      set(24,:) =  (/ ZERO,   -b,   -a /)
+   end
+
+   pm_perm_point_22(a, b, set)
+   ! Permutates (a, b, b),  a.ne.b, according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:24)
+      DBL, IN :: a, b
+      MAT(24, 3), OUT :: set
+      set(1,:)  =  (/  a, b, b /)
+      set(2,:)  =  (/  a,-b, b /)
+      set(3,:)  =  (/  a, b,-b /)
+      set(4,:)  =  (/  a,-b,-b /)
+      set(5,:)  =  (/ -a, b, b /)
+      set(6,:)  =  (/ -a,-b, b /)
+      set(7,:)  =  (/ -a, b,-b /)
+      set(8,:)  =  (/ -a,-b,-b /)
+      set(9,:)  =  (/  b, a, b /)
+      set(10,:) =  (/ -b, a, b /)
+      set(11,:) =  (/  b, a,-b /)
+      set(12,:) =  (/ -b, a,-b /)
+      set(13,:) =  (/  b,-a, b /)
+      set(14,:) =  (/ -b,-a, b /)
+      set(15,:) =  (/  b,-a,-b /)
+      set(16,:) =  (/ -b,-a,-b /)
+      set(17,:) =  (/  b, b, a /)
+      set(18,:) =  (/ -b, b, a /)
+      set(19,:) =  (/  b,-b, a /)
+      set(20,:) =  (/ -b,-b, a /)
+      set(21,:) =  (/  b, b,-a /)
+      set(22,:) =  (/ -b, b,-a /)
+      set(23,:) =  (/  b,-b,-a /)
+      set(24,:) =  (/ -b,-b,-a /)
+   end
+
+   pm_perm_point_31(a, b, c, set)
+   ! Permutates (a, b, c), a.ne.b & a.ne.c & b.ne.c, according to the octahedral group
+   ! "set" must be at least: dimension (1:3, 1:48)
+      DBL, IN :: a, b, c
+      MAT(48, 3), OUT :: set
+      set(1,:)  =  (/  a, b, c /)
+      set(2,:)  =  (/ -a, b, c /)
+      set(3,:)  =  (/  a,-b, c /)
+      set(4,:)  =  (/ -a,-b, c /)
+      set(5,:)  =  (/  b, a, c /)
+      set(6,:)  =  (/ -b, a, c /)
+      set(7,:)  =  (/  b,-a, c /)
+      set(8,:)  =  (/ -b,-a, c /)
+      set(9,:)  =  (/  a, c, b /)
+      set(10,:) =  (/ -a, c, b /)
+      set(11,:) =  (/  a, c,-b /)
+      set(12,:) =  (/ -a, c,-b /)
+      set(13,:) =  (/  b, c, a /)
+      set(14,:) =  (/ -b, c, a /)
+      set(15,:) =  (/  b, c,-a /)
+      set(16,:) =  (/ -b, c,-a /)
+      set(17,:) =  (/  c, a, b /)
+      set(18,:) =  (/  c,-a, b /)
+      set(19,:) =  (/  c, a,-b /)
+      set(20,:) =  (/  c,-a,-b /)
+      set(21,:) =  (/  c, b, a /)
+      set(22,:) =  (/  c,-b, a /)
+      set(23,:) =  (/  c, b,-a /)
+      set(24,:) =  (/  c,-b,-a /)
+      set(25,:) =  (/  a, b,-c /)
+      set(26,:) =  (/ -a, b,-c /)
+      set(27,:) =  (/  a,-b,-c /)
+      set(28,:) =  (/ -a,-b,-c /)
+      set(29,:) =  (/  b, a,-c /)
+      set(30,:) =  (/ -b, a,-c /)
+      set(31,:) =  (/  b,-a,-c /)
+      set(32,:) =  (/ -b,-a,-c /)
+      set(33,:) =  (/  a,-c, b /)
+      set(34,:) =  (/ -a,-c, b /)
+      set(35,:) =  (/  a,-c,-b /)
+      set(36,:) =  (/ -a,-c,-b /)
+      set(37,:) =  (/  b,-c, a /)
+      set(38,:) =  (/ -b,-c, a /)
+      set(39,:) =  (/  b,-c,-a /)
+      set(40,:) =  (/ -b,-c,-a /)
+      set(41,:) =  (/ -c, a, b /)
+      set(42,:) =  (/ -c,-a, b /)
+      set(43,:) =  (/ -c, a,-b /)
+      set(44,:) =  (/ -c,-a,-b /)
+      set(45,:) =  (/ -c, b, a /)
+      set(46,:) =  (/ -c,-b, a /)
+      set(47,:) =  (/ -c, b,-a /)
+      set(48,:) =  (/ -c,-b,-a /)
+   end 
+
+!  **************
+!  Output methods
+!  **************
+
+   put(out)
+   ! Put out the DFTGRID to file "out"
+      OUTPUT :: out
+      out.flush
+      out.text("DFTGRID output:")
+      out.text(" ")
+      out.show("Spherical grid kind       =", .spherical_grid_kind)
+      out.show("Spherical grid order      =", .spherical_grid_order)
+      out.show("No. of spherical points   =", .n_spherical_pts)
+      out.text(" ")
+      out.show("Radial grid kind          =", .radial_grid_kind)
+      out.show("Radial grid order         =", .radial_grid_order)
+      out.show("No. of radial points      =", .n_radial_pts)
+      out.text(" ")
+      out.show("No. of atom grid points   =", .n_atom_pts)
+      out.text(" ")
+      out.show("Becke m partition power     =", .becke_m_partition_power)
+      out.show("Gauss-Chebyshev alpha value =", .gauss_chebyshev_alpha)
+      out.show("Gauss-Chebyshev m     value =", .gauss_chebyshev_m)
+      out.show("Euler-Maclaurin alpha value =", .euler_maclaurin_alpha)
+      out.show("Euler-Maclaurin m     value =", .euler_maclaurin_m)
+   end 
+
+end

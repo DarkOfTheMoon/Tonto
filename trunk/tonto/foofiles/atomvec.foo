@@ -1,0 +1,1495 @@
+! $Id$
+!---------------------------------------------------------------------------
+!  ATOMVEC: ATOM vectors
+!  (c) dylan jayatilaka, 1998
+!---------------------------------------------------------------------------
+module ATOMVEC
+
+   use TYPES
+   use ERROR
+   use MM
+   use DBL
+   use STR
+   use BUFFER
+
+   use VEC
+   use MAT
+   use STRVEC
+   use IVECVEC
+   use INPUT
+   use OUTPUT
+
+   use SHELL
+   use SHELL1
+   use ATOM
+
+   implicit none
+
+#  include "macros"
+#  include "atomvec.int"
+
+contains
+
+!  ******************
+!  Allocation methods
+!  ******************
+
+   create(dim)
+   ! Create space for an atom vector
+      PTR :: self
+      INT :: dim
+      nullify(self)
+      allocate(self(dim))
+      .nullify_ptr_part
+      std_mm.add(dim*ATOM_SIZE)
+   end
+
+   create_copy(atomvec)
+   ! Create space for an atom vector
+      ATOMVEC, PTR :: atomvec
+      PTR :: self
+      INT :: dim
+      dim = size(atomvec)
+      .create(dim)
+      .copy(atomvec)
+   end
+
+   copy(atomvec)
+   ! Copy atomvec to self.  Pointers are copied as pointers, so be careful with destroys.
+      ATOMVEC, PTR :: atomvec
+      PTR :: self
+      INT :: a
+      ENSURE( atomvec.created, "atomvec not created")
+      ENSURE( .created, "self not created")
+      do a=1,size(atomvec)
+        self(a).copy(atomvec(a))
+      end
+   end
+
+   destroy
+   ! Destroy space for an atom vector
+      PTR :: self
+      INT :: dim
+      dim = size(self)
+      RETURN_IF(.destroyed)
+      .destroy_ptr_part
+      std_mm.delete(size(self)*ATOM_SIZE)
+      deallocate(self)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of the atomvec
+      INT :: a
+      do a = 1,.n_atom
+         self(a).nullify_ptr_part
+      end
+   end
+
+   nullify_basis_part
+   ! Nullify the basis parts of the atomvec
+      INT :: a
+      do a = 1,.n_atom
+         nullify(self(a)%basis)
+      end
+   end
+
+   destroy_ptr_part
+   ! Destroy the pointer parts of the atomvec
+      INT :: a
+      do a = 1,.n_atom
+        self(a).destroy_ptr_part
+      end
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+!  *************
+!  Input methods
+!  *************
+
+   read(in,unitcell) [leaky]
+   ! Read in the atom list information from file "in".
+   ! "unitcell" is used for thermal tensor conversion.
+   ! ***Note that this routine creates an ATOMVEC
+      PTR :: self
+      INPUT :: in
+      UNITCELL, optional :: unitcell
+      INT :: line,n_atom,a
+      STR :: word
+      BIN :: angstrom,crystal
+      ENSURE(.destroyed,"atom vector already created")
+      line = in.line_number+1               ! Store line of atom list
+      n_atom = 0
+      angstrom=FALSE
+      crystal=FALSE
+      do                                    ! Read for angstrom or fractional units
+         if (in%buffer.exhausted) exit
+         in.read(word); word.to_lower_case
+         select case (word)
+            case("angstrom");   angstrom=TRUE
+            case("crystal");    crystal=TRUE
+            case("fractional"); crystal=TRUE
+            case default;       DIE("unrecognised option: "// word.trim ) 
+         end
+      end
+      DIE_IF(crystal AND NOT present(unitcell),"xtal unitcell input needed before atoms") 
+      do                                    ! Read ahead for the number of atoms
+         in.read_line
+         in.read(word); word.to_lower_case
+         if (word=="end") exit
+         n_atom = n_atom + 1
+      end
+      DIE_IF(n_atom==0,"empty atom input")
+      .create(n_atom)
+      in.move_to_line(line)                 ! Move back to the start of the atom list
+      do a = 1,n_atom                       ! Read the atom list
+         self(a).read(in)
+         if (in%buffer.exhausted) cycle
+         self(a).read_basis_label(in)
+         if (in%buffer.exhausted) cycle
+         DIE_IF(NOT present(unitcell),"xtal unitcell input needed before atoms") 
+         self(a).read_thermal_tensor(in,unitcell)
+      end
+      in.read(word)
+      DIE_IF(word/="end","end keyword wrongly positioned")
+      if (angstrom) .convert_from_angstrom
+      if (crystal)  .convert_from_crystal(unitcell)
+   end
+
+   read_basis_labels(in)
+   ! Read in a list of basis set labels for every atom from file "in"
+      INPUT :: in
+      INT :: a
+      STR :: word
+      do a = 1,.n_atom
+         self(a).read_basis_label(in)
+      end
+      in.read(word)
+      DIE_IF(word/="end","end keyword wrongly positioned")
+   end
+
+   resolve_basis_labels(basis) [leaky]
+   ! Match the basis set labels for every atom with the labels 
+   ! from the basis set vector "basis"
+      BASISVEC, target :: basis
+      INT :: a,b
+      BIN :: found
+      do a = 1,.n_atom
+         found = FALSE
+         do b = 1,size(basis)                   
+            if (basis(b)%label==self(a)%basis%label) then
+               found = TRUE
+               exit
+            end
+         end
+         ENSURE(found,"unknown basis, atom "//a.to_str.trim)
+         self(a)%basis.destroy
+         self(a)%basis => basis(b) ! NOTE : this a a pointer assign NOT COPY
+      end
+   end
+
+   read_thermal_tensors(in,unitcell)
+   ! Read in the thermal tensor data from "in" for all atoms and treat with
+   ! "unitcell" to get into cartesian coordinates
+   ! Keyword can go at start of input to denote which coordinate system.
+      INPUT :: in
+      UNITCELL :: unitcell
+      INT :: a
+      STR :: word
+      BIN :: crystal
+
+      if ( in%buffer.not_exhausted ) then
+        in.read(word)
+        word.to_lower_case
+        select case (word)
+          case ("cartesian"); crystal = FALSE
+          case ("crystal"); crystal = TRUE
+          case default; DIE("unknown coordinate system " // trim(word))
+        end
+      else
+        crystal = FALSE
+      end
+
+      do a = 1,.n_atom
+        in.read(word)
+        DIE_IF(word=="end","end keyword wrongly positioned")
+        in.move_to_previous_item
+        self(a).read_thermal_tensor(in,unitcell,crystal)
+      end
+      in.read(word)
+      DIE_IF(word/="end","end keyword wrongly positioned")
+   end
+
+!  **************
+!  Output methods
+!  **************
+
+   put_atoms(out)
+   ! Output the atom basis set information
+      OUTPUT :: out
+      INT :: i
+      out.put_text("ATOMVEC:",flush=2)
+      out.put_dash(int_fields=2,dbl_fields=4,flush=1)
+      out.put("ID",int_width=TRUE)
+      out.put("Z",int_width=TRUE)
+      out.put("x")
+      out.put("y")
+      out.put("z")
+      out.put("Basis",flush=1)
+      out.put_dash(int_fields=2,dbl_fields=4,flush=1)
+      do i = 1,.n_atom
+         out.put(self(i)%label,int_width=TRUE)
+         out.put(self(i)%atomic_number)
+         out.put(self(i)%pos(1))
+         out.put(self(i)%pos(2))
+         out.put(self(i)%pos(3))
+         out.put(self(i)%basis%label)
+         out.flush
+      end 
+      out.put_dash(int_fields=2,dbl_fields=4,flush=2)
+      .put_bond_length_table(out)
+   end 
+
+   put_bond_length_table(out,all)
+   ! Output the bond length table. If "all" is present and true, put out all
+   ! possible bond lengths
+      OUTPUT :: out
+      BIN, optional :: all
+      BIN :: print_all_bonds
+      IVECVEC, PTR :: atom_kind
+      INT :: n_k,k,l,kk,ll,a,b
+      STR :: symbol_a,symbol_b
+      DBL :: r_ab
+      print_all_bonds = FALSE
+      if (present(all)) print_all_bonds = all 
+      RETURN_IF( .n_atom<2 )
+      RETURN_IF( .no_of_bonds<1 AND NOT print_all_bonds)
+      .make_atom_kind_list(atom_kind)
+      n_k = size(atom_kind)
+      out.flush
+      out.text("Bond lengths:",flush=2)
+      out.show("No. of independent bonds  =",.no_of_bonds)
+      out.flush
+      out.dash(int_fields=2,dbl_fields=2)
+      out.put("Atom_a",int_width=TRUE)
+      out.put("Atom_b",int_width=TRUE)
+      out.put("r_ab/au")
+      out.put("r_ab/Angstrom",flush=1)
+      out.dash(int_fields=2,dbl_fields=2)
+      do k = 1,n_k 
+      do kk = 1,size(atom_kind(k)%vec)
+      do l = 1,n_k 
+      do ll = 1,size(atom_kind(l)%vec)
+         a = atom_kind(k)%vec(kk)
+         b = atom_kind(l)%vec(ll)
+         symbol_a = self(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         symbol_b = self(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+         if (a==b) cycle
+         if (.not_bonded(a,b) AND NOT print_all_bonds) cycle
+         r_ab = .bond_distance(a,b)
+         out.put(symbol_a,int_width=TRUE)
+         out.put(symbol_b,int_width=TRUE)
+         out.put(r_ab)
+         out.put(r_ab*ANGSTROM_PER_BOHR)
+         out.flush
+      end
+      end
+      end
+      end
+      atom_kind.destroy
+      out.dash(int_fields=2,dbl_fields=2)
+   end
+
+   put_bond_angle_table(out,all)
+   ! Output the bond length table. If "all" is present and true, put out all
+   ! possible angles
+      OUTPUT :: out
+      BIN, optional :: all
+      BIN :: print_all_angles
+      IVECVEC, PTR :: atom_kind
+      INT :: n_k,k,l,m,kk,ll,mm,a,b,c
+      STR :: symbol_a,symbol_b,symbol_c
+      DBL :: theta_abc
+      print_all_angles = FALSE
+      if (present(all)) print_all_angles = all 
+      RETURN_IF( .n_atom<3 )
+      RETURN_IF( .no_of_angles<1 AND NOT print_all_angles)
+      .make_atom_kind_list(atom_kind)
+      n_k = size(atom_kind)
+      out.flush
+      out.text("Bond angles (b the central atom):",flush=2)
+      out.show("No. of independent angles =",.no_of_angles)
+      out.flush
+      out.dash(int_fields=3,dbl_fields=1)
+      out.put("Atom_a",int_width=TRUE)
+      out.put("Atom_b",int_width=TRUE)
+      out.put("Atom_c",int_width=TRUE)
+      out.put("Angle_abc/degrees",flush=1)
+      out.dash(int_fields=3,dbl_fields=1)
+      do k = 1,n_k 
+      do kk = 1,size(atom_kind(k)%vec)
+      do l = 1,n_k 
+      do ll = 1,size(atom_kind(l)%vec)
+      do m = 1,n_k 
+      do mm = 1,size(atom_kind(m)%vec)
+         a = atom_kind(k)%vec(kk)
+         b = atom_kind(l)%vec(ll)
+         c = atom_kind(m)%vec(mm)
+         if (a==b OR b==c OR c==a) cycle
+         if (.not_bonded(a,b) AND NOT print_all_angles) cycle
+         if (.not_bonded(b,c) AND NOT print_all_angles) cycle
+         symbol_a = self(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         symbol_b = self(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+         symbol_c = self(c).chemical_symbol.trim // " (" // c.to_str.trim // ")"
+         theta_abc = .bond_angle(a,b,c,degrees=TRUE)
+         out.put(symbol_a,int_width=TRUE)
+         out.put(symbol_b,int_width=TRUE)
+         out.put(symbol_c,int_width=TRUE)
+         out.put(theta_abc)
+         out.flush
+      end
+      end
+      end
+      end
+      end
+      end
+      atom_kind.destroy
+      out.dash(int_fields=3,dbl_fields=1)
+   end
+
+   put_torsion_angle_table(out,all)
+   ! Output the torsion angle table. If "all" is present and true, put out all
+   ! possible angles
+      OUTPUT :: out
+      BIN, optional :: all
+      BIN :: print_all_angles,abc_colinear,bcd_colinear
+      IVECVEC, PTR :: atom_kind
+      INT :: n_k,k,l,m,n,kk,ll,mm,nn,a,b,c,d
+      STR :: symbol_a,symbol_b,symbol_c,symbol_d
+      DBL :: theta_abcd
+      print_all_angles = FALSE
+      if (present(all)) print_all_angles = all 
+      RETURN_IF( .n_atom<4 )
+      RETURN_IF( .no_of_torsion_angles<1 AND NOT print_all_angles)
+      .make_atom_kind_list(atom_kind)
+      n_k = size(atom_kind)
+      out.flush
+      out.text("Torsion angles (looking down b->c):",flush=2)
+      out.show("No. of independent angles =",.no_of_torsion_angles)
+      out.flush
+      out.dash(int_fields=4,dbl_fields=1)
+      out.put("Atom_a",int_width=TRUE)
+      out.put("Atom_b",int_width=TRUE)
+      out.put("Atom_c",int_width=TRUE)
+      out.put("Atom_d",int_width=TRUE)
+      out.put("Angle_abcd/degrees",flush=1)
+      out.dash(int_fields=4,dbl_fields=1)
+      do k = 1,n_k 
+      do kk = 1,size(atom_kind(k)%vec)
+      do l = 1,n_k 
+      do ll = 1,size(atom_kind(l)%vec)
+      do m = 1,n_k 
+      do mm = 1,size(atom_kind(m)%vec)
+      do n = 1,n_k 
+      do nn = 1,size(atom_kind(n)%vec)
+         a = atom_kind(k)%vec(kk)
+         b = atom_kind(l)%vec(ll)
+         c = atom_kind(m)%vec(mm)
+         d = atom_kind(n)%vec(nn)
+         if (a==b OR a==c OR a==d OR b==c OR b==d OR c==d) cycle
+         if (.not_bonded(a,b) AND NOT print_all_angles) cycle
+         if (.not_bonded(b,c) AND NOT print_all_angles) cycle
+         if (.not_bonded(c,d) AND NOT print_all_angles) cycle
+         symbol_a = self(a).chemical_symbol.trim // " (" // a.to_str.trim // ")"
+         symbol_b = self(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
+         symbol_c = self(c).chemical_symbol.trim // " (" // c.to_str.trim // ")"
+         symbol_d = self(d).chemical_symbol.trim // " (" // d.to_str.trim // ")"
+         theta_abcd = .torsion_angle(a,b,c,d,abc_colinear,bcd_colinear,degrees=TRUE)
+         out.put(symbol_a,int_width=TRUE)
+         out.put(symbol_b,int_width=TRUE)
+         out.put(symbol_c,int_width=TRUE)
+         out.put(symbol_d,int_width=TRUE)
+         if (abc_colinear AND bcd_colinear) then
+            out.put("a-b-c-d colinear")
+         else if (abc_colinear) then
+            out.put("a-b-c colinear")
+         else if (bcd_colinear) then
+            out.put("b-c-d colinear")
+         else
+            out.put(theta_abcd)
+         end
+         out.flush
+      end
+      end
+      end
+      end
+      end
+      end
+      end
+      end
+      atom_kind.destroy
+      out.dash(int_fields=4,dbl_fields=1)
+   end
+
+!  *************************
+!  Geometry unit conversions
+!  *************************
+
+   convert_from_angstrom
+   ! Convert atom positions to A.U. from Angstroms
+      INT :: a
+      do a = 1,.n_atom
+         self(a)%pos = self(a)%pos*BOHR_PER_ANGSTROM
+      end
+   end
+
+   convert_to_angstrom
+   ! Convert atom positions to Angstroms from A.U.
+      INT :: a
+      do a = 1,.n_atom
+         self(a)%pos = self(a)%pos*ANGSTROM_PER_BOHR
+      end
+   end
+
+   convert_from_crystal(unitcell)
+   ! Convert atom positions to A.U. from fractional crystal coordinates
+      UNITCELL, IN :: unitcell
+      .rotate(unitcell%cell_matrix)
+   end
+
+   convert_to_crystal(unitcell)
+   ! Convert atom positions to fractional crystal coordinates from A.U.
+      UNITCELL, IN :: unitcell
+      .rotate(unitcell%inverse_cell_matrix)
+   end
+
+!  *******************
+!  Information methods
+!  *******************
+ 
+   nuclear_energy result(res)
+   ! Return the nuclear repulsion energy
+      DBL :: res
+      INT :: i,j,qi,qj
+      VEC(3) :: radius
+      res = ZERO
+      do i=1,.n_atom
+         qi = self(i)%atomic_number
+         do j=1,i-1
+            qj = self(j)%atomic_number
+            radius =  self(j)%pos - self(i)%pos
+            res = res + qi * qj / sqrt( radius.dot(radius) )
+         end
+      end
+   end
+
+   chemical_formula result(res)
+   ! Return the chemical formula for the molecule, as a string, in alphabetical 
+   ! order of elements
+      STR :: res
+      STRVEC, PTR :: symbol
+      INT :: a,na
+      symbol.create(.n_atom)
+      do a = 1,.n_atom
+         symbol(a) = self(a).chemical_symbol 
+      end
+      symbol.sort
+      res = " "
+      a = 1
+      do
+         na = count(symbol==symbol(a))
+         res = res.trim // symbol(a).trim 
+         if (na>1) &
+         res = res.trim // na.to_str.trim
+         a = a + na
+         if (a>.n_atom) exit
+      end
+      symbol.destroy
+   end
+
+   centre_of_mass result(centre)
+   ! Return the centre of mass
+      VEC(3) :: centre
+      INT :: a
+      DBL :: mw
+      mw = .molecular_weight
+      centre = ZERO
+      do a = 1,.n_atom
+         centre = centre + self(a)%pos*self(a).mass/mw
+      end
+   end
+
+   reduced_mass result(mu)
+   ! Return the centre of mass
+      INT :: a
+      DBL :: mu
+      mu = ZERO
+      do a = 1,.n_atom
+         mu = mu + ONE / self(a).mass
+      end
+      mu = ONE/mu
+   end
+
+   make_inertia_tensor(it)
+   ! Make the moment of inertia tensor wrt the centre of mass
+      MAT(3,3) :: it
+      MAT(3,3) :: m
+      VEC(3) :: com,r
+      DBL :: trace
+      INT :: a
+      com = .centre_of_mass
+      it = ZERO
+      do a = 1, .n_atom
+         r = self(a)%pos - com
+         m = spread(r,dim=1,ncopies=3)*spread(r,dim=2,ncopies=3)
+         m = self(a).mass * m
+         trace = m.trace
+         m = -m
+         m.add_to_diagonal(trace)
+         it = it + m
+      end 
+   end
+
+   make_principal_moments(pm,pa)
+   ! Make the principal moments "pm" and principal axes "pm" wrt the centre of mass.
+   ! The principal axes are made to be right handed.
+   ! - For sperical tops, the local x,y,z axes are the pricipal axes
+   ! - For symmetric tops, the C axis is unique
+   ! - For asymmetric tops, the pricipal axes are aligned close to the local x,y,z axes
+      VEC(3) :: pm 
+      MAT(3,3) :: pa
+      MAT(3,3) :: it
+      .make_inertia_tensor(it)
+      it.solve_eigenproblem(pm,pa)
+      where (pm<TOL(6)) pm = ZERO               ! Small moments set to zero
+      if (.is_spherical_top(pm)) then           ! For spherical tops, principal axes are x,y,z
+            pa.to_unit_matrix
+      else if (.is_symmetric_top(pm)) then      ! For symmetric tops C axis is unique
+         if (abs(pm(1)-pm(3)) < TOL(6)) then
+            pa.swap_columns(2,3)
+            pm.swap_elements(2,3)
+         else if (abs(pm(2)-pm(3)) < TOL(6)) then
+            pa.swap_columns(1,3)
+            pm.swap_elements(1,3)
+         end
+      else                                      ! For asymmetric tops, principal axes are close to x,y,z
+         if (abs(pa(1,2)) > abs(pa(1,1))) then   
+            pa.swap_columns(1,2)
+            pm.swap_elements(1,2)
+         end
+         if (abs(pa(1,3)) > abs(pa(1,1))) then 
+            pa.swap_columns(1,3)
+            pm.swap_elements(1,3)
+         end
+         if (abs(pa(2,3)) > abs(pa(2,2))) then 
+            pa.swap_columns(2,3)
+            pm.swap_elements(2,3)
+         end 
+      end
+      RETURN_IF( pa.determinant>ZERO) ! Ensure principal axes are right handed
+      if (abs(pm(1)-pm(2)) < TOL(6)) then
+         pm.swap_elements(1,2)
+         pa.swap_columns(1,2)
+      else if (abs (pm(2)-pm(3)) < TOL(6)) then 
+         pm.swap_elements(2,3)
+         pa.swap_columns(2,3)
+      else 
+         pa(1:3,3) = -pa(1:3,3)
+      end
+   end
+
+   is_linear(pm) result(res)
+   ! Return TRUE if the geometry is linear. Needs principal moments of inertia "pm"
+      BIN :: res
+      VEC(3) :: pm
+      res = any(pm==ZERO)
+   end
+
+   is_spherical_top(pm) result(res)
+   ! Return TRUE if the geometry is a spherical top
+   ! Needs principal moments of inertia "pm"
+      BIN :: res
+      VEC(3) :: pm
+      res = .no_of_same_principal_moments(pm)==3
+   end
+
+   is_symmetric_top(pm) result(res)
+   ! Return TRUE if the geometry is a symmetric top
+   ! Needs principal moments of inertia "pm"
+      BIN :: res
+      VEC(3) :: pm
+      res = .no_of_same_principal_moments(pm)==1
+   end
+
+   is_prolate_top(pm) result(res)
+   ! Return TRUE if the geometry is a prolate top  
+   ! Needs principal moments of inertia "pm" after alignment
+      BIN :: res
+      VEC(3) :: pm
+      res = .is_symmetric_top(pm) AND (pm(3)<pm(1))
+   end
+
+   is_oblate_top(pm) result(res)
+   ! Return TRUE if the geometry is a oblate top  
+   ! Needs principal moments of inertia "pm" after alignment
+      BIN :: res
+      VEC(3) :: pm
+      res = .is_symmetric_top(pm) AND (pm(3)>pm(1))
+   end
+
+   is_asymmetric_top(pm) result(res)
+   ! Return TRUE if the geometry is a asymmetric top
+   ! Needs principal moments of inertia "pm"
+      BIN :: res
+      VEC(3) :: pm
+      res = .no_of_same_principal_moments(pm)==0
+   end
+
+   no_of_same_principal_moments(pm) result(same)
+   ! Return the number of "same" pairs of principal moments of inertia.
+   ! Needs principal moments of inertia "pm"
+      INT :: same
+      VEC(3) :: pm
+      INT :: i,j
+      same = 0
+      do i = 1,3
+      do j = 1,i-1
+         if (abs(pm(i)-pm(j))<=TOL(6)) then
+            same = same + 1
+         end
+      end 
+      end 
+   end
+
+
+!     DBL :: pi2, bohr2i, rconst
+!     pi2 = PI*PI
+!     bohr2i = ONE/BOHR**2 
+!     
+!     rconst = PLANCK_SI/(cmss*EIGHT*pi2*SPEED_OF_LIGHT_SI) 
+!     if (iunits == 0) rconst = bohr2i * rconst 
+!     do i = 1, 3
+!        if (abs(.principal_moment(i)<small) then
+!           .principal_moment(i)  = ZERO
+!           .rotation_constant(i) = ZERO
+!        else
+!           .rotation_constant(i) = rconst/.principal_moment(i)
+!        end
+!     end
+
+   molecular_weight result(res)
+   ! Return the molceular weight for this atomvec
+      DBL:: res
+      INT :: a
+      res = ZERO
+      do a = 1,.n_atom
+         res = res + self(a).mass
+      end
+   end
+
+   centre_of_atoms result(centre)
+   ! Return the centroid of the atom positions
+      VEC(3) :: centre
+      INT :: a
+      centre = ZERO
+      do a = 1,.n_atom
+         centre = centre + self(a)%pos
+      end
+      centre = centre/.n_atom
+   end
+
+   bounding_cube_width result(width)
+   ! Return "width" which is a width of a side of a cube in which the molecule nicely sits.
+   ! Suitable for generating plot widths.
+      DBL :: width
+      VEC(3) :: centre,dist
+      DBL :: length
+      INT :: a
+      width = ZERO
+      centre = .centre_of_atoms
+      do a = 1,.n_atom
+         dist = self(a)%pos - centre
+         length = dist.norm + self(a).bragg_slater_radius*BOHR_PER_ANGSTROM*TWO
+         length = max(length, dist.norm*TWO)
+         width = max(width,length)
+      end
+      width = TWO*width
+   end
+
+!  ************************
+!  Atom information methods
+!  ************************
+
+   atom_index_from_pos(pos) result(res)
+   ! Return the index of atom from its position "pos"
+      VEC(3) :: pos
+      INT :: res
+      INT :: a
+      BIN :: found
+      found = FALSE
+      do a = 1,.n_atom
+         found = pos.same_as(self(a)%pos)
+         if (found) exit
+      end
+      DIE_IF(NOT found,"no atom for this position")
+      res = a
+   end
+
+   make_atom_kind_count(cnt,n_kind) [leaky]
+   ! Return an array "cnt" in which each element represents an atom, and the value
+   ! of that array element is a count of the number of atoms of that kind. 
+   ! Later atoms (i.e. array elements) which are of the same kind as earlier atoms have
+   ! a count of zero. The number of different kinds is returned in "n_kind".
+      IVEC, PTR :: cnt
+      INT :: n_kind
+      INT :: n,l,n_atom
+      n_atom = .n_atom
+      nullify(cnt); cnt.create(n_atom)
+      cnt = 1
+      do n = 1,n_atom
+         if (cnt(n)==0) cycle
+         do l = n+1,n_atom
+            if (cnt(l)==0) cycle
+            if ( .same_kind_of_atoms(l,n) ) then
+               cnt(n) = cnt(n)+1
+               cnt(l) = 0
+            end
+         end
+      end
+      n_kind = .n_atom - count(cnt==0)
+   end
+
+   make_atom_kind_list(atom_kind) [leaky]
+   ! Make the atom kind list ... atom_kind(k)%vec(c) is the c-th atom of the
+   ! same kind as atom k, which is a unique kind.
+      IVECVEC, PTR :: atom_kind
+      IVEC, PTR :: cnt 
+      INT :: n,l,k,c,n_atom
+      n_atom = .n_atom
+      .make_atom_kind_count(cnt,n)
+      nullify(atom_kind)
+      atom_kind.create(n)
+      k = 0
+      do n = 1,n_atom
+         if (cnt(n)==0) cycle
+         k = k+1
+         c = 1
+         atom_kind(k)%vec.create(cnt(n))
+         atom_kind(k)%vec(c) = n
+         do l = n+1,n_atom
+            if ( .same_kind_of_atoms(l,n) ) then
+               c = c+1
+               atom_kind(k)%vec(c) = l
+            end
+         end
+      end
+      cnt.destroy
+   end
+
+   make_atom_kind_map(map)
+   ! Make an atom kind array "map", where map(a) is the unique atom kind corresponding
+   ! to atom index a.
+      IVEC, PTR :: map
+      IVECVEC, PTR :: atom_kind
+      INT :: n_k,k,kk
+      map.create(.n_atom)
+      .make_atom_kind_list(atom_kind)
+      n_k = size(atom_kind) 
+      do k  = 1,n_k
+      do kk = 1,size(atom_kind(k)%vec)
+         map(atom_kind(k)%vec(kk)) = k
+      end
+      end
+      atom_kind.destroy
+   end
+
+!  ************************
+!  Shell extraction methods
+!  ************************
+
+   get_shell(a,sh)
+   ! Get basis set shell "a" in "sh" 
+      INT :: a
+      SHELL :: sh
+      INT :: aa,sa
+      aa = .atom_for_shell(a)
+      sa = .atom_shell_for_shell(a)
+      sh.set( self(aa)%basis%shell(sa) )
+   end
+
+   get_shell(index,sh,pos)
+   ! Get basis set shell "index" in "sh" and its position in "pos"
+      INT, IN :: index
+      SHELL, PTR :: sh
+      VEC(3) :: pos
+      INT :: aa,sa
+      aa = .atom_for_shell(index)
+      sa = .atom_shell_for_shell(index)
+      sh => self(aa)%basis%shell(sa)
+      pos = self(aa)%pos
+   end
+
+   update_shell1(sh,a,atom_a,sh_a)
+   ! Update the shell "sh" only if the atom "atom_a" and atom shell numbers "sh_a"
+   ! do not correspond to the actual shell number "a". These numbers are reset to
+   ! match a after the routine. 
+      SHELL1 :: sh
+      INT :: a,atom_a,sh_a
+      INT :: aa,sa
+      aa = .atom_for_shell(a)
+      sa = .atom_shell_for_shell(a)
+      if (atom_a/=aa) then
+         atom_a = aa
+         sh_a = sa
+         sh.set(shell=self(aa)%basis%shell(sa),pos=self(aa)%pos)
+      else if (sh_a/=sa) then
+         sh_a = sa
+         sh.set(shell=self(aa)%basis%shell(sa))
+      end
+   end
+
+!  *************************
+!  Shell information methods
+!  *************************
+
+   get_shell_limits(s,first,last) 
+   ! Get the shell function limits "first" and "last" for atomvec shell
+   ! number "s"
+      INT :: s,first,last
+      INT :: a,as,n,ss
+      ss = 0; last = 0
+      atom_loop: do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         do as = 1,n
+            ss = ss + 1
+            first = last+1
+            last  = first + self(a)%basis%shell(as)%n_comp - 1
+            if (s==ss) exit atom_loop
+         end
+      end do atom_loop
+   end
+
+   get_shell_limits(first,last) [leaky]
+   ! Get the shell function limit vectors "first" and "last" for corresponding
+   ! to the vector of atomvec shell number 
+      IVEC, PTR :: first,last
+      INT :: a,as,n,ss,f,l
+      nullify(first); first.create( .no_of_shells)
+      nullify(last);  last.create( .no_of_shells)
+      ss = 0; l = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         do as = 1,n
+            ss = ss + 1
+            f = l + 1
+            l = f + self(a)%basis%shell(as)%n_comp - 1
+            first(ss) = f
+            last(ss)  = l
+         end
+      end
+   end
+
+   make_atom_basis_fn_limits(first,last) [leaky]
+   ! Get the first and last basis functions for the atoms
+      IVEC, PTR :: first,last
+      INT :: a,as,n,l
+      nullify(first); first.create( .n_atom)
+      nullify(last);  last.create( .n_atom)
+      l = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         first(a) = l + 1
+         do as = 1,n
+            l = l + self(a)%basis%shell(as)%n_comp 
+         end
+         last(a) = l
+      end
+   end
+
+!  ******************************
+!  Atom-shell information methods
+!  ******************************
+ 
+   atom_for_shell(s) result(a)
+   ! Return the *atom* number "a" corresponding to the 
+   ! *atomvec* shell number "s"
+      INT :: a,s
+      INT :: ss,n
+      ss = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         ss = ss + n
+         if (s<=ss) exit
+      end
+   end
+ 
+   atom_for_shell result(res) [leaky]
+   ! Return a vector of *atom* numbers corresponding to the 
+   ! vector of *atomvec* shell numbers
+      IVEC, PTR :: res
+      INT :: a,ss,n
+      nullify(res); res.create( .no_of_shells)
+      ss = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         res(ss+1:ss+n) = a
+         ss = ss + n
+      end
+   end
+
+   atom_shell_for_shell(s) result(as)
+   ! Return the *atom* shell number "as" corresponding to the 
+   ! *atomvec* shell number "s"
+      INT :: as,s
+      INT :: a,ss,n
+      ss = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         ss = ss + n
+         if (s<=ss) exit
+      end
+      as = s - ss + n
+   end
+
+   atom_shell_for_shell result(res) [leaky]
+   ! Return a vector of *atom* shell numbers corresponding to the 
+   ! *atomvec* shell number vector
+      IVEC, PTR :: res
+      INT :: a,ss,n,as
+      nullify(res); res.create( .no_of_shells)
+      ss = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         do as = 1,n
+            res(ss+as) = as
+         end
+         ss = ss + n
+      end
+   end
+
+   first_shell_for_atom(a) result(res)
+   ! Return the index of the first shell for atom "a" in the atomvec
+      INT :: a,res
+      INT :: at,n
+      res = 1
+      do at = 1,(a-1)
+         n = self(a)%basis%n_shell
+         res = res + n
+      end
+   end
+
+   first_shell_for_atom result(res) [leaky]
+   ! Return the indices of the first shell for an atom in the atomvec
+      IVEC, PTR :: res
+      INT :: ss,a,n
+      nullify(res); res.create( .n_atom)
+      ss = 0
+      do a = 1,.n_atom
+         n = self(a)%basis%n_shell
+         res(a) = ss + 1
+         ss = ss + n
+      end
+   end
+
+   same_kind_of_atoms(a,b) result(res)
+   ! Return true if atoms "a" and "b" are the same kind
+      INT :: a,b
+      BIN :: res
+      res = self(a).same_kind_as(self(b))
+   end
+
+   bonded(a,b) result(res)
+   ! Return true if atoms "a" and "b" are bonded atoms
+      INT :: a,b
+      BIN :: res
+      DBL :: bond_max
+      bond_max = 1.25*(self(a).bragg_slater_radius + self(b).bragg_slater_radius)
+      bond_max = bond_max*BOHR_PER_ANGSTROM
+      res = .bond_distance(a,b)<bond_max
+   end
+
+   not_bonded(a,b) result(res)
+   ! Return true if atoms "a" and "b" are not bonded atoms
+      INT :: a,b
+      BIN :: res
+      res = NOT .bonded(a,b)
+   end
+
+   no_of_bonds result(res)
+   ! Return the number of bonded atoms
+      INT :: res
+      INT :: a,b
+      res = 0
+      do a = 1,.n_atom
+      do b = 1,a-1
+         if (.bonded(a,b)) res = res + 1
+      end
+      end
+   end
+
+   bond_distance(a,b) result(res)
+   ! Return the bond distance between atoms "a" and "b"
+      INT :: a,b
+      DBL :: res
+      res = self(a)%pos.distance_to(self(b)%pos) 
+   end
+
+   no_of_angles result(res)
+   ! Return the number of angles within bond contact distance
+      INT :: res
+      INT :: n,a,b,c
+      n = .n_atom
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (a==b) cycle
+         if (.not_bonded(a,b)) cycle
+         do c = 1,n
+            if (a==c OR b==c) cycle
+            if (.not_bonded(b,c)) cycle
+            res = res + 1
+         end
+      end
+      end
+      res = res/2
+   end
+
+   bond_angle(a,b,c,degrees) result(res)
+   ! Return the bond angle between atoms "a" , "b" and "c". The central atom is "b".
+   ! If "degrees" is present and TRUE, result is in degrees.
+      INT :: a,b,c
+      BIN, optional :: degrees
+      DBL :: res
+      VEC(3) :: rba,rbc
+      BIN :: change
+      rba = self(a)%pos - self(b)%pos
+      rbc = self(c)%pos - self(b)%pos
+      rba.normalize
+      rbc.normalize
+      res = rba.dot(rbc)
+      res = res.arccos
+      change = FALSE 
+      if (present (degrees)) change = degrees
+      if (change) res = (180/PI)*res
+   end
+
+   no_of_torsion_angles result(res)
+   ! Return the number of torsion angles within bond contact distance
+      INT :: res
+      INT :: n,a,b,c,d
+      n = .n_atom
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (a==b) cycle
+         if (.not_bonded(a,b)) cycle
+         do c = 1,n
+            if (a==c OR b==c) cycle
+            if (.not_bonded(b,c)) cycle
+            do d = 1,n
+               if (a==d OR b==d OR c==d) cycle
+               if (.not_bonded(c,d)) cycle
+               res = res + 1
+            end
+         end
+      end
+      end
+      res = res/2
+   end
+
+   torsion_angle(a,b,c,d,abc_colinear,bcd_colinear,degrees) result(res)
+   ! Return the torsion angle between atoms "a", "b", "c" and "d". The atoms are assumed 
+   ! connected like a--b--c--d and the angle returned is that between vectors (a-b) and (d-c) 
+   ! i.e. the torsion angle looking down the b--c bond. If "degrees" is present and TRUE, 
+   ! result is in degrees. 
+   ! NOTE *** If the result is -ONE, either a--b--c or b--c--d are colinear, and the
+   !          variables "abc_colinear" and "bcd_colinear" are set.
+      INT :: a,b,c,d
+      BIN, optional :: abc_colinear,bcd_colinear
+      BIN, optional :: degrees
+      DBL :: res
+      BIN :: change 
+      VEC(3) :: tcd,tba,rba,rcd,rbc
+      if (present(abc_colinear)) abc_colinear = FALSE
+      if (present(bcd_colinear)) bcd_colinear = FALSE
+      rba = self(a)%pos - self(b)%pos
+      rcd = self(d)%pos - self(c)%pos
+      rbc = self(c)%pos - self(b)%pos
+      tcd.to_cross_product(rcd,rbc)
+      tba.to_cross_product(rba,rbc)
+      if (abs( tba.norm)<TOL(5)) then
+         res = -ONE
+         if (present(abc_colinear)) abc_colinear = TRUE
+      end
+      if (abs( tcd.norm)<TOL(5)) then
+         res = -ONE
+         if (present(bcd_colinear)) bcd_colinear = TRUE
+      end
+      RETURN_IF(res<0)
+      tba.normalize
+      tcd.normalize
+      res = tba.dot(tcd)
+      res = res.arccos
+      change = FALSE 
+      if (present (degrees)) change = degrees
+      if (change) res = (180/PI)*res
+   end
+
+!  ************************
+!  Size information methods
+!  ************************
+
+   n_e result(res) [pure]
+   ! Work out and return the number of electrons in the atomvec
+      IN :: self
+      INT :: res
+      INT :: a
+      res = 0
+      do a = 1,size(self)
+         res = res + self(a)%atomic_number
+      end
+   end
+
+   no_of_shells result(res)  [pure]
+   ! Work out and return the number of gaussian shells in the basis set for the molecule
+      IN :: self
+      INT :: res
+      INT :: a
+      res = 0
+      do a = 1,size(self)
+         res = res + self(a)%basis%n_shell
+      end
+   end
+
+   n_shell_for_atom(i) result(res)  [pure]
+   ! Work out and return the number of gaussian shells in the basis set for the molecule
+      IN :: self
+      INT, IN :: i
+      INT :: res
+      res = self(i)%basis%n_shell
+   end
+
+   no_of_shell_pairs result(res) [pure]
+   ! Return the number of shell pairs in the basis set for the molecule
+      IN :: self
+      INT :: res
+      INT :: n_shell
+      n_shell = .no_of_shells
+      res = n_shell*(n_shell+1)/2
+   end
+
+   no_of_basis_functions result (res) [pure]
+   ! Work out and return the number of basis functions in the basis set for the molecule
+      IN :: self
+      INT :: res
+      INT :: a
+      res = 0
+      do a = 1,size(self)
+         res = res + self(a)%basis%n_bf
+      end
+   end
+
+   n_bf_for_atom(i) result (res) [pure]
+   ! Work out and return the number of basis functions in the basis set for the molecule
+      IN :: self
+      INT, IN :: i
+      INT :: res
+      res = self(i)%basis%n_bf
+   end
+
+   no_of_primitives result (res) [pure]
+   ! Work out and return the number of primitives in the basis set for the molecule
+      IN :: self
+      INT :: res
+      INT :: a
+      res = 0
+      do a = 1,size(self)
+         res = res + self(a)%basis%n_prim
+      end
+   end
+
+   n_atom result(res) [pure]
+   ! Return the number of atoms
+      IN :: self
+      INT :: res
+      res = size(self)
+   end
+
+!  *********************
+!  Basis set information
+!  *********************
+
+   basis_sets_missing result(res)
+   ! Return TRUE if any one atom basis set is undefined
+      BIN :: res
+      INT :: a
+      res = FALSE
+      do a = 1,.n_atom
+         if (NOT associated(self(a)%basis)) then
+            res = TRUE
+            exit
+         end
+      end
+   end
+
+   basis_sets_exist result(res)
+   ! Return TRUE if all atom basis sets are defined
+      BIN :: res
+      INT :: a
+      res = TRUE
+      do a = 1,.n_atom
+         if (NOT associated(self(a)%basis)) then
+            res = FALSE
+            exit
+         end
+      end
+   end
+
+   basis_unresolved result(res)
+   ! Return TRUE if any one basis set shellvec is undefined
+      BIN :: res
+      INT :: a
+      if (.basis_sets_missing) then
+         res = TRUE
+      else
+         res = FALSE
+         do a = 1,.n_atom
+            if (NOT associated(self(a)%basis%shell)) then
+               res = TRUE
+               exit
+            end
+         end
+      end
+   end
+
+   basis_resolved result(res)
+   ! Return TRUE if all basis set shellvecs are defined
+      BIN :: res
+      INT :: a
+      if (.basis_sets_missing) then
+         res = FALSE
+      else
+         res = TRUE
+         do a = 1,.n_atom
+            if (NOT associated(self(a)%basis%shell)) then
+               res = FALSE
+               exit
+            end
+         end
+      end
+   end
+
+   basis_all_unlabeled result(res)
+   ! Return TRUE if all basis set labels do not exist (or are blank)
+      BIN :: res
+      INT :: a
+      if (.basis_sets_missing) then
+         res = TRUE
+      else
+         res = TRUE
+         do a = 1,.n_atom
+            if (self(a)%basis%label/=" ") then
+               res = FALSE
+               exit
+            end
+         end
+      end
+   end
+
+   basis_all_labeled result(res)
+   ! Return TRUE if all basis set labels exist (i.e. are not blank)
+      BIN :: res
+      INT :: a
+      if (.basis_sets_missing) then
+         res = FALSE
+      else
+         res = TRUE
+         do a = 1,.n_atom
+            if (self(a)%basis%label==" ") then
+               res = FALSE
+               exit
+            end
+         end
+      end
+   end
+
+   basis_not_all_labeled result(res)
+   ! Return TRUE if all basis set labels do not exist (i.e. are not blank)
+      BIN :: res
+      res = NOT .basis_all_labeled
+   end
+
+   basis_part_labeled result(res)
+   ! Return TRUE if only some basis set labels exist (i.e. are not blank)
+      BIN :: res
+      if (.basis_sets_missing) then
+         res = FALSE
+      else
+         res = (NOT .basis_all_labeled) AND (NOT .basis_all_unlabeled)
+      end
+   end
+
+  distance_from(atomvec) result (distance)
+  ! Calculates the shortest distance between an atom in self and one in atomvec.
+    ATOMVEC, IN :: atomvec
+    IN :: self
+    DBL :: distance,dist
+    INT :: i,j,dim1,dim2
+    VEC(3) :: difference
+
+    dim1 = size(self)
+    dim2 = size(atomvec)
+
+    ! Do the first pair explicitly to set a starting distance.
+    ! We also work with distance^2 until the end - saves computation.
+    difference = self(1)%pos(:) - atomvec(1)%pos(:)
+    distance = dot_product(difference,difference)
+
+    do i=1,dim1
+      do j=1,dim2
+        difference = self(i)%pos(:) - atomvec(j)%pos(:)
+        dist = dot_product(difference,difference)
+        if (dist < distance) distance = dist
+      end
+    end
+
+    distance = sqrt(distance)
+  end
+
+  distance_from(pos) result (distance)
+  ! Calculates the shortest distance of "pos" to an atom in self.
+    VEC(3), IN :: pos
+    IN :: self
+    DBL :: distance,dist
+    VEC(3) :: difference
+    INT :: i
+
+    ! Do the first pair explicitly to set a starting distance.
+    ! We also work with distance^2 until the end - saves computation.
+    difference = self(1)%pos(:) - pos(:)
+    distance = dot_product(difference,difference)
+
+    do i = 1, size(self)
+      difference = self(i)%pos(:) - pos(:)
+      dist = dot_product(difference,difference)
+      if (dist < distance) distance = dist
+    end
+
+    distance = sqrt(distance)
+  end
+
+  same_as(atomvec) result(res)
+  ! Returns true if the two atomvecs contain the same atoms, though maybe
+  ! in a different order.  Checks atomic number and position of each atom.
+    ATOMVEC, IN :: atomvec
+    BINVEC(size(self)) :: matched
+    BIN :: res,match_pos,match_kind,match
+    INT :: n,q,dim
+    res = FALSE
+    dim = size(self)
+    RETURN_IF(NOT (dim == size(atomvec))) ! different number of atoms in each.
+    matched = FALSE
+    do n = 1, dim
+      match=FALSE
+      do q = 1, dim
+        match_kind =  (self(n)%atomic_number == atomvec(q)%atomic_number)
+        match_pos  =  self(n)%pos.same_as( atomvec(q)%pos, TOL(3) )
+        if (match_pos AND match_kind AND (NOT matched(q))) then
+          matched(q) = TRUE
+          match = TRUE
+          exit
+        end
+      end
+      RETURN_IF(NOT match) ! atom n doesn't have a match.
+    end
+    do q = 1, dim         ! If not all of q are matched then atomvecs not same.
+      RETURN_IF(NOT matched(q))
+    end
+    res = TRUE
+  end
+
+  positions result(res)
+  ! Return a 3 x n_atom matrix containing the positions of all the atoms of self.
+    MAT(3,size(self)) :: res
+    INT :: n
+    do n = 1, size(self)
+      res(:,n) = self(n)%pos
+    end
+  end
+
+!-------------------------------------------------------------------------------
+! Crystal stuff.
+!-------------------------------------------------------------------------------
+
+  seitz_multiply(seitz)
+  ! Self is operated on by the seitz matrix.  Self must be in fractional coordinates.
+    INOUT :: self
+    MAT, IN :: seitz
+    .rotate(seitz(1:3,1:3))
+    .rotate_thermal(seitz(1:3,1:3))
+    .translate(seitz(1:3,4))
+  end
+
+  translate(vector)
+  ! Translate self by vector.
+    INOUT :: self
+    VEC(3), IN :: vector
+    INT :: n
+    do n=1,size(self)
+      self(n)%pos = self(n)%pos + vector
+    end
+  end
+
+  rotate(matrix)
+  ! Rotate self by the rotation matrix
+    INOUT :: self
+    MAT(3,3), IN :: matrix
+    INT :: n
+    do n=1,size(self)
+      self(n)%pos            = matmul(matrix,self(n)%pos)
+    end
+  end
+
+  rotate_thermal(matrix)
+  ! Rotate self by the rotation matrix
+    INOUT :: self
+    MAT(3,3), IN :: matrix
+    INT :: n
+    do n=1,size(self)
+      self(n)%thermal_tensor.change_basis(matrix)
+    end
+  end
+
+  ensure_in_unitcell
+  ! Translate the position to be in the unitcell.  Must already be in crystal coordinates.
+    INOUT :: self
+    VEC(3) :: translation
+    translation = - nint( .centre_of_atoms ,kind=INT_KIND)
+    .translate(translation)
+  end
+
+  default_multiplicity result(res)
+  ! Return the default multiplicity for an atomvec/molecule.
+    IN :: self
+    DBL :: res
+    if (size(self)==1) then
+       res = self(1).ground_state_multiplicity
+    else
+       res = mod(.n_e,2) + 1
+    end
+
+  end
+
+end 
