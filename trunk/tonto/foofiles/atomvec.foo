@@ -129,66 +129,84 @@ contains
 !  Input methods
 !  *************
 
-   read(in,crystal) [leaky]
-   ! Read in the atom list information from file "in".
-   ! "crystal" is used for thermal tensor conversion.
-   ! ***Note that this routine creates an ATOMVEC
+   read [leaky]
+   ! Read in data in the standard order from "stdin". 
+   ! NOTE: Will create a ATOMVEC, if required
       PTR :: self
-      TEXTFILE :: in
-      CRYSTAL, optional :: crystal
-      INT :: line,n_atom,a
+      STRVEC, PTR :: keywords
       STR :: word
-      BIN :: angstrom,cryst
-      ENSURE(.destroyed,"atom vector already created")
-      line = in.line_number+1               ! Store line of atom list
-      n_atom = 0
-      angstrom=FALSE
-      cryst=FALSE
-      do                                ! Read for angstrom or fractional units
-         if (in.buffer.exhausted) exit
-         in.read(word); word.to_lower_case
+      keywords.create(ATOM_INPUT_DATA_ORDER)
+      read_loop: do         ! Loop over input keywords
+         stdin.read(word)
+         word.to_lower_case
          select case (word)
-            case("angstrom");   angstrom=TRUE
-            case("crystal");    cryst=TRUE
-            case("fractional"); cryst=TRUE
-            case default;       DIE("unrecognised option: "// word.trim )
+            case("end");        exit read_loop
+            case("data_order"); .read_data_order(keywords)
+            case("loop");       .read_loop(keywords)
+            case default;       DIE("unknown keyword, "//trim(word))
          end
-      end
-      do                                    ! Read ahead for the number of atoms
-         in.read_line
-         in.read(word); word.to_lower_case
-         if (word=="end") exit
-         n_atom = n_atom + 1
-      end
-      DIE_IF(n_atom==0,"empty atom input")
-      .create(n_atom)
-      in.move_to_line(line)            ! Move back to the start of the atom list
-      do a = 1,n_atom                  ! Read the atom list
-!         self(a).read(in)
-         self(a).read_label_and_pos(in)
-         if (in.buffer.exhausted) cycle
-         self(a).read_basis_label(in)
-         if (in.buffer.exhausted) cycle
-      end
-      in.read(word)
-      DIE_IF(word/="end","end keyword wrongly positioned")
-      if (angstrom) .convert_from_angstrom
-      if (cryst) then
-        DIE_IF(NOT present(crystal),"Crystal unitcell input needed before atoms")
-        .convert_from_crystal(crystal)
-      end
+      end do read_loop
+      keywords.destroy
+   end 
+
+   read_data_order(keywords) [leaky]
+   ! Read in a new data order list from "stdin". 
+      STRVEC, PTR :: keywords
+      keywords.destroy
+      stdin.read_ptr(keywords)
    end
 
-   read_basis_labels(in)
-   ! Read in a list of basis set labels for every atom from file "in"
-      TEXTFILE :: in
-      INT :: a
+   read_loop(keywords) [leaky]
+   ! Read in a list of plain-style data, according to the ordering
+   ! in the list of "keywords".
+      PTR :: self
+      STRVEC :: keywords
       STR :: word
-      do a = 1,.n_atom
-         self(a).read_basis_label(in)
+      INT :: length
+      length = .list_length(keywords)
+      if (.created) ENSURE(length==.n_atom,"list length is wrong")
+      if (.destroyed) .create(length)
+      .process(keywords)
+      stdin.read(word)
+      ENSURE(word=="end","loop must terminate with end")
+   end
+
+   process(keywords) [leaky]
+   ! Read in the list information from "stdin". 
+      PTR :: self
+      STRVEC :: keywords
+      INT :: s
+      STR :: word
+      do s = 1,size(self)             ! Read the list
+         self(s).process(keywords)
       end
-      in.read(word)
-      DIE_IF(word/="end","end keyword wrongly positioned")
+   end 
+
+   list_length(keywords) result (res)
+   ! Return the number of shells in the list, where each shell data components 
+   ! is ordered according to a list of "keywords", if present. 
+      STRVEC  :: keywords
+      INT :: res
+      INT :: line,item
+      ATOM, PTR :: atom
+      STR :: word
+      stdin.read(word)
+      ENSURE(word/="end","empty list")
+      line = stdin.line_number        ! Store line of atom list
+      item = stdin.previous_line_item
+      res = 0
+      do                              ! Read ahead for the number of atoms
+         stdin.move_to_previous_item
+         atom.create
+         atom.process(keywords)
+         atom.destroy
+         res = res + 1
+         stdin.read(word)
+         word.to_lower_case
+         if (word=="end") exit
+      end
+      stdin.move_to_line(line)
+      stdin.move_to_line_item(item)
    end
 
    resolve_basis_labels(basis) [leaky]
@@ -211,128 +229,105 @@ contains
       end
    end
 
-   read_thermal_tensors(in,crystal)
-   ! Read in the thermal tensor data from "in" for all atoms and treat with
-   ! "crystal" to get into cartesian coordinates
-   ! Keyword can go at start of input to denote which coordinate system.
-   ! Default coordinate system is defined in atom module.
-      TEXTFILE :: in
-      CRYSTAL :: crystal
+   change_axis_system_to(kind,crystal) 
+   ! Change the axis system "kind" for all atoms to and from "cartesian" and "crystal".
+      STR(*) :: kind
+      CRYSTAL, IN :: crystal
       INT :: a
-      STR :: word
-      BIN :: use_crystal
-
-      if ( in.buffer.not_exhausted ) then   ! Read in coordinate system.
-        in.read(word)
-        word.to_lower_case
-        select case (word)
-          case ("cartesian"); use_crystal = FALSE
-          case ("crystal"); use_crystal = TRUE
-          case default; DIE("unknown coordinate system " // trim(word))
-        end
-        do a = 1,.n_atom
-          in.read(word)
-          DIE_IF(word=="end","end keyword wrongly positioned")
-          in.move_to_previous_item
-          self(a).read_thermal_tensor(in,crystal)
-        end
-      else                           ! This one we use default coordinates,
-        do a = 1,.n_atom             ! as specified in atom module.
-          in.read(word)
-          DIE_IF(word=="end","end keyword wrongly positioned")
-          in.move_to_previous_item
-          self(a).read_thermal_tensor(in,crystal)
-        end
+      do a = 1,.n_atom
+         self(a).change_axis_system_to(kind,crystal)
       end
-
-      in.read(word)
-      DIE_IF(word/="end","end keyword wrongly positioned")
    end
 
 !  **************
 !  Output methods
 !  **************
 
-   put_atom_position_info(out)
-   ! Output atom position information
-      TEXTFILE :: out
-      .put_coordinates(out)
-      .put_bond_length_table(out)
-      .put_bond_angle_table(out)
-      .put_torsion_angle_table(out)
-   end 
+   put
+   ! Output atom information, without full basis set info
+      stdout.flush
+      stdout.show("Chemical Formula       =",trim(.chemical_formula))
+      stdout.show("No of atoms            =",.n_atom)
+      stdout.show("No of electrons        =",.n_e)
+      .put_coord_info
+   end  
 
-   put_coordinates(out)
+   put_coord_info
+   ! Output atom coordinate information, including bond lengths, angles,
+   ! without full basis set info
+      .put_coordinates
+      .put_bond_length_table
+      .put_bond_angle_table
+      .put_torsion_angle_table
+   end  
+
+   put_coordinates
    ! Output the atom coordinate information
-      TEXTFILE :: out
       if (.bases_are_all_labeled) then
-        .put_coords_with_basis_label(out)
+        .put_coords_with_basis_label
       else
-        .put_coords_without_basis_label(out)
+        .put_coords_without_basis_label
       end
    end
 
-   put_coords_with_basis_label(out)
+   put_coords_with_basis_label
    ! Output the atom coordinates information, including the basis label,
    ! but not the entire basis set.
-      TEXTFILE :: out
       INT :: i
-      out.flush
-      out.text("Atom list information:",flush=1)
-      out.put_dash(int_fields=3,dbl_fields=4,flush=1)
-      out.put("#",int_width=TRUE)
-      out.put("ID",int_width=TRUE)
-      out.put("Z",int_width=TRUE)
-      out.put("x")
-      out.put("y")
-      out.put("z")
-      if (.bases_are_all_labeled) out.put("Basis")
-      out.flush
-      out.put_dash(int_fields=3,dbl_fields=4,flush=1)
+      stdout.flush
+      stdout.text("Atom list information:",flush=1)
+      stdout.put_dash(int_fields=3,dbl_fields=4,flush=1)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("ID",int_width=TRUE)
+      stdout.put("Z",int_width=TRUE)
+      stdout.put("x")
+      stdout.put("y")
+      stdout.put("z")
+      if (.bases_are_all_labeled) stdout.put("Basis")
+      stdout.flush
+      stdout.put_dash(int_fields=3,dbl_fields=4,flush=1)
       do i = 1,.n_atom
-         out.put(i)
-         out.put(self(i).label,int_width=TRUE)
-         out.put(self(i).atomic_number)
-         out.put(self(i).pos(1))
-         out.put(self(i).pos(2))
-         out.put(self(i).pos(3))
-         out.put(self(i).basis.label)
-         out.flush
+         stdout.put(i)
+         stdout.put(self(i).label,int_width=TRUE)
+         stdout.put(self(i).atomic_number)
+         stdout.put(self(i).pos(1))
+         stdout.put(self(i).pos(2))
+         stdout.put(self(i).pos(3))
+         stdout.put(self(i).basis.label)
+         stdout.flush
       end
-      out.put_dash(int_fields=3,dbl_fields=4,flush=1)
+      stdout.put_dash(int_fields=3,dbl_fields=4,flush=1)
    end
 
-   put_coords_without_basis_label(out)
+   put_coords_without_basis_label
    ! Output the atom coordinates information, without basis set label
-      TEXTFILE :: out
       INT :: i
-      out.flush
-      out.text("Atom list information:",flush=1)
-      out.put_dash(int_fields=3,dbl_fields=3,flush=1)
-      out.put("#",int_width=TRUE)
-      out.put("ID",int_width=TRUE)
-      out.put("Z",int_width=TRUE)
-      out.put("x")
-      out.put("y")
-      out.put("z")
-      out.flush
-      out.put_dash(int_fields=3,dbl_fields=3,flush=1)
+      stdout.flush
+      stdout.text("Atom list information:",flush=1)
+      stdout.put_dash(int_fields=3,dbl_fields=3,flush=1)
+      stdout.put("#",int_width=TRUE)
+      stdout.put("ID",int_width=TRUE)
+      stdout.put("Z",int_width=TRUE)
+      stdout.put("x")
+      stdout.put("y")
+      stdout.put("z")
+      stdout.flush
+      stdout.put_dash(int_fields=3,dbl_fields=3,flush=1)
       do i = 1,.n_atom
-         out.put(i)
-         out.put(self(i).label,int_width=TRUE)
-         out.put(self(i).atomic_number)
-         out.put(self(i).pos(1))
-         out.put(self(i).pos(2))
-         out.put(self(i).pos(3))
-         out.flush
+         stdout.put(i)
+         stdout.put(self(i).label,int_width=TRUE)
+         stdout.put(self(i).atomic_number)
+         stdout.put(self(i).pos(1))
+         stdout.put(self(i).pos(2))
+         stdout.put(self(i).pos(3))
+         stdout.flush
       end
-      out.put_dash(int_fields=3,dbl_fields=3,flush=1)
+      stdout.put_dash(int_fields=3,dbl_fields=3,flush=1)
    end
 
-   put_bond_length_table(out,all)
+   put_bond_length_table(all)
    ! Output the bond length table. If "all" is present and true, put out all
    ! possible bond lengths
-      TEXTFILE :: out
       BIN, optional :: all
       BIN :: print_all_bonds
       IVECVEC, PTR :: atom_kind
@@ -345,16 +340,16 @@ contains
       RETURN_IF( .no_of_bonds<1 AND NOT print_all_bonds)
       .make_atom_kind_list(atom_kind)
       n_k = size(atom_kind)
-      out.flush
-      out.text("Bond lengths:",flush=2)
-      out.show("No. of independent bonds  =",.no_of_bonds)
-      out.flush
-      out.dash(int_fields=2,dbl_fields=2)
-      out.put("Atom_a",int_width=TRUE)
-      out.put("Atom_b",int_width=TRUE)
-      out.put("r_ab/au")
-      out.put("r_ab/Angstrom",flush=1)
-      out.dash(int_fields=2,dbl_fields=2)
+      stdout.flush
+      stdout.text("Bond lengths:",flush=2)
+      stdout.show("No. of independent bonds  =",.no_of_bonds)
+      stdout.flush
+      stdout.dash(int_fields=2,dbl_fields=2)
+      stdout.put("Atom_a",int_width=TRUE)
+      stdout.put("Atom_b",int_width=TRUE)
+      stdout.put("r_ab/au")
+      stdout.put("r_ab/Angstrom",flush=1)
+      stdout.dash(int_fields=2,dbl_fields=2)
       do k = 1,n_k
       do kk = 1,size(atom_kind(k).vec)
       do l = 1,n_k
@@ -366,23 +361,22 @@ contains
          if (a==b) cycle
          if (.not_bonded(a,b) AND NOT print_all_bonds) cycle
          r_ab = .bond_distance(a,b)
-         out.put(symbol_a,int_width=TRUE)
-         out.put(symbol_b,int_width=TRUE)
-         out.put(r_ab)
-         out.put(r_ab*ANGSTROM_PER_BOHR)
-         out.flush
+         stdout.put(symbol_a,int_width=TRUE)
+         stdout.put(symbol_b,int_width=TRUE)
+         stdout.put(r_ab)
+         stdout.put(r_ab*ANGSTROM_PER_BOHR)
+         stdout.flush
       end
       end
       end
       end
       atom_kind.destroy
-      out.dash(int_fields=2,dbl_fields=2)
+      stdout.dash(int_fields=2,dbl_fields=2)
    end
 
-   put_bond_angle_table(out,all)
+   put_bond_angle_table(all)
    ! Output the bond length table. If "all" is present and true, put out all
    ! possible angles
-      TEXTFILE :: out
       BIN, optional :: all
       BIN :: print_all_angles
       IVECVEC, PTR :: atom_kind
@@ -396,16 +390,16 @@ contains
       RETURN_IF( .no_of_angles>100 AND NOT print_all_angles)
       .make_atom_kind_list(atom_kind)
       n_k = size(atom_kind)
-      out.flush
-      out.text("Bond angles (b the central atom):",flush=2)
-      out.show("No. of independent angles =",.no_of_angles)
-      out.flush
-      out.dash(int_fields=3,dbl_fields=1)
-      out.put("Atom_a",int_width=TRUE)
-      out.put("Atom_b",int_width=TRUE)
-      out.put("Atom_c",int_width=TRUE)
-      out.put("Angle_abc/degrees",flush=1)
-      out.dash(int_fields=3,dbl_fields=1)
+      stdout.flush
+      stdout.text("Bond angles (b the central atom):",flush=2)
+      stdout.show("No. of independent angles =",.no_of_angles)
+      stdout.flush
+      stdout.dash(int_fields=3,dbl_fields=1)
+      stdout.put("Atom_a",int_width=TRUE)
+      stdout.put("Atom_b",int_width=TRUE)
+      stdout.put("Atom_c",int_width=TRUE)
+      stdout.put("Angle_abc/degrees",flush=1)
+      stdout.dash(int_fields=3,dbl_fields=1)
       do k = 1,n_k
       do kk = 1,size(atom_kind(k).vec)
       do l = 1,n_k
@@ -422,11 +416,11 @@ contains
          symbol_b = self(b).chemical_symbol.trim // " (" // b.to_str.trim // ")"
          symbol_c = self(c).chemical_symbol.trim // " (" // c.to_str.trim // ")"
          theta_abc = .bond_angle(a,b,c,degrees=TRUE)
-         out.put(symbol_a,int_width=TRUE)
-         out.put(symbol_b,int_width=TRUE)
-         out.put(symbol_c,int_width=TRUE)
-         out.put(theta_abc)
-         out.flush
+         stdout.put(symbol_a,int_width=TRUE)
+         stdout.put(symbol_b,int_width=TRUE)
+         stdout.put(symbol_c,int_width=TRUE)
+         stdout.put(theta_abc)
+         stdout.flush
       end
       end
       end
@@ -434,13 +428,12 @@ contains
       end
       end
       atom_kind.destroy
-      out.dash(int_fields=3,dbl_fields=1)
+      stdout.dash(int_fields=3,dbl_fields=1)
    end
 
-   put_torsion_angle_table(out,all)
+   put_torsion_angle_table(all)
    ! Output the torsion angle table. If "all" is present and true, put out all
    ! possible angles
-      TEXTFILE :: out
       BIN, optional :: all
       BIN :: print_all_angles,abc_colinear,bcd_colinear
       IVECVEC, PTR :: atom_kind
@@ -454,17 +447,17 @@ contains
       RETURN_IF( .no_of_angles>100 AND NOT print_all_angles)
       .make_atom_kind_list(atom_kind)
       n_k = size(atom_kind)
-      out.flush
-      out.text("Torsion angles (looking down b->c):",flush=2)
-      out.show("No. of independent angles =",.no_of_torsion_angles)
-      out.flush
-      out.dash(int_fields=4,dbl_fields=1)
-      out.put("Atom_a",int_width=TRUE)
-      out.put("Atom_b",int_width=TRUE)
-      out.put("Atom_c",int_width=TRUE)
-      out.put("Atom_d",int_width=TRUE)
-      out.put("Angle_abcd/degrees",flush=1)
-      out.dash(int_fields=4,dbl_fields=1)
+      stdout.flush
+      stdout.text("Torsion angles (looking down b->c):",flush=2)
+      stdout.show("No. of independent angles =",.no_of_torsion_angles)
+      stdout.flush
+      stdout.dash(int_fields=4,dbl_fields=1)
+      stdout.put("Atom_a",int_width=TRUE)
+      stdout.put("Atom_b",int_width=TRUE)
+      stdout.put("Atom_c",int_width=TRUE)
+      stdout.put("Atom_d",int_width=TRUE)
+      stdout.put("Angle_abcd/degrees",flush=1)
+      stdout.dash(int_fields=4,dbl_fields=1)
       do k = 1,n_k
       do kk = 1,size(atom_kind(k).vec)
       do l = 1,n_k
@@ -486,20 +479,20 @@ contains
          symbol_c = self(c).chemical_symbol.trim // " (" // c.to_str.trim // ")"
          symbol_d = self(d).chemical_symbol.trim // " (" // d.to_str.trim // ")"
          theta_abcd = .torsion_angle(a,b,c,d,abc_colinear,bcd_colinear,degrees=TRUE)
-         out.put(symbol_a,int_width=TRUE)
-         out.put(symbol_b,int_width=TRUE)
-         out.put(symbol_c,int_width=TRUE)
-         out.put(symbol_d,int_width=TRUE)
+         stdout.put(symbol_a,int_width=TRUE)
+         stdout.put(symbol_b,int_width=TRUE)
+         stdout.put(symbol_c,int_width=TRUE)
+         stdout.put(symbol_d,int_width=TRUE)
          if (abc_colinear AND bcd_colinear) then
-            out.put("a-b-c-d colinear")
+            stdout.put("a-b-c-d colinear")
          else if (abc_colinear) then
-            out.put("a-b-c colinear")
+            stdout.put("a-b-c colinear")
          else if (bcd_colinear) then
-            out.put("b-c-d colinear")
+            stdout.put("b-c-d colinear")
          else
-            out.put(theta_abcd)
+            stdout.put(theta_abcd)
          end
-         out.flush
+         stdout.flush
       end
       end
       end
@@ -509,59 +502,58 @@ contains
       end
       end
       atom_kind.destroy
-      out.dash(int_fields=4,dbl_fields=1)
+      stdout.dash(int_fields=4,dbl_fields=1)
    end
 
-  put_thermal_tensors(out,crystal)
-  ! Output the thermal tensors if they exist.
-     TEXTFILE :: out
+  put_thermal_tensors(crystal)
+  ! Output the thermal tensors.
      CRYSTAL :: crystal
      BIN :: err
      INT :: i
-     out.flush
-     out.text("Thermal tensors in cartesian coordinates/(bohr^2):")
-     out.flush
-     out.dash(int_fields=1,dbl_fields=6)
-     out.put("Atom",int_width=TRUE)
-     out.put("U11")
-     out.put("U22")
-     out.put("U33")
-     out.put("U12")
-     out.put("U13")
-     out.put("U23")
-     out.flush
-     out.dash(int_fields=1,dbl_fields=6)
+     stdout.flush
+     stdout.text("Thermal tensors in cartesian coordinates/(bohr^2):")
+     stdout.flush
+     stdout.dash(int_fields=1,dbl_fields=6)
+     stdout.put("Atom",int_width=TRUE)
+     stdout.put("U11")
+     stdout.put("U22")
+     stdout.put("U33")
+     stdout.put("U12")
+     stdout.put("U13")
+     stdout.put("U23")
+     stdout.flush
+     stdout.dash(int_fields=1,dbl_fields=6)
      do i = 1,.n_atom
-       out.put(i)
-       self(i).put_thermal_tensor(out)
-       out.flush
+       stdout.put(i)
+       self(i).put_thermal_tensor
+       stdout.flush
      end
-     out.dash(int_fields=1,dbl_fields=6)
-     out.flush
-     out.text("Thermal parameters in crystal coordinates/(angstrom^2):")
-     out.flush
-     out.dash(int_fields=1,dbl_fields=6)
-     out.put("Atom",int_width=TRUE)
-     out.put("U11")
-     out.put("U22")
-     out.put("U33")
-     out.put("U12")
-     out.put("U13")
-     out.put("U23")
-     out.flush
-     out.dash(int_fields=1,dbl_fields=6)
+     stdout.dash(int_fields=1,dbl_fields=6)
+     stdout.flush
+     stdout.text("Thermal parameters in crystal coordinates/(angstrom^2):")
+     stdout.flush
+     stdout.dash(int_fields=1,dbl_fields=6)
+     stdout.put("Atom",int_width=TRUE)
+     stdout.put("U11")
+     stdout.put("U22")
+     stdout.put("U33")
+     stdout.put("U12")
+     stdout.put("U13")
+     stdout.put("U23")
+     stdout.flush
+     stdout.dash(int_fields=1,dbl_fields=6)
      do i = 1,.n_atom
 !       self(i).change_thermal_tensor_axes_to("crystal",crystal)
        self(i).thermal_tensor.convert_to("angstrom^2",err)
        DIE_IF(err,"error converting units")
-       out.put(i)
-       self(i).put_thermal_tensor(out)
-       out.flush
+       stdout.put(i)
+       self(i).put_thermal_tensor
+       stdout.flush
        self(i).thermal_tensor.convert_from("angstrom^2",err)
        DIE_IF(err,"error converting units")
 !       self(i).change_thermal_tensor_axes_to("cartesian",crystal)
      end
-     out.dash(int_fields=1,dbl_fields=6)
+     stdout.dash(int_fields=1,dbl_fields=6)
   end
 
 !  *************************
@@ -1750,21 +1742,21 @@ contains
     end
   end
 
-  thermal_tensor_to_crystal(crystal)
+  thermal_tensor_to(crystal)
   ! Convert all thermal tensors from cartesians to crystal coordinates.
     CRYSTAL, IN :: crystal
     INT :: n
     do n=1,size(self)
-      self(n).thermal_tensor_to_crystal(crystal)
+      self(n).thermal_tensor_to(crystal)
     end
   end
 
-  thermal_tensor_from_crystal(crystal)
+  thermal_tensor_from(crystal)
   ! Convert all thermal tensors from crystal coordinates to cartesians.
     CRYSTAL, IN :: crystal
     INT :: n
     do n=1,size(self)
-      self(n).thermal_tensor_from_crystal(crystal)
+      self(n).thermal_tensor_from(crystal)
     end
   end
 

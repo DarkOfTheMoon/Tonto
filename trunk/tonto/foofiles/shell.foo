@@ -43,11 +43,18 @@ module SHELL
 
 contains
 
+!  ******************
+!  Allocation methods
+!  ******************
+
    create 
    ! Create a shell object
       PTR :: self
       allocate(self)
       ADD_MEM(SHELL_SIZE)
+      .l = 0
+      .n_cc = 0
+      .n_comp = 0
       .nullify_ptr_part
    end
 
@@ -113,41 +120,132 @@ contains
    set_default
    ! Set a default shell
       .l = 0
-      .n_comp = 1
       .n_cc = 1
       .ex.create(1)
       .cc.create(1)
       .ex(1) = ONE
       .cc(1) = ONE
+      .update
    end
 
-   read(in) [leaky]
-   ! Read a contracted gaussian self from file "in"
-      TEXTFILE :: in
-      CHR :: l_c
-      INT :: l,n_cc,i
-      in.read_chr(l_c)
-      in.read(n_cc)
-      l_c.to_lower_case
-      select case (l_c) 
-         case ("s"); l = 0
-         case ("p"); l = 1
-         case ("d"); l = 2
-         case ("f"); l = 3
-         case ("g"); l = 4
-         case default; 
-            DIE_IF(l_c<"g","unknown angular momentum character:"//l_c)
-            l = 4 + iachar(l_c)-iachar("g")
-      end 
-      .l = l
-      .n_comp = (l+1)*(l+2)/2
-      .n_cc = n_cc
-      .ex.create(n_cc)
-      .cc.create(n_cc)
-      do i = 1,n_cc
-         in.read(.ex(i))
-         in.read(.cc(i))
+   update     
+   ! Update the shell data
+      .n_comp = (.l+1)*(.l+2)/2
+   end
+
+!  *************
+!  Input methods
+!  *************
+
+   read [leaky]
+   ! Read data from "stdin" using keyword style input.
+      STR :: word
+      read_loop: do             ! Loop over keywords
+         stdin.read(word)
+         if (stdin.end_of_file) exit read_loop
+         if (word=="end")       exit read_loop
+         .process(word)      
+      end do read_loop
+      .update
+   end
+
+   process(word) [leaky]
+   ! Process a keyword "word". Data is inputted from "stdin", unless
+   ! "word" is a sequence of blank separated strings. In this case, 
+   ! the sequence is processed as if it were a separate file.
+      STR(*) :: word
+      if (word.includes(" ")) then
+         stdin.redirect([word])
+         .read
+      else
+         select case (word)
+            case("end");    ! exit surrounding loop
+            case("shell");  .read
+            case("units");  .read_units
+            case("l");      .read_l
+            case("n_cc");   .read_n_cc
+            case("ex");     .read_ex
+            case("cc");     .read_cc
+            case("ex,cc");  .read_ex_cc
+            case default;    DIE("unknown keyword, "//trim(word))
+         end
       end
+   end
+
+   process(keyword) [leaky]
+   ! Process each of the words in the "keyword" list.
+      STRVEC :: keyword
+      INT :: k,n_key
+      n_key = size(keyword)
+      do k = 1,n_key
+         if (keyword(k)=="end") exit 
+         .process(keyword(k)) 
+      end
+      ENSURE(k>=n_key,"unprocessed words remain in the keyword list")
+      .update
+   end
+
+   read_units
+   ! Read a string which describes the units to be used
+      stdin.set_default_units(stdin.next_str)
+   end
+
+   read_l
+   ! Read in the l symbol
+      STR :: word
+      CHR :: l_c
+      INT :: l
+      stdin.read(word)
+      if (word.is_int) then
+         .l = word.to_int 
+      else
+         ENSURE(len_trim(word)==1,"unknown L symbol")
+         l_c = word
+         l_c.to_lower_case
+         select case (l_c) 
+            case ("s"); l = 0
+            case ("p"); l = 1
+            case ("d"); l = 2
+            case ("f"); l = 3
+            case ("g"); l = 4
+            case default; 
+               DIE_IF(l_c<"g","unknown angular momentum character:"//l_c)
+               l = 4 + iachar(l_c)-iachar("g")
+         end 
+         .l = l
+      end
+   end
+
+   read_n_cc
+   ! Read in the number of vontraction coefficients
+      stdin.read(.n_cc)
+      ENSURE(.n_cc>0,"n_cc must be positive")
+   end
+
+   read_ex [leaky]
+   ! Read in the exponents
+      ENSURE(.n_cc>0,"n_cc must be entered first")
+      ENSURE(.ex.destroyed,"ex already entered")
+      .ex.create(.n_cc)
+      stdin.read(.ex)
+   end
+
+   read_cc [leaky]
+   ! Read in the contraction coefficients
+      ENSURE(.n_cc>0,"n_cc must be entered first")
+      ENSURE(.cc.destroyed,"cc already entered")
+      .cc.create(.n_cc)
+      stdin.read(.cc)
+   end
+
+   read_ex_cc [leaky]
+   ! Read in the exponents
+      ENSURE(.n_cc>0,"n_cc must be entered first")
+      ENSURE(.ex.destroyed,"ex already entered")
+      ENSURE(.cc.destroyed,"ex already entered")
+      .ex.create(.n_cc)
+      .cc.create(.n_cc)
+      stdin.read(.ex,.cc)
    end
 
    l_chr result(res)
@@ -168,8 +266,7 @@ contains
    end
     
    make_contraction_matrix(ccm)
-   ! Return the contraction coefficient matrix
-   ! Size of ccm is .n_prim,.n_comp.
+   ! Return the contraction coefficient matrix. Size of ccm is (.n_prim,.n_comp).
       MAT :: ccm
       INT :: b,p,i
       DBL :: f
@@ -188,9 +285,8 @@ contains
    end
 
    unnormalise
-   ! Unnormalise self for cartesian component x^l.
-   ! It is up to you to correct this factor with appropriate
-   ! double factorial square roots for other components.
+   ! Unnormalise self for cartesian component x^l. It is up to you to correct this 
+   ! factor with appropriate double factorial square roots for other components.
       INT :: i,j
       DBL :: sum,a,b,ab,pi2,norm,fac
       sum = ZERO
@@ -203,15 +299,15 @@ contains
          end
          sum = sum + .cc(i)*.cc(i)
       end
-   !  Take the normalization factor out of the primitive
+      ! Take the normalization factor out of the primitive
       pi2 = (HALF/PI)**(THREE/FOUR)
       norm = pi2/sqrt(sum)
       do i = 1,.n_cc
          a = FOUR*.ex(i)
          fac = .l.double_factorial
          fac = ONE/sqrt(fac)
-   !     this factor should be: fac = 1/sqrt(df(nx)*df(ny)*df(nz))
-   !     where n are the cartesian powers of the basis component
+         ! this factor should be: fac = 1/sqrt(df(nx)*df(ny)*df(nz))
+         ! where n are the cartesian powers of the basis component
          .cc(i) = .cc(i)*norm*fac*a**(HALF*.l+HALF+QUARTER)
       end
    end
@@ -222,24 +318,23 @@ contains
       res = .n_comp*.n_cc
    end
 
-   put(out)
-   ! Put the shell information to file "out"
-      TEXTFILE :: out
+   put
+   ! Put the shell information to "stdout"
       INT :: i
-      out.flush
-      out.show("L quantum number = ",.l)
-      out.dash(int_fields=1,dbl_fields=2)
-      out.put("N", int_width=TRUE)
-      out.put("Exponents")
-      out.put("Contraction",flush=1)
-      out.dash(int_fields=1,dbl_fields=2)
-      do i = 1, .n_cc
-         out.put(i)
-         out.put( .ex(i))
-         out.put( .cc(i))
-         out.flush
+      stdout.flush
+      stdout.show("L quantum number = ",.l)
+      stdout.dash(int_fields=1,dbl_fields=2)
+      stdout.put("N", int_width=TRUE)
+      stdout.put("Exponents")
+      stdout.put("Contraction")
+      stdout.flush
+      stdout.dash(int_fields=1,dbl_fields=2)
+      do i = 1,.n_cc
+         stdout.put(i)
+         stdout.put( .ex(i))
+         stdout.put( .cc(i))
+         stdout.flush
       end
-      out.flush
    end
 
 end 
