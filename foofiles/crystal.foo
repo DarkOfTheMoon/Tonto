@@ -29,7 +29,6 @@ module CRYSTAL
    use ATOMVEC
    use ARCHIVE
    use SPACEGROUP
-   use PAIRSTATISTICS
 
    implicit none
 
@@ -147,10 +146,10 @@ module CRYSTAL
 !   VEC, PTR :: F_pred DEFAULT_NULL
 !   ! Calculated structure factors including scale and extinction corrections
 !  
-!   PAIRSTATISTICS :: F_stats
-!   ! Statistics for comparing predicted and experimental structure factor magnitudes
-!
 !   DBL :: scale_factor
+!   ! Scale factor to apply to the predicted structure factors
+!
+!   DBL :: exp_scale_factor
 !   ! Fixed scale factor to apply to the experimental structure factors
 !
 !   BIN :: use_scale_factor
@@ -177,6 +176,33 @@ module CRYSTAL
 !
 !   STR :: partition_model
 !   ! Model for partitioning fragments of the molecule
+!
+!   INT :: n_param
+!   ! No of fitting parameters used
+!
+!   DBL :: chi2
+!   ! Chi^2 agreement statistic for F_pred with F_exp
+!
+!   DBL :: goodness_of_fit
+!   ! Goodness of fit parameter F_pred with F_exp
+!
+!   DBL :: r_factor
+!   ! R factor agreement statistic F_pred with F_exp
+!
+!   DBL :: weighted_r_factor
+!   ! Weighted R factor agreement statistic F_pred with F_exp
+!
+!   DBL :: I_chi2
+!   ! Chi^2 agreement statistic for I_pred with I_exp
+!
+!   DBL :: I_goodness_of_fit
+!   ! Goodness of fit parameter for I_pred with I_exp
+!
+!   DBL :: I_r_factor
+!   ! R factor agreement statistic for I_pred with I_exp
+!
+!   DBL :: I_weighted_r_factor
+!   ! Weighted R factor agreement statistic for I_pred with I_exp
 !
 !   end
 
@@ -230,6 +256,7 @@ contains
          .l.destroy
          .n_refl = 0
          .scale_factor = ONE
+         .exp_scale_factor = ONE
          .ext_factor = ZERO
          if (.F_calc_exists) .F_calc.destroy
          if (.F_pred_exists) .F_pred.destroy
@@ -263,11 +290,12 @@ contains
       .make_cell_matrices
       .n_refl = 0
       .destroy_reflection_data
-      .scale_factor = ONE
       .synthesize_sigma_I = FALSE
-      .use_scale_factor = FALSE
-      .correct_extinction = FALSE
+      .use_scale_factor = TRUE
+      .correct_extinction = TRUE
       .correct_dispersion = TRUE
+      .scale_factor = ONE
+      .exp_scale_factor = ONE
       .ext_factor = ZERO
       .wavelength = 0.71069d0 * BOHR_PER_ANGSTROM
       .kind = "x-ray"
@@ -444,7 +472,6 @@ contains
             case("correct_dispersion");      .read_correct_dispersion
             case("thermal_smearing_model");  .read_thermal_smearing_model
             case("partition_model");         .read_partition_model
-            case("update_gof_parameters");   .update_gof_parameters
             case("erase_spacegroup");        .spacegroup.destroy_ptr_part
             case("destroy_spacegroup");      .spacegroup.destroy_ptr_part
             case("erase_reflection_data");   .destroy_reflection_data
@@ -459,9 +486,13 @@ contains
    ! Update the crystal information
       .spacegroup.analyse
       .make_cell_matrices
-      if (.F_exp.created) .F_exp = .F_exp * .scale_factor
-      if (.sigma.created) .sigma = .sigma * .scale_factor
-      .scale_factor = ONE
+      if (.F_exp.created) .F_exp = .F_exp * .exp_scale_factor
+      if (.sigma.created) .sigma = .sigma * .exp_scale_factor
+      .exp_scale_factor = ONE
+      if (.F_exp.destroyed OR .sigma.destroyed) then
+        .use_scale_factor = FALSE
+        .correct_extinction = FALSE
+      end
    end
 
    read_kind
@@ -537,9 +568,6 @@ contains
       in.read(word)            !  Expecting the end keyword
       word.to_lower_case
       ENSURE(trim(word) == "end", 'expecting "end" keyword')
-      ! Set defaults for predicting structure factors
-      .use_scale_factor = TRUE
-      .correct_extinction = TRUE
    end
 
    put_F_calc [leaky]
@@ -582,7 +610,7 @@ contains
 
    read_scale_factor
    ! Read the structure factor multiplier
-      stdin.read(.scale_factor)
+      stdin.read(.exp_scale_factor)
    end 
 
    read_use_scale_factor
@@ -667,8 +695,7 @@ contains
     INT :: n
     DBL :: kx,ky,kz,stl,c,s,two_theta,F2
     ENSURE(.n_refl>0,"no reflections entered")
-    ENSURE(.F_calc_exists, "no calculated structure factors")
-    if (.no_F_pred) .make_F_predicted
+    ENSURE(.F_pred.created, "no predicted structure factors")
     rcm = .reciprocal_cell_matrix
     do N=1, .n_refl
       kx = rcm(1,1) * .h(n) + rcm(1,2) * .k(n) + rcm(1,3) * .l(n)
@@ -755,18 +782,6 @@ contains
     end
   end
 
-  update_gof_parameters
-  ! Make the goodnes of fit parameters, "chi2", "R_factor", "gof",
-  ! "scale_factor", for the scaled structure factors.
-    DBL :: top1,top2,bot1,bot2
-    DIE_IF( .no_F_exp, "no experimental structure factors")
-    DIE_IF( .no_F_pred, "no predicted structure factors")
-    .F_stats.n_param = 0
-    if (.use_scale_factor)   .F_stats.n_param = .F_stats.n_param+1
-    if (.correct_extinction) .F_stats.n_param = .F_stats.n_param+1
-    .F_stats.set_data(.F_pred,.F_exp,.sigma)
-  end
-
   equivalence_factors result (res)
   ! Return the equivalence factors, the number of distinct reflections
   ! which are symmetry equivalent to a particular (hkl) triple, for all
@@ -786,50 +801,62 @@ contains
      end
   end
 
-  make_F_predicted(use_scale_factor,correct_extinction) [recursive] [leaky]
-  ! Return the predicted magnitude of the structure factors, including possibly
-  ! an overall "scale_factor", and the possibility to "correct_extinction".
-  ! NOTE: the optional arguments override the settings in the type.
-     INOUT :: self
-     BIN, optional :: use_scale_factor,correct_extinction
-     VEC(.n_refl) :: res
-     VEC, PTR :: ext
-     BIN :: scale,extinction
-     DBL :: fac
-     ENSURE(.F_calc_exists, "no calculated structure factors")
-     .F_pred.destroy
-     scale      = .use_scale_factor
-     extinction = .correct_extinction
-     if (present(use_scale_factor))   scale      = use_scale_factor
-     if (present(correct_extinction)) extinction = correct_extinction
-     if (.no_F_exp) then
-        scale = FALSE
-        extinction = FALSE
-     end
-     .F_pred.destroy
-     .F_pred.create(.n_refl)
-     .F_stats.n_param = 0
-     .F_pred = abs(.F_calc)
-     if (scale AND extinction) then
-        .F_stats.n_param = 2
-        .F_stats.set_data(.F_pred,.F_exp,.sigma)
-        fac = .F_stats.scale_factor
-        ext.create(.n_refl)
-        ext = .extinction_correction
-        .F_pred = fac * .F_pred * ext
-        ext.destroy
-     else if (scale) then
-        .F_stats.n_param = 1
-        .F_stats.set_data(.F_pred,.F_exp,.sigma)
-        fac = .F_stats.scale_factor
-        .F_pred = fac * .F_pred
-     else if (extinction) then
-        .F_stats.n_param = 1
-        ext.create(.n_refl)
-        ext = .extinction_correction
-        .F_pred =       .F_pred * ext
-        ext.destroy
-     end
+  make_F_predicted [leaky]
+  ! Make the predicted magnitude of the structure factors, including possibly
+  ! an overall scale factor and extinction correction.
+    INOUT :: self
+    ENSURE(.F_calc_exists, "no calculated structure factors")
+    .F_pred.destroy
+    .F_pred.create(.n_refl)
+    .F_pred = abs(.F_calc) * .corrections
+    if (.F_exp.created AND .sigma.created) .make_agreement_statistics
+  end
+
+  corrections result(res) [leaky]
+  ! Return a vector containing all the corrections to the structure factors, as
+  ! factors.
+    VEC(.n_refl) :: res
+    ENSURE(.F_calc_exists, "no calculated structure factors")
+    if (.correct_extinction) .use_scale_factor = TRUE ! Scaling is necessary.
+
+    .n_param = 0
+    if (.correct_extinction) .n_param = .n_param + 1
+    if (.use_scale_factor)   .n_param = .n_param + 1
+
+    if (.correct_extinction) then
+      res = .extinction_correction
+    else if (.use_scale_factor) then
+      .get_scale_factor
+      res = .scale_factor
+    else
+      res = ONE
+    end
+  end
+
+  get_scale_factor
+  ! Determine the structure factor scale factor to scale the calculated
+  ! structure factors by.
+    VEC, PTR :: Fc
+    ENSURE(.F_calc.created, "No calculated structure factors.")
+    ENSURE(.F_exp.created,  "No experimental structure factors.")
+    ENSURE(.sigma.created,  "No experimental errors.")
+    Fc.create(.n_refl)
+    Fc = abs(.F_calc)
+    .get_scale_factor(Fc,.F_exp,.sigma)
+    Fc.destroy
+  end
+
+  get_scale_factor(Fcalc,Fexp,sigma)
+  ! Determine the structure factor scale factor to scale the calculated
+  ! structure factors "Fcalc" by.
+    VEC :: Fcalc,Fexp,sigma
+    DBL :: top,bot
+    ENSURE(size(Fcalc) == .n_refl, "Size of Fcalc array incorrect.")
+    ENSURE(size(Fexp)  == .n_refl, "Size of Fexp array incorrect.")
+    ENSURE(size(sigma) == .n_refl, "Size of sigma array incorrect.")
+    top = sum( Fcalc(:) *  Fexp(:)   / (sigma(:) * sigma(:)) )
+    bot = sum( Fcalc(:) *  Fcalc(:)  / (sigma(:) * sigma(:)) )
+    .scale_factor = top/bot
   end
 
   extinction_correction result(res)
@@ -843,12 +870,12 @@ contains
     angle_part.create( .n_refl )
     angle_part = .extinction_angle_part
     .get_extinction_parameters
-    res(:) = (ONE + .ext_factor * .F_calc(:)*conjg(.F_calc(:)) * angle_part(:))**(-0.25d0)
+    res(:) = .scale_factor  / sqrt(sqrt(ONE + .ext_factor * .F_calc(:)*conjg(.F_calc(:)) * angle_part(:)))
     angle_part.destroy
   end
 
   extinction_angle_part result(res)
-  ! Return the angular part of the extinciton correction.
+  ! Return the angular part of the extinction correction.
     MAT(3,3) :: rcm
     VEC( .n_refl ) :: res
     INT :: n
@@ -867,140 +894,149 @@ contains
   end
 
   get_extinction_parameters
-  ! Gets the g and x parameters of Larson's method.  Does not scale the
-  ! structure factors.
+  ! Gets the g and x parameters of Larson's method.  Does not apply the
+  ! correction, just calculates .ext_factor and .scale_factor.
   ! Larson, A. C., in <I>Crystallographic Computing</I> Ed. Ahmed, F. R.
   ! (Copenhagen, Munksgaard 1970), pp. 291-294.
-    DBL :: ghigh,glow,gnew,dghigh,dgnew,dglow, scale_factor
-    DBL :: xhigh,xlow,xnew,dxhigh,dxlow,dxnew,xprev,gprev
-    VEC, PTR :: Fc
+    DBL :: old_scale
+    DBL :: high,low,new,dhigh,dlow,dnew,xprev
+    VEC, PTR :: Fc,angle
     INT :: j
+
+    ! Get initial scale factor, with no extinction.
+    Fc.create(.n_refl)
+    Fc = abs(.F_calc)
     .ext_factor  = ZERO
-    .F_stats.n_param = 2
-    .make_F_predicted(correct_extinction=FALSE)
-    .update_gof_parameters
-    if (.F_stats.scale_factor < 0) then
-      WARN("scale_factor < 0, extinction set to zero")
-      RETURN
+    .get_scale_factor(Fc,.F_exp,.sigma)
+    Fc.destroy
+    DIE_IF(.scale_factor<0, "scale_factor < 0, this is not realistic!")
+    RETURN_IF( .dchi_dext > ZERO)
+
+    old_scale = .scale_factor
+    xprev = ZERO
+    angle.create( .n_refl )
+    angle = .extinction_angle_part
+
+    low=0
+    do j=-15,10
+      high=TEN**(j-1)
+      .ext_factor = high
+      if (.dchi_dext >= ZERO) then
+        exit
+      end
+      low = high
+      if (j == 10) then ! extinction correction failed.
+        .ext_factor  = ZERO
+        .get_scale_factor(Fc,.F_exp,.sigma)
+        RETURN
+      end
     end
-
-    glow=HALF;    ghigh=TWO;     gprev=ZERO
-
+    new = (low+high)/TWO
+    
     outer_loop : do
-      do                                    ! get g which minimises dchi2/dg
-        gnew=(glow+ghigh)/TWO
-        scale_factor = gnew
-        dgnew  = .dchidg(gnew, .ext_factor)
-        if (abs(dgnew) <= 1E-8) exit
-        dglow  = .dchidg(glow, .ext_factor)
-        dghigh = .dchidg(ghigh, .ext_factor)
-        .minimise_param(dglow,dghigh,dgnew,glow,ghigh,gnew)
-      end
+      .ext_factor=new;   dnew  = .dchi_dext
+      xprev= .ext_factor
+      old_scale = .scale_factor
 
-      if ( .dchidx(scale_factor, ZERO) > ZERO) then
-         .make_F_predicted(correct_extinction=FALSE)
-         scale_factor = .F_stats.scale_factor
-         exit outer_loop
-      end
-      xlow=0
-      do j=-15,0
-        xhigh=TEN**(j-1)
-        if (.dchidx(scale_factor, TEN**(j)) >= ZERO) then
-          exit
-        end
-      end
+      Fc.create(.n_refl)                    ! minimise dchi2/dscale
+      Fc = abs(.F_calc) * ONE/sqrt(sqrt(ONE + new * .F_calc(:)*conjg(.F_calc(:)) * angle(:))) ! **-1/4
+      .get_scale_factor(Fc,.F_exp,.sigma)
+      Fc.destroy
 
-      do                                    ! get x which minimises dchi2/dx
-        xnew=(xlow+xhigh)/TWO
-        .ext_factor=xnew
-        dxnew  = .dchidx(scale_factor,xnew)
-        if (abs(dxnew) <= ONE) exit
-        dxlow  = .dchidx(scale_factor,xlow)
-        dxhigh = .dchidx(scale_factor,xhigh)
-        .minimise_param(dxlow,dxhigh,dxnew,xlow,xhigh,xnew)
-        if (xnew >= ONE) then
-          .make_F_predicted(correct_extinction=FALSE)
-          scale_factor = .F_stats.scale_factor
-          exit outer_loop
-        end
+      do                                    ! minimise dchi2/dext
+        .ext_factor=low;   dlow  = .dchi_dext
+        .ext_factor=high;  dhigh = .dchi_dext
+        .minimise_param(dlow,dhigh,dnew,low,high,new)
+        .ext_factor=new;   dnew  = .dchi_dext
+        if (abs(dnew) <= TEN) exit
       end
-
-      if ((abs(xprev-xnew) <= abs(xnew*(1E-6))) AND (abs(gprev-gnew) <= abs(gnew*(1E-6)))) exit
-      xprev=xnew
-      gprev=gnew
+ 
+      ! Exit if both converged to 6 significant figures.
+      if ((abs(xprev-new) <= abs(new*TOL(6))) &
+        AND (abs(old_scale-.scale_factor) <= abs(.scale_factor*TOL(6)))) exit
     end do outer_loop
+
+    angle.destroy
   end
 
   minimise_param(dlow,dhigh,dnew,low,high,new)
-    DBL, IN :: dlow,dhigh,dnew,new
-    DBL :: high,low
-    if (dlow <= 0) then
-      if (dhigh <= 0) then
+  ! Use the bisection method to minimise the extinction parameter.
+    DBL, IN :: dlow,dhigh,dnew
+    DBL, INOUT :: low,high,new
+    if (dnew < 0) then     ! minimum right of "new".
+      if (dhigh < 0) then  ! minimum right of "high".
         high=1.25d0*high
         low=high
-      else if (dnew <= 0) then
+      else                 ! minumum between "new" and "high".
         low=new
-      else
+      end
+    else                   ! minimum left of "new".
+      if (dlow > 0) then   ! minimum left of "low".
+        low=0.75d0 * low
+        high=new
+      else                 ! minumum between "low" and "new".
         high=new
       end
-    else
-      low=0.75d0 * low
-      high=new
     end
+    new=(low+high)/TWO
   end
 
-  dchidg(gparam,xparam) result (res)
-  ! Derivative of the chi^2 with respect to g.
-  ! (c) Daniel Grimwood, UWA, April 1997
-    DBL, IN :: gparam, xparam
-    VEC, PTR :: Fc,angle_bit,Fexp,sig
+  dchi_dext result (res)
+  ! Derivative of the chi^2 with respect to the extinction parameter.
     DBL :: res
-    DBL :: factor,totalg,a,b
+    DBL :: Fc2,factor,total,a,b,Fc,Fexp,sig
+    VEC, PTR :: angle_bit
     INT :: j
-    Fc.create(.n_refl)
-    Fc = abs(.F_calc)
     angle_bit.create( .n_refl )
     angle_bit = .extinction_angle_part
-    Fexp => .F_exp
-    sig => .sigma
-    totalg = ZERO
+    total = ZERO
     do j = 1, .n_refl
-      factor = ONE + xparam * Fc(j) * Fc(j) * angle_bit(j)
+      Fc     = abs(.F_calc(j))
+      Fexp   = .F_exp(j)
+      sig    = .sigma(j)
+      Fc2    = Fc * Fc
+      factor = ONE + .ext_factor * Fc2 * angle_bit(j)
       a      = sqrt(factor)
       b      = sqrt(a)
-      totalg = totalg + Fc(j) * (Fexp(j)/b - gparam * Fc(j)/a) / (sig(j)*sig(j))
+      total  = total + angle_bit(j)*Fc2*Fc * (Fexp/b - .scale_factor*Fc/a) / &
+                  (factor*sig*sig)
     end
-    res = totalg * (-TWO) / .n_refl
+    res= .scale_factor * total / (TWO * max(.n_refl-.n_param,1))
     angle_bit.destroy
-    Fc.destroy
   end
 
-  dchidx(gparam,xparam) result (res)
-  ! Derivative of the chi^2 with respect to x.
-  ! (c) Daniel Grimwood, UWA, April 1997
-    DBL, IN :: gparam, xparam
-    DBL :: res
-    DBL :: Fc2,factor,totalx,a,b
-    VEC, PTR :: Fc,angle_bit,Fexp,sig
-    INT :: j
-    Fc.create(.n_refl)
-    Fc = abs(.F_calc)
-    angle_bit.create( .n_refl )
-    angle_bit = .extinction_angle_part
-    Fexp => .F_exp;     sig => .sigma
-    totalx = ZERO
-    do j = 1, .n_refl
-      Fc2    = Fc(j) * Fc(j)
-      factor = ONE + xparam * Fc2 * angle_bit(j)
-      a      = sqrt(factor)
-      b      = sqrt(a)
-      totalx = totalx + angle_bit(j)*Fc2*Fc(j) * (Fexp(j)/b-gparam*Fc(j)/a) / &
-                  (factor*sig(j)*sig(j))
-    end
-    res= gparam * totalx / (TWO * .n_refl)
-    angle_bit.destroy
-    Fc.destroy
-  end
+   make_agreement_statistics
+   ! Make the agreement statistics
+      DBL :: top1,top2,bot1,bot2
+      VEC, PTR :: I_pred,I_exp,I_sigma
+      ENSURE(.F_pred.created, "Predicted structure factors do not exist.")
+      ENSURE(.F_exp.created,  "Experimental structure factors do not exist.")
+      ENSURE(.sigma.created, "Experimental errors do not exist.")
+
+      top1 = sum( abs(.F_pred - .F_exp) )
+      bot1 = sum( abs(.F_exp) )
+      top2 = sum( ((.F_pred - .F_exp) /.sigma)**2 )
+      bot2 = sum( (.F_exp/.sigma)**2 )
+      .r_factor          = top1/bot1
+      .weighted_r_factor = sqrt(top2/bot2)
+      .chi2              = top2/max(.n_refl-.n_param,1)
+      .goodness_of_fit   = sqrt(.chi2)
+
+      I_pred.create(.n_refl);    I_pred  = .I_pred
+      I_exp.create(.n_refl);     I_exp   = .I_exp
+      I_sigma.create(.n_refl);   I_sigma = .I_sigma
+      top1 = sum( abs(I_pred - I_exp) )
+      bot1 = sum( abs(I_exp) )
+      top2 = sum( ((I_pred - I_exp) /I_sigma)**2 )
+      bot2 = sum( (I_exp/I_sigma)**2 )
+      .I_r_factor          = top1/bot1
+      .I_weighted_r_factor = sqrt(top2/bot2)
+      .I_chi2              = top2/max(.n_refl-.n_param,1)
+      .I_goodness_of_fit   = sqrt(.chi2)
+      I_sigma.destroy
+      I_exp.destroy
+      I_pred.destroy
+   end
 
    make_k_pts(res)
    ! Convert the hkl indices to reciprocal lattice vectors
@@ -2185,33 +2221,68 @@ contains
       out.dash(int_fields=2)
    end
 
-   put_stats
-   ! Output the goodness of fit data to stdout
-     .put(.F_stats,stdout)
-   end
-
-   put(stats,out)
-   ! Output the goodness of fit statistics to file "out"
-      PAIRSTATISTICS, IN :: stats
-      TEXTFILE :: out
-      RETURN_IF(.no_F_calc OR .no_F_exp)
-      .update_gof_parameters
-      stats.put(out)
-      .put_extinction_data(out)
-      out.show("Thermal smearing model      =", .thermal_smearing_model)
-      out.show("Fragment partition model    =", .partition_model)
-   end
-
-   put_extinction_data(out)
-   ! Output the extinctiondata to file "out"
-      TEXTFILE :: out
-      out.flush
-      if (.correct_extinction) then;
-         out.show("Secondary extinction factor =", .ext_factor)
-      else
-         out.show("Correct extinction?         =", FALSE)
+   put_F_stats(output)
+   ! Output the structure factor goodness of fit statistics to file "output" or
+   ! stdout.
+      TEXTFILE, optional, target :: output
+      TEXTFILE, PTR :: out
+      if (present(output)) then; out => output
+      else;                      out => stdout
       end
-!      out.show("Correct dispersion?         =", .correct_dispersion)
+      out.flush
+      out.text("Goodness of fit parameters based on Structure Factors:",flush=2)
+      out.show("R factor                    =", .r_factor)
+      out.show("Weighted R factor           =", .weighted_r_factor)
+      out.show("chi**2                      =", .chi2)
+      out.show("Goodness of fit             =", .goodness_of_fit)
+      .put_correction_data(out)
+   end
+
+   put_I_stats(output)
+   ! Output the intensity goodness of fit statistics to file "output" or stdout.
+      TEXTFILE, optional, target :: output
+      TEXTFILE, PTR :: out
+      if (present(output)) then; out => output
+      else;                      out => stdout
+      end
+      out.flush
+      out.text("Goodness of fit parameters based on Intensities:",flush=2)
+      out.show("R factor                    =", .I_r_factor)
+      out.show("Weighted R factor           =", .I_weighted_r_factor)
+      out.show("chi**2                      =", .I_chi2)
+      out.show("Goodness of fit             =", .I_goodness_of_fit)
+      .put_correction_data(out)
+   end
+
+  put_corrections(out)
+  ! Output which corrections are being used, to file "out"
+    TEXTFILE :: out
+    out.flush
+    out.show("Using scale factor       = ", .use_scale_factor,dbl_width=TRUE)
+    out.show("Using extinction         = ", .correct_extinction,dbl_width=TRUE)
+    out.show("Thermal smearing model   = ", .thermal_smearing_model)
+    out.show("Fragment partition model = ", .partition_model)
+!    out.show("Correct dispersion?      = ", .correct_dispersion)
+    out.flush
+  end
+
+  put_correction_data(out)
+  ! Output the correction data to file "out"
+    TEXTFILE :: out
+    out.flush
+    if (.correct_extinction) then;
+      out.show("Secondary extinction factor =", .ext_factor)
+    else
+      out.show("Correct extinction?         =", FALSE)
+    end
+    if (.use_scale_factor) then;
+      out.show("Scale factor                =", .scale_factor)
+    else
+      out.show("Use scale factor?           =", FALSE)
+    end
+    out.show("Thermal smearing model      =", .thermal_smearing_model)
+    out.show("Fragment partition model    =", .partition_model)
+!    out.show("Correct dispersion?         =", .correct_dispersion)
    end
 
    put_reflection_data(output) [leaky]
@@ -2244,7 +2315,7 @@ contains
       out.flush
       out.text("Structure factor reflection data:",flush=2)
       out.show("No. of reflections =",.n_refl)
-      .put(.F_stats,out)
+      .put_F_stats(out)
       out.dash(int_fields=3,dbl_fields=5)
       out.tab(int_fields=3,dbl_fields=2)
       out.put("Predicted")
@@ -2346,7 +2417,6 @@ contains
       TEXTFILE, PTR :: out
       INT :: n
       VEC, PTR :: I_exp,I_pred,sigma
-      PAIRSTATISTICS :: I_stats
       ENSURE(.F_calc_exists,"The calculated SF's are all zero")
       ENSURE(.F_exp_exists, "The experimental SF's are all zero")
       if (present(output)) then; out => output
@@ -2358,11 +2428,10 @@ contains
       I_pred = .I_pred
       I_exp =  .I_exp
       sigma =  .I_sigma
-      I_stats.set_data(I_exp,I_pred,sigma)
       out.flush
       out.text("Intensity Reflection data:",flush=2)
       out.show("No. of reflections =",.n_refl)
-      .put(I_stats,out)
+      .put_I_stats
       out.dash(int_fields=3,dbl_fields=5)
       out.put("h", int_width=TRUE)
       out.put("k", int_width=TRUE)
@@ -2405,7 +2474,7 @@ contains
       out.text("Intensity Reflection data:",flush=2)
       out.show("No. of reflections =",.n_refl)
       dbl_fields = 1
-      .put_extinction_data(out)
+      .put_correction_data(out)
       out.flush
       out.dash(int_fields=3,dbl_fields=2)
       out.tab(int_fields=3,dbl_fields=1)
@@ -2476,16 +2545,35 @@ contains
     STR, optional :: name
     ARCHIVE :: archive
     MAT, PTR :: grid
-    ENSURE(.F_calc_exists,"No calculated structure factors")
-    ENSURE(.F_exp_exists,"No calculated structure factors")
-    if (.no_F_pred) .make_F_predicted
-    .F_stats.set_data(.F_pred,.F_exp,.sigma)
-    .F_stats.make_qq_plot_grid(grid)
+    ENSURE(grid.created,"no grid")
+    .make_qq_plot_grid(grid)
     archive.set(root_name=name,name="qq_plot",format="ascii")
     archive.write(grid,order="by_column")
     archive.close
     grid.destroy
   end
+
+   make_qq_plot_grid(grid)
+   ! Make the grid for the Q-Q plot, which is a plot of the deviations X-Y
+   ! versus the expected deviations, assuming that the expected devaitions
+   ! are normally distributed. grid(1,:) contains the expected deviation d0j,
+   ! grid(2,:) contains actual deviation dj.
+      MAT :: grid
+      VEC, PTR :: d
+      DBL :: temp
+      INT :: n,j
+      ENSURE(size(grid,1)==2, "grid wrong size")
+      ENSURE(size(grid,2)==n, "grid wrong size")
+      d.create(n)                      ! quantile
+      d(:)  = (.F_exp(:) - .F_pred(:))/.sigma(:)
+      d.sort                           ! sort array from lowest to highest.
+      grid(2,:) = d
+      d.destroy
+      do j=1,n                           ! expected quantile, d0j
+        temp = real(2*n-2*j+1)/real(2*n) ! cumulative probability
+        grid(1,n-j+1) = temp.z_from_p
+      end
+   end
 
   put_chi2_vs_angle_plot
   ! Output a table with the chi^2 for the structure factor data set broken
@@ -2500,6 +2588,7 @@ contains
 
     stdin.read(num_sections)
     ENSURE(num_sections > 0, "number of sections to plot not positive")
+    ENSURE(.F_pred.created,"no predicted structure factors")
     rcm = .reciprocal_cell_matrix
 
     ! Work out the limits of the sin(theta)/lambda.
@@ -2534,15 +2623,13 @@ contains
     stdout.put("stl")
     stdout.put("chi^2",flush=1)
     stdout.dash(dbl_fields=2)
-    .update_gof_parameters
-    Fc = .F_pred * .F_stats.scale_factor
     do n = 1, num_sections
       chi2 = ZERO
       num = 0
       stl_mean = stl_min + (n - HALF) * width
       do k = 1, .n_refl
         if (n==section_for(k)) then
-          chi2 = chi2 + ((Fc(k) - .F_exp(k)) / .sigma(k))**2
+          chi2 = chi2 + ((.F_pred(k) - .F_exp(k)) / .sigma(k))**2
           num = num + 1
         end
       end
@@ -2551,7 +2638,7 @@ contains
         stdout.flush
         cycle
       else
-        chi2 = chi2 / max(num - .F_stats.n_param,1)
+        chi2 = chi2 / max(num - .n_param,1)
         stdout.put(chi2,flush=1)
       end
     end

@@ -3156,8 +3156,7 @@ contains
     .make_ao_density_matrix
 
     .make_dchi2_2_d2U(d2U,dU);              max_dU = dU.largest_value
-    .crystal.update_gof_parameters
-    chi2 = .crystal.F_stats.chi2
+    chi2 = .crystal.chi2
 
     if (present(output)) then
     if (output) then
@@ -3202,8 +3201,7 @@ contains
         therm(3,3) = old_U(base+6) + direction(base+6)
       end
       .make_dchi2_2_d2U(d2U,dU);              max_dU = dU.largest_value
-      .crystal.update_gof_parameters
-      chi2 = .crystal.F_stats.chi2
+      chi2 = .crystal.chi2
 
       norm = dU.norm / sqrt(ONE*dim)
 
@@ -6998,17 +6996,10 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    MAT, PTR :: MO,temp,S
-    MAT, PTR :: constraint,first_fock
-!    ARCHIVE :: archive
-    STR :: kind
-    DBL :: max_diff, mean_diff, diff, total
-    INT :: i,j
 
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.bases_are_all_resolved, "no basis set")
     DIE_IF( .mult/=1,"this is not a singlet state")
-    kind = .scfdata.spinorbital_kind
 
     .get_initial_guess
     .make_fock_matrix
@@ -7017,63 +7008,30 @@ contains
       .fit_thermal_parameters
     else
       .make_structure_factors
-      .crystal.update_gof_parameters
     end
 
     .scfdata.set(nuclear_energy=.nuclear_energy)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
-    .scfdata.set(stats=.crystal.F_stats)
+    .scfdata.set_stats(.crystal.chi2, .crystal.goodness_of_fit, &
+                         .crystal.r_factor, .crystal.weighted_r_factor)
     .scfdata.put_banner
 
-    stdout.show("Using scale factor       = ", .crystal.use_scale_factor,dbl_width=TRUE)
-    stdout.show("Using extinction         = ", .crystal.correct_extinction,dbl_width=TRUE)
-    stdout.show("Thermal smearing model   = ", .crystal.thermal_smearing_model)
-    stdout.show("Fragment partition model = ", .crystal.partition_model)
-    stdout.flush
-
-    if (kind == "restricted") then
-      if ( .molecular_orbitals.destroyed(kind) ) .make_fock_guess
-      MO => .molecular_orbitals.restricted
-    else
-      DIE("can only do restricted calculations.")
-    end
+    .crystal.put_corrections(stdout)
 
     do
       .scfdata.diis.cleanup
-
       do
-        constraint.create( .n_bf, .n_bf)
-        .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
-!        archive.set(.name,"constraint",kind=kind)
-!        archive.write(constraint)
-
-        constraint.change_basis(MO)          ! Zero out the occ-occ and vir-vir
-        constraint(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
-        constraint(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
-        .fock_matrix.restricted.change_basis(MO)
-        .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
-        .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
-
-        .fock_matrix.restricted.plus(constraint)
-
-        temp.create( .n_bf, .n_bf)
-        S.create( .n_bf, .n_bf)
-        .get_overlap_matrix(S)
-        temp.to_product(MO,S,transpose_a=TRUE)
-        S.destroy
-        .fock_matrix.restricted.change_basis(temp) ! Back to AO basis.
-        constraint.destroy
-        temp.destroy
-
+        .add_constraint
         .extrapolate_scf
         .update_molecular_orbitals
         .make_scf_density_matrix
         .save_scf_results
         .make_fock_matrix                      ! To get new Hartree-Fock energy.
         .make_structure_factors
-        .crystal.update_gof_parameters
 
-        .scfdata.update(energy=.scf_energy, kinetic_energy=.kinetic_energy,stats=.crystal.F_stats)
+        .scfdata.update(energy=.scf_energy, kinetic_energy=.kinetic_energy)
+        .scfdata.set_stats(.crystal.chi2, .crystal.goodness_of_fit, &
+                              .crystal.r_factor, .crystal.weighted_r_factor)
         .scfdata.put_results
         if (.scfdata.scf_done) exit
       end
@@ -7083,37 +7041,7 @@ contains
         .fit_thermal_parameters
       else
         .make_structure_factors
-        .crystal.update_gof_parameters
       end
-
-!      ! You can comment this section out if you want.  It is self contained.
-!      if (.scfdata.lambda_iteration == 1) then
-!        archive.set(.name,"first_fock",kind=kind)
-!        archive.write(.fock_matrix.restricted)
-!      else
-!        first_fock.create(.n_bf, .n_bf)
-!        archive.set(.name,"first_fock",kind=kind)
-!        archive.read(first_fock)
-!        mean_diff = ZERO; max_diff = ZERO; total = ZERO
-!        do i = 1, .n_bf
-!          do j = 1, .n_bf
-!            diff = abs(first_fock(i,j) - .fock_matrix.restricted(i,j))
-!            mean_diff = mean_diff + diff
-!            total = total + abs(first_fock(i,j))
-!            if (diff > max_diff) max_diff = max_diff + diff
-!          end
-!        end
-!        first_fock.destroy
-!        mean_diff = mean_diff / (.n_bf * .n_bf)
-!        stdout.text("Fock matrix statistics, AO basis.")
-!        stdout.show("Magnitude first Fock matrix   = ",total)
-!        stdout.show("Mean deviation in Fock matrix = ",mean_diff)
-!        stdout.show("Mean deviation as a fraction  = ",mean_diff/total)
-!        stdout.show("Max deviation in Fock matrix  = ",max_diff)
-!        stdout.show("Max deviation as a fraction   = ",max_diff/total)
-!        stdout.dash(dbl_fields=5,int_fields=1)
-!        stdout.flush
-!      end
 
       if (.scfdata.exceeded_lambda_max) exit
     end
@@ -7123,7 +7051,45 @@ contains
     if (.optimise_thermals) .put_atom_thermal_tensors
   end
 
+  add_constraint
+  ! Make the constraint matrix for wavefunction fitting and add it to the fock
+  ! matrix.
+    MAT, PTR :: MO,temp,S
+    MAT, PTR :: constraint
+    STR :: kind
+    kind = .scfdata.spinorbital_kind
+
+    if (kind == "restricted") then
+      if ( .molecular_orbitals.destroyed(kind) ) .make_fock_guess
+      MO => .molecular_orbitals.restricted
+    else
+      DIE("can only do restricted calculations.")
+    end
+
+    constraint.create( .n_bf, .n_bf)
+    .make_constraint(constraint, .scfdata.lambda / (.scfdata.lambda + 1) )
+
+    constraint.change_basis(MO)          ! Zero out the occ-occ and vir-vir
+    constraint(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
+    constraint(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
+    .fock_matrix.restricted.change_basis(MO)
+    .fock_matrix.restricted(.n_a+1:,:.n_a).to_product(ONE/(.scfdata.lambda+1))
+    .fock_matrix.restricted(:.n_a,.n_a+1:).to_product(ONE/(.scfdata.lambda+1))
+
+    .fock_matrix.restricted.plus(constraint)
+    constraint.destroy
+
+    temp.create( .n_bf, .n_bf)
+    S.create( .n_bf, .n_bf)
+    .get_overlap_matrix(S)
+    temp.to_product(MO,S,transpose_a=TRUE)
+    S.destroy
+    .fock_matrix.restricted.change_basis(temp) ! Back to AO basis.
+    temp.destroy
+  end
+
   make_constraint(constraint,lambda)
+  ! Make the constraint matrix for wavefunction fitting.
     MAT :: constraint
     DBL, IN :: lambda
     MAT, PTR :: k_pts
@@ -7143,14 +7109,14 @@ contains
     Fc => .crystal.F_calc
     Fexp => .crystal.F_exp
     sig => .crystal.sigma
-    fac = TWO*lambda/max(n_refl - .crystal.F_stats.n_param,1)
+    fac = TWO*lambda/max(n_refl - .crystal.n_param,1)
 
     fac_times_alpha.create(n_refl)
 
     Fm.create(n_refl)
     Fm = abs(.crystal.F_calc)
     alpha.create(n_refl)
-    alpha = .crystal.extinction_correction * .crystal.F_stats.scale_factor
+    alpha = .crystal.corrections
     do n=1,n_refl
       fac_times_alpha(n)=fac*alpha(n)*(alpha(n)*Fm(n)-Fexp(n))/(sig(n)*sig(n)*Fm(n))
     end
@@ -7594,7 +7560,7 @@ contains
      n_refl = .crystal.n_refl
      k.create(n_refl,3); .crystal.make_k_pts(k)
      F.create(n_refl)
-     F = .crystal.F_exp - abs(.crystal.F_calc)
+     F = .crystal.F_exp - abs(.crystal.F_pred)
      phase.create(n_refl)
      do n = 1,n_pts
         phase.to_product(k,pts(n:n,:),transpose_b=TRUE)
