@@ -99,7 +99,7 @@ c
       SUBROUTINE DGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB,
      $                   BETA, C, LDC )
 *     .. Scalar Arguments ..
-      CHARACTER*1        TRANSA, TRANSB
+      character(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
       DOUBLE PRECISION   ALPHA, BETA
 *     .. Array Arguments ..
@@ -123,7 +123,7 @@ c
 *  Parameters
 *  ==========
 *
-*  TRANSA - CHARACTER*1.
+*  TRANSA - character(len=1).
 *           On entry, TRANSA specifies the form of op( A ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -135,7 +135,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANSB - CHARACTER*1.
+*  TRANSB - character(len=1).
 *           On entry, TRANSB specifies the form of op( B ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -411,7 +411,7 @@ c
 *     .. Scalar Arguments ..
       DOUBLE PRECISION   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
-      CHARACTER*1        TRANS
+      character(len=1)        TRANS
 *     .. Array Arguments ..
       DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
 *     ..
@@ -429,7 +429,7 @@ c
 *  Parameters
 *  ==========
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry, TRANS specifies the operation to be performed as
 *           follows:
 *
@@ -1260,7 +1260,7 @@ c
 *     .. Scalar Arguments ..
       DOUBLE PRECISION   ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
       DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
 *     ..
@@ -1278,7 +1278,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the array A is to be referenced as
 *           follows:
@@ -1518,7 +1518,7 @@ c
 *     .. Scalar Arguments ..
       DOUBLE PRECISION   ALPHA
       INTEGER            INCX, INCY, LDA, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
       DOUBLE PRECISION   A( LDA, * ), X( * ), Y( * )
 *     ..
@@ -1536,7 +1536,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the array A is to be referenced as
 *           follows:
@@ -1744,7 +1744,7 @@ c
       SUBROUTINE DSYR2K( UPLO, TRANS, N, K, ALPHA, A, LDA, B, LDB,
      $                   BETA, C, LDC )
 *     .. Scalar Arguments ..
-      CHARACTER*1        UPLO, TRANS
+      character(len=1)        UPLO, TRANS
       INTEGER            N, K, LDA, LDB, LDC
       DOUBLE PRECISION   ALPHA, BETA
 *     .. Array Arguments ..
@@ -1769,7 +1769,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On  entry,   UPLO  specifies  whether  the  upper  or  lower
 *           triangular  part  of the  array  C  is to be  referenced  as
 *           follows:
@@ -1782,7 +1782,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry,  TRANS  specifies the operation to be performed as
 *           follows:
 *
@@ -2067,7 +2067,7 @@ c
       SUBROUTINE DTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA,
      $                   B, LDB )
 *     .. Scalar Arguments ..
-      CHARACTER*1        SIDE, UPLO, TRANSA, DIAG
+      character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
       DOUBLE PRECISION   ALPHA
 *     .. Array Arguments ..
@@ -2089,7 +2089,7 @@ c
 *  Parameters
 *  ==========
 *
-*  SIDE   - CHARACTER*1.
+*  SIDE   - character(len=1).
 *           On entry,  SIDE specifies whether  op( A ) multiplies B from
 *           the left or right as follows:
 *
@@ -2099,7 +2099,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the matrix A is an upper or
 *           lower triangular matrix as follows:
 *
@@ -2109,7 +2109,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANSA - CHARACTER*1.
+*  TRANSA - character(len=1).
 *           On entry, TRANSA specifies the form of op( A ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -2121,7 +2121,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  DIAG   - CHARACTER*1.
+*  DIAG   - character(len=1).
 *           On entry, DIAG specifies whether or not A is unit triangular
 *           as follows:
 *
@@ -2418,7 +2418,7 @@ c
       SUBROUTINE DTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 *     .. Scalar Arguments ..
       INTEGER            INCX, LDA, N
-      CHARACTER*1        DIAG, TRANS, UPLO
+      character(len=1)        DIAG, TRANS, UPLO
 *     .. Array Arguments ..
       DOUBLE PRECISION   A( LDA, * ), X( * )
 *     ..
@@ -2436,7 +2436,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the matrix is an upper or
 *           lower triangular matrix as follows:
 *
@@ -2446,7 +2446,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry, TRANS specifies the operation to be performed as
 *           follows:
 *
@@ -2458,7 +2458,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  DIAG   - CHARACTER*1.
+*  DIAG   - character(len=1).
 *           On entry, DIAG specifies whether or not A is unit
 *           triangular as follows:
 *
@@ -2701,7 +2701,7 @@ c
       SUBROUTINE DTRSM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA,
      $                   B, LDB )
 *     .. Scalar Arguments ..
-      CHARACTER*1        SIDE, UPLO, TRANSA, DIAG
+      character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
       DOUBLE PRECISION   ALPHA
 *     .. Array Arguments ..
@@ -2725,7 +2725,7 @@ c
 *  Parameters
 *  ==========
 *
-*  SIDE   - CHARACTER*1.
+*  SIDE   - character(len=1).
 *           On entry, SIDE specifies whether op( A ) appears on the left
 *           or right of X as follows:
 *
@@ -2735,7 +2735,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the matrix A is an upper or
 *           lower triangular matrix as follows:
 *
@@ -2745,7 +2745,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANSA - CHARACTER*1.
+*  TRANSA - character(len=1).
 *           On entry, TRANSA specifies the form of op( A ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -2757,7 +2757,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  DIAG   - CHARACTER*1.
+*  DIAG   - character(len=1).
 *           On entry, DIAG specifies whether or not A is unit triangular
 *           as follows:
 *
@@ -3098,12 +3098,12 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          Specifies whether the matrix A is upper or lower triangular.
 *          = 'U':  Upper triangular
 *          = 'L':  Lower triangular
 *
-*  DIAG    (input) CHARACTER*1
+*  DIAG    (input) character(len=1)
 *          Specifies whether or not the matrix A is unit triangular.
 *          = 'N':  Non-unit triangular
 *          = 'U':  Unit triangular
@@ -3241,11 +3241,11 @@ c
 *  Arguments
 *  =========
 *
-*  UPLO    (input) CHARACTER*1
+*  UPLO    (input) character(len=1)
 *          = 'U':  A is upper triangular;
 *          = 'L':  A is lower triangular.
 *
-*  DIAG    (input) CHARACTER*1
+*  DIAG    (input) character(len=1)
 *          = 'N':  A is non-unit triangular;
 *          = 'U':  A is unit triangular.
 *
@@ -3440,11 +3440,11 @@ c
       SUBROUTINE ZGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB,
      $                   BETA, C, LDC )
 *     .. Scalar Arguments ..
-      CHARACTER*1        TRANSA, TRANSB
+      character(len=1)        TRANSA, TRANSB
       INTEGER            M, N, K, LDA, LDB, LDC
-      COMPLEX*16         ALPHA, BETA
+      double complex         ALPHA, BETA
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      double complex         A( LDA, * ), B( LDB, * ), C( LDC, * )
 *     ..
 *
 *  Purpose
@@ -3464,7 +3464,7 @@ c
 *  Parameters
 *  ==========
 *
-*  TRANSA - CHARACTER*1.
+*  TRANSA - character(len=1).
 *           On entry, TRANSA specifies the form of op( A ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -3476,7 +3476,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANSB - CHARACTER*1.
+*  TRANSB - character(len=1).
 *           On entry, TRANSB specifies the form of op( B ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -3505,11 +3505,11 @@ c
 *           be at least  zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, ka ), where ka is
+*  A      - double complex       array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANSA = 'N' or 'n',  and is  m  otherwise.
 *           Before entry with  TRANSA = 'N' or 'n',  the leading  m by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -3524,7 +3524,7 @@ c
 *           least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - COMPLEX*16       array of DIMENSION ( LDB, kb ), where kb is
+*  B      - double complex       array of DIMENSION ( LDB, kb ), where kb is
 *           n  when  TRANSB = 'N' or 'n',  and is  k  otherwise.
 *           Before entry with  TRANSB = 'N' or 'n',  the leading  k by n
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -3539,12 +3539,12 @@ c
 *           least  max( 1, n ).
 *           Unchanged on exit.
 *
-*  BETA   - COMPLEX*16      .
+*  BETA   - double complex      .
 *           On entry,  BETA  specifies the scalar  beta.  When  BETA  is
 *           supplied as zero then C need not be set on input.
 *           Unchanged on exit.
 *
-*  C      - COMPLEX*16       array of DIMENSION ( LDC, n ).
+*  C      - double complex       array of DIMENSION ( LDC, n ).
 *           Before entry, the leading  m by n  part of the array  C must
 *           contain the matrix  C,  except when  beta  is zero, in which
 *           case C need not be set on entry.
@@ -3569,15 +3569,15 @@ c
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX
+      INTRINSIC          MAX
 *     .. Local Scalars ..
       LOGICAL            CONJA, CONJB, NOTA, NOTB
       INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
-      COMPLEX*16         TEMP
+      double complex         TEMP
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      double complex         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -3693,7 +3693,7 @@ c
                DO 110, I = 1, M
                   TEMP = ZERO
                   DO 100, L = 1, K
-                     TEMP = TEMP + DCONJG( A( L, I ) )*B( L, J )
+                     TEMP = TEMP + CONJG( A( L, I ) )*B( L, J )
   100             CONTINUE
                   IF( BETA.EQ.ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
@@ -3737,7 +3737,7 @@ c
                END IF
                DO 190, L = 1, K
                   IF( B( J, L ).NE.ZERO )THEN
-                     TEMP = ALPHA*DCONJG( B( J, L ) )
+                     TEMP = ALPHA*CONJG( B( J, L ) )
                      DO 180, I = 1, M
                         C( I, J ) = C( I, J ) + TEMP*A( I, L )
   180                CONTINUE
@@ -3778,7 +3778,7 @@ c
                   TEMP = ZERO
                   DO 260, L = 1, K
                      TEMP = TEMP +
-     $                      DCONJG( A( L, I ) )*DCONJG( B( J, L ) )
+     $                      CONJG( A( L, I ) )*CONJG( B( J, L ) )
   260             CONTINUE
                   IF( BETA.EQ.ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
@@ -3795,7 +3795,7 @@ c
                DO 300, I = 1, M
                   TEMP = ZERO
                   DO 290, L = 1, K
-                     TEMP = TEMP + DCONJG( A( L, I ) )*B( J, L )
+                     TEMP = TEMP + CONJG( A( L, I ) )*B( J, L )
   290             CONTINUE
                   IF( BETA.EQ.ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
@@ -3814,7 +3814,7 @@ c
                DO 330, I = 1, M
                   TEMP = ZERO
                   DO 320, L = 1, K
-                     TEMP = TEMP + A( L, I )*DCONJG( B( J, L ) )
+                     TEMP = TEMP + A( L, I )*CONJG( B( J, L ) )
   320             CONTINUE
                   IF( BETA.EQ.ZERO )THEN
                      C( I, J ) = ALPHA*TEMP
@@ -3851,11 +3851,11 @@ c
       SUBROUTINE ZGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA, BETA
+      double complex         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, M, N
-      CHARACTER*1        TRANS
+      character(len=1)        TRANS
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), X( * ), Y( * )
+      double complex         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -3873,7 +3873,7 @@ c
 *  Parameters
 *  ==========
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry, TRANS specifies the operation to be performed as
 *           follows:
 *
@@ -3895,11 +3895,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, n ).
+*  A      - double complex       array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients.
 *           Unchanged on exit.
@@ -3910,7 +3910,7 @@ c
 *           max( 1, m ).
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of DIMENSION at least
+*  X      - double complex       array of DIMENSION at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ) otherwise.
@@ -3923,12 +3923,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - COMPLEX*16      .
+*  BETA   - double complex      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of DIMENSION at least
+*  Y      - double complex       array of DIMENSION at least
 *           ( 1 + ( m - 1 )*abs( INCY ) ) when TRANS = 'N' or 'n'
 *           and at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ) otherwise.
@@ -3952,18 +3952,18 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      double complex         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP
+      double complex         TEMP
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
       LOGICAL            NOCONJ
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX
+      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4094,7 +4094,7 @@ c
    90             CONTINUE
                ELSE
                   DO 100, I = 1, M
-                     TEMP = TEMP + DCONJG( A( I, J ) )*X( I )
+                     TEMP = TEMP + CONJG( A( I, J ) )*X( I )
   100             CONTINUE
                END IF
                Y( JY ) = Y( JY ) + ALPHA*TEMP
@@ -4111,7 +4111,7 @@ c
   120             CONTINUE
                ELSE
                   DO 130, I = 1, M
-                     TEMP = TEMP + DCONJG( A( I, J ) )*X( IX )
+                     TEMP = TEMP + CONJG( A( I, J ) )*X( IX )
                      IX   = IX   + INCX
   130             CONTINUE
                END IF
@@ -4128,10 +4128,10 @@ c
       END
       SUBROUTINE ZGERC ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA
+      double complex         ALPHA
       INTEGER            INCX, INCY, LDA, M, N
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), X( * ), Y( * )
+      double complex         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4157,11 +4157,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( m - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the m
 *           element vector x.
@@ -4172,7 +4172,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of dimension at least
+*  Y      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -4183,7 +4183,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, n ).
+*  A      - double complex       array of DIMENSION ( LDA, n ).
 *           Before entry, the leading m by n part of the array A must
 *           contain the matrix of coefficients. On exit, A is
 *           overwritten by the updated matrix.
@@ -4205,15 +4205,15 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP
+      double complex         TEMP
       INTEGER            I, INFO, IX, J, JY, KX
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX
+      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -4252,7 +4252,7 @@ c
       IF( INCX.EQ.1 )THEN
          DO 20, J = 1, N
             IF( Y( JY ).NE.ZERO )THEN
-               TEMP = ALPHA*DCONJG( Y( JY ) )
+               TEMP = ALPHA*CONJG( Y( JY ) )
                DO 10, I = 1, M
                   A( I, J ) = A( I, J ) + X( I )*TEMP
    10          CONTINUE
@@ -4267,7 +4267,7 @@ c
          END IF
          DO 40, J = 1, N
             IF( Y( JY ).NE.ZERO )THEN
-               TEMP = ALPHA*DCONJG( Y( JY ) )
+               TEMP = ALPHA*CONJG( Y( JY ) )
                IX   = KX
                DO 30, I = 1, M
                   A( I, J ) = A( I, J ) + X( IX )*TEMP
@@ -4286,11 +4286,11 @@ c
       SUBROUTINE ZHEMV ( UPLO, N, ALPHA, A, LDA, X, INCX,
      $                   BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA, BETA
+      double complex         ALPHA, BETA
       INTEGER            INCX, INCY, LDA, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), X( * ), Y( * )
+      double complex         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4306,7 +4306,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the array A is to be referenced as
 *           follows:
@@ -4324,11 +4324,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, n ).
+*  A      - double complex       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the hermitian matrix and the strictly
@@ -4347,7 +4347,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -4358,12 +4358,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - COMPLEX*16      .
+*  BETA   - double complex      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of dimension at least
+*  Y      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y. On exit, Y is overwritten by the updated
@@ -4385,17 +4385,17 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      double complex         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP1, TEMP2
+      double complex         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX, DBLE
+      INTRINSIC          MAX, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -4481,7 +4481,7 @@ c
                TEMP2 = ZERO
                DO 50, I = 1, J - 1
                   Y( I ) = Y( I ) + TEMP1*A( I, J )
-                  TEMP2  = TEMP2  + DCONJG( A( I, J ) )*X( I )
+                  TEMP2  = TEMP2  + CONJG( A( I, J ) )*X( I )
    50          CONTINUE
                Y( J ) = Y( J ) + TEMP1*DBLE( A( J, J ) ) + ALPHA*TEMP2
    60       CONTINUE
@@ -4495,7 +4495,7 @@ c
                IY    = KY
                DO 70, I = 1, J - 1
                   Y( IY ) = Y( IY ) + TEMP1*A( I, J )
-                  TEMP2   = TEMP2   + DCONJG( A( I, J ) )*X( IX )
+                  TEMP2   = TEMP2   + CONJG( A( I, J ) )*X( IX )
                   IX      = IX      + INCX
                   IY      = IY      + INCY
    70          CONTINUE
@@ -4515,7 +4515,7 @@ c
                Y( J ) = Y( J ) + TEMP1*DBLE( A( J, J ) )
                DO 90, I = J + 1, N
                   Y( I ) = Y( I ) + TEMP1*A( I, J )
-                  TEMP2  = TEMP2  + DCONJG( A( I, J ) )*X( I )
+                  TEMP2  = TEMP2  + CONJG( A( I, J ) )*X( I )
    90          CONTINUE
                Y( J ) = Y( J ) + ALPHA*TEMP2
   100       CONTINUE
@@ -4532,7 +4532,7 @@ c
                   IX      = IX      + INCX
                   IY      = IY      + INCY
                   Y( IY ) = Y( IY ) + TEMP1*A( I, J )
-                  TEMP2   = TEMP2   + DCONJG( A( I, J ) )*X( IX )
+                  TEMP2   = TEMP2   + CONJG( A( I, J ) )*X( IX )
   110          CONTINUE
                Y( JY ) = Y( JY ) + ALPHA*TEMP2
                JX      = JX      + INCX
@@ -4548,11 +4548,11 @@ c
       END
       SUBROUTINE ZHER2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA
+      double complex         ALPHA
       INTEGER            INCX, INCY, LDA, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), X( * ), Y( * )
+      double complex         A( LDA, * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -4568,7 +4568,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the array A is to be referenced as
 *           follows:
@@ -4586,11 +4586,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -4601,7 +4601,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of dimension at least
+*  Y      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -4612,7 +4612,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, n ).
+*  A      - double complex       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular part of the hermitian matrix and the strictly
@@ -4646,15 +4646,15 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP1, TEMP2
+      double complex         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX, DBLE
+      INTRINSIC          MAX, DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -4712,8 +4712,8 @@ c
          IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
             DO 20, J = 1, N
                IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
-                  TEMP1 = ALPHA*DCONJG( Y( J ) )
-                  TEMP2 = DCONJG( ALPHA*X( J ) )
+                  TEMP1 = ALPHA*CONJG( Y( J ) )
+                  TEMP2 = CONJG( ALPHA*X( J ) )
                   DO 10, I = 1, J - 1
                      A( I, J ) = A( I, J ) + X( I )*TEMP1 + Y( I )*TEMP2
    10             CONTINUE
@@ -4726,8 +4726,8 @@ c
          ELSE
             DO 40, J = 1, N
                IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
-                  TEMP1 = ALPHA*DCONJG( Y( JY ) )
-                  TEMP2 = DCONJG( ALPHA*X( JX ) )
+                  TEMP1 = ALPHA*CONJG( Y( JY ) )
+                  TEMP2 = CONJG( ALPHA*X( JX ) )
                   IX    = KX
                   IY    = KY
                   DO 30, I = 1, J - 1
@@ -4752,8 +4752,8 @@ c
          IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
             DO 60, J = 1, N
                IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
-                  TEMP1     = ALPHA*DCONJG( Y( J ) )
-                  TEMP2     = DCONJG( ALPHA*X( J ) )
+                  TEMP1     = ALPHA*CONJG( Y( J ) )
+                  TEMP2     = CONJG( ALPHA*X( J ) )
                   A( J, J ) = DBLE( A( J, J ) ) +
      $                        DBLE( X( J )*TEMP1 + Y( J )*TEMP2 )
                   DO 50, I = J + 1, N
@@ -4766,8 +4766,8 @@ c
          ELSE
             DO 80, J = 1, N
                IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
-                  TEMP1     = ALPHA*DCONJG( Y( JY ) )
-                  TEMP2     = DCONJG( ALPHA*X( JX ) )
+                  TEMP1     = ALPHA*CONJG( Y( JY ) )
+                  TEMP2     = CONJG( ALPHA*X( JX ) )
                   A( J, J ) = DBLE( A( J, J ) ) +
      $                        DBLE( X( JX )*TEMP1 + Y( JY )*TEMP2 )
                   IX        = JX
@@ -4798,10 +4798,10 @@ c
       CHARACTER          TRANS, UPLO
       INTEGER            K, LDA, LDB, LDC, N
       DOUBLE PRECISION   BETA
-      COMPLEX*16         ALPHA
+      double complex         ALPHA
 *     ..
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), B( LDB, * ), C( LDC, * )
+      double complex         A( LDA, * ), B( LDB, * ), C( LDC, * )
 *     ..
 *
 *  Purpose
@@ -4822,7 +4822,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On  entry,   UPLO  specifies  whether  the  upper  or  lower
 *           triangular  part  of the  array  C  is to be  referenced  as
 *           follows:
@@ -4835,7 +4835,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry,  TRANS  specifies the operation to be performed as
 *           follows:
 *
@@ -4861,11 +4861,11 @@ c
 *           matrices  A and B.  K must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16         .
+*  ALPHA  - double complex         .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, ka ), where ka is
+*  A      - double complex       array of DIMENSION ( LDA, ka ), where ka is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  A  must contain the matrix  A,  otherwise
@@ -4880,7 +4880,7 @@ c
 *           be at least  max( 1, k ).
 *           Unchanged on exit.
 *
-*  B      - COMPLEX*16       array of DIMENSION ( LDB, kb ), where kb is
+*  B      - double complex       array of DIMENSION ( LDB, kb ), where kb is
 *           k  when  TRANS = 'N' or 'n',  and is  n  otherwise.
 *           Before entry with  TRANS = 'N' or 'n',  the  leading  n by k
 *           part of the array  B  must contain the matrix  B,  otherwise
@@ -4899,7 +4899,7 @@ c
 *           On entry, BETA specifies the scalar beta.
 *           Unchanged on exit.
 *
-*  C      - COMPLEX*16          array of DIMENSION ( LDC, n ).
+*  C      - double complex          array of DIMENSION ( LDC, n ).
 *           Before entry  with  UPLO = 'U' or 'u',  the leading  n by n
 *           upper triangular part of the array C must contain the upper
 *           triangular part  of the  hermitian matrix  and the strictly
@@ -4938,17 +4938,17 @@ c
       EXTERNAL           XERBLA
 *     ..
 *     .. Intrinsic Functions ..
-      INTRINSIC          DBLE, DCONJG, MAX
+      INTRINSIC          DBLE, MAX
 *     ..
 *     .. Local Scalars ..
       LOGICAL            UPPER
       INTEGER            I, INFO, J, L, NROWA
-      COMPLEX*16         TEMP1, TEMP2
+      double complex         TEMP1, TEMP2
 *     ..
 *     .. Parameters ..
       DOUBLE PRECISION   ONE
       PARAMETER          ( ONE = 1.0D+0 )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER          ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -5050,8 +5050,8 @@ c
                DO 120 L = 1, K
                   IF( ( A( J, L ).NE.ZERO ) .OR. ( B( J, L ).NE.ZERO ) )
      $                 THEN
-                     TEMP1 = ALPHA*DCONJG( B( J, L ) )
-                     TEMP2 = DCONJG( ALPHA*A( J, L ) )
+                     TEMP1 = ALPHA*CONJG( B( J, L ) )
+                     TEMP2 = CONJG( ALPHA*A( J, L ) )
                      DO 110 I = 1, J - 1
                         C( I, J ) = C( I, J ) + A( I, L )*TEMP1 +
      $                              B( I, L )*TEMP2
@@ -5078,8 +5078,8 @@ c
                DO 170 L = 1, K
                   IF( ( A( J, L ).NE.ZERO ) .OR. ( B( J, L ).NE.ZERO ) )
      $                 THEN
-                     TEMP1 = ALPHA*DCONJG( B( J, L ) )
-                     TEMP2 = DCONJG( ALPHA*A( J, L ) )
+                     TEMP1 = ALPHA*CONJG( B( J, L ) )
+                     TEMP2 = CONJG( ALPHA*A( J, L ) )
                      DO 160 I = J + 1, N
                         C( I, J ) = C( I, J ) + A( I, L )*TEMP1 +
      $                              B( I, L )*TEMP2
@@ -5101,24 +5101,24 @@ c
                   TEMP1 = ZERO
                   TEMP2 = ZERO
                   DO 190 L = 1, K
-                     TEMP1 = TEMP1 + DCONJG( A( L, I ) )*B( L, J )
-                     TEMP2 = TEMP2 + DCONJG( B( L, I ) )*A( L, J )
+                     TEMP1 = TEMP1 + CONJG( A( L, I ) )*B( L, J )
+                     TEMP2 = TEMP2 + CONJG( B( L, I ) )*A( L, J )
   190             CONTINUE
                   IF( I.EQ.J ) THEN
                      IF( BETA.EQ.DBLE( ZERO ) ) THEN
-                        C( J, J ) = DBLE( ALPHA*TEMP1+DCONJG( ALPHA )*
+                        C( J, J ) = DBLE( ALPHA*TEMP1+CONJG( ALPHA )*
      $                              TEMP2 )
                      ELSE
                         C( J, J ) = BETA*DBLE( C( J, J ) ) +
-     $                              DBLE( ALPHA*TEMP1+DCONJG( ALPHA )*
+     $                              DBLE( ALPHA*TEMP1+CONJG( ALPHA )*
      $                              TEMP2 )
                      END IF
                   ELSE
                      IF( BETA.EQ.DBLE( ZERO ) ) THEN
-                        C( I, J ) = ALPHA*TEMP1 + DCONJG( ALPHA )*TEMP2
+                        C( I, J ) = ALPHA*TEMP1 + CONJG( ALPHA )*TEMP2
                      ELSE
                         C( I, J ) = BETA*C( I, J ) + ALPHA*TEMP1 +
-     $                              DCONJG( ALPHA )*TEMP2
+     $                              CONJG( ALPHA )*TEMP2
                      END IF
                   END IF
   200          CONTINUE
@@ -5129,24 +5129,24 @@ c
                   TEMP1 = ZERO
                   TEMP2 = ZERO
                   DO 220 L = 1, K
-                     TEMP1 = TEMP1 + DCONJG( A( L, I ) )*B( L, J )
-                     TEMP2 = TEMP2 + DCONJG( B( L, I ) )*A( L, J )
+                     TEMP1 = TEMP1 + CONJG( A( L, I ) )*B( L, J )
+                     TEMP2 = TEMP2 + CONJG( B( L, I ) )*A( L, J )
   220             CONTINUE
                   IF( I.EQ.J ) THEN
                      IF( BETA.EQ.DBLE( ZERO ) ) THEN
-                        C( J, J ) = DBLE( ALPHA*TEMP1+DCONJG( ALPHA )*
+                        C( J, J ) = DBLE( ALPHA*TEMP1+CONJG( ALPHA )*
      $                              TEMP2 )
                      ELSE
                         C( J, J ) = BETA*DBLE( C( J, J ) ) +
-     $                              DBLE( ALPHA*TEMP1+DCONJG( ALPHA )*
+     $                              DBLE( ALPHA*TEMP1+CONJG( ALPHA )*
      $                              TEMP2 )
                      END IF
                   ELSE
                      IF( BETA.EQ.DBLE( ZERO ) ) THEN
-                        C( I, J ) = ALPHA*TEMP1 + DCONJG( ALPHA )*TEMP2
+                        C( I, J ) = ALPHA*TEMP1 + CONJG( ALPHA )*TEMP2
                      ELSE
                         C( I, J ) = BETA*C( I, J ) + ALPHA*TEMP1 +
-     $                              DCONJG( ALPHA )*TEMP2
+     $                              CONJG( ALPHA )*TEMP2
                      END IF
                   END IF
   230          CONTINUE
@@ -5161,11 +5161,11 @@ c
       END
       SUBROUTINE ZHPMV ( UPLO, N, ALPHA, AP, X, INCX, BETA, Y, INCY )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA, BETA
+      double complex         ALPHA, BETA
       INTEGER            INCX, INCY, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
-      COMPLEX*16         AP( * ), X( * ), Y( * )
+      double complex         AP( * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -5181,7 +5181,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the matrix A is supplied in the packed
 *           array AP as follows:
@@ -5199,11 +5199,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  AP     - COMPLEX*16       array of DIMENSION at least
+*  AP     - double complex       array of DIMENSION at least
 *           ( ( n*( n + 1 ) )/2 ).
 *           Before entry with UPLO = 'U' or 'u', the array AP must
 *           contain the upper triangular part of the hermitian matrix
@@ -5219,7 +5219,7 @@ c
 *           not be set and are assumed to be zero.
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -5230,12 +5230,12 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  BETA   - COMPLEX*16      .
+*  BETA   - double complex      .
 *           On entry, BETA specifies the scalar beta. When BETA is
 *           supplied as zero then Y need not be set on input.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of dimension at least
+*  Y      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y. On exit, Y is overwritten by the updated
@@ -5257,17 +5257,17 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      double complex         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP1, TEMP2
+      double complex         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, DBLE
+      INTRINSIC          DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -5352,7 +5352,7 @@ c
                K     = KK
                DO 50, I = 1, J - 1
                   Y( I ) = Y( I ) + TEMP1*AP( K )
-                  TEMP2  = TEMP2  + DCONJG( AP( K ) )*X( I )
+                  TEMP2  = TEMP2  + CONJG( AP( K ) )*X( I )
                   K      = K      + 1
    50          CONTINUE
                Y( J ) = Y( J ) + TEMP1*DBLE( AP( KK + J - 1 ) )
@@ -5369,7 +5369,7 @@ c
                IY    = KY
                DO 70, K = KK, KK + J - 2
                   Y( IY ) = Y( IY ) + TEMP1*AP( K )
-                  TEMP2   = TEMP2   + DCONJG( AP( K ) )*X( IX )
+                  TEMP2   = TEMP2   + CONJG( AP( K ) )*X( IX )
                   IX      = IX      + INCX
                   IY      = IY      + INCY
    70          CONTINUE
@@ -5392,7 +5392,7 @@ c
                K      = KK     + 1
                DO 90, I = J + 1, N
                   Y( I ) = Y( I ) + TEMP1*AP( K )
-                  TEMP2  = TEMP2  + DCONJG( AP( K ) )*X( I )
+                  TEMP2  = TEMP2  + CONJG( AP( K ) )*X( I )
                   K      = K      + 1
    90          CONTINUE
                Y( J ) = Y( J ) + ALPHA*TEMP2
@@ -5411,7 +5411,7 @@ c
                   IX      = IX      + INCX
                   IY      = IY      + INCY
                   Y( IY ) = Y( IY ) + TEMP1*AP( K )
-                  TEMP2   = TEMP2   + DCONJG( AP( K ) )*X( IX )
+                  TEMP2   = TEMP2   + CONJG( AP( K ) )*X( IX )
   110          CONTINUE
                Y( JY ) = Y( JY ) + ALPHA*TEMP2
                JX      = JX      + INCX
@@ -5428,11 +5428,11 @@ c
       END
       SUBROUTINE ZHPR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, AP )
 *     .. Scalar Arguments ..
-      COMPLEX*16         ALPHA
+      double complex         ALPHA
       INTEGER            INCX, INCY, N
-      CHARACTER*1        UPLO
+      character(len=1)        UPLO
 *     .. Array Arguments ..
-      COMPLEX*16         AP( * ), X( * ), Y( * )
+      double complex         AP( * ), X( * ), Y( * )
 *     ..
 *
 *  Purpose
@@ -5448,7 +5448,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the upper or lower
 *           triangular part of the matrix A is supplied in the packed
 *           array AP as follows:
@@ -5466,11 +5466,11 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry, ALPHA specifies the scalar alpha.
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x.
@@ -5481,7 +5481,7 @@ c
 *           X. INCX must not be zero.
 *           Unchanged on exit.
 *
-*  Y      - COMPLEX*16       array of dimension at least
+*  Y      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCY ) ).
 *           Before entry, the incremented array Y must contain the n
 *           element vector y.
@@ -5492,7 +5492,7 @@ c
 *           Y. INCY must not be zero.
 *           Unchanged on exit.
 *
-*  AP     - COMPLEX*16       array of DIMENSION at least
+*  AP     - double complex       array of DIMENSION at least
 *           ( ( n*( n + 1 ) )/2 ).
 *           Before entry with  UPLO = 'U' or 'u', the array AP must
 *           contain the upper triangular part of the hermitian matrix
@@ -5523,15 +5523,15 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP1, TEMP2
+      double complex         TEMP1, TEMP2
       INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, DBLE
+      INTRINSIC          DBLE
 *     ..
 *     .. Executable Statements ..
 *
@@ -5587,8 +5587,8 @@ c
          IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
             DO 20, J = 1, N
                IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
-                  TEMP1 = ALPHA*DCONJG( Y( J ) )
-                  TEMP2 = DCONJG( ALPHA*X( J ) )
+                  TEMP1 = ALPHA*CONJG( Y( J ) )
+                  TEMP2 = CONJG( ALPHA*X( J ) )
                   K     = KK
                   DO 10, I = 1, J - 1
                      AP( K ) = AP( K ) + X( I )*TEMP1 + Y( I )*TEMP2
@@ -5604,8 +5604,8 @@ c
          ELSE
             DO 40, J = 1, N
                IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
-                  TEMP1 = ALPHA*DCONJG( Y( JY ) )
-                  TEMP2 = DCONJG( ALPHA*X( JX ) )
+                  TEMP1 = ALPHA*CONJG( Y( JY ) )
+                  TEMP2 = CONJG( ALPHA*X( JX ) )
                   IX    = KX
                   IY    = KY
                   DO 30, K = KK, KK + J - 2
@@ -5631,8 +5631,8 @@ c
          IF( ( INCX.EQ.1 ).AND.( INCY.EQ.1 ) )THEN
             DO 60, J = 1, N
                IF( ( X( J ).NE.ZERO ).OR.( Y( J ).NE.ZERO ) )THEN
-                  TEMP1   = ALPHA*DCONJG( Y( J ) )
-                  TEMP2   = DCONJG( ALPHA*X( J ) )
+                  TEMP1   = ALPHA*CONJG( Y( J ) )
+                  TEMP2   = CONJG( ALPHA*X( J ) )
                   AP( KK ) = DBLE( AP( KK ) ) +
      $                       DBLE( X( J )*TEMP1 + Y( J )*TEMP2 )
                   K        = KK               + 1
@@ -5648,8 +5648,8 @@ c
          ELSE
             DO 80, J = 1, N
                IF( ( X( JX ).NE.ZERO ).OR.( Y( JY ).NE.ZERO ) )THEN
-                  TEMP1    = ALPHA*DCONJG( Y( JY ) )
-                  TEMP2    = DCONJG( ALPHA*X( JX ) )
+                  TEMP1    = ALPHA*CONJG( Y( JY ) )
+                  TEMP2    = CONJG( ALPHA*X( JX ) )
                   AP( KK ) = DBLE( AP( KK ) ) +
      $                       DBLE( X( JX )*TEMP1 + Y( JY )*TEMP2 )
                   IX       = JX
@@ -5677,11 +5677,11 @@ c
       SUBROUTINE ZTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA,
      $                   B, LDB )
 *     .. Scalar Arguments ..
-      CHARACTER*1        SIDE, UPLO, TRANSA, DIAG
+      character(len=1)        SIDE, UPLO, TRANSA, DIAG
       INTEGER            M, N, LDA, LDB
-      COMPLEX*16         ALPHA
+      double complex         ALPHA
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), B( LDB, * )
+      double complex         A( LDA, * ), B( LDB, * )
 *     ..
 *
 *  Purpose
@@ -5699,7 +5699,7 @@ c
 *  Parameters
 *  ==========
 *
-*  SIDE   - CHARACTER*1.
+*  SIDE   - character(len=1).
 *           On entry,  SIDE specifies whether  op( A ) multiplies B from
 *           the left or right as follows:
 *
@@ -5709,7 +5709,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the matrix A is an upper or
 *           lower triangular matrix as follows:
 *
@@ -5719,7 +5719,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANSA - CHARACTER*1.
+*  TRANSA - character(len=1).
 *           On entry, TRANSA specifies the form of op( A ) to be used in
 *           the matrix multiplication as follows:
 *
@@ -5731,7 +5731,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  DIAG   - CHARACTER*1.
+*  DIAG   - character(len=1).
 *           On entry, DIAG specifies whether or not A is unit triangular
 *           as follows:
 *
@@ -5752,13 +5752,13 @@ c
 *           at least zero.
 *           Unchanged on exit.
 *
-*  ALPHA  - COMPLEX*16      .
+*  ALPHA  - double complex      .
 *           On entry,  ALPHA specifies the scalar  alpha. When  alpha is
 *           zero then  A is not referenced and  B need not be set before
 *           entry.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, k ), where k is m
+*  A      - double complex       array of DIMENSION ( LDA, k ), where k is m
 *           when  SIDE = 'L' or 'l'  and is  n  when  SIDE = 'R' or 'r'.
 *           Before entry  with  UPLO = 'U' or 'u',  the  leading  k by k
 *           upper triangular part of the array  A must contain the upper
@@ -5779,7 +5779,7 @@ c
 *           then LDA must be at least max( 1, n ).
 *           Unchanged on exit.
 *
-*  B      - COMPLEX*16       array of DIMENSION ( LDB, n ).
+*  B      - double complex       array of DIMENSION ( LDB, n ).
 *           Before entry,  the leading  m by n part of the array  B must
 *           contain the matrix  B,  and  on exit  is overwritten  by the
 *           transformed matrix.
@@ -5802,15 +5802,15 @@ c
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX
+      INTRINSIC          MAX
 *     .. Local Scalars ..
       LOGICAL            LSIDE, NOCONJ, NOUNIT, UPPER
       INTEGER            I, INFO, J, K, NROWA
-      COMPLEX*16         TEMP
+      double complex         TEMP
 *     .. Parameters ..
-      COMPLEX*16         ONE
+      double complex         ONE
       PARAMETER        ( ONE  = ( 1.0D+0, 0.0D+0 ) )
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     ..
 *     .. Executable Statements ..
@@ -5923,9 +5923,9 @@ c
    90                   CONTINUE
                      ELSE
                         IF( NOUNIT )
-     $                     TEMP = TEMP*DCONJG( A( I, I ) )
+     $                     TEMP = TEMP*CONJG( A( I, I ) )
                         DO 100, K = 1, I - 1
-                           TEMP = TEMP + DCONJG( A( K, I ) )*B( K, J )
+                           TEMP = TEMP + CONJG( A( K, I ) )*B( K, J )
   100                   CONTINUE
                      END IF
                      B( I, J ) = ALPHA*TEMP
@@ -5943,9 +5943,9 @@ c
   130                   CONTINUE
                      ELSE
                         IF( NOUNIT )
-     $                     TEMP = TEMP*DCONJG( A( I, I ) )
+     $                     TEMP = TEMP*CONJG( A( I, I ) )
                         DO 140, K = I + 1, M
-                           TEMP = TEMP + DCONJG( A( K, I ) )*B( K, J )
+                           TEMP = TEMP + CONJG( A( K, I ) )*B( K, J )
   140                   CONTINUE
                      END IF
                      B( I, J ) = ALPHA*TEMP
@@ -6004,7 +6004,7 @@ c
                         IF( NOCONJ )THEN
                            TEMP = ALPHA*A( J, K )
                         ELSE
-                           TEMP = ALPHA*DCONJG( A( J, K ) )
+                           TEMP = ALPHA*CONJG( A( J, K ) )
                         END IF
                         DO 250, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -6016,7 +6016,7 @@ c
                      IF( NOCONJ )THEN
                         TEMP = TEMP*A( K, K )
                      ELSE
-                        TEMP = TEMP*DCONJG( A( K, K ) )
+                        TEMP = TEMP*CONJG( A( K, K ) )
                      END IF
                   END IF
                   IF( TEMP.NE.ONE )THEN
@@ -6032,7 +6032,7 @@ c
                         IF( NOCONJ )THEN
                            TEMP = ALPHA*A( J, K )
                         ELSE
-                           TEMP = ALPHA*DCONJG( A( J, K ) )
+                           TEMP = ALPHA*CONJG( A( J, K ) )
                         END IF
                         DO 290, I = 1, M
                            B( I, J ) = B( I, J ) + TEMP*B( I, K )
@@ -6044,7 +6044,7 @@ c
                      IF( NOCONJ )THEN
                         TEMP = TEMP*A( K, K )
                      ELSE
-                        TEMP = TEMP*DCONJG( A( K, K ) )
+                        TEMP = TEMP*CONJG( A( K, K ) )
                      END IF
                   END IF
                   IF( TEMP.NE.ONE )THEN
@@ -6065,9 +6065,9 @@ c
       SUBROUTINE ZTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 *     .. Scalar Arguments ..
       INTEGER            INCX, LDA, N
-      CHARACTER*1        DIAG, TRANS, UPLO
+      character(len=1)        DIAG, TRANS, UPLO
 *     .. Array Arguments ..
-      COMPLEX*16         A( LDA, * ), X( * )
+      double complex         A( LDA, * ), X( * )
 *     ..
 *
 *  Purpose
@@ -6083,7 +6083,7 @@ c
 *  Parameters
 *  ==========
 *
-*  UPLO   - CHARACTER*1.
+*  UPLO   - character(len=1).
 *           On entry, UPLO specifies whether the matrix is an upper or
 *           lower triangular matrix as follows:
 *
@@ -6093,7 +6093,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  TRANS  - CHARACTER*1.
+*  TRANS  - character(len=1).
 *           On entry, TRANS specifies the operation to be performed as
 *           follows:
 *
@@ -6105,7 +6105,7 @@ c
 *
 *           Unchanged on exit.
 *
-*  DIAG   - CHARACTER*1.
+*  DIAG   - character(len=1).
 *           On entry, DIAG specifies whether or not A is unit
 *           triangular as follows:
 *
@@ -6121,7 +6121,7 @@ c
 *           N must be at least zero.
 *           Unchanged on exit.
 *
-*  A      - COMPLEX*16       array of DIMENSION ( LDA, n ).
+*  A      - double complex       array of DIMENSION ( LDA, n ).
 *           Before entry with  UPLO = 'U' or 'u', the leading n by n
 *           upper triangular part of the array A must contain the upper
 *           triangular matrix and the strictly lower triangular part of
@@ -6140,7 +6140,7 @@ c
 *           max( 1, n ).
 *           Unchanged on exit.
 *
-*  X      - COMPLEX*16       array of dimension at least
+*  X      - double complex       array of dimension at least
 *           ( 1 + ( n - 1 )*abs( INCX ) ).
 *           Before entry, the incremented array X must contain the n
 *           element vector x. On exit, X is overwritten with the
@@ -6162,16 +6162,16 @@ c
 *
 *
 *     .. Parameters ..
-      COMPLEX*16         ZERO
+      double complex         ZERO
       PARAMETER        ( ZERO = ( 0.0D+0, 0.0D+0 ) )
 *     .. Local Scalars ..
-      COMPLEX*16         TEMP
+      double complex         TEMP
       INTEGER            I, INFO, IX, J, JX, KX
       LOGICAL            NOCONJ, NOUNIT
 *     .. External Subroutines ..
       EXTERNAL           XERBLA
 *     .. Intrinsic Functions ..
-      INTRINSIC          DCONJG, MAX
+      INTRINSIC          MAX
 *     ..
 *     .. Executable Statements ..
 *
@@ -6298,9 +6298,9 @@ c
    90                CONTINUE
                   ELSE
                      IF( NOUNIT )
-     $                  TEMP = TEMP*DCONJG( A( J, J ) )
+     $                  TEMP = TEMP*CONJG( A( J, J ) )
                      DO 100, I = J - 1, 1, -1
-                        TEMP = TEMP + DCONJG( A( I, J ) )*X( I )
+                        TEMP = TEMP + CONJG( A( I, J ) )*X( I )
   100                CONTINUE
                   END IF
                   X( J ) = TEMP
@@ -6319,10 +6319,10 @@ c
   120                CONTINUE
                   ELSE
                      IF( NOUNIT )
-     $                  TEMP = TEMP*DCONJG( A( J, J ) )
+     $                  TEMP = TEMP*CONJG( A( J, J ) )
                      DO 130, I = J - 1, 1, -1
                         IX   = IX   - INCX
-                        TEMP = TEMP + DCONJG( A( I, J ) )*X( IX )
+                        TEMP = TEMP + CONJG( A( I, J ) )*X( IX )
   130                CONTINUE
                   END IF
                   X( JX ) = TEMP
@@ -6341,9 +6341,9 @@ c
   150                CONTINUE
                   ELSE
                      IF( NOUNIT )
-     $                  TEMP = TEMP*DCONJG( A( J, J ) )
+     $                  TEMP = TEMP*CONJG( A( J, J ) )
                      DO 160, I = J + 1, N
-                        TEMP = TEMP + DCONJG( A( I, J ) )*X( I )
+                        TEMP = TEMP + CONJG( A( I, J ) )*X( I )
   160                CONTINUE
                   END IF
                   X( J ) = TEMP
@@ -6362,10 +6362,10 @@ c
   180                CONTINUE
                   ELSE
                      IF( NOUNIT )
-     $                  TEMP = TEMP*DCONJG( A( J, J ) )
+     $                  TEMP = TEMP*CONJG( A( J, J ) )
                      DO 190, I = J + 1, N
                         IX   = IX   + INCX
-                        TEMP = TEMP + DCONJG( A( I, J ) )*X( IX )
+                        TEMP = TEMP + CONJG( A( I, J ) )*X( IX )
   190                CONTINUE
                   END IF
                   X( JX ) = TEMP
