@@ -34,6 +34,9 @@ while (@ARGV) {
     }
 }
 
+$filename =~ s/\\{/{/g;
+$depsfile =~ s/\\{/{/g;
+
 #*******************************************************************************
 # Error checks.
 
@@ -65,7 +68,7 @@ $base =~ s/\.[^\.]+$//;
 
 if (defined @gets) {
   foreach $get (&uniq(@gets)) {
-    ($name = $get) =~ s/$/.get/;
+    ($name = $get) =~ s/$/.foo/;
     push (@getlist,'$(foodir)/' . $name);
   }
 }
@@ -123,12 +126,13 @@ sub PrintWords {
 # &uniq(list)
 # return the list in original order minus duplicates.
 sub uniq {
-    my @words;
+    my %words;
     foreach $x (@_) {
-      $_ = join(" ",@words);
-      if (! /\b$x\b/) { push(@words,$x); }
+      $words{$x} = 1;
+    # $_ = join(" ",@words);
+    # if (! /\b\Q$x\E\b/) { push(@words,$x); }
     }
-    return @words;
+    return (keys %words);
 }
 
 #*******************************************************************************
@@ -138,8 +142,9 @@ sub get_deps {
 
   open(FILE, $_[0]) or die "Cannot find file $_[0]\n";
 
+print STDERR @gets;
   while (<FILE>) {
-    /(?:.+):::(?:.+)get_from\((\w+)\)/i && push(@gets, lc($1));
+    /(?:.+):::(?:.+)get_from\(\s*([^ )]+)\s*[),]/i && do { $x=$1; push(@gets, lc($x))};
   }
   close(FILE);
 }

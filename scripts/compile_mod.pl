@@ -313,7 +313,8 @@ sub TEST_RECOMPILE {
 sub ECHO_AND_RUN {
   my ($mycommand, $exit_value);
   $mycommand = join(' ',@_);
-  print "$mycommand\n";
+  $mycommand =~ s/{/\\{/g; # replace curlies to stop globbing
+  print $mycommand;
   system($mycommand);
   if ($?==-1) {
     $exit_value = -1;
