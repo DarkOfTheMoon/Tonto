@@ -364,9 +364,15 @@ LINE: while (<FOOFILE>) {
 		$routine_cnt{$name} = 0;
 	    }
 
-	    if ($is_function) { $inp = "${pre}${attr}function ${name}${self}";   }
-	    else              { $inp = "${pre}${attr}subroutine ${name}${self}"; }
-	    if ($is_functional == 0 && $is_routinal == 0) {
+	    if ($is_function) { 
+	       if ($is_selfless) { $inp = "${pre}${attr}function ${name}${args}";   }
+	       else              { $inp = "${pre}${attr}function ${name}${self}";   }
+            }    
+	    else              { 
+	       if ($is_selfless) { $inp = "${pre}${attr}subroutine ${name}${args}"; }
+	       else              { $inp = "${pre}${attr}subroutine ${name}${self}"; }
+            }    
+	    if ($is_functional == 0 && $is_routinal == 0 && $is_selfless == 0) {
                                 $inp = "$inp; $module_name :: self"; }
 
 	    $real_routine_name = $name;
@@ -524,11 +530,13 @@ sub analyse_rout_name {
 
     $is_function = 0;
     if ($inp =~ / result[ ]*[(]/ )        { $is_function = 1; }
+    $is_selfless = 0;
+    if ($inp =~ s/ \[selfless]// )        { $is_selfless = 1; }
     $is_functional = 0;
-    $is_routinal = 0;
-    $pure = 0;
     if ($inp =~ s/ \[functional]// )      { $is_functional = 1; }
+    $is_routinal = 0;
     if ($inp =~ s/ \[routinal]// )        { $is_routinal = 1; }
+    $pure = 0;
     $attr = '';
     if ($inp =~ s/ \[pure]// )            { $attr = 'PURE ';             $pure = 1; }
     if ($inp =~ s/ \[always_pure]// )     { $attr = 'ALWAYS_PURE ';      $pure = 1; }
