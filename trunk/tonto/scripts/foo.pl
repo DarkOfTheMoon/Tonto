@@ -1849,16 +1849,16 @@ sub html_do_new_routine_scope {
   if (defined $5) { $attr = ' ::: <A CLASS="ATTR">'.$5.'</A>' } else { $attr = '' }
 
   # Link get_from to the place where it's inherited from, if applicable.
-  if ($attr =~ m'get_from\(([^)]*)\)') {
+  if ($attr =~ m'get_from[(]([^),]*)([),])') {
      if (defined $tonto_type_info{$1}) {
         $tmp = lc $1;
         $attr = $PREMATCH . 
                 "get_from</A>(<A CLASS=\"TYPE\" HREF=\"${tmp}_short.html#$routname\">$1<\/A>" . 
-                ")<A CLASS=\"ATTR\">" . $POSTMATCH;
+                "<A CLASS=\"ATTR\">$2" . $POSTMATCH;
      } else {
         $attr = $PREMATCH . 
                 "get_from</A>(<A CLASS=\"TYPE\" HREF=\"#$1\">$1<\/A>" . 
-                ")<A CLASS=\"ATTR\">" . $POSTMATCH;
+                "<A CLASS=\"ATTR\">$2" . $POSTMATCH;
      }
   }
   $real_name = $routine{$current_rout_name}{short_name};
@@ -3049,7 +3049,7 @@ sub html_do_module_interface_scope {
   my $rout;
   foreach $rout (@tmp) {
      next if ($rout !~ /\w+/);
-     $rout = "<A CLASS=\"ROUTINE\" HREF=\"${foofile_head_name}_short#$rout\">$rout</A>"; 
+     $rout = "<A CLASS=\"ROUTINE\" HREF=\"${foofile_head_name}_short.html#$rout\">$rout</A>"; 
   }
   $html_out = join('',@tmp);
   &html_print($html_out);
