@@ -1,0 +1,1170 @@
+!-------------------------------------------------------------------------------
+!
+! DIFFRACTION_DATA: Diffraction data structure for crystals
+!
+! $Id$
+!
+! Copyright (C) Dylan Jayatilaka, Daniel Grimwood, 1999
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!-------------------------------------------------------------------------------
+
+module DIFFRACTION_DATA
+
+   implicit none
+
+   saved_self :: DIFFRACTION_DATA*
+
+contains
+
+!  **************************
+!  Create and destroy methods
+!  **************************
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+      self :: PTR
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of the diffraction data object
+     nullify(.reflections)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Erase all pointer information
+    .destroy_reflection_data
+   end
+
+   destroy_reflection_data ::: leaky
+   ! Erase all reflection data
+     if (.reflection_data_exists) then
+       .scale_factor = ONE
+       .exp_scale_factor = ONE
+       .extinction_factor = ZERO
+       .reflections.destroy
+     end
+   end
+
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+     object :: DIFFRACTION_DATA
+     self :: PTR
+   end
+
+   copy(diffraction_data) ::: leaky
+   ! Set self to be crystal.
+     diffraction_data :: DIFFRACTION_DATA, IN
+     self = diffraction_data
+     self.nullify_ptr_part
+     if (diffraction_data.reflections.created) &
+        .reflections.create_copy(diffraction_data.reflections)
+   end
+
+   set_defaults ::: leaky
+   ! Set up a default diffraction_data object
+      .destroy_reflection_data
+      .synthesize_sigma_I     = DIFFRACTION_DATA_SYNTHESISE_SIGMA_I
+      .optimise_scale         = DIFFRACTION_DATA_OPTIMISE_SCALE
+      .optimise_extinction    = DIFFRACTION_DATA_OPTIMISE_EXTINCTION
+      .correct_dispersion     = DIFFRACTION_DATA_CORRECT_DISPERSION
+      .scale_factor           = DIFFRACTION_DATA_SCALE_FACTOR
+      .exp_scale_factor       = DIFFRACTION_DATA_EXP_SCALE_FACTOR
+      .extinction_factor      = DIFFRACTION_DATA_EXTINCTION_FACTOR
+      .wavelength             = DIFFRACTION_DATA_WAVELENGTH
+      .data_kind              = DIFFRACTION_DATA_DATA_KIND
+      .thermal_smearing_model = DIFFRACTION_DATA_THERMAL_SMEARING_MODEL
+      .partition_model        = DIFFRACTION_DATA_PARTITION_MODEL
+   end
+
+   update(unitcell,spacegroup)
+   ! Update the crystal information after setting values. If the
+   ! "unitcell" is provided, then that is used to define the reflection
+   ! .theta values.
+     unitcell :: UNITCELL, optional
+     spacegroup :: SPACEGROUP, optional
+     if (.reflections.created) then
+       if (.reflections.have_F_exp) then
+         .reflections.scale_F_exp(.exp_scale_factor)
+       else
+         .optimise_scale = FALSE
+         .optimise_extinction = FALSE
+       end
+       if (.reflections.have_F_sigma) then
+         .reflections.scale_F_sigma(.exp_scale_factor)
+       else
+         .optimise_scale = FALSE
+         .optimise_extinction = FALSE
+       end
+       .exp_scale_factor = ONE
+       if (present(unitcell))   .set_theta_angles(unitcell.reciprocal_matrix)
+       if (present(spacegroup)) .set_equivalence_factors(spacegroup)
+     end
+   end
+
+   set_equivalence_factors(spacegroup) 
+   ! Set the equivalence factors, the number of distinct reflections
+   ! which are symmetry equivalent to a particular (hkl) triple, for all
+   ! the reflections.
+      spacegroup :: SPACEGROUP 
+   ENSURE(.reflections.created,"no reflection data")
+      hkl,new :: VEC{INT}(3)
+      n,s,u,n_refl :: INT
+      n_refl = .reflections.n_refl
+      do n = 1,n_refl
+         hkl = .reflections.indices(n)
+         u = 1
+         do s = 2,spacegroup.n_seitz
+            new = matmul(hkl,spacegroup.seitz(1:3,1:3,s))
+            if (hkl(1)/=new(1) OR hkl(2)/=new(2) OR hkl(3)/=new(3)) u = u + 1
+         end
+         .reflections(n).equivalence_factor = u
+      end
+   end
+
+   set_theta_angles(reciprocal_matrix)
+   ! This routine is called after the reflections are read in, in order to set
+   ! all the .theta values, which are used later all over the place ...
+     self :: INOUT
+     reciprocal_matrix :: MAT{REAL}(3,3)
+     hkl :: VEC{INT}(3)
+     kx,ky,kz,sin_theta :: REAL
+     n :: INT
+     do n = 1,.reflections.n_refl
+        hkl = .reflections.indices(n)
+        kx = dot_product(reciprocal_matrix(1,:),hkl(:))
+        ky = dot_product(reciprocal_matrix(2,:),hkl(:))
+        kz = dot_product(reciprocal_matrix(3,:),hkl(:))
+        sin_theta = HALF*sqrt(kx*kx+ky*ky+kz*kz)*.wavelength
+        .reflections(n).theta = asin(sin_theta)
+     end
+   end
+
+!  ************
+!  Read methods
+!  ************
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+     keyword :: STR
+     word :: STR
+     word = keyword
+     word.to_lower_case
+     select case (word)
+        case ("}                          ")  ! exit read_loop
+        case ("correct_dispersion=        "); .read_correct_dispersion
+        case ("destroy_reflection_data    "); .destroy_reflection_data
+        case ("erase_reflection_data      "); .destroy_reflection_data
+        case ("exp_scale_factor=          "); .read_exp_scale_factor
+        case ("junk=                      "); .read_junk
+        case ("kind=                      "); .read_data_kind
+        case ("make_f_predicted           "); .make_F_predicted
+        case ("optimise_extinction=       "); .read_optimise_extinction
+        case ("optimise_extinction_factor="); .read_optimise_extinction
+        case ("optimize_extinction=       "); .read_optimise_extinction
+        case ("optimize_extinction_factor="); .read_optimise_extinction
+        case ("optimise_scale=            "); .read_optimise_scale
+        case ("optimise_scale_factor=     "); .read_optimise_scale
+        case ("optimize_scale=            "); .read_optimise_scale
+        case ("optimize_scale_factor=     "); .read_optimise_scale
+        case ("partition_model=           "); .read_partition_model
+        case ("reflection_data=           "); .read_reflection_data
+        case ("synthesize_sigma_i=        "); .read_synthesize_sigma_I
+        case ("thermal_smearing_model=    "); .read_thermal_smearing_model
+        case ("wavelength=                "); .read_wavelength
+        case ("put                        "); .put
+        case ("put_stl                    "); .put_stl
+        case ("units=                     "); .read_units
+        case default;                       UNKNOWN(word)
+      end
+   end
+
+   read_units ::: get_from(OBJECT)
+   ! Read a string which describes the units to be used
+   end
+
+   read_junk ::: get_from(OBJECT)
+   ! Read in a junk string, useful for ignoring a field
+   end
+
+   read_data_kind
+   ! Read the data kind of crystal experiment
+      stdin.read(.data_kind)
+      .data_kind.to_lower_case
+      select case (.data_kind)
+         case("x-ray")
+         case("pnd  ")
+         case default; UNKNOWN(.data_kind)
+      end
+   end
+
+   read_reflection_data ::: leaky, private
+   ! Read in reflection data in the standard order from "stdin".
+      .reflections.read_list_keywords
+   end
+
+   read_exp_scale_factor ::: private
+   ! Read the structure factor multiplier
+      stdin.read(.exp_scale_factor)
+   end
+
+   read_wavelength ::: private
+   ! Read the experimental wavelength
+      stdin.read(.wavelength)
+   end
+
+   read_optimise_scale ::: private
+   ! Read the switch whether to use and overall scale factor to minimise
+   ! the chi2 statistic when calculating the structure factors.
+   ! NOTE: this is not the same at the overall .scale_factor which is applied
+   ! to the experimental structure factors.
+      stdin.read(.optimise_scale)
+   end
+
+   read_synthesize_sigma_I ::: private
+   ! Read the switch whether to artificially create sigma(I) errors when
+   ! evaluating the chi2 statistics based on intensities. Refer to routine
+   ! .I_sigma
+      stdin.read(.synthesize_sigma_I)
+   end
+
+   read_optimise_extinction ::: private
+   ! Read the switch whether to correct extinction or not, according to the
+   ! Larson formula
+      stdin.read(.optimise_extinction)
+   end
+
+   read_correct_dispersion ::: private
+   ! Read the switch whether to correct dispersion or not, according to the
+   ! atomic dispersion factors
+      stdin.read(.correct_dispersion)
+   end
+
+   read_thermal_smearing_model ::: private
+   ! Read the thermal smearing model to use to correct for thermal vibration
+   ! in the calculated structure factors
+      stdin.read(.thermal_smearing_model)
+      .thermal_smearing_model.to_lower_case
+      select case (.thermal_smearing_model)
+         case("       ")
+         case("none   ")
+         case("coppens")
+         case("stewart")
+         case("tanaka ")
+         case default;    UNKNOWN(.thermal_smearing_model)
+      end
+   end
+
+   read_partition_model ::: private
+   ! Read the partition model to used to correct for oversampled fragments
+   ! of the unit cell when calculating the structure factors
+      stdin.read(.partition_model)
+      .partition_model.to_lower_case
+      select case(.partition_model)
+         case("        ")
+         case("none    ")
+         case("mulliken")
+         case("gaussian")
+         case default;    UNKNOWN(.partition_model)
+      end
+   end
+
+
+!  ***************
+!  General methods
+!  ***************
+
+   lp_factor result(res)
+   ! Return the array of the Lorentz Polarization factors for all the
+   ! reflections
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflections.created,"no reflection data")
+     n :: INT
+     c,s,two_theta :: REAL
+     do n=1, .reflections.n_refl
+       two_theta = TWO*.reflections(n).theta
+       c = cos(two_theta)
+       s = sin(two_theta)
+       if (s.is_zero(TOL(8))) then
+         res(n) = ZERO
+         WARN("lp_factor for (000) reflection set to zero")
+       else
+         res(n) = (1+c*c)/(TWO*s)
+       end
+     end
+   end
+
+   I_pred result(res)
+   ! Return the array of predicted Intensities. Only the Lorentz Polarization
+   ! factor and the angular velocity factor for a single crystal are used.
+   ! Fundamental constants appearing in front of this are not calculated
+   ! NOTE: unlike I_exp, these may include extinction and dispersion effects.
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_exp, "no calculated structure factors")
+     n :: INT
+     c,s,two_theta,F2 :: REAL
+     do n=1, .reflections.n_refl
+       two_theta = TWO*.reflections(n).theta
+       c = cos(two_theta)
+       s = sin(two_theta)
+       F2 = .reflections(n).F_pred
+       F2 = F2*F2
+       if (s.is_zero(TOL(8))) then
+         res(n) = F2
+       else
+         res(n) = (1+c*c)/(TWO*s)*F2
+       end
+     end
+   end
+
+   I_exp result(res)
+   ! Return the array of experimental Intensities. Only the Lorentz Polarization
+   ! factor and the angular velocity factor for a single crystal are used.
+   ! Fundamental constants appearing in front of this are not calculated
+   ! NOTE: extinction factors, dispersion, multiple scattering corrections
+   ! are not included. These are the experimental intensities with these effects
+   ! removed.
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_exp, "no calculated structure factors")
+     n :: INT
+     c,s,two_theta,F2 :: REAL
+     do n=1, .reflections.n_refl
+       two_theta = TWO*.reflections(n).theta
+       c = cos(two_theta)
+       s = sin(two_theta)
+       F2 = abs(.reflections(n).F_exp)
+       F2 = F2*F2
+       if (s.is_zero(TOL(8))) then
+          res(n) = F2
+       else
+          res(n) = (1+c*c)/(TWO*s)*F2
+       end
+     end
+   end
+
+   I_sigma result(res)
+   ! Return the array of experimental sigma's in the Intensities.
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_I_pred OR .reflections.have_F_exp, "no structure factors")
+     n :: INT
+     c,s,two_theta,F2 :: REAL
+     if (NOT .reflections.have_F_exp AND NOT .synthesize_sigma_I) then
+       WARN("The synthesize_sigma_I flag was not set; it is now set")
+       .synthesize_sigma_I = TRUE
+     end
+     if (.synthesize_sigma_I) then
+       res = .reflections.I_pred
+       res = sqrt(res/.reflections.equivalence_factor)
+     else
+       do n=1, .reflections.n_refl
+         two_theta = TWO*.reflections(n).theta
+         c = cos(two_theta)
+         s = sin(two_theta)
+         F2 = abs(.reflections(n).F_exp)
+         if (s.is_zero(TOL(8))) then
+           res(n) = F2
+         else
+           res(n) = TWO*(1+c*c)/(TWO*s)*F2
+         end
+       end
+     end
+   end
+
+   stl(n) result (res)
+   ! Return the value of sin(theta) / lambda for reflection n
+     self :: IN
+     n :: INT, IN
+     res :: REAL
+     res = sin(.reflections(n).theta)/.wavelength
+   end
+
+   make_F_predicted
+   ! Make the predicted magnitude of the structure factors, including possibly
+   ! an overall scale factor and extinction correction.
+   DIE_IF(NOT .reflections.created,"no reflection data")
+     F_pred :: VEC{REAL}*
+     self :: INOUT
+     .n_param = 0
+     if (.optimise_extinction OR .optimise_scale) .get_optimum_parameters
+     F_pred.create(.reflections.n_refl)
+     if (.data_kind=="pnd") then
+       F_pred = .reflections.F_calc * .extinction_correction
+     else
+       F_pred = abs(.reflections.F_calc) * .extinction_correction
+     end
+     .reflections.set_F_pred(F_pred)
+     F_pred.destroy
+   end
+
+   get_optimum_parameters ::: private
+   ! Get the scale factors, extinction parameters, etc, which minimise the chi2.
+   ! (To get the corrections cooresponding to these parameters see routine
+   ! .extinction_correction)
+     if (.optimise_extinction) then
+       .optimise_extinction_factor
+     else if (.optimise_scale) then
+       .optimise_scale_factor
+     end
+   end
+
+   extinction_correction result(res)
+   ! Return the extinction correction  factors "res" to the calculated
+   ! individual structure factors.
+     res :: VEC{REAL}(size(.reflections))
+     res = .extinction_correction(.scale_factor,.extinction_factor)
+   end
+
+   extinction_correction(scale_factor,extinction_factor) result(res)
+   ! Return the extinction correction  factors "res" to the calculated
+   ! individual structure factors. NOTE: this routine also does scaling
+   ! corrections without extinction.
+     scale_factor,extinction_factor :: REAL
+     res :: VEC{REAL}(size(.reflections))
+     F_calc :: CPX
+     angle_part :: VEC{REAL}*
+     n,n_refl :: INT
+     n_refl = .reflections.n_refl
+     ENSURE(.reflections.created,"no reflection data")
+     ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+     if (extinction_factor.is_zero(TOL(9))) then
+        res(:) = scale_factor
+     else
+       angle_part.create(n_refl)
+       angle_part = .extinction_angle_part
+       do n=1, n_refl
+         F_calc = .reflections(n).F_calc
+         res(n) = scale_factor / sqrt(sqrt(ONE + &
+             extinction_factor*F_calc*conjg(F_calc)*angle_part(n)))
+       end
+       angle_part.destroy
+     end
+   end
+
+   extinction_angle_part result(res) ::: private
+   ! Return the angular part of the extinction correction.
+     res :: VEC{REAL}(size(.reflections))
+      n :: INT
+     twotheta,c,s :: REAL
+     do n=1, .reflections.n_refl
+       twotheta=TWO*.reflections(n).theta
+       c = cos(twotheta)
+       s = sin(twotheta)
+       res(n) = (1+c*c)/(1+c*s)
+     end
+   end
+
+   optimise_scale_factor
+   ! Determine the structure factor scale factor to scale the calculated
+   ! structure factors .F_calc by in order to minimise the chi2. (But it does
+   ! not do any scaling; see .extinction_correction routine for that)
+     top,bot,F_pred :: REAL
+     n,n_refl :: INT
+     ref :: REFLECTION*
+     n_refl = .reflections.n_refl
+     DIE_IF(NOT .reflections.created,"no reflection data")
+     DIE_IF(NOT .reflections.have_F_calc, "no calculated structure factors")
+     DIE_IF(NOT .reflections.have_F_exp, "no experimental structure factors")
+     DIE_IF(NOT .reflections.have_F_sigma, "no structure factor errors")
+     top = ZERO
+     bot = ZERO
+     do n=1,n_refl
+       ref => .reflections(n)
+       if (.data_kind=="pnd") then; F_pred = ref.F_calc
+       else;                   F_pred = abs(ref.F_calc)
+       end
+       ENSURE(ref.F_sigma/=ZERO,"Structure factor has zero error!")
+       top = top + F_pred * ref.F_exp  / (ref.F_sigma * ref.F_sigma)
+       bot = bot + F_pred * F_pred / (ref.F_sigma * ref.F_sigma)
+     end
+     .scale_factor = top/bot
+     .n_param = 1
+   end
+
+   optimise_extinction_factor
+   ! Optimize the .scale_factor and .extinction_factor parameter of Larson's
+   ! method.
+   ! NOTE: the corrections are not applied to .F_pred; use the routine
+   ! .extinction_corrections to do that.
+   ! Reference: Larson, A. C., in <I>Crystallographic Computing</I>
+   !            Ed. Ahmed, F. R. (Copenhagen, Munksgaard 1970), pp. 291-294.
+      self :: target
+      p :: VEC{REAL}(2)
+      chi2_min :: REAL
+      .optimise_scale_factor
+      p(1) = .scale_factor
+      p(2) = ZERO          ! This is the .extinction_factor
+    ! saved_self.copy(self)
+      saved_self => self
+      VEC{REAL}:minimise_BFGS(DIFFRACTION_DATA:chi2,DIFFRACTION_DATA:d_chi2,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
+    ! saved_self.destroy_ptr_part
+      .scale_factor = p(1)
+      .extinction_factor = p(2)
+      .n_param = 2
+   end
+
+   chi2(p) result (res) ::: selfless
+   ! Make the chi2 between the calculated and experimental structure factors
+   ! with extinction and scale parameters stored in vector p.
+     p :: VEC{REAL}
+     res :: REAL
+   ENSURE(saved_self.reflections.created,"no reflection data")
+   ENSURE(saved_self.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(saved_self.reflections.have_F_exp, "no experimental structure factors")
+   ENSURE(saved_self.reflections.have_F_sigma, "no structure factor errors")
+   ENSURE(size(p)==2, "wrong size, p")
+     tmp,tmp1 :: REAL
+     ext :: VEC{REAL}*
+     ref :: REFLECTION*
+     n,n_refl :: INT
+     self :: DIFFRACTION_DATA*
+     self => saved_self
+     n_refl = .reflections.n_refl
+     ext.create(n_refl)
+     ext = .extinction_correction(p(1),p(2))
+     tmp = ZERO
+     do n=1,n_refl
+       ref => .reflections(n)
+       tmp1 = (abs(ref.F_calc) * ext(n) - ref.F_exp) / ref.F_sigma
+       tmp = tmp + tmp1 * tmp1
+     end
+       res = tmp / max(n_refl-.n_param,1)
+     ext.destroy
+   end
+
+   d_chi2(p) result (res) ::: selfless
+   ! Return the derivative of the chi2 with respect to the .scale_factor in
+   ! p(1), and with respect to .extinction_factor in p(2). This routine is for
+   ! use in the BFGS minimiser.
+      p :: VEC{REAL}
+      res :: VEC{REAL}(size(p))
+   ENSURE(size(p)==2, "wrong size, p")
+      self :: DIFFRACTION_DATA*
+      self => saved_self
+      res(1) = .d_chi2_d_scale(p)
+      res(2) = .d_chi2_d_ext(p)
+   end
+
+   d_chi2_d_scale(p) result (res)
+   ! Derivative of the chi^2 with respect to the scale factor
+     p :: VEC{REAL}
+     res :: REAL
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+   ENSURE(size(p)==2, "wrong size, p")
+     tmp,F_pred :: REAL
+     ext :: VEC{REAL}*
+     ref :: REFLECTION*
+     n,n_refl :: INT
+     n_refl = .reflections.n_refl
+     ext.create(n_refl)
+     ext = .extinction_correction(p(1),p(2))
+     tmp = ZERO
+     do n=1,n_refl
+       ref => .reflections(n)
+       F_pred = abs(ref.F_calc) * ext(n)
+       tmp = tmp + F_pred*F_pred - ref.F_exp*F_pred / (ref.F_sigma*ref.F_sigma)
+     end
+     res = TWO*tmp/(p(1)*max(n_refl-.n_param,1))
+     ext.destroy
+   end
+
+   d_chi2_d_ext(p) result (res)
+   ! Derivative of the chi^2 with respect to the extinction parameter.
+     p :: VEC{REAL}, IN
+     res :: REAL
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+   ENSURE(size(p)==2, "wrong size, p")
+     tmp,extn,p1 :: REAL
+     angle_bit,ext :: VEC{REAL}*
+     ref :: REFLECTION*
+     n,n_refl :: INT
+     n_refl = .reflections.n_refl
+     angle_bit.create(n_refl)
+     ext.create(n_refl)
+     angle_bit = .extinction_angle_part
+     p1 = p(1)
+     ext = .extinction_correction(ONE,p(2))
+     tmp = ZERO
+     do n = 1,n_refl
+       ref => .reflections(n)
+       extn = ext(n)
+       tmp = tmp + (p1 * abs(ref.F_calc) * extn - ref.F_exp) * &
+           extn*extn*extn*extn*extn* ref.F_calc*ref.F_calc*ref.F_calc * &
+           angle_bit(n) / (ref.F_sigma * ref.F_sigma)
+     end
+     res = -p1*tmp/(TWO * max(n_refl-.n_param,1))
+     ext.destroy
+     angle_bit.destroy
+   end
+
+   d_chi2_dU(dF) result (res)
+   ! Evaluate the derivative of the chi^2 with respect to parameters U
+   ! (e.g. thermal parameters) given the derivatives "dF" of where
+   ! .F_calc with respect to these parameters U. NOTE: this routine
+   ! assumes that the .scale_factor and .extinction_factor are fixed.
+     dF :: MAT{CPX}
+     res :: VEC{REAL}(size(dF,2))
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(size(dF,1)==n_refl, "wrong size, dF")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+     Fc_conjgFcalc :: VEC{CPX}*
+     ref :: REFLECTION*
+     ext,angle_bit :: VEC{REAL}*
+     fac,Fc,Fc1,extn :: REAL
+     u,n_refl,n :: INT
+     n_refl = .reflections.n_refl
+     angle_bit.create(n_refl)
+     angle_bit = .extinction_angle_part
+     ext.create(n_refl)
+     ext = .extinction_correction(ONE,.extinction_factor)
+     Fc_conjgFcalc.create(n_refl)
+     do n = 1,n_refl
+       ref => .reflections(n)
+       extn = ext(n)
+       Fc1 = abs(ref.F_calc)
+       Fc = ( (.scale_factor*extn*Fc1 - ref.F_exp) / &
+          (ref.F_sigma * ref.F_sigma) ) * &
+          (extn / Fc1 - HALF * extn * extn * extn * extn * extn * &
+          .extinction_factor * Fc1 * angle_bit(n))
+       Fc_conjgFcalc(n) = Fc * conjg(ref.F_calc)
+     end
+     fac = TWO*.scale_factor/max(n_refl-.n_param,1)
+     do u = 1,size(dF,2)
+        res(u) = fac * sum( Fc_conjgFcalc(:) * dF(:,u) )
+     end
+     Fc_conjgFcalc.destroy
+     ext.destroy
+     angle_bit.destroy
+   end
+
+!  **************
+!  Output methods
+!  **************
+
+   put
+   ! Put out the diffraction data to file "out"
+      stdout.flush
+      stdout.text("Diffraction information:")
+      stdout.show("data_kind                        = ", .data_kind)
+      if (.reflections.created) then
+      stdout.text("Reflection data:")
+      stdout.flush
+      .put_reflection_data
+      stdout.flush
+      end
+   end
+
+   put_stl ::: private
+   ! Output sin(theta)/lambda for all reflections.
+   ENSURE(.reflections.created,"No list of reflections")
+   ENSURE(.reflections.have_indices,"No list of reflections")
+     n :: INT
+     stdout.text("sin(theta)/lambda for the reflections")
+     stdout.dash(int_fields=3,real_fields=1)
+     stdout.put("h",int_width=TRUE)
+     stdout.put("k",int_width=TRUE)
+     stdout.put("l",int_width=TRUE)
+     stdout.put("stl")
+     stdout.flush
+     stdout.dash(int_fields=3,real_fields=1)
+     do n=1,size(.reflections)
+       stdout.put(.reflections(n).h)
+       stdout.put(.reflections(n).k)
+       stdout.put(.reflections(n).l)
+       stdout.put(.stl(n))
+       stdout.flush
+     end
+     stdout.dash(int_fields=3,real_fields=1)
+   end
+
+   put_F_calc
+   ! Put the hkl Miller index triple followed by the calculated
+   ! structure factor to add onto existing structure factors.
+   ENSURE(.reflections.created, "no reflection data")
+      .reflections.set_keys(["indices","F_calc "])
+      .reflections.put
+      .reflections.clear_keys
+   end
+
+   put_F_stats ::: private
+   ! Output the structure factor goodness of fit statistics
+   ! stdout.
+      .reflections.put_F_stats
+      .put_correction_data
+   end
+
+   put_I_stats ::: private
+   ! Output the intensity goodness of fit statistics
+      .reflections.put_I_stats
+      .put_correction_data
+   end
+
+   put_correction_data
+   ! Output the correction data
+     real_width :: BIN
+     real_width = TRUE
+     stdout.flush
+     stdout.show("Using scale factor          = ", .optimise_scale,real_width)
+     stdout.show("Using extinction            = ", .optimise_extinction,real_width)
+     stdout.show("Thermal smearing model      = ", .thermal_smearing_model)
+     stdout.show("Fragment partition model    = ", .partition_model)
+     stdout.show("Correct dispersion?         = ", .correct_dispersion,real_width=TRUE)
+     if (.optimise_extinction) then;
+     stdout.show("Optimize extinction         = ", TRUE,real_width)
+     stdout.show("Secondary extinction factor = ", .extinction_factor)
+     else
+     stdout.show("Optimize extinction         = ", FALSE,real_width)
+     end
+     if (.optimise_scale) then
+     stdout.show("Optimize scale factor       = ", TRUE,real_width)
+     stdout.show("Scale factor                = ", .scale_factor)
+     else
+     stdout.show("Optimize scale factor       = ", FALSE,real_width)
+     end
+   end
+
+   put_gof_data
+   ! Output the correction data
+     stdout.show("Chi2                        = ", .F_chi2)
+     stdout.show("Goodness of fit in F        = ", .F_goodness_of_fit)
+     stdout.show("R factor in F               = ", .F_r_factor)
+     stdout.show("Weighted R factor in F      = ", .F_weighted_r_factor)
+   end
+
+   put_reflection_data
+   ! Output the reflection data t
+   ENSURE(.reflections.created,"no reflections")
+     if (.have_F_calc OR .have_F_pred) .put_correction_data
+     .reflections.put
+   end
+
+   put_reflection_phases ::: private
+   ! Output the reflection phases
+   ENSURE(.reflections.created, "no reflection data")
+     .reflections.set_keys(["indices","F_calc ","F_phase"])
+     .reflections.put
+     .reflections.clear_keys
+   end
+
+   put_qq_plot(name)
+   ! Output a qq plot to the text file.
+   ! It is a plot of the experimental quantile vs expected quantile.
+     name :: STR, optional
+   ENSURE(.reflections.created, "no reflection data")
+     .reflections.put_F_qq_plot(name)
+   end
+
+   put_labelled_qq_plot(name)
+   ! Output a qq plot to the text file.
+   ! It is a plot of the experimental quantile vs expected quantile.
+     name :: STR, optional
+   ENSURE(.reflections.created, "no reflection data")
+     .reflections.put_labelled_F_qq_plot(name)
+   end
+
+   put_chi2_vs_angle_plot
+   ! Output a table with the chi^2 for the structure factor data set broken
+   ! into sections.
+   ! Reads from stdin the number of divisions in the plot.
+     num_sections :: INT
+     n,num,k,n_refl :: INT
+     section_for :: VEC{INT}*
+     stl,stl_min,stl_max,chi2,width,stl_mean :: REAL
+
+     stdin.read(num_sections)
+   ENSURE(num_sections > 0, "number of sections to plot not positive")
+   ENSURE(.reflections.created,"no structure factors")
+     n_refl = .reflections.n_refl
+
+     ! Work out the limits of the sin(theta)/lambda.
+     stl_min = 1000
+     stl_max = ZERO
+     do n=1, n_refl
+       stl = .stl(n) * BOHR_PER_ANGSTROM
+       if (stl < stl_min) stl_min = stl
+       if (stl > stl_max) stl_max = stl
+     end
+     width = (TOL(3) + stl_max - stl_min)/num_sections
+
+     section_for.create(n_refl)
+     ! Determine which section each reflection belongs to.
+     do n=1, n_refl
+       stl = .stl(n) * BOHR_PER_ANGSTROM
+       section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
+     end
+
+     stdout.flush
+     stdout.text("Chi^2 vs angle plot")
+     stdout.flush
+     stdout.text("sin(theta)/lambda in Angstrom^(-1)")
+     stdout.show("Smallest sin(theta)/lambda  = ",stl_min)
+     stdout.show("Largest sin(theta)/lambda   = ",stl_max)
+     stdout.flush
+     stdout.put("stl")
+     stdout.put("chi^2",flush=1)
+     stdout.dash(real_fields=2)
+     do n = 1, num_sections
+       chi2 = ZERO
+       num = 0
+       stl_mean = stl_min + (n - HALF) * width
+       do k = 1, n_refl
+         if (n==section_for(k)) then
+           chi2 = chi2 + .reflections(k).F_z2
+           num = num + 1
+         end
+       end
+       stdout.put(stl_mean)
+       if (num==0) then
+         stdout.flush
+         cycle
+       else
+         chi2 = chi2 / max(num - .n_param,1)
+         stdout.put(chi2,flush=1)
+       end
+     end
+     stdout.flush
+     section_for.destroy
+   end
+
+   put_fcalc_plots
+   ! Output some different plots about the calculated structure factors.
+     ext :: VEC{REAL}*
+     ext_refs :: VEC{REFLECTION}*
+     n,n_refl :: INT
+     y,w :: REAL
+
+     n_refl = .reflections.n_refl
+
+     stdout.text("The effects of angle.")
+     stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs sin(theta)/lambda")
+     do n=1,n_refl
+       stdout.put(.stl(n))
+       stdout.put(.reflections(n).F_z)
+       stdout.flush
+     end
+     stdout.flush
+
+     stdout.text("The effects of intensity.")
+     stdout.text("Scatter plot of (Fexp-Fpred)/F_sigma vs Fexp")
+     do n=1,n_refl
+       stdout.put(.reflections(n).F_exp)
+       stdout.put(.reflections(n).F_z)
+       stdout.flush
+     end
+     stdout.flush
+
+     ext_refs.create(n_refl)
+     ext.create(n_refl)
+     ext = .extinction_correction
+     ext_refs.set_F_exp(.reflections.F_pred)
+     ext_refs.set_F_pred(.reflections.F_pred * ext)
+     ext_refs.set_F_sigma(.reflections.F_sigma)
+     ext.destroy
+
+     stdout.text("The effects of extinction.")
+     w = ZERO
+     y = ZERO
+     do n=1,n_refl
+       y = y + abs(ext_refs(n).F_z)
+       w = w + abs(ext_refs(n).F_r)
+     end
+     y = y / n_refl
+     w = w / n_refl
+     stdout.show("Average value of abs(Fcalc_ext-Fcalc)/F_sigma is ",y)
+     stdout.show("Average value of abs(extinction correction) is ",w)
+     stdout.flush
+
+     stdout.text("The effects of intensity on extinction.")
+     stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs Fpred")
+     do n=1,n_refl
+       stdout.put(ext_refs(n).F_pred)
+       stdout.put(ext_refs(n).F_z)
+       stdout.flush
+     end
+     stdout.flush
+
+     stdout.text("The effects of scattering angle on extinction.")
+     stdout.text("Scatter plot of (Fcalc_ext-Fcalc)/F_sigma vs sin(theta)/lambda")
+     do n=1,n_refl
+       stdout.put(.stl(n))
+       stdout.put(ext_refs(n).F_z)
+       stdout.flush
+     end
+     ext_refs.destroy
+
+     stdout.flush
+   end
+
+   put_PND_sf(name)
+   ! Output the magnetic structure factors
+       name :: STR
+       FM_s,FM_l :: VEC{CPX}*
+       arch :: ARCHIVE
+        n :: INT
+       FM_s.create(.reflections.n_refl)
+       arch.set(name,"PND_spin_sf")
+       arch.read(FM_s)
+       FM_l.create(.reflections.n_refl)
+       arch.set(name,"PND_nabla_sf")
+       arch.read(FM_l)
+       stdout.text("PND magnetic structure factors:")
+       stdout.flush
+       stdout.dash(int_fields=3,real_fields=3)
+       stdout.put("h", int_width=TRUE)
+       stdout.put("k", int_width=TRUE)
+       stdout.put("l", int_width=TRUE)
+       stdout.put("FM_s")
+       stdout.put("FM_l")
+       stdout.put("FM")
+       stdout.flush
+       stdout.dash(int_fields=3,real_fields=3)
+       do n = 1, .reflections.n_refl
+          stdout.put(.reflections(n).h)
+          stdout.put(.reflections(n).k)
+          stdout.put(.reflections(n).l)
+          stdout.put(real(FM_s(n)) )
+          stdout.put(real(FM_l(n)) )
+          stdout.put(real(FM_s(n)+FM_l(n)) )
+          stdout.flush
+       end
+       stdout.dash(int_fields=3,real_fields=3)
+       FM_l.destroy
+       FM_s.destroy
+   end
+
+!  *******************
+!  Tests for existence
+!  *******************
+
+   reflection_data_exists result(res)
+   ! Return TRUE if reflection data exists
+     res :: BIN
+     res = associated(.reflections)
+   end
+
+   have_F_exp result(res)
+   ! Return TRUE if have some experimental structure factors
+      res :: BIN
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_exp
+   end
+
+   have_F_calc result(res)
+   ! Return TRUE if have some calculated structure factors
+      res :: BIN
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_calc
+   end
+
+   have_F_pred result(res)
+   ! Return TRUE if have some predicted structure factors
+      res :: BIN
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_pred
+   end
+
+   have_F_sigma result(res)
+   ! Return TRUE if have some structure factor errors
+      res :: BIN
+      res = FALSE
+      if (associated(.reflections)) res = .reflections.have_F_sigma
+   end
+
+!*******************************************************************************
+!                     Inherited reflection routines
+!*******************************************************************************
+
+   n_refl result (res)
+   ! The number of reflections
+     res :: INT
+   ENSURE(.reflections.created, "no reflection data")
+     res = .reflections.n_refl
+   end
+
+   F_calc result (res)
+   ! The calculated structure factors
+     res :: VEC{CPX}(size(.reflections))
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_calc
+   end
+
+   F_pred result (res)
+   ! The predicted structure factors
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_pred
+   end
+
+   F_sigma result (res)
+   ! The structure factor errors
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_sigma
+   end
+
+   F_exp result (res)
+   ! The experimental structure factors
+     res :: VEC{REAL}(size(.reflections))
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_exp
+   end
+
+   set_F_calc(F_calc)
+   ! Set the calculated structure factors
+     F_calc :: VEC{CPX}, IN
+   ENSURE(.reflection_data_exists,"no reflection data")
+     .reflections.set_F_calc(F_calc)
+   end
+
+   F_chi2 result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_chi2
+   end
+
+   F_goodness_of_fit result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_goodness_of_fit
+   end
+
+   F_r_factor result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_r_factor
+   end
+
+   F_weighted_r_factor result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.F_weighted_r_factor
+   end
+
+   I_chi2 result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.I_chi2
+   end
+
+   I_goodness_of_fit result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.I_goodness_of_fit
+   end
+
+   I_r_factor result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.I_r_factor
+   end
+
+   I_weighted_r_factor result(res)
+   ! Returns data
+     self :: IN
+     res :: REAL
+   ENSURE(.reflection_data_exists,"no reflection data")
+     res = .reflections.I_weighted_r_factor
+   end
+
+   simulate_new_F_exp
+   ! Simulate a new experiment by adding normally distributed experimental
+   ! errors the the F_exp.
+   ENSURE(.reflection_data_exists,"no reflection data")
+   ENSURE(.have_F_exp,"no experimental structure factors")
+   ENSURE(.have_F_sigma,"no experimental structure factor errors")
+     F_exp :: VEC{REAL}*
+     n :: INT
+     chi2,z :: REAL
+     stdout.flush
+     stdout.text("Adding simulated errors to F_exp using F_sigma.")
+     F_exp.create(.n_refl)
+     F_exp = .reflections.F_exp
+     .reflections.simulate_new_F_exp
+     chi2=ZERO
+     do n=1,.n_refl
+       z=(F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+       chi2 = chi2 + z*z
+     end
+     chi2 = chi2 / max(.n_refl - 1,1)
+     stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
+     stdout.flush
+     stdout.dash(real_fields=4)
+     stdout.put("F_exp (old)")
+     stdout.put("F_exp (new)")
+     stdout.put("F_sigma")
+     stdout.put("dF/sigma")
+     stdout.flush
+     stdout.dash(real_fields=4)
+     do n=1,.n_refl
+       z=(F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+       stdout.put(F_exp(n))
+       stdout.put(.reflections(n).F_exp)
+       stdout.put(.reflections(n).F_sigma)
+       stdout.put(z)
+       stdout.flush
+     end
+     stdout.dash(real_fields=4)
+     F_exp.destroy
+   end
+
+end
