@@ -3608,7 +3608,6 @@ sub fortran_do_program_scope {
 
   ######## lines that contain a dot. ###########
   $fortran_out = &dots_to_fortran($fortran_out);
-  print STDERR $fortran_out;
   ######## lines that contain a dot. ###########
 
   &fortran_process_case_statements;
