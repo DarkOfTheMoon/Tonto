@@ -57,7 +57,8 @@ contains
      nullify(.unique_atom_for_frag_atom)
      nullify(.unique_symop_for_frag_atom)
      nullify(.unique_shift_for_frag_atom)
-     nullify(.reduced_symop)
+   ! nullify(.reduced_symop)
+   ! nullify(.cluster_symop)
      nullify(.inverted_symop)
      nullify(.translated_symop)
      nullify(.unique_SF_symop)
@@ -69,6 +70,7 @@ contains
      nullify(.asym_atom_for_unit_cell_atom)
      nullify(.frag_cell_for_unit_cell_atom)
      nullify(.frag_atom_for_unit_cell_atom)
+     nullify(.frag_atom_for_asym_unit_atom)
      nullify(.data)
      nullify(.xray_data)
      nullify(.pnd_data)
@@ -98,7 +100,8 @@ contains
      .unique_atom_for_frag_atom.destroy
      .unique_symop_for_frag_atom.destroy
      .unique_shift_for_frag_atom.destroy
-     .reduced_symop.destroy
+   ! .reduced_symop.destroy
+   ! .cluster_symop.destroy
      .inverted_symop.destroy
      .translated_symop.destroy
      .unique_SF_symop.destroy
@@ -110,6 +113,8 @@ contains
      .asym_atom_for_unit_cell_atom.destroy
      .frag_cell_for_unit_cell_atom.destroy
      .frag_atom_for_unit_cell_atom.destroy
+     .frag_atom_for_asym_unit_atom.destroy
+     .fragment_info_made = FALSE
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -155,10 +160,10 @@ contains
         .unique_symop_for_frag_atom.create_copy(crystal.unique_symop_for_frag_atom)
      if (crystal.unique_shift_for_frag_atom.created) &
         .unique_shift_for_frag_atom.create_copy(crystal.unique_shift_for_frag_atom)
-     if (crystal.reduced_symop.created) &
-        .reduced_symop.create_copy(crystal.reduced_symop)
-     if (crystal.cluster_symop.created) &
-        .cluster_symop.create_copy(crystal.cluster_symop)
+   ! if (crystal.reduced_symop.created) &
+   !    .reduced_symop.create_copy(crystal.reduced_symop)
+   ! if (crystal.cluster_symop.created) &
+   !    .cluster_symop.create_copy(crystal.cluster_symop)
      if (crystal.inverted_symop.created) &
         .inverted_symop.create_copy(crystal.inverted_symop)
      if (crystal.translated_symop.created) &
@@ -181,6 +186,8 @@ contains
         .frag_cell_for_unit_cell_atom.create_copy(crystal.frag_cell_for_unit_cell_atom)
      if (crystal.frag_atom_for_unit_cell_atom.created) &
         .frag_atom_for_unit_cell_atom.create_copy(crystal.frag_atom_for_unit_cell_atom)
+     if (crystal.frag_atom_for_asym_unit_atom.created) &
+        .frag_atom_for_asym_unit_atom.create_copy(crystal.frag_atom_for_asym_unit_atom)
      if (crystal.xray_data.created) &
         .xray_data.create_copy(crystal.xray_data)
      if (crystal.pnd_data.created) &
@@ -254,7 +261,9 @@ contains
         case ("prune_asymmetric_unit=     "); .read_prune_asymmetric_unit
         case ("put                        "); .put
         case ("read_cif                   "); .read_CIF
+        case ("redirect                   "); .redirect
         case ("repetition_factors=        "); .read_repetition_factors
+        case ("revert                     "); .revert
         case ("spacegroup=                "); .read_spacegroup
         case ("unitcell=                  "); .read_unitcell
         case ("units=                     "); .read_unitcell
@@ -268,6 +277,15 @@ contains
 
    read_junk ::: get_from(OBJECT)
    ! Read in a junk string, useful for ignoring a field
+   end
+
+   redirect ::: get_from(OBJECT), leaky
+   ! Redirect input. (This code is for non-pointer self objects).
+   end
+
+   revert ::: get_from(OBJECT), leaky
+   ! Revert back to previous stdin file. (This code is for non-pointer self
+   ! objects).
    end
 
    read_kind
@@ -325,8 +343,8 @@ contains
    ! repeated. This could be because of an input or CIF file error, or it could
    ! be genuinely correct because the repeated atom corresponds to a disordered
    ! position. For Hirshfeld surface plots, which can cope with disorder, you
-   ! probably do not want to remove or prune the asymmetric atom list, but for
-   ! crystal calculations you must do so.
+   ! probably do not want to prune the asymmetric atom list, but for crystal
+   ! calculations you must do so.
       stdin.read(.prune_asymmetric_unit)
    end
 
@@ -400,7 +418,7 @@ contains
       labels.destroy
    end
 
-   set_asymmetric_unit_geometry(geometry)
+   set_asymmetric_unit_geometry(geometry) ::: leaky
    ! Set the asymmetric unit geometry from a CARTESIAN "geometry". This is
    ! useful if the atomic coordinates have been processed from a CIF elsewhere,
    ! e.g. in the VEC{ATOM} module.
@@ -418,7 +436,7 @@ contains
 
    make_k_pts(res)
    ! Convert the .reflection.hkl indices to reciprocal lattice vectors
-   ! Dimension of res is [._refl,3]
+   ! Dimension of res is [.n_refl,3]
       res :: MAT{REAL}
        n :: INT
       hkl :: VEC{INT}(3)
@@ -1088,13 +1106,15 @@ contains
 !  Reduced group, Unique operators, Z number
 !  *****************************************
 
-   make_reduced_group_data(atom) ::: leaky
-   ! The reduced group are those unique seitz operators which are needed to
-   ! generate the complete ".fragment_cell_geometry" from the atom fragment
-   ! positions in "atom".  Some of the spacegroup symmetry operations may only
-   ! lead to fragment geometries which are inversions of, or translations of,
-   ! other operations in the reduced group.  This information is also worked out
-   ! here, and it can be used to save work in structure factor calculations.
+   make_fragment_data(atom) ::: leaky
+   ! This routine makes a multitude of mapping arrays that relate a given set
+   ! fragment "atom" list, or the asymmetric cell atoms, to the unit cell atoms,
+   ! or fragment cell atoms which are generated by symmetry; and it may store
+   ! the related symmetry operations and unique atoms.  Particularly important
+   ! for structure factor calculations are whether certain operations are
+   ! inversions or translations, since this can save a lot of work. This latter
+   ! things now have nothing to do with fragment stuff but are placed in
+   ! here anyway; they should probably be shifted to the spacegroup module.
    ! NOTE: if ".prune_asymmetric_unit" is TRUE then any non-unique atoms in the
    ! ".asymmetric_unit_geometry" are removed. NOTE: this is probably not what
    ! you want for Hirshfeld surface calcs, but it may be what you want when
@@ -1106,8 +1126,8 @@ contains
       .fragment_geometry.create(3,.n_fragment_atoms)
       atom.get_geometry(.fragment_geometry)
       .unitcell.change_into_fractional(.fragment_geometry)
-      .make_reduced_symops         ! These don't seem to be used
-      .make_cluster_symops
+    ! .make_reduced_symops         ! These don't seem to be used
+    ! .make_cluster_symops
       .make_inverted_symops        ! These are used to save time in SF calcs
       .make_translated_symops
       .make_unique_SF_symops
@@ -1149,82 +1169,84 @@ contains
       res = u/f
    end
 
-   make_reduced_symops ::: leaky, private
-   ! Make a list of the indices of the Seitz matrices, ".reduced_symop", which
-   ! will generate different geometries from that in ".fragment_geometry" when
-   ! both the original and transformed geometries are converted to unit cell
-   ! coordinates.  ".n_reduced_symops" is set to the number of these reduced
-   ! symmetry operations.
-      gi,gu :: MAT{REAL}*
-      i,j,u, n :: INT
-      identical :: BIN
-      gi.create(3,.n_fragment_atoms)
-      gu.create(3,.n_fragment_atoms)
-      .reduced_symop.create(.spacegroup.n_seitz)
-      n = 1
-      .reduced_symop(1) = 1
-      do i = 2,.spacegroup.n_seitz
-         gi = .fragment_geometry
-         .transform_geometry(gi,i,to_unit_cell=TRUE)
-         do j = 1,n                            ! Loop over reduced symops
-            gu = .fragment_geometry
-            u = .reduced_symop(j)
-            .transform_geometry(gu,u,to_unit_cell=TRUE)
-            identical  = .is_same_geometry(gi,gu)
-            if (identical) exit
-         end
-         if (NOT identical) then
-            n = n + 1
-            .reduced_symop(n) = i
-         end
-      end
-      .n_reduced_symops = n
-      .reduced_symop.shrink(n)
-      gu.destroy
-      gi.destroy
-   end
+!   make_reduced_symops ::: leaky, private
+!   ! Make a list of the indices of the Seitz matrices, ".reduced_symop", which
+!   ! will generate different geometries from that in ".fragment_geometry" when
+!   ! both the original and transformed geometries are converted to unit cell
+!   ! coordinates.  ".n_reduced_symops" is set to the number of these reduced
+!   ! symmetry operations.
+!      gi,gu :: MAT{REAL}*
+!      i,j,u, n :: INT
+!      identical :: BIN
+!      gi.create(3,.n_fragment_atoms)
+!      gu.create(3,.n_fragment_atoms)
+!      .reduced_symop.create(.spacegroup.n_seitz)
+!      n = 1
+!      .reduced_symop(1) = 1
+!      do i = 2,.spacegroup.n_seitz
+!         gi = .fragment_geometry
+!         .transform_geometry(gi,i,to_unit_cell=TRUE)
+!         do j = 1,n                            ! Loop over reduced symops
+!            gu = .fragment_geometry
+!            u = .reduced_symop(j)
+!            .transform_geometry(gu,u,to_unit_cell=TRUE)
+!            identical  = .is_same_geometry(gi,gu)
+!            if (identical) exit
+!         end
+!         if (NOT identical) then
+!            n = n + 1
+!            .reduced_symop(n) = i
+!         end
+!      end
+!      .n_reduced_symops = n
+!      .reduced_symop.shrink(n)
+!      gu.destroy
+!      gi.destroy
+!   end
 
-   make_cluster_symops ::: leaky, private
-   ! Make a list of the indices of the Seitz matrices, ".cluster_symop", which
-   ! will generate different geometries from that in ".fragment_geometry".
-   ! This routine is the same as make_reduced_symops except that the geometries
-   ! are *not* converted to unit cell coordinates.  ".n_cluster_symops" is set
-   ! to the number of these symmetry operations.  These operators are useful for
-   ! generating clusters of this fragment. NOTE: the unit operator, element 1,
-   ! is part of the set of cluster_symops.
-      gi,gu :: MAT{REAL}*
-      i,j,u, n :: INT
-      identical :: BIN
-      gi.create(3,.n_fragment_atoms)
-      gu.create(3,.n_fragment_atoms)
-      .cluster_symop.create(.spacegroup.n_seitz)
-      n = 1
-      .cluster_symop(1) = 1
-      do i = 2,.spacegroup.n_seitz
-         gi = .fragment_geometry
-         .transform_geometry(gi,i)
-         do j = 1,n                       ! Loop over cluster symops
-            gu = .fragment_geometry
-            u = .cluster_symop(j)
-            .transform_geometry(gu,u)
-            identical  = .is_same_geometry(gi,gu)
-            if (identical) exit
-         end
-         if (NOT identical) then
-            n = n + 1
-            .cluster_symop(n) = i
-         end
-      end
-      .n_cluster_symops = n
-      .cluster_symop.shrink(n)
-      gu.destroy
-      gi.destroy
-   end
+!   make_cluster_symops ::: leaky, private
+!   ! Make a list of the indices of the Seitz matrices, ".cluster_symop", which
+!   ! will generate different geometries from that in ".fragment_geometry".
+!   ! This routine is the same as make_reduced_symops except that the geometries
+!   ! are *not* converted to unit cell coordinates.  ".n_cluster_symops" is set
+!   ! to the number of these symmetry operations.  These operators are useful for
+!   ! generating clusters of this fragment. NOTE: the unit operator, element 1,
+!   ! is part of the set of cluster_symops.
+!      gi,gu :: MAT{REAL}*
+!      i,j,u, n :: INT
+!      identical :: BIN
+!      gi.create(3,.n_fragment_atoms)
+!      gu.create(3,.n_fragment_atoms)
+!      .cluster_symop.create(.spacegroup.n_seitz)
+!      n = 1
+!      .cluster_symop(1) = 1
+!      do i = 2,.spacegroup.n_seitz
+!         gi = .fragment_geometry
+!         .transform_geometry(gi,i)
+!         do j = 1,n                       ! Loop over cluster symops
+!            gu = .fragment_geometry
+!            u = .cluster_symop(j)
+!            .transform_geometry(gu,u)
+!            identical  = .is_same_geometry(gi,gu)
+!            if (identical) exit
+!         end
+!         if (NOT identical) then
+!            n = n + 1
+!            .cluster_symop(n) = i
+!         end
+!      end
+!      .n_cluster_symops = n
+!      .cluster_symop.shrink(n)
+!      gu.destroy
+!      gi.destroy
+!   end
 
    make_inverted_symops ::: leaky, private
-   ! Determine which of the reduced symops can generate geometries from
-   ! ".fragment cell_geometry" which are related by inversion.
-   ENSURE(.reduced_symop.created,"no reduced_symop array")
+   ! Determine which of the Seitz symops generate geometries which are related
+   ! by inversion. Really, we should check the cartesian seitz matrices, but and
+   ! inversion is just -1 times the identity, to the cartesian inversion
+   ! operator is just the same as the crystal-axis inversion operator, with -1
+   ! down the diagonal.
    ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
       n,i,j :: INT
       inverted :: BIN
@@ -1246,9 +1268,11 @@ contains
    end
 
    make_translated_symops ::: leaky, private
-   ! Determine which of the reduced symops can generate geometries from
-   ! ".fragment_cell_geometry" which are related by translation, (including
-   ! translation by the zero vector), but not inversion
+   ! Determine which of the Seitz symops generate geometries which are related
+   ! by translation, (including translation by the zero vector), but not
+   ! inversion. Really we should check the cartesian seitz operators, but the
+   ! identity oprator has the same representation in either the crystal or
+   ! cartesian axis systems.
    ENSURE(.inverted_symop.created,"no inverted_symop array")
    ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
       i,j :: INT
@@ -1564,19 +1588,25 @@ contains
 
    make_frag_cell_for_unit_cell ::: leaky, private
    ! Make an array which maps the unit cell geometry positions into the fragment
-   ! cell geometry positions. This only works when the fragment cell geometry is
-   ! the same as the unit cell geometry. It is used for crystal cluster
-   ! calculations based on molecular fragments.
+   ! cell geometry positions.  This should only be used when the fragment cell
+   ! geometry is the same as the unit cell geometry. It is used for crystal
+   ! cluster calculations based on molecular fragments, and for extracting the
+   ! asymmetric unit cell atoms from a given fragment geometry
    ENSURE(.unit_cell_geometry.created,"no unit cell geometry") 
    ENSURE(.fragment_cell_geometry.created,"no fragment cell geometry") 
+   ENSURE(.n_asymmetric_unit_atoms>0,"no asymmetric unit atoms") 
       pu,pf :: VEC{REAL}(3)
-      u,f :: INT
+      u,f,a,b :: INT
       found :: BIN
       tol :: REAL
       if (.n_unit_cell_atoms/=.n_fragment_cell_atoms) return
       tol = TOL(3)/maxval(.unitcell.length)
       .frag_cell_for_unit_cell_atom.create(.n_unit_cell_atoms)
       .frag_atom_for_unit_cell_atom.create(.n_unit_cell_atoms)
+      .frag_atom_for_asym_unit_atom.create(.n_asymmetric_unit_atoms)
+      .frag_cell_for_unit_cell_atom = 0
+      .frag_atom_for_unit_cell_atom = 0
+      .frag_atom_for_asym_unit_atom = 0
       do u = 1,.n_unit_cell_atoms
          pu = .unit_cell_geometry(:,u)
          found = FALSE
@@ -1585,14 +1615,14 @@ contains
             found = pu.same_as(pf,tol)
             if (NOT found) cycle
             .frag_cell_for_unit_cell_atom(u) = f
-            .frag_atom_for_unit_cell_atom(u) = .frag_atom_for_frag_cell_atom(f)
+            a = .frag_atom_for_frag_cell_atom(f)
+            b = .asym_atom_for_unit_cell_atom(u)
+            .frag_atom_for_unit_cell_atom(u) = a
+            if (.frag_atom_for_asym_unit_atom(b)==0) &
+            .frag_atom_for_asym_unit_atom(b) = a
             exit 
          end
-         if (NOT found) then
-            WARN("unit cell atom "//u.to_str.trim//" was not found in the fragment cell")
-            .frag_cell_for_unit_cell_atom.destroy
-            .frag_atom_for_unit_cell_atom.destroy
-         end
+         WARN_IF(NOT found,"unit cell atom "//u.to_str.trim//" was not found in the fragment cell")
       end
    end
 
@@ -1620,6 +1650,15 @@ contains
          end
          .repetition_factor(a) = n_same
       end
+   end
+
+   has_complete_fragment result (res)
+   ! Returns TRUE if the the fragment cell and unit cells are equivalent i.e. if
+   ! there are enough atoms in the fragment to generate the whole unit cell.
+      res :: BIN
+      res = .fragment_info_made AND .frag_cell_for_unit_cell_atom.created
+      if (NOT res) return
+      res = all(.frag_cell_for_unit_cell_atom>0)
    end
 
    transform_geometry(g,op,translate,ignore_glide,to_unit_cell)
@@ -1755,16 +1794,16 @@ contains
       .unitcell.change_from_fractional(res)
    end
 
-   reduced_symop_mat(r) result (res) ::: private
-   ! Return the "r"-th reduced symop matrix in the unique list made by routine
-   ! ".make_reduced_symops".
-      res :: MAT{REAL}(3,3)
-      r :: INT
-   ENSURE(.reduced_symop.created,"no reduced_symops!")
-   ENSURE(r<=.n_reduced_symops,"symop index out of range")
-   ENSURE(r>0, "symop index out of range")
-      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
-   end
+!   reduced_symop_mat(r) result (res) ::: private
+!   ! Return the "r"-th reduced symop matrix in the unique list made by routine
+!   ! ".make_reduced_symops".
+!      res :: MAT{REAL}(3,3)
+!      r :: INT
+!   ENSURE(.reduced_symop.created,"no reduced_symops!")
+!   ENSURE(r<=.n_reduced_symops,"symop index out of range")
+!   ENSURE(r>0, "symop index out of range")
+!      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
+!   end
 
    unique_SF_symop_mat(u) result (res) ::: private
    ! Return the "u"-th reduced symop matrix in the unique list made by routine
@@ -1923,47 +1962,47 @@ contains
       .put_repetition_factors(atom)
    end
 
-   put_reduced_symop_data ::: private
-   ! Put out the reduced symop data
-   ENSURE(.fragment_geometry.created,"fragment_geometry?")
-   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array!")
-      n,s :: INT
-      inverted,translated :: BIN
-      stdout.flush
-      stdout.text("Crystal fragment reduced group information:")
-      stdout.flush
-      stdout.text("NOTE: this table is NOT used any more in structure factor calculations")
-      stdout.flush
-      stdout.dash(int_fields=5)
-      stdout.put("Reduced",int_width=TRUE)
-      stdout.put("Seitz",int_width=TRUE)
-      stdout.put("Inv.",int_width=TRUE)
-      stdout.put("Trans.",int_width=TRUE)
-      stdout.flush
-      stdout.put("Symop",int_width=TRUE)
-      stdout.put("Symop",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("Unique?",int_width=TRUE)
-      stdout.flush
-      stdout.dash(int_fields=5)
-      do n = 1,.n_reduced_symops
-         stdout.put(n)
-         s = .reduced_symop(n)
-         stdout.put(s)
-         inverted = .inverted_symop(s)>0
-         if (inverted) then;   stdout.put(.inverted_symop(s))
-         else;                 stdout.tab(int_fields=1)
-         end
-         translated = .translated_symop(s)<n
-         stdout.put(.translated_symop(s))
-         if (inverted OR translated) then; stdout.put("No",int_width=TRUE)
-         else;                             stdout.put("Yes",int_width=TRUE)
-         end
-         stdout.flush
-      end
-      stdout.dash(int_fields=5)
-   end
+!   put_reduced_symop_data ::: private
+!   ! Put out the reduced symop data
+!   ENSURE(.fragment_geometry.created,"fragment_geometry?")
+!   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array!")
+!      n,s :: INT
+!      inverted,translated :: BIN
+!      stdout.flush
+!      stdout.text("Crystal fragment reduced group information:")
+!      stdout.flush
+!      stdout.text("NOTE: this table is NOT used any more in structure factor calculations")
+!      stdout.flush
+!      stdout.dash(int_fields=5)
+!      stdout.put("Reduced",int_width=TRUE)
+!      stdout.put("Seitz",int_width=TRUE)
+!      stdout.put("Inv.",int_width=TRUE)
+!      stdout.put("Trans.",int_width=TRUE)
+!      stdout.flush
+!      stdout.put("Symop",int_width=TRUE)
+!      stdout.put("Symop",int_width=TRUE)
+!      stdout.put("of?",int_width=TRUE)
+!      stdout.put("of?",int_width=TRUE)
+!      stdout.put("Unique?",int_width=TRUE)
+!      stdout.flush
+!      stdout.dash(int_fields=5)
+!      do n = 1,.n_reduced_symops
+!         stdout.put(n)
+!         s = .reduced_symop(n)
+!         stdout.put(s)
+!         inverted = .inverted_symop(s)>0
+!         if (inverted) then;   stdout.put(.inverted_symop(s))
+!         else;                 stdout.tab(int_fields=1)
+!         end
+!         translated = .translated_symop(s)<n
+!         stdout.put(.translated_symop(s))
+!         if (inverted OR translated) then; stdout.put("No",int_width=TRUE)
+!         else;                             stdout.put("Yes",int_width=TRUE)
+!         end
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=5)
+!   end
 
    put_inv_trans_symop_data ::: private
    ! Put out the inverted translated symop data
