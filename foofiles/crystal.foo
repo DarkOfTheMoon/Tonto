@@ -64,17 +64,14 @@ module CRYSTAL
 !   MAT(3,3) :: reciprocal_cell_matrix
 !   ! reciprocal cell matrix (bohr^{-1}).
 !
-!   MAT(3,3) :: inverse_cell_matrix
-!   ! inverse direct cell matrix (bohr^{-1})
+!   MAT(3,3) :: reciprocal_U_cell_matrix
+!   ! Converts thermal tensors from cartesian to crystal systems.
 !
 !   INT :: n_fragment_atoms
 !   ! No of atoms in the inputted cell fragment
 !
 !   MAT, PTR :: fragment_geometry
-!   ! The geometry for cell fragment under consideration
-!
-!   IVEC, PTR :: fragment_unique_atom
-!   ! Corresponding index of the unique cell atom in fragment_cell_geometry
+!   ! The geometry for molecular cell fragment under consideration
 !
 !   INT :: n_unit_cell_atoms
 !   ! Total no. of unit cell atoms
@@ -82,11 +79,20 @@ module CRYSTAL
 !   MAT, PTR :: unit_cell_geometry
 !   ! The full unit cell geometry
 !
-!   IVEC, PTR :: unit_cell_unique_atom
-!   ! Corresponding index of the unique cell atom in unit_cell_geometry
-!
 !   INT :: n_unique_unit_cell_atoms
 !   ! No of unique unit cell atoms
+!
+!   IVEC, PTR :: unique_atom
+!   ! Contains the actual unique (asymmetric) unit cell atoms.
+!
+!   IVEC, PTR :: unique_atom_for
+!   ! If "a" is the index of an atom position in fragment_geometry, fragment_geometry(:,a),
+!   ! then unique_atom_for(a) is the index of the unique (asymmetric) unit cell atom 
+!   ! which generates that position.
+!
+!   IVEC, PTR :: fragment_atom_for
+!   ! If "u" is the index of an atom position in unit_cell_geometry, unit_cell_geometry(:,u),
+!   ! then fragment_atom_for(a) is the index of the fragment_atom which generates that position.
 !
 !   INT :: n_reduced_symops
 !   ! No. of symops needed to make the unit_cell_geometry from fragment_geometry
@@ -94,14 +100,27 @@ module CRYSTAL
 !   IVEC, PTR :: reduced_symop
 !   ! Indices of the reduced symops in the spacegroup seitz list
 !
+!   INT :: n_inverted_symops
+!   ! Number of symmetry operations related by inversion
+!
 !   IVEC, PTR :: inverted_symop
 !   ! Indices of the unique symops related by inversion
 !
 !   IVEC, PTR :: translated_symop
 !   ! Indices of the unique symops related by translation
 !
+!   INT :: n_unique_symops
+!   ! Number of unique symmetry operations not related by inversion or translation.
+!   ! This is used to save work in structure factor calculations.
+!
+!   IVEC, PTR :: unique_symop
+!   ! Indices of the unique symops not related by inversion or translation
+!
 !   VEC, PTR :: repetition_factor
 !   ! The partition factors for cell_geometry
+!
+!   DBL :: Z
+!   ! The crystallographic Z factor for the moleculat cell fragment in the unitcell
 !
 !   INT :: n_refl
 !   ! No. of reflection planes
@@ -160,21 +179,6 @@ module CRYSTAL
 !   DBL :: wavelength
 !   ! Experiment wavelength
 !
-!   INT :: Z
-!   ! Number of molecules in the unitcell
-!
-!   INT :: n_inverted_symops
-!   ! Number of symmetry operations related by inversion
-!
-!   IVEC, PTR :: unique_atom
-!   ! Contains the asymmetric unit atoms.
-!
-!   IVEC, PTR :: unique_atom_for
-!   ! Maps the atoms onto the asymmetric unit atoms.
-!   end
-!
-!   IVEC, PTR :: fragment_atom_for
-!   ! Maps a position in the unitcell onto one in the fragment.
 !   end
 
 contains
@@ -268,7 +272,7 @@ contains
       res = NOT associated(self)
    end
 
-   set_default
+   set_default [leaky]
    ! Set up a default crystal object
       BIN :: err
       .spacegroup.set_default
@@ -432,6 +436,7 @@ contains
       .set_default
       read_loop : do
          in.read(word)
+         word.to_lower_case
          select case (word)
             case("end");                     exit read_loop
             case("kind");                    in.read( .kind )
@@ -797,13 +802,13 @@ contains
    ! in the reduced crystal spacegroup
    ! (c) Dylan Jayatilaka, UWA, feb 1996
       MAT :: k
-      INT :: p,u,n,n_unique
+      INT :: p,u,n
       MAT(3,3) :: b,rcm
+      ENSURE(.unique_symop.created,"unique_symop array does not exist")
       p = 0
-      n_unique = .n_reduced_symops
       rcm = 2*PI*.reciprocal_cell_matrix
-      do u = 1,n_unique
-         b = matmul(rcm,.reduced_symop_mat(u))
+      do u = 1,.n_unique_symops
+         b = matmul(rcm,.unique_symop_mat(u))
          do n = 1, .n_refl
             p = p + 1
             k(p,1) = b(1,1)*.h(n) + b(1,2)*.k(n) + b(1,3)*.l(n)
@@ -820,21 +825,19 @@ contains
    make_phases_for_symop(u,phase,mask)
    ! Return the sum of the "phase" shifts for each (hkl) reflection from each
    ! glide vector for all symops which are equivalent to the "u"-th
-   ! reduced symmetry operation, as determined by the mask array.
+   ! unique symmetry operation, .unique_symop(u), as determined by the mask array.
       INT, IN :: u
       CVEC, OUT :: phase
       IVEC, IN :: mask
       DBL :: pi2,tx,ty,tz
       INT :: s
-      BIN :: analysis
-      analysis = .reduced_symop.created
-      ENSURE( analysis,"Unique symop analysis not yet done")
+      ENSURE( .unique_symop.created,"Unique symop analysis not yet done")
       ENSURE( u<=.n_reduced_symops,"symop index out of range")
       ENSURE( size(phase)==.n_refl,"wrong length for phase array")
       pi2 = TWO*PI
       phase = ZERO
       do s = 1,.spacegroup.n_seitz
-         if (mask(s)/=(u)) cycle
+         if (mask(s)/=.unique_symop(u)) cycle
          tx = pi2*.spacegroup.seitz(4,1,s)
          ty = pi2*.spacegroup.seitz(4,2,s)
          tz = pi2*.spacegroup.seitz(4,3,s)
@@ -852,12 +855,12 @@ contains
       ENSURE( size(sf)==.n_refl,"incorrect size for array sf")
       phase.create(.n_refl)
       sf = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)+1
          ul = .n_refl*u
          .make_phases_for_symop(u,phase,.translated_symop)
          sf(:) = sf(:) + phase(:)*unique_sf(uf:ul)
-         if ( all(.inverted_symop/=(u)) ) cycle
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
          .make_phases_for_symop(u,phase,.inverted_symop)
          sf(:) = sf(:) + phase(:)*conjg(unique_sf(uf:ul))
       end
@@ -874,13 +877,13 @@ contains
       ENSURE( size(sf_ints,1)==.n_refl,"incorrect size for array sf_ints")
       phase.create(.n_refl)
       sf_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
          sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
          sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
@@ -899,13 +902,13 @@ contains
       ENSURE( size(sf,1)==.n_refl,"incorrect size for array sf")
       phase.create(.n_refl)
       sf = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
          sf(n,:) = sf(n,:) + phase(n)*unique_sf(uf+n,:)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
          sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(uf+n,:))
@@ -925,13 +928,13 @@ contains
       ENSURE( size(ft_ints,1)==.n_refl,"incorrect size for array ft_ints")
       phase.create(.n_refl)
       ft_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
          ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*unique_ft_ints(uf+n,:,:)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
          ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*conjg(unique_ft_ints(uf+n,:,:))
@@ -957,7 +960,7 @@ contains
       ints.create(size(ft_ints,2),size(ft_ints,3))
       .make_k_pts(q)
       ft_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
@@ -969,7 +972,7 @@ contains
             ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
             ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle ! for inversions ...
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
             ints = phase(n)*conjg(unique_ft_ints(uf+n,:,:))
@@ -1011,7 +1014,7 @@ contains
       ints.create(size(ft_ints,2),size(ft_ints,3),3)
       .make_k_pts(q)
       ft_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
@@ -1023,7 +1026,7 @@ contains
             ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
                                                 - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
          end
-         if ( all(.inverted_symop/=(u)) ) cycle ! for inversions ...
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
             ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
@@ -1064,7 +1067,7 @@ contains
       ints.create(size(ft_ints,2),size(ft_ints,3),3)
       .make_k_pts(q)
       ft_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
@@ -1073,7 +1076,7 @@ contains
             ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
             ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*ints(:,:,2)-q(n,2)*ints(:,:,1)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle ! for inversions ...
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
             ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
@@ -1107,13 +1110,13 @@ contains
       ENSURE( size(ft_ints,1)==.n_refl,"incorrect size for array ft_ints")
       phase.create(.n_refl)
       ft_ints = ZERO
-      do u = 1,.n_reduced_symops
+      do u = 1,.n_unique_symops
          uf = .n_refl*(u-1)
          .make_phases_for_symop(u,phase,.translated_symop)
          do n = 1,.n_refl
          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) + phase(n)*unique_ft_ints(uf+n,:,:,:)
          end
-         if ( all(.inverted_symop/=(u)) ) cycle ! for inversions ...
+         if ( all(.inverted_symop/=.unique_symop(u)) ) cycle ! for inversions ...
          .make_phases_for_symop(u,phase,.inverted_symop)
          do n = 1,.n_refl
          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) - phase(n)*conjg(unique_ft_ints(uf+n,:,:,:))
@@ -1407,9 +1410,11 @@ contains
       .n_fragment_atoms = size(atom)
       .fragment_geometry.create(3,.n_fragment_atoms)
       atom.get_geometry(.fragment_geometry)
+      .change_geometry_to_crystal(.fragment_geometry)
       .make_reduced_symops
       .make_inverted_symops
       .make_translated_symops
+      .make_unique_symops
       .make_unique_atoms
       .make_unit_cell_geometry
       .make_repetition_factors
@@ -1452,7 +1457,7 @@ contains
       n = 1
       .reduced_symop(1) = 1
       do i = 2,.spacegroup.n_seitz
-         do j = 1,n                            ! Loop over unique symops
+         do j = 1,n                            ! Loop over reduced symops
             gi = .fragment_geometry
             gu = .fragment_geometry
             u = .reduced_symop(j)
@@ -1498,7 +1503,7 @@ contains
    end
 
    make_translated_symops [leaky]
-   ! Determine which of the unique symops can generate geometries from
+   ! Determine which of the reduced symops can generate geometries from
    ! ".fragment cell_geometry" which are related by translation, (including
    ! translation by the zero vector), but not inversion
       MAT, PTR :: gi,gj
@@ -1510,11 +1515,11 @@ contains
       gi.create(3,n_atom)
       gj.create(3,n_atom)
       .translated_symop.create(.spacegroup.n_seitz)
-      .translated_symop = 0
-      do i = 2,.n_reduced_symops
+      do i = 1,.n_reduced_symops
          ii = .reduced_symop(i)
+         .translated_symop(ii) = i
          if (.inverted_symop(ii)>0) cycle
-         do j = 1,i
+         do j = 1,i-1
             jj = .reduced_symop(j)
             gi = .fragment_geometry
             gj = .fragment_geometry
@@ -1533,6 +1538,31 @@ contains
       end
       gj.destroy
       gi.destroy
+   end
+
+   make_unique_symops [leaky]
+   ! Determine which are the unique symops (independent of inversion and
+   ! translation) which are a subset of the reduced symops.
+      INT :: n,i,ii
+      ENSURE(.inverted_symop.created,  "no inverted_symop array")
+      ENSURE(.translated_symop.created,"no translated_symop array")
+      n = 0
+      do i = 1,.n_reduced_symops
+         ii = .reduced_symop(i)
+         if (.inverted_symop(ii)>0) cycle
+         if (.translated_symop(ii)<i) cycle ! Only true translations count
+         n = n + 1
+      end
+      .n_unique_symops = n
+      .unique_symop.create(n)
+      n = 0
+      do i = 1,.n_reduced_symops
+         ii = .reduced_symop(i)
+         if (.inverted_symop(ii)>0) cycle
+         if (.translated_symop(ii)<i) cycle
+         n = n + 1
+         .unique_symop(n) = i
+      end
    end
 
    is_same_geometry(geom_i,geom_j) result(res)
@@ -1563,7 +1593,7 @@ contains
 
    make_unique_atoms [leaky]
    ! Make the asymmetric unit atoms for the ".fragment_geometry".
-      MAT, PTR :: unit
+      MAT, PTR :: geometry
       VEC(3) :: pa
       INT :: u,a,s,col
       BIN :: found
@@ -1573,14 +1603,20 @@ contains
       .unique_atom_for(1) = 1
       .unique_atom.create(1)
       .unique_atom(1) = 1
+      geometry.create(3,.n_fragment_atoms)
+      geometry = .fragment_geometry
+      .put_to_unit_cell(geometry)
       u = 1
       do a = 2,.n_fragment_atoms
          found = FALSE
          do s = 1,.spacegroup.n_seitz
-            pa = .fragment_geometry(:,a)
+            pa = geometry(:,a)
             .transform_position(pa,s,to_unit_cell=TRUE)
-            found = .fragment_geometry(:,.unique_atom).has_column(pa,TOL(3),col)
-            if (.unique_atom_for(a)==0 AND found) .unique_atom_for(a) = col
+            found = geometry(:,.unique_atom).has_column(pa,TOL(3),col)
+            if (.unique_atom_for(a)==0 AND found) then
+               .unique_atom_for(a) = col
+               exit
+            end
          end
          if (NOT found) then
             u = u + 1
@@ -1590,6 +1626,7 @@ contains
          end
       end
       .n_unique_unit_cell_atoms = u
+      geometry.destroy
    end
 
    make_unit_cell_geometry [leaky]
@@ -1635,7 +1672,7 @@ contains
       .repetition_factor.create(.n_fragment_atoms)
       do a = 1,.n_fragment_atoms
          pa = .fragment_geometry(:,a)
-         .put_position_to_unit_cell(pa)
+         .put_to_unit_cell(pa)
          n_same = 0
          do b = 1,.n_fragment_atoms
          do n = 1,.n_reduced_symops
@@ -1691,41 +1728,51 @@ contains
       end
       to_cell = FALSE
       if (present(to_unit_cell)) to_cell = to_unit_cell
-      if (to_cell) .put_position_to_unit_cell(p)
+      if (to_cell) .put_to_unit_cell(p)
    end
 
-   put_geometry_to_unit_cell(g)
+   put_to_unit_cell(g)
    ! Transform the geometry "g" in fractional coordinates into the
    ! (1,1,1) unit cell
       MAT :: g
       INT :: n,n_atom
       ENSURE( size(g,1)==3, "incorrect size for array g")
-      n_atom = size(g)
+      n_atom = size(g,2)
       do n = 1,n_atom
-         .put_position_to_unit_cell(g(:,n))
+         .put_to_unit_cell(g(:,n))
       end
    end
 
-   put_position_to_unit_cell(p)
+   put_to_unit_cell(p)
    ! Transform the position "p" in fractional coordinates into the
    ! (1,1,1) unit cell
       VEC(3) :: p
-      INT :: n,n_atom
+      INT :: n
       ENSURE( size(p)==3, "incorrect size for position vector p")
       p(:) = mod(p(:)+TWO+0.001d0,ONE) - 0.001d0
    end
 
-   reduced_symop_mat(u) result (res)
-   ! Return the "u"-th reduced symop matrix in the unique list made by routine
-   ! ".make_unique_symops".
+   reduced_symop_mat(r) result (res)
+   ! Return the "r"-th reduced symop matrix in the unique list made by routine
+   ! ".make_reduced_symops".
       MAT(3,3) :: res
-      INT :: u
-      BIN :: analysis
-      analysis = .reduced_symop.created
-      ENSURE( analysis,"Unique symop analysis not yet done")
-      ENSURE( u<=.n_reduced_symops,"symop index out of range")
-      ENSURE( u>0,         "symop index out of range")
-      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(u))
+      INT :: r
+      ENSURE( .reduced_symop.created,"Unique symop analysis not yet done")
+      ENSURE( r<=.n_reduced_symops,"symop index out of range")
+      ENSURE( r>0, "symop index out of range")
+      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
+   end
+
+   unique_symop_mat(u) result (res)
+   ! Return the "u"-th reduced symop matrix in the unique list made by routine
+   ! ".make_reduced_symops".
+      MAT(3,3) :: res
+      INT :: u,r
+      ENSURE( .unique_symop.created,"Unique symop analysis not yet done")
+      ENSURE( u<=.n_unique_symops,"symop index out of range")
+      ENSURE( u>0,"symop index out of range")
+      r = .unique_symop(u)
+      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
    end
 
 !  **************
@@ -1779,6 +1826,7 @@ contains
       out.show("No. of unit cell atoms        = ",.n_unit_cell_atoms)
       out.show("No. of unique unit cell atoms = ",.n_unique_unit_cell_atoms)
       out.show("Z factor                      = ",.Z)
+      .put_reduced_symop_data(out)
       if (present(atom)) then
         .put_fragment_geometry(out,atom)
         .put_asymmetric_unit_geometry(out,atom)
@@ -1787,12 +1835,53 @@ contains
       end
    end
 
+   put_reduced_symop_data(out)
+   ! Put out the reduced symop data
+      TEXTFILE :: out
+      INT :: n,s
+      BIN :: inverted,translated
+      ENSURE(.fragment_geometry.created,"no fragment_geometry array")
+      ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+      out.flush
+      out.text("Crystal fragment reduced group information:")
+      out.flush
+      out.dash(int_fields=5)
+      out.put("Reduced",int_width=TRUE)
+      out.put("Seitz",int_width=TRUE)
+      out.put("Inv.",int_width=TRUE)
+      out.put("Trans.",int_width=TRUE)
+      out.flush
+      out.put("Symop",int_width=TRUE)
+      out.put("Symop",int_width=TRUE)
+      out.put("of?",int_width=TRUE)
+      out.put("of?",int_width=TRUE)
+      out.put("Unique?",int_width=TRUE)
+      out.flush
+      out.dash(int_fields=5)
+      do n = 1,.n_reduced_symops
+         out.put(n)
+         s = .reduced_symop(n)
+         out.put(s)
+         inverted = .inverted_symop(s)>0
+         if (inverted) then;   out.put(.inverted_symop(s))
+         else;                 out.tab(int_fields=1)
+         end
+         translated = .translated_symop(s)<n
+         out.put(.translated_symop(s))
+         if (inverted OR translated) then; out.put("No",int_width=TRUE)
+         else;                             out.put("Yes",int_width=TRUE)
+         end
+         out.flush
+      end
+      out.dash(int_fields=5)
+   end
+
    put_fragment_geometry(out,atom)
    ! Put out the cell geometry information
       TEXTFILE :: out
       ATOMVEC :: atom
-      INT :: n,u
       STR :: symbol
+      INT :: n
       ENSURE(.fragment_geometry.created,"no fragment_geometry array")
       ENSURE(.unique_atom_for.created,"no unique_atom_for array")
       out.flush
@@ -1810,10 +1899,9 @@ contains
       out.flush
       out.dash(int_fields=2,dbl_fields=3)
       do n = 1,.n_fragment_atoms
-         out.put(n)
-         u = .unique_atom_for(n)
-         symbol = atom(u).chemical_symbol.trim // " (" // u.to_str.trim // ")"
+         symbol = atom(n).chemical_symbol.trim // " (" // n.to_str.trim // ")"
          out.put(symbol,int_width=TRUE)
+         out.put(.unique_atom_for(n))
          out.put(.fragment_geometry(1,n))
          out.put(.fragment_geometry(2,n))
          out.put(.fragment_geometry(3,n))
@@ -1863,7 +1951,6 @@ contains
       ATOMVEC :: atom
       INT :: n,f
       STR :: symbol
-      out.dash(int_fields=2)
       out.flush
       out.text("Full unit cell geometry:")
       out.flush
@@ -1915,6 +2002,7 @@ contains
          out.put(rf)
          out.flush
       end
+      out.dash(int_fields=2)
    end
 
    put_gof_data(out)
