@@ -685,6 +685,7 @@ line: while (<FOOFILE>) {
             $post = $4;
 	    $inp  = $pre . $arg . "%X$rep" . $rout . "X$rep" . $post; 
             $rout{$rep} = $rout;
+	    $arg =~ s/\(.*//sg; # remove any brackets.
 	    if (&has_field($arg, $rout)) { $comp{$rep} = "yes"; }
 	    else                         { $comp{$rep} = "no"; }
             $modu{$rep} = lc($arg_type);
