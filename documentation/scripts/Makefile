@@ -33,7 +33,6 @@ installdir := ${exec_prefix}/bin
 
 
 
-
 #==============================================================================
 # For normal use you shouldn't have to change anything below here.
 #==============================================================================
@@ -59,13 +58,14 @@ F90SUFFIX := f90
 COFLAGS  := -M -q
 SHELL    := /bin/csh -f
 VPATH    := .:./objects:./modules:./f90: \
-            ./dependencies:./foofiles:./scripts \
-            ./documentation/htmlfiles
+            ./dependencies:./foofiles:./scripts: \
+            ./documentation/htmlfiles:./documentation
 
 .DEFAULT :
 .SUFFIXES :
 .SUFFIXES : .o .x .$(F90SUFFIX) .dep .foo .html
 .PHONY : clean all objectfiles directories install
+docdir := ./documentation
 
 #------------------------------------------------------------------------------
 # >>> Object files in hierachical order
@@ -131,31 +131,31 @@ install : run_mol.x
 	install $(installdir)/run_mol.x ./run_mol.x
 
 clean :
-	@if (-d ./dependencies)  echo "rm -f dependencies/*"
+	@if (-d ./dependencies)  echo "rm -f ./dependencies/*"
 	@if (-d ./dependencies)  rm -f ./dependencies/*; exit 0
-	@if (-d ./objects)       echo "rm -f objects/*"
+	@if (-d ./objects)       echo "rm -f ./objects/*"
 	@if (-d ./objects)       rm -f ./objects/*; exit 0
-	@if (-d ./modules)       echo "rm -f modules/*"
+	@if (-d ./modules)       echo "rm -f ./modules/*"
 	@if (-d ./modules)       rm -f ./modules/*; exit 0
-	@if (-d ./new_modules)   echo "rm -f new_modules/*"
+	@if (-d ./new_modules)   echo "rm -f ./new_modules/*"
 	@if (-d ./new_modules)   rm -f ./new_modules/*; exit 0
-	@if (-d ./interfaces)    echo "rm -f interfaces/*"
+	@if (-d ./interfaces)    echo "rm -f ./interfaces/*"
 	@if (-d ./interfaces)    rm -f ./interfaces/*; exit 0
-	@if (-d ./f90)           echo "rm -f f90/*"
+	@if (-d ./f90)           echo "rm -f ./f90/*"
 	@if (-d ./f90)           rm -f ./f90/*; exit 0
 	@rm -f ./run_*.x;      exit 0
 	@if (-e ./dependfile)    rm -f ./dependfile
 
 docsclean :
-	@if (-d ./documentation/htmlfiles) echo "rm -f documentation/htmlfiles/*"
-	@if (-d ./documentation/htmlfiles) rm -f ./documentation/htmlfiles/*; exit 0
-	@if (-d ./documentation/f90files)  echo "rm -f documentation/f90files/*"
-	@if (-d ./documentation/f90files)  rm -f ./documentation/f90files/*; exit 0
-	@if (-d ./documentation/foofiles)  echo "rm -f documentation/foofiles/*"
-	@if (-d ./documentation/foofiles)  rm -f ./documentation/foofiles/*; exit 0
+	@if (-d $(docdir)/htmlfiles) echo "rm -f $(docdir)/htmlfiles/*"
+	@if (-d $(docdir)/htmlfiles) rm -f $(docdir)/htmlfiles/*; exit 0
+	@if (-d $(docdir)/f90files)  echo "rm -f $(docdir)/f90files/*"
+	@if (-d $(docdir)/f90files)  rm -f $(docdir)/f90files/*; exit 0
+	@if (-d $(docdir)/foofiles)  echo "rm -f $(docdir)/foofiles/*"
+	@if (-d $(docdir)/foofiles)  rm -f $(docdir)/foofiles/*; exit 0
 
 distclean : clean docsclean
-	@if (-e ./sysinfo)       rm -f ./sysinfo
+	@if (-e ./Makefile)   rm -f ./Makefile
 
 distribution :
 	./scripts/make_dist
@@ -174,24 +174,26 @@ configure : configure.in
 # start of the documentation.
 #---------------------------------------------------------------------------
 
-documentation : $(htmlfiles) make_navbar macros Makefile \
-           make_deps.perl update_module_file macros \
-           foo.perl foo2html.perl
-	@if (! -d ./documentation/htmlfiles) mkdir ./documentation/htmlfiles
-	@if (! -d ./documentation/f90files)  mkdir ./documentation/f90files
-	@if (! -d ./documentation/foofiles)  mkdir ./documentation/foofiles
-	cp -f ./configure                  ./documentation/scripts
-	cp -f ./configure.in               ./documentation/scripts
-	cp -f ./macros                     ./documentation/scripts
-	cp -f ./Makefile                   ./documentation/scripts
-	cp -f ./Makefile.in                ./documentation/scripts
-	cp -f ./scripts/update_module_file ./documentation/scripts
-	cp -f ./scripts/make_deps.perl     ./documentation/scripts
-	cp -f ./scripts/make_dist          ./documentation/scripts
-	cp -f ./scripts/foo.perl           ./documentation/scripts
-	cp -f ./scripts/foo2html.perl      ./documentation/scripts
+documentation : macros Makefile Makefile.in configure configure.in \
+           make_navbar make_deps.perl update_module_file update_file \
+           foo.perl foo2html.perl TONTO-nav-bar.html
+	@if (! -d $(docdir)/scripts)  mkdir $(docdir)/scripts
+	@scripts/update_file ./configure $(docdir)/scripts/configure
+	@scripts/update_file ./configure.in $(docdir)/scripts/configure.in
+	@scripts/update_file ./Makefile $(docdir)/scripts/Makefile
+	@scripts/update_file ./Makefile.in $(docdir)/scripts/Makefile.in
+	@scripts/update_file ./macros $(docdir)/scripts/macros
+	@scripts/update_file ./scripts/update_module_file $(docdir)/scripts/update_module_file
+	@scripts/update_file ./scripts/make_deps.perl $(docdir)/scripts/make_deps.perl
+	@scripts/update_file ./scripts/make_dist $(docdir)/scripts/make_dist
+	@scripts/update_file ./scripts/make_navbar $(docdir)/scripts/make_navbar
+	@scripts/update_file ./scripts/update_file $(docdir)/scripts/update_file
+	@scripts/update_file ./scripts/foo.perl $(docdir)/scripts/foo.perl
+	@scripts/update_file ./scripts/foo2html.perl $(docdir)/scripts/foo2html.perl
+
+TONTO-nav-bar.html : Makefile
 	./scripts/make_navbar $(sort $(basename $(htmlfiles))) > \
-                                ./documentation/TONTO-nav-bar.html
+          $(docdir)/TONTO-nav-bar.html
 
 #------------------------------------------------------------------------------
 # >>> Main dependency rules file
@@ -219,7 +221,7 @@ endif
 dependfile : $(dependfiles)
 	@if (! -e ./dependencies)  mkdir ./dependencies
 	perl -pe "s/f90/$(F90SUFFIX)/go;" $(addprefix ./dependencies/, $(dependfiles)) \
-                        > ./dependfile
+          > ./dependfile
 
 #------------------------------------------------------------------------------
 # >>> Default (implicit) suffix rules
@@ -234,19 +236,21 @@ dependfile : $(dependfiles)
 
 types.$(F90SUFFIX) : types.foo foo.perl
 	@if (! -d f90)           mkdir f90
+	@if (! -d interfaces)    mkdir interfaces
 	perl -w scripts/foo.perl foofiles/$(<F) f90/$(*F).$(F90SUFFIX) interfaces/$(*F).int
 
 %.$(F90SUFFIX) : %.foo foo.perl types.mod
 	@if (! -d f90)           mkdir f90
+	@if (! -d interfaces)    mkdir interfaces
 	perl -w scripts/foo.perl foofiles/$(<F) f90/$(*F).$(F90SUFFIX) interfaces/$(*F).int
 
 %.html : %.foo foo2html.perl types.foo foo.perl
-	@if (! -d documentation/htmlfiles) mkdir documentation/htmlfiles
-	@if (! -d documentation/f90files)  mkdir documentation/f90files
-	@if (! -d documentation/foofiles)  mkdir documentation/foofiles
-	perl -w scripts/foo2html.perl foofiles/$(<F) documentation/htmlfiles/$(*F).html documentation/htmlfiles/$(*F)_short.html
-	perl -w scripts/foo.perl foofiles/$(<F) documentation/f90files/$(*F).$(F90SUFFIX) documentation/f90files/$(*F).int
-	cp -f foofiles/$(*F).foo documentation/foofiles
+	@if (! -d $(docdir)/htmlfiles) mkdir $(docdir)/htmlfiles
+	@if (! -d $(docdir)/f90files)  mkdir $(docdir)/f90files
+	@if (! -d $(docdir)/foofiles)  mkdir $(docdir)/foofiles
+	perl -w scripts/foo2html.perl foofiles/$(<F) $(docdir)/htmlfiles/$(*F).html $(docdir)/htmlfiles/$(*F)_short.html
+	perl -w scripts/foo.perl foofiles/$(<F) $(docdir)/f90files/$(*F).$(F90SUFFIX) $(docdir)/f90files/$(*F).int
+	cp -f foofiles/$(*F).foo $(docdir)/foofiles
 
 %.mod : 
 	make $(*F).o
@@ -255,7 +259,6 @@ types.$(F90SUFFIX) : types.foo foo.perl
 	@if (! -d objects)       mkdir objects
 	@if (! -d modules)       mkdir modules
 	@if (! -d new_modules)   mkdir new_modules
-	@if (! -d interfaces)    mkdir interfaces
 	f95 $(FFLAGS) $(F90)   -c -o objects/$(*F).o f90/$(<F)
 	scripts/update_module_file $(*F).mod
 
