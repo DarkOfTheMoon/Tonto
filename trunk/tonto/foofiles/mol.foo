@@ -4423,6 +4423,7 @@ contains
     if (.scfdata.apply_camp_king) .camp_king(old_MO,old_F,E_HF,E_K)
     .scfdata.reset(.nuclear_energy,E_HF,E_K)
     .make_scf_error(error)
+    error.destroy
     .scfdata.put_banner
     .scfdata.put_results
     do
@@ -6742,7 +6743,7 @@ contains
 
     .make_constraint(constraint, .scfdata.lambda )
     .add_constraint(constraint)
-    if (.scfdata.apply_camp_king) .camp_king(old_MO,old_F,E_HF,E_K)
+    .make_scf_error(error)
 
     .scfdata.reset(.nuclear_energy,E_HF,E_K)
     .scfdata.set_stats(.crystal)
@@ -6753,6 +6754,7 @@ contains
       .scfdata.put_results                     ! Zeroth iteration (important!)
       .scfdata.diis.cleanup
       do
+        .extrapolate_scf(error)
         old_MO.set_to(.molecular_orbitals)
         old_P.set_to(.density_matrix)
         old_F.set_to(.fock_matrix)
@@ -6774,7 +6776,6 @@ contains
         .scfdata.set_stats(.crystal)
 
         .make_scf_error(error)
-        .extrapolate_scf(error)
 
         .scfdata.put_results
         if (.scfdata.scf_done) exit
@@ -8532,15 +8533,14 @@ contains
   ! Uses old_MO (lambda=0) and new_MO (lambda=1) to generate MO at lambda.
   ! lambda should be between 0 and 1.
     OPMAT, IN :: MO_old,F_old
-    OPMAT* :: F_backup,MO_backup,P_backup,constraint
+    OPMAT* :: F_backup,MO_backup,P_backup,constraint,error
     MAT* :: old_MO,new_MO,old_F
     MAT* :: Uh,V,W,U,CV,CW,S,Q,Q1,F,Cj,Cj1,Cl
     DBL, INOUT :: E_HF,E_K
     VEC* :: theta
     INT :: minpq,n,n_p,n_q,i,k,j
     DBL :: ded0,ded1,ded1a,E0,E1,El,lambda
-    BIN :: tmp1,tmp2
-    DBL :: l1,l2,l3,tol
+    DBL :: tol,diis0,diis1,diisl
 
     n_p = .n_e/2
     n_q = .n_bf - n_p
@@ -8604,6 +8604,9 @@ contains
     .make_scf_density_matrix(damp=FALSE)
     E_HF = .scf_energy
     E_K = .kinetic_energy
+    .make_scf_error(error)
+    diis1=.scfdata.diis_error
+    error.destroy
 
     if (ded1 > ZERO) then ! minimum is at a lambda less than lambda=1.
       !get de/dl at l=0
@@ -8620,22 +8623,28 @@ contains
       .molecular_orbitals.restricted = old_MO
       .make_scf_density_matrix(damp=FALSE)
       E0 = .scf_energy
+      .make_scf_error(error)
+      diis0=.scfdata.diis_error
+      error.destroy
 
-      if (ded0 < ZERO) then ! minimum is at a lambda greater than lambda=0.
+      if (ded0 < ZERO OR diis1<0.9*diis0) then ! minimum is at a lambda greater than lambda=0.
         if (abs(ded1) > TEN*abs(ded0)) then
           lambda = 0.1
         else
           lambda = HALF
         end
-        .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,n)
+        .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,n,diis0)
+        .make_scf_error(error)
+        diisl=.scfdata.diis_error
+        error.destroy
         Uh.create(.n_bf,.n_bf)
         .make_Camp_King_U_hat(Uh,lambda,theta)
         Cl.create(.n_bf,.n_bf)
         Cl.to_product(CV,Uh)
         Uh.destroy
         .molecular_orbitals.restricted.to_product(Q,Cl)
+        .schmidt_orthonormalise(.molecular_orbitals)
         .make_scf_density_matrix(damp=FALSE)
-        .make_structure_factors
         .make_fock_matrix
         E_HF = .scf_energy
         E_K = .kinetic_energy
@@ -8654,11 +8663,13 @@ contains
         .density_matrix.set_to(P_backup)
       end
     else
+ n=0
       .fock_matrix.set_to(F_backup)
       .molecular_orbitals.set_to(MO_backup)
       .density_matrix.set_to(P_backup)
     end
- write(*,'(2i5,4f15.8)') self%scfdata%iteration,n,E_HF,F_chi2_(self%crystal),E_HF+self%scfdata%lambda*F_chi2_(self%crystal),E_K
+! write(*,'(2i5,4f15.8)') self%scfdata%iteration,n,E_HF,F_chi2_(self%crystal),E_HF+self%scfdata%lambda*F_chi2_(self%crystal),E_K
+! write(*,'(6f15.8)') ded0,ded1,ded1a,diis0,diis1,diisl
 
     F.destroy
     CV.destroy
@@ -8666,7 +8677,8 @@ contains
     Q.destroy
   end
 
-  minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,n) [private]
+  minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,n,diis0) [private]
+    DBL, IN :: diis0
     DBL :: lambda,f,tol,dedx
     INT, IN :: n_p
     INT, OUT :: n
@@ -8674,6 +8686,7 @@ contains
     VEC :: theta
     INT :: i
     DBL :: a,b,d,d1,d2,du,dv,dw,dx,e,fu,fv,fw,fx,olde,tol1,tol2,u,u1,u2,v,w,x,xm
+    DBL :: diisl
     BIN :: ok1,ok2
 
     tol=0.1
@@ -8683,7 +8696,7 @@ contains
     w=lambda
     x=lambda
     e=ZERO
-    .get_Camp_King_energy(x,fx,dx,Ql,CV,theta,n_p)
+    .get_Camp_King_energy(x,fx,dx,Ql,CV,theta,n_p,diisl)
     fv=fx
     fw=fx
     dv=dx
@@ -8694,6 +8707,7 @@ contains
       xm=HALF*(a+b)
       tol1=tol*abs(x)+TOL(10)
       tol2=TWO*tol1
+      if (diisl < 0.9*diis0) exit
       if (abs(x-xm)<=(tol2-HALF*(b-a))) exit
       if (abs(e)>tol1) then
         d1=TWO*(b-a)
@@ -8740,10 +8754,10 @@ contains
       end if
       if (abs(d)>=tol1) then
         u=x+d
-        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p)
+        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl)
       else
         u=x+sign(tol1,d)
-        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p)
+        .get_Camp_King_energy(u,fu,du,Ql,CV,theta,n_p,diisl)
         if (fu > fx) exit
       end if
       if (fu <= fx) then
@@ -8774,12 +8788,12 @@ contains
     dedx=dx
   end
 
-  get_Camp_King_energy(lambda,El,dedl,Q,CV,theta,n_p) [private]
+  get_Camp_King_energy(lambda,El,dedl,Q,CV,theta,n_p,diisl) [private]
     MAT, IN :: Q,CV
     VEC, IN :: theta
     INT, IN :: n_p
-    OPMAT* :: constraint
-    DBL :: lambda,El,dedl
+    OPMAT* :: constraint,error
+    DBL :: lambda,El,dedl,diisl
     MAT* :: Uh,Cl,F
     INT :: n
 
@@ -8799,6 +8813,9 @@ contains
       .add_constraint(constraint)
       constraint.destroy
     end
+    .make_scf_error(error)
+    diisl=.scfdata.diis_error
+    error.destroy
     F.create(.n_bf,.n_bf)
     F=.fock_matrix.restricted                      ! Fbar at lambda in AO basis.
     F.change_basis(Q)
