@@ -1,0 +1,692 @@
+! $Id$
+!-------------------------------------------------------------------------------
+!
+! ARCHIVE: For archiving tonto objects to disk
+!
+! A polymorphic file object which can store ascii or binary format.
+! Archives with the string "ascii" somewhere in their name are assumed to be 
+! ascii files, otherwise they are binary files.
+!
+! An archive can't be used for input and output at the same time.
+!
+! Read and write routines are used to deal with entire single objects. 
+! The archive is closed after the requested IO operation.
+!
+! If the above behaviour is not what is needed, the archive can be opened
+! for multiple object I/O in one archive (say, a list of integral blocks)
+! and you can deal by hand with appropriate component of the archive.
+!
+! (c) dylan jayatilaka 1998
+!
+!-------------------------------------------------------------------------------
+module ARCHIVE
+
+   use TYPES
+   use ERROR
+   use MM
+   use STR
+ 
+   use VEC
+   use MAT
+
+   use OPVEC
+   use OPMAT
+
+   use INPUT
+   use OUTPUT
+   use FILE
+
+   implicit none         
+
+#  include "macros"
+#  include "archive.int"
+
+!  type archive_type
+!     STR         :: root_name      ! Archive root name
+!     STR         :: name           ! Archive name
+!     STR         :: kind           ! Archive basis kind for opmat objects
+!     STR         :: format         ! Archive format (blank for binary)
+!     FILE , PTR  :: file           ! Binary file part
+!     INPUT, PTR  :: in             ! Input text file part
+!     OUTPUT, PTR :: out            ! Output text file part
+!  end 
+
+contains
+
+   create(root_name,name,kind,format)
+   ! Create an archive object with main name "root_name" and sub name "name".
+   ! "kind" is used to identify components of OPMAT and OPVEC objects.
+   ! "format" is used to identify file format (e.g. ascii). The default is binary.
+      PTR :: self
+      STR(*), optional :: root_name,name
+      STR(*), optional :: kind,format
+      nullify(self)
+      allocate(self)
+      .nullify_ptr_part
+      .set_default
+      .set_names(root_name,name,kind,format)
+      std_mm.add(ARCHIVE_SIZE)
+   end
+
+   destroy 
+   ! Destroy an opmat object
+      PTR :: self
+      if ( .destroyed) return
+      .destroy_ptr_part
+      deallocate(self)
+      std_mm.delete(ARCHIVE_SIZE)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of the opmat object
+      nullify(.file)
+      nullify(.in)
+      nullify(.out)
+   end
+
+   destroy_ptr_part
+   ! Destroy the pointer parts of the opmat object
+      .file.destroy
+      .in.destroy
+      .out.destroy
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has not been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   set_default
+   ! Set up a default archive object
+      .root_name = ""
+      .name      = ""
+      .kind      = ""
+      .format    = ""
+      .destroy_ptr_part
+   end
+
+   set(root_name,name,kind,format)
+   ! Set the archive names, if present, or else set defualt names
+      STR(*), optional :: root_name,name
+      STR(*), optional :: kind,format
+      .set_names(root_name,name,kind,format)
+   end
+
+   set_names(root_name,name,kind,format)
+   ! Reset an archive to have main name "root_name", sub name "name"
+   ! "kind" (if present) is used to identify components of OPMAT and OPVEC objects.
+   ! "format" (if present) is used to identify file format (e.g. ascii). The default is binary.
+      STR(*), optional :: root_name,name
+      STR(*), optional :: kind,format
+      .set_default 
+      if (present(root_name)) .root_name = root_name
+      if (present(name))      .name      = name
+      if (present(kind))      .kind      = kind
+      if (present(format))    .format    = format
+   end
+
+   set_root_name(root_name)
+   ! Set an archive to have sub name "name".
+      STR(*) :: root_name
+      .destroy_ptr_part
+      .root_name = root_name
+   end
+
+   set_name(name)
+   ! Set an archive to have sub name "name".
+      STR(*) :: name
+      .destroy_ptr_part
+      .name = name
+   end
+
+   set_kind(kind)
+   ! Set an archive to have kind "kind".
+      STR(*) :: kind
+      .destroy_ptr_part
+      .kind = kind
+   end
+
+   set_format(format)
+   ! Set an archive to have format "format".
+      STR(*) :: format
+      .destroy_ptr_part
+      .format = format
+   end
+
+   file_name(kind) result(res)
+   ! Return the archive file name from string ".root_name" by prepending the 
+   ! archive header ".name". If present ".kind" is also appended. If present, 
+   ! ".format" is also appended.
+      STR(*), optional :: kind
+      STR :: res,k
+      res = .root_name.trim // ":" // .name
+      k = .kind
+      if (present(kind)) k = kind
+      if (k/="")       res = res.trim // "," // k.trim
+      if (.format/="") res = res.trim // "," // .format
+   end
+
+   text_file result(res)
+   ! Return true if the file is a text file
+      BIN :: res
+      res = .format.includes("ascii")
+   end
+
+   exists(kind) result(res)
+   ! Return TRUE if the archive exists in some form on disk.
+      STR(*), optional :: kind
+      BIN :: res
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         res = .in.exists
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         res = .file.exists
+         .file.destroy
+      end
+   end
+
+   does_not_exist(kind) result(res)
+   ! Return TRUE if archive does not exist on the disk
+      STR(*), optional :: kind
+      BIN :: res
+      res = NOT .exists(kind)
+   end
+
+   doesnt_exist(kind) result(res)
+   ! Return TRUE if archive does not exist on the disk
+      STR(*), optional :: kind
+      BIN :: res
+      res = NOT .exists(kind)
+   end
+
+   open(for,buffered,type,kind) [leaky]
+   ! Open archive file 
+      STR(*) :: for
+      STR(*), optional :: type
+      BIN, optional :: buffered
+      STR(*), optional :: kind
+      if (.text_file) then
+         select case (for)
+            case("read","reading","read-only","reading-only")
+               nullify(.in)
+               .in.create( .file_name(kind).trim)
+               .in.open
+            case("write","writing","write-only","writing-only")
+               nullify(.out)
+               .out.create( .file_name(kind).trim)
+               .out.open
+            case default; DIE("must open with read-only or write-only, not "//trim(for))
+         end
+      else 
+         nullify(.file)
+         .file.create( .file_name(kind).trim)
+         .file.open(for,buffered,type)
+      end
+   end
+
+   close [leaky]
+   ! Close the archive file. 
+      if (.in.created) then
+          .in.close
+          .in.destroy
+      end
+      if (.out.created) then
+          .out.close
+          .out.destroy
+      end
+      if (.file.created) then
+          .file.close
+          .file.destroy
+      end
+   end
+
+   delete(kind)
+   ! Delete archive file if it exists.
+      STR(*), optional :: kind
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         if (.in.exists) .in.delete
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         if (.file.exists) .file.delete
+         .file.destroy
+      end
+   end
+
+   delete_all
+   ! Delete all kinds of archive file, if they exists.
+      .delete
+      .delete("restricted")
+      .delete("unrestricted")
+      .delete("alpha")
+      .delete("beta")
+      .delete("general")
+      .delete("restricted_complex")
+      .delete("unrestricted_complex")
+      .delete("alpha_complex")
+      .delete("beta_complex")
+      .delete("general_complex")
+      .delete("complex_restricted")
+      .delete("complex_unrestricted")
+      .delete("complex_alpha")
+      .delete("complex_beta")
+      .delete("complex_general")
+   end
+
+!  ************************************
+!  Read routines: read an entire object
+!  ************************************
+
+   read(item,kind)
+   ! Read from the archive, vector "item".
+      VEC :: item
+      STR(*), optional :: kind
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         DIE_IF( .in.does_not_exist,"no text archive "// .name.trim)
+         .in.open
+         .in.read(item)
+         .in.close
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         DIE_IF( .file.does_not_exist,"no binary archive "// .name.trim)
+         .file.open
+         .file.read(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   read(item,kind)
+   ! Read from the archive, complex vector "item".
+      CVEC :: item
+      STR(*), optional :: kind
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         DIE_IF( .in.does_not_exist,"no text archive "// .name.trim)
+         .in.open
+         .in.read(item)
+         .in.close
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         DIE_IF( .file.does_not_exist,"no binary archive "// .name.trim)
+         .file.open
+         .file.read(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   read(item,kind,order)
+   ! Read from the archive, matrix "item". "order" is the input order for text files
+      MAT :: item
+      STR(*), optional :: kind,order
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         DIE_IF( .in.does_not_exist,"no text archive "// .name.trim)
+         .in.open
+         .in.read(item,order)
+         .in.close
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         DIE_IF( .file.does_not_exist,"no binary archive "// .name.trim)
+         .file.open
+         .file.read(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   read(item,kind,order)
+   ! Read from the archive, complex matrix "item". "order" is the input order for text files
+      CMAT :: item
+      STR(*), optional :: kind,order
+      if (.text_file) then
+         nullify(.in); .in.create( .file_name(kind).trim)
+         DIE_IF( .in.does_not_exist,"no text archive "// .name.trim)
+         .in.open
+         .in.read(item,order)
+         .in.close
+         .in.destroy
+      else 
+         nullify(.file); .file.create( .file_name(kind).trim)
+         DIE_IF( .file.does_not_exist,"no binary archive "// .name.trim)
+         .file.open
+         .file.read(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   read(item,kind) [leaky]
+   ! Read from the archive operator vector "item". If present, "kind" is the kind 
+   ! of "item" to be read in. 
+      OPVEC :: item
+      STR(*), optional :: kind
+      STR :: itemkind
+      if (present(kind)) then;  itemkind = kind
+      else if (.kind/="") then; itemkind = .kind
+      else;                     itemkind = item.spinorbital_kind
+      end
+      select case (itemkind)
+         case ("restricted")
+            item.destroy("restricted")
+            item.create("restricted")
+            .read(item%restricted)
+         case ("unrestricted")
+            item.destroy("unrestricted")
+            item.create("unrestricted")
+            .read(item%alpha,kind="alpha")
+            .read(item%beta,kind="beta")
+         case ("alpha")
+            item.destroy("alpha")
+            item.create("alpha")
+            .read(item%alpha,kind="alpha")
+         case ("beta")
+            item.destroy("beta")
+            item.create("beta")
+            .read(item%beta,kind="beta")
+         case ("general")
+            item.destroy("general")
+            item.create("general")
+            .read(item%general)
+         case default
+            DIE("unknown opvec kind, " // trim(itemkind))
+      end
+      if (.text_file) .write(item,itemkind)
+   end
+
+   read(item,kind,order) [leaky]
+   ! Read from the archive operator matrix "item". If present, "kind" is the kind 
+   ! of "item" to be read in. "order" indicated the input order for ascii files.
+      OPMAT :: item
+      STR(*), optional :: kind,order
+      STR :: itemkind
+      if (present(kind))  then; itemkind = kind
+      else if (.kind/="") then; itemkind = .kind
+      else;                     itemkind = item.spinorbital_kind
+      end
+      select case (itemkind)
+         case ("restricted")
+            item.destroy("restricted")
+            item.create("restricted")
+            .read(item%restricted,"restricted",order)
+         case ("unrestricted")
+            item.destroy("unrestricted")
+            item.create("unrestricted")
+            .read(item%alpha,"alpha",order)
+            .read(item%beta,"beta",order)
+         case ("alpha")
+            item.destroy("alpha")
+            item.create("alpha")
+            .read(item%alpha,"alpha",order)
+         case ("beta")
+            item.destroy("beta")
+            item.create("beta")
+            .read(item%beta,"beta",order)
+         case ("general")
+            item.destroy("general")
+            item.create("general")
+            .read(item%general,"general",order)
+         case ("restricted_complex","complex_restricted")
+            item.destroy("restricted_complex")
+            item.create("restricted_complex")
+            .read(item%restricted_complex,"restricted_complex",order)
+         case ("unrestricted_complex","complex_unrestricted")
+            item.destroy("unrestricted_complex")
+            item.create("unrestricted_complex")
+            .read(item%alpha_complex,"alpha_complex",order)
+            .read(item%beta_complex,"beta_complex",order)
+         case ("alpha_complex","complex_alpha")
+            item.destroy("alpha_complex")
+            item.create("alpha_complex")
+            .read(item%alpha_complex,"alpha_complex",order)
+         case ("beta_complex","complex_beta")
+            item.destroy("beta_complex")
+            item.create("beta_complex")
+            .read(item%beta_complex,"beta_complex",order)
+         case ("general_complex","complex_general")
+            item.destroy("general_complex")
+            item.create("general_complex")
+            .read(item%general_complex,"general_complex",order)
+         case default
+            DIE("unknown opmat kind, " // trim(itemkind))
+      end
+      if (.text_file) .write(item,kind,order)
+   end
+
+!  **************
+!  Write routines
+!  **************
+
+   write(item,kind,format)
+   ! Write to the archive, vector "item". "format" is the output format wanted for text files 
+      VEC :: item
+      STR(*), optional :: kind,format
+      STR :: fmt
+      if (.text_file) then
+         nullify(.out); .out.create( .file_name(kind).trim)
+         .out.set_dbl_style("d")
+         .out.open
+         fmt = "row"; if (present(format)) fmt = format
+         .out.put(item,fmt)
+         .out.close
+         .out.destroy
+      else
+         nullify(.file); .file.create( .file_name(kind).trim)
+         .file.open
+         .file.put(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   write(item,kind,format)
+   ! Write to the archive, complex vector "item". "format" is the output format wanted for text files 
+      CVEC :: item
+      STR(*), optional :: kind,format
+      STR :: fmt
+      if (.text_file) then
+         nullify(.out); .out.create( .file_name(kind).trim)
+         .out.set_dbl_style("d")
+         .out.open
+         fmt = "row"; if (present(format)) fmt = format
+         .out.put(item,fmt)
+         .out.close
+         .out.destroy
+      else
+         nullify(.file); .file.create( .file_name(kind).trim)
+         .file.open
+         .file.put(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   write(item,kind,order)
+   ! Write to the archive, matrix "item". "order" is the output format wanted for text files 
+      MAT :: item
+      STR(*), optional :: kind,order
+      STR :: ord
+      if (.text_file) then
+         nullify(.out); .out.create( .file_name(kind).trim)
+         .out.set_dbl_style("d")
+         .out.open
+         ord = "by_row"; if (present(order)) ord = order
+         .out.put(item,ord)
+         .out.close
+         .out.destroy
+      else
+         nullify(.file); .file.create( .file_name(kind).trim)
+         .file.open
+         .file.put(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   write(item,kind,order)
+   ! Write to the archive, complex matrix "item". "order" is the output format wanted for text files 
+      CMAT :: item
+      STR(*), optional :: kind,order
+      STR :: ord
+      if (.text_file) then
+         nullify(.out); .out.create( .file_name(kind).trim)
+         .out.set_dbl_style("d")
+         .out.open
+         ord = "by_row"; if (present(order)) ord = order
+         .out.put(item,ord)
+         .out.close
+         .out.destroy
+      else
+         nullify(.file); .file.create( .file_name(kind).trim)
+         .file.open
+         .file.put(item)
+         .file.close
+         .file.destroy
+      end
+   end
+
+   write(item,kind,order)
+   ! Write to the archive operator vector "item". "order" indicated the output order 
+   ! for ascii files.
+      OPVEC :: item
+      STR(*), optional :: kind,order
+      STR :: itemkind
+      if (present(kind)) then; itemkind = kind
+      else;                    itemkind = item.spinorbital_kind
+      end
+      if (present(kind)) ENSURE(kind==itemkind,"wrong item kind")
+      select case (itemkind)
+         case ("restricted");   .write(item%restricted,"restricted",order)
+         case ("unrestricted"); .write(item%alpha,"alpha",order)
+                                .write(item%beta,"beta",order)
+         case ("alpha");        .write(item%alpha,"alpha",order)
+         case ("beta");         .write(item%beta,"beta",order)
+         case ("general");      .write(item%general,"general",order)
+         case default;          DIE("unknown opvec kind, " // trim(itemkind))
+      end
+   end
+
+   write(item,kind,order)
+   ! Write to the archive operator vector "item". "order" indicated the output order 
+   ! for ascii files.
+      OPMAT :: item
+      STR(*), optional :: kind,order
+      STR :: itemkind
+      if (present(kind)) then; itemkind = kind
+      else;                    itemkind = item.spinorbital_kind
+      end
+      if (present(kind)) ENSURE(kind==itemkind,"wrong item kind")
+      select case (itemkind)
+         case ("restricted");           .write(item%restricted,"restricted",order)
+         case ("unrestricted");         .write(item%alpha,"alpha",order)
+                                        .write(item%beta,"beta",order)
+         case ("alpha");                .write(item%alpha,"alpha",order)
+         case ("beta");                 .write(item%beta,"beta",order)
+         case ("general");              .write(item%general,"general",order)
+         case ("restricted_complex");   .write(item%restricted_complex,"restricted_complex",order)
+         case ("unrestricted_complex"); .write(item%alpha_complex,"alpha_complex",order)
+                                        .write(item%beta_complex,"beta_complex",order)
+         case ("alpha_complex");        .write(item%alpha_complex,"alpha_complex",order)
+         case ("beta_complex");         .write(item%beta_complex,"beta_complex",order)
+         case ("general_complex");      .write(item%general_complex,"general_complex",order)
+         case default;                  DIE("unknown opmat kind, " // trim(itemkind))
+      end
+   end
+
+!  **********************
+!  Write gnuplot routines
+!  **********************
+
+   write_gnuplot(density,n_x,n_y,n_z)
+   ! Write a "density" vector corresponding to a grid with dimensions "n_x", "n_y", "n_z" 
+   ! in gnuplot format (suitable for an splot). 
+      VEC :: density 
+      INT :: n_x,n_y,n_z
+      INT :: n,x,y,z
+      DIE_IF(NOT .text_file,"must open a ascii file")
+      .open(for="writing")
+      .out.set_dbl_style("d")
+      .out.set_dbl_width(30)
+      .out.set_dbl_precision(15)
+      n = 1
+      do z = 1,n_z
+         if (n_z>1) then
+            .out.put(" z = ") 
+            .out.put(z)
+            .out.flush
+         end
+         do y = 1,n_y
+         do x = 1,n_x
+            .out.put(density(n))
+            .out.flush
+            n = n+1
+         end
+         .out.flush
+         end
+      end
+      .close
+   end
+
+   write_gnuplot(j,n_x,n_y,n_z,norm,normalise)
+   ! Write a current density vector "j" corresponding to a grid with dimensions "n_x", "n_y", "n_z" 
+   ! in gnuplot format (suitable for an splot). 
+   ! If "norm" is present and TRUE write the norm of the vector field
+   ! If "normalise" is present and TRUE write the normalised of the vector field
+      MAT :: j 
+      INT :: n_x,n_y,n_z
+      BIN, optional :: norm,normalise
+      INT :: n,x,y,z
+      BIN :: write_norm,write_normalised
+      VEC(3) :: v
+      DIE_IF(NOT .text_file,"must open a ascii file")
+      .open(for="writing")
+      .out.set_dbl_style("d")
+      .out.set_dbl_width(30)
+      .out.set_dbl_precision(15)
+      write_norm = FALSE; if (present(norm)) write_norm = norm
+      write_normalised = FALSE; if (present(normalise)) write_normalised = normalise
+      n = 1
+      do z = 1,n_z
+         if (n_z>1) then
+            .out.put(" z = ") 
+            .out.put(z)
+            .out.flush
+         end
+         do y = 1,n_y
+         do x = 1,n_x
+            v = j(n,:)
+            if (write_norm) then
+               .out.put( v.norm)
+            else 
+               if (write_normalised) v.normalise
+               .out.put(v(1))
+               .out.put(v(2))
+               .out.put(v(3))
+            end
+            .out.flush
+            n = n+1
+         end
+         .out.flush
+         end
+      end
+      .close
+   end
+
+end 

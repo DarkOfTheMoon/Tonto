@@ -1,0 +1,596 @@
+! $Id$
+!-----------------------------------------------------------------------
+!
+! INPUT : Line-oriented formatted sequential advancing file input, 
+! including input from standard input. 
+!
+! The INPUT object is a FILE with a BUFFER. The only difference to the
+! FILE class is that INPUT uses formatted files; the input proceeds via 
+! a line buffer. Also, there is a default internal standard input object .
+!
+! This could be re-implemented using non-advancing input without 
+! a buffer, but I am not sure if standard input can be treated this
+! way. Also, the use of line numbers would be more tricky, and slower.
+!
+! Note that the input buffer is limited to size BSTR_SIZE.
+!
+! (c) dylan jayatilaka, december 1997
+!
+!-----------------------------------------------------------------------
+module INPUT
+
+   use TYPES
+   use ERROR
+   use MM
+   use STR
+   use UNITNUMBER
+   use BUFFER
+
+   implicit none
+
+#include "macros"
+#include "input.int"
+
+!  type input_type
+!     INT :: unit      ! This is a FILE
+!     INT :: record
+!     INT :: io_status
+!     STR :: name
+!     BUFFER :: buffer
+!  end 
+
+   interface read
+      read_str, read_dbl, read_cdbl, read_int, read_bin, 
+      read_ivec, read_vec, read_cvec, read_mat, read_cmat
+   end
+
+   INPUT, PTR, public :: std_input => NULL()
+ 
+contains
+
+!  *****************************
+!  File creation type operations
+!  *****************************
+
+   create_std_input
+   ! Create a the standard input file object, if needed.
+      PTR :: self
+      INT :: dim
+      if (std_input.destroyed) then
+         allocate(std_input)
+         dim = 3*INT_SIZE + STR_SIZE 
+         dim = dim + 3*INT_SIZE + BIN_SIZE + BSTR_SIZE 
+         std_mm.add(dim)
+         std_input%name = "std_input"
+         std_input%record = 0
+         std_input%unit = INPUT_STD_INPUT_UNIT
+         std_input%io_status = 0
+      end
+      std_input%buffer.clear
+      self => std_input
+   end
+
+   create(name) 
+   ! Create an input file object. Does not open the input file.
+      PTR :: self
+      CHR(*) :: name
+      UNITNUMBER :: unitnumber
+      nullify(self)
+      allocate(self)
+      std_mm.add(INPUT_SIZE)
+      .name = name
+      .record = 0
+      .io_status = 0
+      unitnumber.get( .unit)
+      .buffer.clear
+   end
+
+   destroy
+   ! Destroy a input file object
+      PTR :: self
+      UNITNUMBER :: unitnumber
+      if (.destroyed) return
+      unitnumber.free( .unit)
+      std_mm.delete(INPUT_SIZE)
+      deallocate(self)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   open
+   ! Open the input file. The input file object must already be created
+      if (.exists) then
+         open(unit=.unit,      &
+              file=.name,      &
+              status="old",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=.io_status)
+         DIE_IF(.io_status>0,"error opening old file "//.name)
+      else
+         open(unit=.unit,      &
+              file=.name,      &
+              status="new",        &
+              access="sequential", &
+              form="formatted",    &
+              iostat=.io_status)
+         DIE_IF(.io_status>0,"error opening new file "//.name)
+      end
+   end
+
+   close
+   ! Close the input file
+      close(unit=.unit)
+   end
+
+   close_and_delete
+   ! Close the input file and delete it from the file system
+      close(unit=.unit,status="delete")
+   end
+
+   delete
+   ! Delete the input file from the file system
+      if (.is_not_open) .open
+      .close_and_delete
+   end
+      
+!  **************************
+!  Data input type operations
+!  **************************
+
+   move_to_next_item 
+   ! Move to the next item. Get a new line if the current buffer is exhausted
+      if (.buffer.exhausted) then
+         do
+            .read_line
+            if (.buffer.not_empty) exit
+         end
+      end
+   end
+
+   read_line( dont_die) 
+   ! Read a line into the buffer from the input file
+      STR, optional :: dont_die
+      INT :: fail, end_file
+      BSTR :: string
+      string = ""
+      fail = 2
+      read(unit=.unit,fmt="(a)",end=20,err=10) string
+      fail = fail-1
+20    fail = fail-1
+10    continue
+      end_file = 0
+      if (fail==1) then
+       if (NOT present(dont_die)) then
+         DIE("End of file")
+       else
+         end_file = 1
+       end
+      end
+      if (fail==2) DIE("read error")
+      if (end_file == 0) then
+        .buffer.set(string) ! set and analyse buffer
+        .record = .record+1 
+      end
+   end
+
+   move_to_previous_item 
+   ! Move to the previous item in the input file. Backspace a line if required.
+      if ( .buffer.item==1) then            ! If next item to be read is item 1
+         do
+            .backspace_line
+            if (.buffer.not_empty) exit
+         end
+         .move_to_item(.buffer%n_items)     ! move to last item on previous line
+      else
+         .move_to_item(.buffer%item)        ! move to the last read item
+      end
+   end
+      
+   move_to_item(number) 
+   ! Move the cursor over to the *start* of item "number"
+      INT :: number
+      .buffer.move_to_item(number)
+   end
+
+   look_for( search, from_start)
+   ! sets record to the line starting with "search" string
+   ! if from_start is present then the search is started from the beginning
+   STR(*) :: search
+   STR, optional :: from_start
+   INT :: start_record, end_record
+      start_record = .record
+      if (present(from_start)) self.rewind
+      do
+         if (search.is_included_in(self%buffer%buffer_str)) exit
+         end_record = .record
+         .read_line( "dont die")
+         if (.record == end_record) then
+            .move_to_line( start_record)
+            exit
+         end
+      end
+   end
+
+   get_str result(word) 
+   ! Read a str from the input file and return it
+      STR :: word
+      .move_to_next_item
+      word = .buffer.get_str
+   end
+      
+   get_dbl result(value)
+   ! Read a dbl from the input file and return it
+      DBL :: value
+      .move_to_next_item
+      value = .buffer.get_dbl
+   end
+      
+   get_cdbl result(value)
+   ! Read a cdbl from the input file and return it
+      CDBL :: value
+      DBL :: real,imag
+      .move_to_next_item
+      real = .buffer.get_dbl
+      .move_to_next_item
+      imag = .buffer.get_dbl
+      value = cmplx(real,imag)
+   end
+
+   get_int result(value) 
+   ! Read a integer from the input file and return it
+      INT :: value
+      .move_to_next_item
+      value = .buffer.get_int
+   end
+      
+   get_bin result(value) 
+   ! Read a logical from the input file and return it
+      BIN :: value
+      .move_to_next_item
+      value = .buffer.get_bin
+   end
+
+   read_chr(chr) 
+   ! Read a character into "chr"
+      CHR :: chr
+      STR :: word
+      .move_to_next_item
+      word = .buffer.get_str
+      DIE_IF(len_trim(word)>1,"expecting a character: "//trim(word))
+      chr = word
+   end
+
+   read_str(word) 
+   ! Read a str into "word"
+      STR :: word
+      .move_to_next_item
+      word = .buffer.get_str
+   end
+ 
+   read_dbl(value)
+   ! Read a dbl into "value"
+      DBL :: value
+      .move_to_next_item
+      value = .buffer.get_dbl
+   end
+
+  read_formatted_dbl(value,form)
+  ! Read a formatted dbl into "value". Does not check the end of line!
+    DBL :: value
+    CHR(*), IN :: form
+    value = .buffer.get_formatted_dbl(form)
+  end
+
+   read_cdbl(value)
+   ! Read a cdbl into "value"
+      CDBL :: value
+      DBL :: real,imag
+      .move_to_next_item
+      real = .buffer.get_dbl
+      .move_to_next_item
+      imag = .buffer.get_dbl
+      value = cmplx(real,imag)
+   end
+
+   read_int(value) 
+   ! Read an integer into "value"
+      INT :: value
+      .move_to_next_item
+      value = .buffer.get_int
+   end
+      
+   read_bin(value) 
+   ! Read a logical into "value"
+      BIN :: value
+      .move_to_next_item
+      value = .buffer.get_bin
+   end
+      
+   read_ivec(v)
+   ! Read in an integer vector sequentially. Line breaks are not significant.
+      IVEC :: v
+      INT :: dim,i
+      dim = size(v)
+      do i = 1,dim
+         v(i) = .get_int
+      end
+   end
+      
+   read_vec(v)
+   ! Read in a vector sequentially. Line breaks are not significant.
+      VEC :: v
+      INT :: dim,i
+      dim = size(v)
+      do i = 1,dim
+         v(i) = .get_dbl
+      end
+   end
+      
+  rest_of_line(res)
+  ! If there is anything left on the input line, then it is returned, else
+  ! nothing is returned.  Pointer moves to next line.
+    INOUT :: self
+    STR :: res
+    if ( .buffer.not_empty ) then
+      .move_to_next_item
+      res = .buffer%buffer_str( .buffer%pos : )
+      .read_line
+    else
+      res = ""
+      .read_line
+    end
+  end
+
+   read_cvec(v)
+   ! Read in a complex vector sequentially. Line breaks are not significant.
+      CVEC :: v
+      INT :: dim,i
+      dim = size(v)
+      do i = 1,dim
+         v(i) = .get_cdbl
+      end
+   end
+
+   read_mat(m,order)
+   ! Read in a complex matrix sequentially by row (default) or by column. 
+   ! Line breaks are not significant.
+      MAT :: m
+      STR(*), optional :: order
+      INT :: dim1,dim2,i,j
+      STR :: print_order
+      dim1 = size(m,1)
+      dim2 = size(m,2)
+      print_order = "by_row"
+      if (present(order)) print_order = order
+      select case (print_order)
+         case ("by_column","column_major")
+            do j = 1,dim2
+            do i = 1,dim1
+              m(i,j) = .get_dbl
+            end
+            end
+         case ("by_row","row_major")
+            do i = 1,dim1
+            do j = 1,dim2
+              m(i,j) = .get_dbl
+            end
+            end
+         case default
+            DIE("unknown print order, "//print_order.trim)
+      end
+   end
+
+  read_formatted_mat(m,form,items_per_line)
+  ! Read a formatted matrix.
+    MAT, OUT :: m
+    CHR(*), IN :: form
+    INT, IN :: items_per_line
+    INT :: i,j,d,count
+
+    .buffer%pos = 0
+
+    d = size(m,1)
+    count=0
+    do i=1,d
+      do j=1,d
+        .read_formatted_dbl(m(i,j),form)
+        count = count + 1
+         if (count==items_per_line) then
+           do
+              .read_line
+              if (.buffer.not_empty) exit
+           end
+           count=0
+         end
+      end
+    end
+  end
+
+  read_cadpac_mat(m)
+  ! Read in a matrix produced by the constraint part of cadpac.
+    IN :: self
+    MAT, OUT :: m
+    .read_formatted_mat(m,"5D16.8",5)
+  end
+
+   read_cmat(m,order)
+   ! Read in a complex matrix sequentially by row (default) or by column. 
+   ! Line breaks are not significant.
+      CMAT :: m
+      STR, optional :: order
+      INT :: dim1,dim2,i,j
+      STR :: print_order
+      dim1 = size(m,1)
+      dim2 = size(m,2)
+      print_order = "by_row"
+      if (present(order)) print_order = order
+      select case (print_order)
+         case ("by_column","column_major")
+            do j = 1,dim2
+            do i = 1,dim1
+              m(i,j) = .get_cdbl
+            end
+            end
+         case ("by_row","row_major")
+            do i = 1,dim1
+            do j = 1,dim2
+              m(i,j) = .get_cdbl
+            end
+            end
+         case default
+            DIE("unknown print order, "//print_order.trim)
+      end
+   end
+
+!  **********************************
+!  Line repositioning type operations
+!  **********************************
+
+   rewind
+   ! REwind the input file
+      rewind(unit=.unit,iostat=.io_status)
+      DIE_IF(.io_status>0,"rewind error")
+      .record = 0
+      .read_line
+   end
+
+   move_to_end
+   ! Move to the end of the input file
+      do
+         read(unit=.unit, fmt="()", iostat=.io_status)
+         if (.io_status<>0) exit
+         .record = .record + 1
+      end
+      backspace(unit=.unit,iostat=.io_status)
+      backspace(unit=.unit,iostat=.io_status)
+      .record = max(0,.record-1)
+      .read_line
+   end
+
+   backspace_line 
+   ! Reprocess previously input line
+      INT :: lastline
+      lastline = .record-1
+      .move_to_line(lastline) 
+   end
+
+   skip_line
+   ! Skip the next line in the input file
+      INT :: nextline
+      nextline = .record+1
+      .move_to_line(nextline) 
+   end
+
+   move_to_line(line) 
+   ! Move to the requested line in the input file
+      INT :: line
+      DIE_IF(line<1,"line number must be positive")
+      if (line<(.record+1)) then
+         do 
+            backspace(unit=.unit,iostat=.io_status)
+            DIE_IF(.io_status>0,"backspace error")
+            .record = max(0,.record-1)
+            if (line==(.record+1)) exit
+         end
+      else if (line>(.record+1)) then
+         do 
+            read(unit=.unit,fmt="()",iostat=.io_status)
+            DIE_IF(.io_status>0,"read error")
+            .record = .record + 1
+            if (line==(.record+1)) exit
+         end
+      end
+      .read_line
+   end
+
+!  ***********************************
+!  Inquiry methods inherited from FILE
+!  ***********************************
+
+   exists result(res)
+   ! Returns true if the file exists on the file system
+      BIN :: res
+      inquire(file=.name,exist=res)
+   end
+
+   does_not_exist result(res)
+   ! Returns true if the file does *not* exist on the file system
+      BIN :: res
+      res = NOT (.exists)
+   end
+
+   is_open result(res)
+   ! Returns true if the file has been opened
+      BIN :: res
+      ! inquire(unit=.unit,opened=res)
+      inquire(file=.name,opened=res)
+   end
+
+   is_not_open result(res)
+   ! Returns true if the file has *not* been opened
+      BIN :: res
+      res = NOT (.is_open)
+   end
+
+   unit_used result(res)
+   ! Returns true if the file unit is in use
+      BIN :: res
+      inquire(unit=.unit,opened=res)
+   end
+
+   unit_not_used result(res)
+   ! Returns true if the file unit is *not* in use
+      BIN :: res
+      inquire(unit=.unit,opened=res)
+      res = NOT res
+   end
+
+   position result(res) 
+   ! Return record position of the file
+      INT :: res
+      res = .record
+   end
+
+   line_number result(res) 
+   ! Return the input file line number
+      INT :: res
+      res = .record
+   end
+
+   end_of_file result(res)
+   ! Read a line into the buffer from the input file
+      INT :: fail
+      BIN :: res
+      BSTR :: string
+      string = ""
+      fail = 2
+      read(unit=.unit,fmt="(a)",end=20,err=10) string
+      fail = fail-1
+20    fail = fail-1
+10    continue
+      select case (fail)
+        case (0)
+          res = FALSE
+          backspace(unit=.unit,iostat=.io_status)
+          DIE_IF(.io_status>0,"backspace error")
+        case (1)
+          res = TRUE
+        case (2)
+          DIE("unknown read error")
+      end
+   end
+
+end 

@@ -1,0 +1,332 @@
+! $Id$
+!---------------------------------------------------------------------
+!
+! PLOTGRID: for cartesian grid generation
+!
+! (c) Dylan Jayatilaka, december 1997
+!
+!---------------------------------------------------------------------
+module PLOTGRID
+
+   use TYPES
+   use ERROR
+   use MM
+   use STR
+   use VEC
+   use INPUT
+   use OUTPUT
+   use MAT
+   use ATOMVEC
+
+   implicit none         
+
+#include "macros"
+#include "plotgrid.int"
+
+!  type plotgrid_type
+!     STR    :: kind
+!     INT    :: orbital
+!     DBL    :: maximum_cell_distance
+!     INT    :: n_x, n_y, n_z, n_pt
+!     INT    :: centre_atom, x_atom_1, x_atom_2, y_atom_1, y_atom_2
+!     DBL    :: del
+!     VEC(3) :: centre, origin
+!     VEC(3) :: x_axis, y_axis, z_axis
+!     VEC(3) :: width, offset
+!     BIN    :: calc_x_width, calc_y_width
+!  end 
+   
+contains
+
+  create(atom)
+  ! Create a grid object
+    PTR :: self
+    ATOMVEC, PTR, optional :: atom
+    nullify(self)
+    allocate(self)
+    std_mm.add(PLOTGRID_SIZE)
+    .set_defaults(atom)
+  end
+
+  create_copy(grid)
+  ! Create a grid object which is a duplicate of grid.
+    PTR :: self
+    PLOTGRID, IN :: grid
+    nullify(self)
+    allocate(self)
+    std_mm.add(PLOTGRID_SIZE)
+    .copy(grid)
+  end
+
+  copy(grid)
+  ! Copy the contents of grid to self.
+    PLOTGRID, IN :: grid
+    .kind     = grid%kind
+    .orbital  = grid%orbital
+    .maximum_cell_distance = grid%maximum_cell_distance
+    .centre_atom = grid%centre_atom
+    .n_x      = grid%n_x; .n_y = grid%n_y; .n_z = grid%n_z
+    .n_pt     = grid%n_pt
+    .x_atom_1 = grid%x_atom_1; .x_atom_2 = grid%x_atom_2
+    .y_atom_1 = grid%y_atom_1; .y_atom_2 = grid%y_atom_2
+    .del      = grid%del
+    .centre   = grid%centre
+    .origin = grid%origin
+    .x_axis   = grid%x_axis; .y_axis = grid%y_axis; .z_axis = grid%z_axis
+    .width    = grid%width
+    .offset   = grid%offset
+    .calc_x_width = grid%calc_x_width
+    .calc_y_width = grid%calc_y_width
+  end
+
+   destroy 
+   ! Destroy a PLOTGRID object
+      PTR :: self
+      if (.destroyed) return
+      deallocate(self)
+      std_mm.delete(PLOTGRID_SIZE)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   set_defaults(atom)
+   ! Set up a default grid. If "atom" is present it is used to define
+   ! an xyz bounding cube for the molecule .
+      ATOMVEC, PTR, optional :: atom
+      .kind                  = ""   
+      .orbital               = 0
+      .maximum_cell_distance = 5
+      .centre = ZERO
+      .offset = ZERO
+      .centre_atom = 0
+      .x_atom_1 = 0
+      .x_atom_2 = 0
+      .y_atom_1 = 0
+      .y_atom_2 = 0
+      .x_axis(:) = (/ ONE, ZERO, ZERO/)
+      .y_axis(:) = (/ZERO,  ONE, ZERO/)
+      .n_x       = 51
+      .n_y       = 51
+      .n_z       = 1
+      .del       = ONE
+      .width(:)  = (/ TWO,  TWO, ZERO/)
+      .calc_x_width = TRUE
+      .calc_y_width = TRUE
+      if (present(atom)) then
+         if (associated(atom)) then
+            .width = atom.bounding_cube_width
+            .calc_x_width = FALSE
+            .calc_y_width = FALSE
+         end
+      end
+      .update
+   end
+
+   read(in,atom,unitcell) [leaky]
+   ! Read in grid information from file "in". If present, "atom" is
+   ! used to define an xyz bounding cube and to define atom-labelled
+   ! axis definitions, like x-axis_atoms and y_axis_atoms.
+      PTR :: self
+      INPUT :: in
+      ATOMVEC, PTR, optional :: atom
+      UNITCELL, optional :: unitcell
+      MAT(3,3) :: rotation_matrix
+      STR :: word,units
+      .destroy
+      .create(atom)
+      units = ""
+      rotation_matrix.to_unit_matrix
+      read_loop : do
+         in.read(word)
+         word.to_lower_case
+         select case (word)
+            case("end");           exit read_loop
+            case("kind");          in.read( .kind )
+            case("type");          in.read( .kind )
+            case("maximum_cell_distance");  in.read(.maximum_cell_distance)
+            case("max_cell_distance");      in.read(.maximum_cell_distance)
+            case("orbital");       in.read( .orbital )
+            case("centre");        in.read(.centre); .centre.rotate(rotation_matrix)
+            case("centre_atom");   in.read(.centre_atom)
+            case("x_axis");        in.read(.x_axis); .x_axis.rotate(rotation_matrix)
+            case("y_axis");        in.read(.y_axis); .y_axis.rotate(rotation_matrix)
+            case("x_axis_atoms");  in.read(.x_atom_1); in.read(.x_atom_2)
+            case("y_axis_atoms");  in.read(.y_atom_1); in.read(.y_atom_2)
+            case("x_width");       in.read(.width(1)); .calc_x_width = FALSE
+            case("y_width");       in.read(.width(2)); .calc_y_width = FALSE
+            case("z_width");       in.read(.width(3))
+            case("crystal_plane"); ENSURE( present(unitcell), "no unitcell info")
+                                   .read_crystal_plane(in,unitcell)
+            case("x_axis_offset"); in.read(.offset(1))
+            case("y_axis_offset"); in.read(.offset(2))
+            case("z_axis_offset"); in.read(.offset(3))
+            case("x_points");      in.read(.n_x)
+            case("crystal");       ENSURE( present(unitcell), "no unitcell info")
+                                   rotation_matrix = unitcell%cell_matrix
+            case("angstrom");      units = "angstrom"
+            case default; DIE("unknown keyword - " // word.trim)
+         end 
+      end do read_loop
+      .offset.rotate(rotation_matrix)
+      if (units=="angstrom") then
+        .centre = .centre * BOHR_PER_ANGSTROM
+        .x_axis = .x_axis * BOHR_PER_ANGSTROM
+        .y_axis = .y_axis * BOHR_PER_ANGSTROM
+        .z_axis = .z_axis * BOHR_PER_ANGSTROM
+        .width  = .width  * BOHR_PER_ANGSTROM
+        .offset = .offset * BOHR_PER_ANGSTROM
+        .maximum_cell_distance = .maximum_cell_distance * BOHR_PER_ANGSTROM
+      end
+      .update(atom)
+   end
+
+  read_crystal_plane(in,unitcell)
+  ! To read in a vector which describes a plane in the crystal.
+  ! The vector is the normal of the plane.
+    INPUT :: in
+    UNITCELL, IN :: unitcell
+    in.read( .z_axis )
+    .z_axis.rotate(unitcell%cell_matrix)
+    .z_axis.normalise
+    .x_axis.normalise
+    .y_axis.to_cross_product( .z_axis, .x_axis)
+    .y_axis.normalise
+    .x_axis.to_cross_product( .y_axis, .z_axis)
+    .x_axis.normalise
+  end
+
+   update(atom)
+   ! Update the grid data, if any changes have been made. "atom" may be
+   ! a provided atom list to resolve atom-based axis specifications.
+      ATOMVEC, PTR, optional :: atom
+      DBL :: dot
+      if (.centre_atom/=0 OR .x_atom_1/=0 OR .y_atom_1/=0) then 
+         ENSURE(present(atom),"atom list not present")
+         ENSURE(associated(atom),"atom list not present")
+      end
+      DIE_IF(all(.width==ZERO),"all grid widths are zero")
+      if (.centre_atom/=0) .centre = atom(.centre_atom)%pos
+      if (.x_atom_1/=0) then
+         .x_axis = atom(.x_atom_2)%pos - atom(.x_atom_1)%pos
+        if (.calc_x_width) .width(1) = TWO*.x_axis.norm
+      end
+      if (.y_atom_1/=0) then
+         .y_axis = atom(.y_atom_2)%pos - atom(.y_atom_1)%pos
+        if (.calc_y_width) .width(2) = TWO*.y_axis.norm
+      end
+      .x_axis.normalise
+      .y_axis.normalise
+      dot = dot_product(.x_axis,.y_axis)                ! Orthogonalise y_axis to x_axis
+      .y_axis = .y_axis - dot*.x_axis
+      .y_axis.normalise
+      .z_axis.to_cross_product(.x_axis,.y_axis)
+      .centre = .centre + .offset(1)*.x_axis
+      .centre = .centre + .offset(2)*.y_axis
+      .centre = .centre + .offset(3)*.z_axis
+      .n_x = 2*(.n_x/2) + 1                             ! Make axis points odd ...
+      if(.n_x>1) .del = .width(1)/(.n_x-1)
+      if(.n_x==1) .width = ZERO
+      .n_y  = nint(.width(2)/.del,kind=INT_KIND) + 1
+      .n_y = 2*(.n_y/2) + 1
+      .width(2) = .del*(.n_y-1)
+      .n_z = nint(.width(3)/.del,kind=INT_KIND) + 1
+      .n_z = 2*(.n_z/2) + 1
+      .width(3) = .del*(.n_z-1)
+      .origin = .centre
+      .origin = .origin -.width(1)*HALF*.x_axis
+      .origin = .origin -.width(2)*HALF*.y_axis
+      .origin = .origin -.width(3)*HALF*.z_axis
+      .n_pt = .n_x*.n_y*.n_z
+   end
+
+   make_points(x_pt,y_pt,z_pt)
+   ! Make a list of the grid points
+      VEC :: x_pt,y_pt,z_pt
+      DBL :: x1,x2,x3,y1,y2,y3,z1,z2,z3
+      DBL :: ox,oy,oz
+      INT :: ix,iy,iz,i_pt
+      ENSURE( size(x_pt) == .n_pt, "array of points not correct size")
+      ENSURE( size(y_pt) == .n_pt, "array of points not correct size")
+      ENSURE( size(z_pt) == .n_pt, "array of points not correct size")
+      ox = .origin(1);      oy = .origin(2);      oz = .origin(3)
+      x1 = .del*.x_axis(1); x2 = .del*.x_axis(2); x3 = .del*.x_axis(3)
+      y1 = .del*.y_axis(1); y2 = .del*.y_axis(2); y3 = .del*.y_axis(3)
+      z1 = .del*.z_axis(1); z2 = .del*.z_axis(2); z3 = .del*.z_axis(3)
+      do i_pt = 1,.n_pt                           
+         iz = (i_pt-1)/(.n_x*.n_y)
+         iy = (i_pt-iz*.n_x*.n_y-1)/.n_x
+         ix = i_pt-iz*.n_x*.n_y-iy*.n_x-1
+         x_pt(i_pt) = ox + ix*x1 + iy*y1 + iz*z1
+         y_pt(i_pt) = oy + ix*x2 + iy*y2 + iz*z2
+         z_pt(i_pt) = oz + ix*x3 + iy*y3 + iz*z3
+      end
+   end
+
+   make_points(pt)
+   ! Return a list of the grid points.
+      MAT, OUT :: pt
+      .points(pt)
+   end
+
+   points(pt,first_pt,last_pt)
+   ! Return a list of the grid points. Will return a subset of the grid points 
+   ! from "first_pt" to "last_pt", if these options are provided.
+      INT, IN, optional :: first_pt,last_pt
+      MAT, OUT :: pt
+      DBL :: x1,x2,x3,y1,y2,y3,z1,z2,z3
+      DBL :: ox,oy,oz
+      INT :: ix,iy,iz,i_pt,first,last
+      first = 1;          last = size(pt,1)
+      if (present(first_pt))     first = first_pt
+      if (present(last_pt))      last  = last_pt
+      ox = .origin(1);      oy = .origin(2);      oz = .origin(3)
+      x1 = .del*.x_axis(1); x2 = .del*.x_axis(2); x3 = .del*.x_axis(3)
+      y1 = .del*.y_axis(1); y2 = .del*.y_axis(2); y3 = .del*.y_axis(3)
+      z1 = .del*.z_axis(1); z2 = .del*.z_axis(2); z3 = .del*.z_axis(3)
+      do i_pt = first,last
+         iz = (i_pt-1)/(.n_x*.n_y)
+         iy = (i_pt-iz*.n_x*.n_y-1)/.n_x
+         ix = i_pt-iz*.n_x*.n_y-iy*.n_x-1
+         pt(i_pt,1) = ox + ix*x1 + iy*y1 + iz*z1
+         pt(i_pt,2) = oy + ix*x2 + iy*y2 + iz*z2
+         pt(i_pt,3) = oz + ix*x3 + iy*y3 + iz*z3
+      end
+   end
+
+   put(out)
+   ! Put the grid data to file "out"
+      OUTPUT :: out
+      out.flush
+      out.text("PLOTGRID output")
+      out.flush
+      out.show("Plot grid kind          =", .kind)
+      out.show("Plot orbital no.        =", .orbital)
+      out.show("Maximum cell distance   =", .maximum_cell_distance)
+      out.show("Number of X grid points =",.n_x)
+      out.show("Number of Y grid points =",.n_y)  
+      out.show("Number of Z grid points =",.n_z)
+      out.show("Total number of points  =",.n_pt)
+      out.show("X-axis width            =",.width(1))
+      out.show("Y-axis width            =",.width(2))
+      out.show("Z-axis width            =",.width(3))
+      out.show("Centre point            =",.centre(1), .centre(2), .centre(3))
+      out.show("Left hand corner        =",.origin(1), .origin(2), .origin(3))
+      out.show("X-axis vector           =",.x_axis(1), .x_axis(2), .x_axis(3))
+      out.show("Y-axis vector           =",.y_axis(1), .y_axis(2), .y_axis(3))
+      out.show("Z-axis vector           =",.z_axis(1), .z_axis(2), .z_axis(3))
+   end
+
+end
+  

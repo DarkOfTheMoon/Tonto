@@ -1,0 +1,365 @@
+! $Id$
+!-----------------------------------------------------------------------------
+!  BUFFER : operations on a string buffer ...
+!
+!  Synopsis
+!
+!  A BUFFER consists of a string (buffer), a cursor position (pos), an item
+!  counter (item), the number of items in the buffer (n_items), and a
+!  logical switch which indicates whether the buffer has been analysed
+!  (analysed).
+!
+!  Methods are divided into two types -- "put" operations and "get" operations.
+!  The former involving placing value type variables, strings, integers, dbl's,
+!  into the buffer, with or without formatting. The "get" operations involving
+!  extracting value type variables from the string buffer. 
+!
+!  There are also methods for moving around the buffer, including skipping
+!  forwards or backwards, either by item or by character.
+!
+!  Notes
+!
+!  The buffer string is of length BSTR_SIZE. Problems will occur if you want
+!  to analyse strings larger than this. The maximum size of any item is
+!  STR_SIZE.
+!
+!  (c) dylan jayatilaka, 1998
+!-----------------------------------------------------------------------------
+module BUFFER
+
+   use TYPES
+   use ERROR
+   use MM
+   use STR
+
+   implicit none
+
+#  include "macros"
+#  include "buffer.int"
+
+!  type buffer_type
+!     INT  :: pos                        ! position of the end of the last item
+!     INT  :: item                       ! the number of the last item
+!     INT  :: n_items                    ! total number of items in the buffer
+!     BIN  :: analysed                   ! true if the buffer has been analysed
+!     STR  :: comment_chars              ! comment characters used in the buffer
+!     BSTR :: buffer_str                 ! the actual buffer string
+!  end 
+
+contains
+
+!  *************************
+!  Initialisation operations
+!  *************************
+
+   create(string,comment_chars)
+   ! Create a buffer and initialize it
+      PTR :: self
+      CHR(*), optional :: string,comment_chars
+      nullify(self)
+      allocate(self)
+      std_mm.add(BUFFER_SIZE)
+      .set(string,comment_chars)
+   end
+
+   destroy 
+   ! Destroy a buffer
+      PTR :: self
+      if (.destroyed) return
+      std_mm.delete(BUFFER_SIZE)
+      deallocate(self)
+   end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   set(string,comment_chars)
+   ! Set the buffer string to string, analyse it, and initialize the counters
+      CHR(*),optional :: string,comment_chars
+      BSTR :: str
+      STR :: com
+      str = ""
+      com = BUFFER_COMMENT_CHARS
+      if (present(string))        str = string
+      if (present(comment_chars)) com = comment_chars
+      .buffer_str = str
+      .pos = 0           ! the position of the end of the last word
+      .item = 0
+      .n_items = 0
+      .analysed = FALSE
+      .comment_chars = com
+      .analyse
+   end
+
+   clear
+   ! Clear the buffer string and reset the counters
+      .set
+   end
+
+   analyse 
+   ! Analyse the buffer string and process it into items
+      INT :: end,l
+      STR :: item
+      end = 0
+      .n_items = 0
+      do
+         item = "" 
+         item = .buffer_str(end+1:).get_next_item(last=l,comment_chars=.comment_chars)
+         if (item==" ") exit
+         end = end+l+1
+         .n_items = .n_items+1
+         if (end>BSTR_SIZE) exit
+      end
+      .analysed = TRUE
+   end
+      
+!  ************************
+!  Get operations on buffer
+!  ************************
+
+   get_item result(item)
+   ! Get the next item in the buffer string as a str and increment
+   ! the cursor
+      STR :: item
+      INT :: l
+      ENSURE(.analysed,"buffer not analysed")
+      if (.not_exhausted) then
+         item = ""
+         item = .buffer_str(.pos+1:).get_next_item(last=l,comment_chars=.comment_chars)
+         .pos  = .pos + l + 1
+         .item = .item + 1
+      end
+   end
+      
+   skip_item
+   ! Skip the next item in the buffer string
+      STR :: item
+      INT :: l
+      ENSURE(.analysed,"buffer not analysed")
+      item = ""
+      if (.not_exhausted) then
+         item = .buffer_str(.pos+1:).get_next_item(last=l,comment_chars=.comment_chars)
+         .pos  = .pos + l + 1
+         .item = .item + 1
+      end
+   end
+      
+   move_to_item(number) 
+   ! Move the cursor over to the *start* of item "number"
+      INT :: number
+      INT :: item
+      ENSURE(.analysed,"buffer not analysed")
+      ENSURE(number<=.n_items+1,"not enough items")
+      ENSURE(number>=1,"cannot move to items less than 1")
+      .pos = 0
+      .item = 0
+      do item=1,(number-1)
+         .skip_item
+      end
+   end
+
+   get_str result(value) 
+   ! Get the next item in the buffer string as a str
+      STR :: value
+      value = .get_item
+   end
+      
+   get_dbl result(value) 
+   ! Get the next item in the buffer string as a dbl number
+      DBL :: value
+      STR :: item
+      item = .get_item
+      value = item.to_dbl
+   end
+      
+   get_formatted_dbl(form) result (value)
+   ! Get a dbl "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      DBL :: value
+      CHR(*), IN :: form
+      INT :: first,last,width
+
+      first = form.scan("FfEeDd") + 1
+      last = form.scan(".") - 1
+      read(form(first:last),"(i)") width
+      read( .buffer_str(.pos+1:.pos+1+width), form) value
+      .pos = .pos + width
+      .item = .item + 1
+   end
+
+   get_int result (value) 
+   ! Get the next item in the buffer string as an integer number
+      INT :: value
+      STR :: item
+      item = .get_item
+      value = item.to_int
+   end
+      
+   get_bin result (value) 
+   ! Get the next item in the buffer string as a logical
+      BIN :: value
+      STR :: item
+      item = .get_item
+      value = item.to_bin
+   end
+      
+!  ************************
+!  Put operations on buffer
+!  ************************
+
+   move_cursor(skip) 
+   ! Move the cursor "skip" characters in the buffer string
+      INT :: skip
+      .pos = .pos + skip
+      ENSURE(.pos<=BSTR_SIZE,"cursor beyond buffer end")
+   end
+
+   put_str(string) 
+   ! Put "string" into the buffer string *after* the current position and
+   ! increment the cursor
+      CHR(*) :: string
+      INT :: l
+      l = len(string)
+      ENSURE(.pos+l<=BSTR_SIZE,"cursor beyond buffer end")
+      .buffer_str(.pos+1:.pos+l) = string
+      .move_cursor(l)
+      .analysed = FALSE
+   end
+
+   put_formatted_str(value,form) 
+   ! Put a string "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      CHR(*) :: value
+      CHR(*) :: form
+      STR :: string
+      string = ""
+      write(string,"("//trim(form)//")") value
+      .put_str(trim(string)) 
+      .analysed = FALSE
+   end
+
+   put_formatted_dbl(value,form) 
+   ! Put a dbl "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      DBL :: value
+      CHR(*) :: form
+      STR :: string
+      write(string,"("//trim(form)//")") value
+      .put_str(trim(string)) 
+      .analysed = FALSE
+   end
+
+   put_formatted_cdbl(value,form) 
+   ! Put a cdbl "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      CDBL :: value
+      CHR(*) :: form
+      STR :: string
+      write(string,"("//"2"//trim(form)//")") value
+      .put_str(trim(string)) 
+      .analysed = FALSE
+   end
+
+   put_formatted_int(value,form)
+   ! Put an integer "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      INT :: value
+      CHR(*) :: form
+      STR :: string
+      write(string,"("//trim(form)//")") value
+      .put_str(trim(string)) 
+      .analysed = FALSE
+   end
+      
+   put_formatted_bin(value,form)
+   ! Put a logical "value" into the buffer string using fortran format string
+   ! "form", and increment the cursor.
+      BIN :: value
+      CHR(*) :: form
+      STR :: string
+      write(string,"("//trim(form)//")") value
+      .put_str(trim(string)) 
+      .analysed = FALSE
+   end
+      
+!  ***************
+!  Inquiry methods
+!  ***************
+      
+   item result(res) 
+   ! Return the number of the item which the cursor lies *before*
+      INT :: res
+      res = .item+1 !
+   end
+
+   n_items result(res) 
+   ! Return the number of items in the buffer string
+      INT :: res
+      if (.not_analysed) .analyse
+      res = .n_items
+   end
+
+   buffer_str result(res) 
+   ! Return the buffer string, less any blank spaces at the end
+      BSTR :: res
+      res = ""
+!     res = .buffer_str
+      res = .buffer_str(1:max(len_trim(.buffer_str),1))
+   end
+      
+   cursor_pointer result(res) 
+   ! Return a string of the form "----^" which is a pictorial representation 
+   ! of where the cursor position lies
+      BSTR :: res
+      res = ""
+      res = repeat("-",.pos-1)//"^"
+   end
+      
+   analysed result(res)
+   ! Return true if the buffer string has been analysed
+      BIN :: res
+      res = .analysed
+   end
+      
+   not_analysed result(res)
+   ! Return true if the buffer string has not been analysed
+      BIN :: res
+      res = NOT .analysed
+   end
+      
+   exhausted result(res)
+   ! Return true if there are no more items in the buffer string that could be extracted
+      BIN :: res
+      res = .item >= .n_items
+   end
+      
+   not_exhausted result(res)
+   ! Return true if there are more items in the buffer string that could be extracted
+      BIN :: res
+      res = .item <  .n_items
+   end
+      
+   empty result(res)
+   ! Return true if the buffer string contains no items
+      BIN :: res
+      res = .n_items==0
+   end
+      
+   not_empty result(res)
+   ! Return true if the buffer string contains at least one item
+      BIN :: res
+      res = .n_items>0
+   end
+
+end

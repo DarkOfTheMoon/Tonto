@@ -1,0 +1,574 @@
+! $Id$
+!---------------------------------------------------------------------------
+!
+!  SCFDATA: Store SCF data and deal with iteration control ......
+!
+!  (c) Daniel Grimwood, 1998
+!
+!---------------------------------------------------------------------------
+module SCFDATA
+
+   use TYPES
+   use ERROR
+   use MM
+   use STR
+   use INPUT
+   use OUTPUT
+   use VECDIIS
+
+   implicit none
+
+#  include "macros"
+#  include "scfdata.int"
+
+!  type scfdata_type
+!    STR :: kind
+!    STR :: initial_guess
+!    DBL :: nuclear_energy
+!    DBL :: energy
+!    DBL :: old_energy
+!    DBL :: difference
+!    DBL :: convergence
+!    INT :: iteration, lambda_iteration
+!    INT :: max_iterations
+!    INT :: damp_finish
+!    DBL :: damp_factor
+!    DBL :: lambda, lambda_max, lambda_step
+!    DBL :: chi2, old_chi2, gof, r_factor, weighted_r_factor
+!    BIN :: direct
+!    BIN :: using_diis
+!    BIN :: output
+!    BIN :: NDDO         ! Neglect of diatomic differential overlap
+!    DBL :: level_shift
+!    VECDIIS :: diis     ! For fock matrix diis extrapolation
+!  end
+
+  INT, parameter, private :: lambda_width = 8, lambda_precision = 3
+  INT, parameter, private :: chi2_width = 10, chi2_precision = 3
+  OUTPUT, PTR, private :: out => NULL()
+
+contains
+
+!  *******************
+!  Allocation routines
+!  *******************
+
+  create
+  ! Create space for an SCF type
+    PTR :: self
+    nullify(self)
+    allocate(self)
+    std_mm.add(SCFDATA_SIZE)
+    .nullify_ptr_part
+    .set_default
+  end
+
+  destroy
+  ! Destroy space for an SCF type
+    PTR :: self
+    if (.destroyed) return
+    .destroy_ptr_part
+    std_mm.delete(SCFDATA_SIZE)
+    deallocate(self)
+  end
+
+   created result(res)
+   ! Returns true if self has been created
+      PTR :: self
+      BIN :: res
+      res = associated(self)
+   end
+
+   destroyed result(res)
+   ! Returns true if self has *not* been created
+      PTR :: self
+      BIN :: res
+      res = NOT associated(self)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of self
+      .diis.nullify_ptr_part
+   end
+
+   destroy_ptr_part
+   ! Destroy the pointer parts of self
+      .diis.destroy_ptr_part
+   end
+
+   delete_diis_archives
+   ! Delete the DIIS archives on disk
+     if (.using_diis) .diis.delete_archives
+   end
+
+   cleanup_diis
+   ! Delete the DIIS archives on disk, and restore the DIIS object so it can be reused.
+   ! Does not go back to the default DIIS parameters.
+     if (.using_diis) .diis.cleanup
+   end
+
+!  ************
+!  Set routines
+!  ************
+ 
+  set_default
+  ! Set default SCF data 
+    .kind               = ""     ! Purposely set blank so that diis comes afterwards
+    .initial_guess      = "core"
+    .energy             = ZERO
+    .nuclear_energy     = ZERO
+    .kinetic_energy     = ZERO
+    .old_energy         = ZERO
+    .difference         = ZERO
+    .convergence        = 0.000001d0
+    .iteration          = 0
+    .max_iterations     = 100
+    .damp_finish        = DIIS_START
+    .damp_factor        = 0.5d0
+    .direct             = FALSE
+    .lambda             = 0
+    .lambda_max         = 0
+    .lambda_step        = 1
+    .lambda_iteration   = 0
+    .chi2               = ZERO
+    .gof                = ZERO
+    .r_factor           = ZERO
+    .weighted_r_factor  = ZERO
+    .direct             = FALSE
+    .using_diis         = TRUE
+    .output             = TRUE
+    .NDDO               = FALSE
+    .level_shift        = 0.3d0
+    .diis.set_default
+  end
+ 
+  set(nuclear_energy,put_file)
+  ! Set the values which are not expected to change.
+    DBL, IN, optional :: nuclear_energy
+    OUTPUT, optional :: put_file
+    if (present(nuclear_energy))    .nuclear_energy = nuclear_energy
+    if (present(put_file))          .set_put_file(put_file)
+  end
+
+  reset(energy,kinetic_energy,chi2,gof,r_factor,weighted_r_factor)
+  ! Reset SCF energy and iteration data , but don't change 
+  ! nuclear_energy, convergence, direct, or max_it options
+     DBL, IN, optional :: energy,kinetic_energy
+     DBL, IN, optional :: chi2,gof,r_factor,weighted_r_factor
+    .energy             = ZERO
+    .kinetic_energy     = ZERO
+    .old_energy         = ZERO
+    .difference         = ZERO
+    .iteration          = 0
+    .chi2               = ZERO
+    .gof                = ZERO
+    .r_factor           = ZERO
+    .weighted_r_factor  = ZERO
+
+    if (present(energy))            .update_energy(energy)
+    if (present(kinetic_energy))    .kinetic_energy = kinetic_energy 
+    if (present(chi2))              .update_chi2(chi2)
+    if (present(gof))               .gof = gof
+    if (present(r_factor))          .r_factor = r_factor
+    if (present(weighted_r_factor)) .weighted_r_factor = weighted_r_factor
+  end
+
+  update_lambda
+  ! Increments lambda by lambda_step
+    .lambda = .lambda + .lambda_step
+    .lambda_iteration = .lambda_iteration + 1
+    .iteration      = 0
+  end
+
+  update(energy,kinetic_energy,chi2,gof,r_factor,weighted_r_factor)
+  ! Update the SCF energy and/or chi2 and incement iteration.
+    DBL, IN, optional :: energy,kinetic_energy
+    DBL, IN, optional :: chi2,gof,r_factor,weighted_r_factor
+    if (present(energy))            .update_energy(energy)
+    if (present(kinetic_energy))    .kinetic_energy = kinetic_energy 
+    if (present(chi2))              .update_chi2(chi2)
+    if (present(gof))               .gof = gof
+    if (present(r_factor))          .r_factor = r_factor
+    if (present(weighted_r_factor)) .weighted_r_factor = weighted_r_factor
+    .iteration = .iteration+1
+  end
+
+  update_energy(energy)
+  ! Update the current SCF energy and increment iteration.
+  ! Put the results to the output file
+    DBL, IN :: energy
+    .old_energy = .energy
+    .energy = energy 
+    .difference = .energy - .old_energy
+  end
+
+
+  update_chi2(chi2)
+  ! Update the current chi2.
+    DBL, IN :: chi2
+    .old_chi2 = .chi2
+    .chi2 = chi2
+  end
+
+  set_initial_energy(energy)
+  ! Set the current SCF energy
+    DBL, IN :: energy
+    .old_energy = .energy
+    .energy = energy
+    .difference = .energy - .old_energy
+  end
+
+  set_put_file(putfile)
+  ! Set the file "putfile" where to send the output.
+    OUTPUT, target :: putfile
+    out => putfile
+  end
+
+   spinorbital_kind(scf_kind) result(res)
+   ! Return the kind of spinorbitals used in a particular "scf_kind"
+   ! (i.e. for the fock_matrix and density_matrix, but not neccesarily the mo's)
+      STR(*), optional :: scf_kind
+      STR :: res
+      STR :: kind
+      kind = .kind
+      if (present(scf_kind)) kind = scf_kind 
+      select case (kind)
+         case("rhf","restricted_hartree_fock");             res = "restricted"
+         case("rohf","restricted_open_shell_hartree_fock"); res = "unrestricted"
+         case("uhf","unrestricted_hartree_fock");           res = "unrestricted"
+         case("ghf","general_hartree_fock");                res = "general"
+         case("rchf","restricted_complex_hartree_fock");    res = "restricted_complex"
+         case("uchf","unrestricted_complex_hartree_fock");  res = "unrestricted_complex"
+         case("gchf","general_complex_hartree_fock");       res = "general_complex"
+         case("xray_rhf","xray_constrained_restricted_hartree_fock");  res = "restricted"
+         case("xray_fit","xray_constrained");               res = "restricted"
+         case default; DIE("unknown scf kind")
+      end
+   end
+
+   molecular_orbital_kind(scf_kind) result(res)
+   ! Return the kind of spinorbitals used for the molecular orbitals in a
+   ! particular "scf_kind"
+      STR(*), optional :: scf_kind
+      STR :: res
+      STR :: kind
+      kind = .kind
+      if (present(scf_kind)) kind = scf_kind 
+      select case (kind)
+         case("rhf","restricted_hartree_fock");             res = "restricted"
+         case("rohf","restricted_open_shell_hartree_fock"); res = "restricted"
+         case("uhf","unrestricted_hartree_fock");           res = "unrestricted"
+         case("ghf","general_hartree_fock");                res = "general"
+         case("rchf","restricted_complex_hartree_fock");    res = "restricted_complex"
+         case("uchf","unrestricted_complex_hartree_fock");  res = "unrestricted_complex"
+         case("gchf","general_complex_hartree_fock");       res = "general_complex"
+         case("xray_rhf","xray_constrained_restricted_hartree_fock"); res = "restricted"
+         case("xray_fit","xray_constrained");               res = "restricted"
+         case default; DIE("unknown scf kind")
+      end
+   end
+
+   number_kind result(res)
+   ! Return the kind of numbers used for a particular "kind"
+      STR :: res
+      select case (.kind)
+         case("rhf","rohf","uhf","ghf");              res = "real"
+         case("rchf","uchf","gchf");                  res = "complex"
+         case("restricted_hartree_fock");             res = "real"
+         case("restricted_open_shell_hartree_fock");  res = "real"
+         case("unrestricted_hartree_fock");           res = "real"
+         case("general_hartree_fock");                res = "real"
+         case("restricted_complex_hartree_fock");     res = "complex"
+         case("unrestricted_complex_hartree_fock");   res = "complex"
+         case("general_complex_hartree_fock");        res = "complex"
+         case("xray_rhf","xray_constrained_restricted_hartree_fock");  res = "real"
+         case("xray_fit","xray_constrained");         res = "real"
+         case default; DIE("unknown scf kind")
+      end
+   end
+
+!  **************
+!  Input routines
+!  **************
+
+   read(in)
+      INPUT :: in
+      STR :: word
+      read_loop : do
+         in.read(word)
+         word.to_lower_case
+         select case (word)
+            case("end");             exit read_loop
+            case("kind");            in.read( .kind ) 
+            case("scf_kind");        in.read( .kind )
+            case("scf_type");        in.read( .kind )
+            case("guess");           in.read( .initial_guess )
+            case("initial_guess");   in.read( .initial_guess )
+            case("max_it");          in.read( .max_iterations )
+            case("max_iterations");  in.read( .max_iterations )
+            case("convergence");     in.read( .convergence )
+            case("direct");          .read_direct(in)
+            case("diis");            .read_diis(in)
+            case("diis_keep");       .read_diis_keep(in)
+            case("diis_start");      .read_diis_start(in)
+            case("damp_finish");     in.read( .damp_finish)
+            case("damp_factor");     in.read( .damp_factor)
+            case("initial_lambda");  in.read( .lambda )
+            case("lambda_max");      in.read( .lambda_max )
+            case("lambda_step");     in.read( .lambda_step )
+            case("level_shift");     in.read( .level_shift )
+            case("output");          in.read( .output )
+            case("nddo");            in.read( .NDDO )
+            case default;            DIE("unknown keyword, " // word.trim)
+         end 
+      end do read_loop
+      ENSURE(.kind/="","no scf kind specified")
+   end
+ 
+   read_direct(in)
+   ! Set whether to use the disk in calculations
+     INPUT :: in
+     STR :: word
+     in.read( word )
+     word.to_lower_case
+     select case ( word.trim )
+       case ("on");    .direct = TRUE
+       case ("off");   .direct = FALSE
+       case ("true");  .direct = TRUE
+       case ("false"); .direct = FALSE
+       case default;   DIE("unknown direct option, " // word.trim)
+     end
+   end
+ 
+   read_diis(in)
+   ! Set whether to use the diis in calculations
+     INPUT :: in
+     STR :: word
+     in.read( word )
+     word.to_lower_case
+     select case ( word.trim )
+       case ("on");    .using_diis = TRUE
+       case ("off");   .using_diis = FALSE
+       case ("true");  .using_diis = TRUE
+       case ("false"); .using_diis = FALSE
+       case default;   DIE("unknown diis option, " // word.trim)
+     end
+   end
+
+   read_diis_keep(in)
+   ! Set the value of the number of diis vectors to keep
+     INPUT :: in
+     INT :: keep
+     in.read( keep )
+     .using_diis = TRUE
+     .diis.set_keep(keep)
+   end
+
+   read_diis_start(in)
+   ! Set the value of the starting iteration for the DIIS extrapolation
+     INPUT :: in
+     INT :: start
+     in.read( start )
+     .using_diis = TRUE
+     .diis.set_start(start)
+   end
+
+!  *****
+!  Tests
+!  *****
+
+   scf_done result(res)
+   ! Return TRUE if the scf procedure is done
+      BIN :: res
+      res = .converged OR .exceeded_max_it
+   end
+
+   converged result(res)
+   ! Return TRUE if the SCFDATA appears to be converged
+      BIN :: res
+      if (.want_energy) then
+        res = abs(.difference) < .convergence
+      else
+        res = abs( .chi2 - .old_chi2 ) < .convergence
+      end
+      res = res AND (.iteration > 1)
+      res = res AND (.diis_error < sqrt( .convergence ))
+   end
+
+   diis_error result(res)
+   ! Return a numerical measure of the diis error
+      DBL :: res
+      if (.diis_used) then; res = .diis%error_length
+      else;                 res = ZERO
+      end
+   end
+
+   exceeded_max_it result(res)
+   ! Return TRUE if the SCFDATA has exceeded the maximum iterations
+      BIN :: res
+      res = .iteration >= .max_iterations
+   end
+
+   exceeded_lambda_max result(res)
+   ! Return TRUE if the SCFDATA has exceeded the maximum lambda
+      BIN :: res
+      res = .lambda >= 0.9999d0 * .lambda_max  ! 0.9999 because they are reals.
+   end
+
+   diis_used result(res)
+   ! Return TRUE if DIIS extrapolation has been used
+      BIN :: res
+      if (NOT .using_diis) then; res = FALSE
+      else;                      res = (.iteration > .diis%start)
+      end
+   end
+
+   no_diis_extrapolation result(res)
+   ! Return TRUE if no DIIS extrapolation is to be used
+      BIN :: res
+      if (NOT .using_diis) then; res = TRUE
+      else;                      res = (.iteration < .diis%start)
+      end
+   end
+
+   use_damping result(res)
+   ! Return TRUE if density matrix damping is to be used
+      BIN :: res
+      res = FALSE
+      if (.iteration <= .damp_finish) res = TRUE
+   end
+
+  fitting result(res)
+  ! Return true if we are fitting the wavefunction.
+    BIN :: res
+    select case (.kind)
+      case("xray_rhf","xray_constrained_restricted_hartree_fock");   res = TRUE
+      case("xray_fit","xray_constrained");                           res = TRUE
+      case default;                                                  res = FALSE
+    end
+  end
+
+  want_energy result(res)
+  ! Return true if we don't want to know the energy.
+    BIN :: res
+    select case (.kind)
+      case("xray_fit","xray_constrained");                           res = FALSE
+      case default;                                                  res = TRUE
+    end
+  end
+
+!  ***************
+!  Output routines
+!  ***************
+
+  put_results
+  ! Print out the results for the current iteration
+    INT :: fields
+    if (NOT .output) return
+    if (.iteration == 1 AND .lambda_iteration < 1) .put_banner
+    out.put(.iteration)
+    fields = 0
+    if (.fitting) then
+      fields = fields + 2
+      out.put(.lambda)
+      out.put(.chi2)
+    end
+    if (.want_energy) then
+      fields = fields + 2
+      out.put(.energy)
+      out.put(.difference)
+    end
+    if (.using_diis) then
+      fields = fields + 1
+      if (.diis_used) then
+        out.put(.diis_error)
+      else
+        out.put("-")
+      end
+    end
+    out.flush
+    if (.scf_done) then
+       out.dash(dbl_fields=fields,int_fields=1)
+       if (.converged) then; out.text("* * * SCF has converged * * *",flush=1)
+       else;                 out.text("* * * SCF has not converged * * *",flush=1)
+       end
+       out.dash(dbl_fields=fields,int_fields=1)
+       .put_energy
+       .put_kinetic_energy
+       if (.fitting) .put_crystal
+       out.dash(dbl_fields=fields,int_fields=1)
+    end
+  end
+
+  put_summary
+  ! Prints out a summary of what is stored in the scfdata object.
+    out.show("SCF kind                 = ", .kind)
+    out.show("Initial guess            = ", .initial_guess)
+    out.show("Nuclear Energy           = ", .nuclear_energy)
+    .put_energy
+    .put_kinetic_energy
+    out.show("Convergence              = ", .convergence)
+    out.show("Maximum iterations       = ", .max_iterations,dbl_width=TRUE)
+    out.show("Direct                   = ", .direct,dbl_width=TRUE)
+    out.show("Level Shift              = ", .level_shift)
+    out.show("Damping quits at         = ", .damp_finish,dbl_width=TRUE)
+    out.show("Using DIIS               = ", .using_diis,dbl_width=TRUE)
+    if (.using_diis) .diis.put(out)  
+    if (.fitting) then
+      out.show("lambda fitting parameter =", .lambda)
+      out.show("lambda max               =", .lambda_max)
+      out.show("lambda step              =", .lambda_step)
+      .put_crystal
+    end
+    out.flush
+  end
+
+  put_banner
+  ! Prints out the nuclear energy and initial guess energy.
+    INT :: fields
+    if (NOT .output) return
+    out.flush
+    out.text("***************")
+    out.text("SCF calculation")
+    out.text("***************")
+    out.flush
+    .put_summary
+
+    fields = 0
+    if (.fitting)     fields = fields + 2
+    if (.want_energy) fields = fields + 2
+    if (.using_diis)  fields = fields + 1
+    out.dash(dbl_fields=fields,int_fields=1)
+    out.put("Iter",int_width=TRUE)
+    if (.fitting) then
+      out.put("lambda")
+      out.put("chi2")
+    end
+    if (.want_energy) then
+      out.put("Energy")
+      out.put("Difference")
+    end
+    if (.using_diis) out.put("DIIS Error")
+    out.flush
+    out.dash(dbl_fields=fields,int_fields=1)
+  end
+
+  put_energy
+  ! Prints out the SCF energy.
+    out.show("SCF Energy               = ", .energy)
+  end
+
+  put_kinetic_energy
+  ! Prints out the kinetic energy.
+    out.show("Kinetic Energy           = ", .kinetic_energy)
+  end
+
+  put_crystal
+  ! Prints out the SCF energy.
+    out.show("Chi^2                    = ", .chi2)
+    out.show("Goodness of fit          = ", .gof)
+    out.show("R factor                 = ", .r_factor)
+    out.show("Weighted R factor        = ", .weighted_r_factor)
+  end
+
+end 
