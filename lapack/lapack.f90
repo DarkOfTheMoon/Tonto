@@ -6346,7 +6346,8 @@
 !     June 30, 1999
 !
 !     .. Scalar Arguments ..
-      CHARACTER*( * )    NAME, OPTS
+!      CHARACTER*( * )    NAME, OPTS
+      CHARACTER(len=*)    NAME, OPTS
       INTEGER            ISPEC, N1, N2, N3, N4
 !     ..
 !
@@ -6446,14 +6447,10 @@
 !     ..
 !     .. Executable Statements ..
 !
-      GO TO ( 100, 100, 100, 400, 500, 600, 700 ) ISPEC
-!
-!     Invalid value for ISPEC
-!
-      ILAENV = -1
-      RETURN
-!
-  100 CONTINUE
+!      GO TO ( 100, 100, 100, 400, 500, 600, 700 ) ISPEC
+      select case (ISPEC)
+      case (1,2,3)
+!  100 CONTINUE
 !
 !     Convert NAME to upper case if the first character is lower case.
 !
@@ -6511,9 +6508,11 @@
       C3 = SUBNAM( 4:6 )
       C4 = C3( 2:3 )
 !
-      GO TO ( 110, 200, 300 ) ISPEC
+!      GO TO ( 110, 200, 300 ) ISPEC
+      select case (ISPEC)
 !
-  110 CONTINUE
+!  110 CONTINUE
+      case (1)
 !
 !     ISPEC = 1:  block size
 !
@@ -6668,7 +6667,8 @@
       ILAENV = NB
       RETURN
 !
-  200 CONTINUE
+      case (2)
+!  200 CONTINUE
 !
 !     ISPEC = 2:  minimum block size
 !
@@ -6745,7 +6745,8 @@
       ILAENV = NBMIN
       RETURN
 !
-  300 CONTINUE
+      case (3)
+!  300 CONTINUE
 !
 !     ISPEC = 3:  crossover point
 !
@@ -6797,34 +6798,47 @@
       END IF
       ILAENV = NX
       RETURN
+      end select
 !
-  400 CONTINUE
+      case (4)
+!  400 CONTINUE
 !
 !     ISPEC = 4:  number of shifts (used by xHSEQR)
 !
       ILAENV = 6
       RETURN
 !
-  500 CONTINUE
+      case (5)
+!  500 CONTINUE
 !
 !     ISPEC = 5:  minimum column dimension (not used)
 !
       ILAENV = 2
       RETURN
 !
-  600 CONTINUE 
+      case (6)
+!  600 CONTINUE 
 !
 !     ISPEC = 6:  crossover point for SVD (used by xGELSS and xGESVD)
 !
       ILAENV = INT( REAL( MIN( N1, N2 ) )*1.6E0 )
       RETURN
 !
-  700 CONTINUE
+      case (7)
+!  700 CONTINUE
 !
 !     ISPEC = 7:  number of processors (not used)
 !
       ILAENV = 1
       RETURN
+      case default
+!
+!     Invalid value for ISPEC
+!
+      ILAENV = -1
+      RETURN
+!
+      end select
 !
 !     End of ILAENV
 !
