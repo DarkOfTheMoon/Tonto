@@ -23,6 +23,7 @@
 # Don't forget to write the routine at the bottom of the script.
 my (%platform_array);
 %platform_array = (
+  "ABSOFT-f95-on-DARWIN"   =>  ABSOFT_f95_on_DARWIN,
   "ABSOFT-f95-on-LINUX"    =>  ABSOFT_f95_on_LINUX,
   "COMPAQ-f90-on-OSF1"     =>  COMPAQ_f90_on_OSF1,
   "COMPAQ-f95-on-OSF1"     =>  COMPAQ_f95_on_OSF1,
@@ -90,9 +91,6 @@ $size1 = (stat($file1))[7];
 $size2 = (stat($file2))[7];
 ($size1 == $size2) or exit 1;
 
-open(FILE1,$file1) or die "Cannot open $file1\n";
-open(FILE2,$file2) or die "Cannot open $file2\n";
-
 #*******************************************************************************
 # In this bit, we farm out to various routines to set an array of file offsets
 # where differences between the files are to be ignored.  Then do the
@@ -102,6 +100,12 @@ if (defined $fc) {
   $routine = $platform_array{$fc};
   defined ($routine) && &$routine; # call the corresponding subroutine to $fc
 }
+
+open(FILE1,$file1) or die "Cannot open $file1\n";
+open(FILE2,$file2) or die "Cannot open $file2\n";
+binmode(FILE1);
+binmode(FILE2);
+
 $result = &do_compare();  # do the actual comparison
 close(FILE2);
 close(FILE1);
@@ -110,8 +114,8 @@ exit $result;
 #*******************************************************************************
 # Now for the subroutines.
 #*******************************************************************************
-$i = 0;
 sub do_compare {
+  $i = 0;
   while ((! eof FILE1) && (! eof FILE2)) {
     $i++;
     if (getc(FILE1) ne getc(FILE2)) {
@@ -174,11 +178,20 @@ sub IBM_xlf90_on_AIX {
 }
 
 sub INTEL_ifc_on_LINUX {
-# version 7.  Offsets start from end of file.
-  @reverse = (5,6,7,8,9,10,51,52,53,54,55,56,57,58);
-  foreach $i (@reverse) {
-    push @skip_array,$size1-$i+1;
+# version 7.1.  For version 08.00.00 if their module file format, ignore the
+# last record of the file, where the record separator is chr(0).
+  my $lastreclength = 0;
+  open(FILE1,$file1) or die "Cannot open $file1\n";
+  binmode(FILE1);
+  local $/ = chr(0);
+  while (<FILE1>) {
+    $lastreclength = length($_);
   }
+  close(FILE1);
+  for ($j=0; $j<$lastreclength; $j++) {
+    push @skip_array,$size1-$j;
+  }
+  return 0;
 }
 
 sub LAHEY_lf95_on_LINUX {
@@ -199,6 +212,10 @@ sub WORKSHOP_f95_on_SUNOS {
 
 
 sub ABSOFT_f95_on_LINUX {
+# don't skip anything.
+}
+
+sub ABSOFT_f95_on_DARWIN {
 # don't skip anything.
 }
 
