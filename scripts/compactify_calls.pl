@@ -21,13 +21,15 @@
 #                
 # Where : 
 #   
-#    -caller module       means that "module" is the name of a file containing 
-#                         the calling routines or program.
+#    -caller module.rcf       means that "module.rcf" is the name of the routine
+#                             call file (.rcf file) whose corresponding module \
+#                             contains the calling routines or program.
 #
-#    -called module1 ...  means the list of modules which are called by the
-#                         caller module
+#    -called module1.rcf ...  means the list of modules which are called by the
+#                             caller module
 #
-#    All modules "module", "module1", ... must end in the .foo file extension.
+#    All modules "module.rcf", "module1.rcf", ... must end in the .rcf file 
+#    extension. Such .rcf files are made by the foo.pl script.
 #
 # (c) Dylan Jayatilaka, University of Western Australia, 2004.
 #
@@ -94,6 +96,7 @@ my $routine;
 my $module;
 my $called_routine;
 my $called_module;
+my $indent = '';
 
 foreach $foofile (@all_files) {
 
@@ -127,6 +130,8 @@ foreach $foofile (@all_files) {
    # Append to the list of module names.
 
    $module = uc($head_name);
+   next if (defined $module{$module});
+   print "Module $module:";
 
    # Read in all the routines and their calls.
 
@@ -145,7 +150,7 @@ foreach $foofile (@all_files) {
 
        if (@item==1) {
           $routine = $item[0];
-          print "found call to \"$routine\" in \"$module\"\n";
+          print "   Found routine \"$routine\":\n";
           if (! defined $module{$module}{$routine}) {
              %{$module{$module}{$routine}} = ();
           }
@@ -156,7 +161,7 @@ foreach $foofile (@all_files) {
           }
           $called_module  = $item[0];
           $called_routine = $item[1];
-          print "found call to \"$called_routine\" in \"$called_module\" from \"$routine\" in \"$module\"\n";
+          print "      Found call to \"$called_module:$called_routine\"\n";
           push(@{$module{$module}{$routine}{$called_module}},$called_routine);
        }
    }
@@ -168,15 +173,15 @@ foreach $foofile (@all_files) {
 # Loop over the caller routines, and get called routines
 
 print "\n";
-print "caller file   is \"$caller_file\"\n";
-print "caller module is \"$caller_module\"\n";
+print "Caller file   is \"$caller_file\"\n";
+print "Caller module is \"$caller_module\"\n";
 print "\n";
 
 my @called_routine;
 my %call_list = ();
 
 foreach $routine (keys %{$module{$caller_module}}) {
- # print "routine = $routine\n";
+   print "$caller_module:$routine\n";
    foreach $called_module (keys %{$module{$caller_module}{$routine}}) {
       @called_routine = @{$module{$caller_module}{$routine}{$called_module}};
  # print "called_module = $called_module\n";
@@ -205,14 +210,16 @@ sub add_calls_from {
 
    my $called_module = shift;
    my @called_routine = @_;
- 
-   print "$called_module: ";
-   print "@called_routine\n";
+
+   my $indent_keep = $indent;
+   $indent = $indent.'   ';
  
    my $routine;
    my $module_call;
  
    foreach $routine (@called_routine) {
+
+      print "$indent$called_module:$routine\n";
 
       if (! defined $call_list{$called_module}{$routine}) {
 
@@ -233,4 +240,6 @@ sub add_calls_from {
       }
 
    }
+
+   $indent = $indent_keep;
 }

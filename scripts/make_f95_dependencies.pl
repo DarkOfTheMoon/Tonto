@@ -30,7 +30,8 @@
 # "use" statements.  This is probably a good idea if you use modules supplied by
 # your compiler vendor and you don't want to tell "make" to go searching system
 # directories for them.  By default, "service_routines" is not output in
-# dependency lists (this comes with Lahey's LF95).
+# dependency lists (this comes with Lahey's LF95). By default, only "use"
+# statements which are in lower case are included in the dependency list.
 
 #*******************************************************************************
 # Usage :
@@ -350,7 +351,7 @@ sub get_includes {
        close(INC);
        push(@incs, $inchead . $inc);
     }
-    $line =~ /^\s*use\s+(\w+)/io &&
+    $line =~ /^\s*use\s+(\w+)/o &&       # only lower case "use" statements are included
             do {push(@modules, &$ModCase("$1"))};
     $line =~ /^\s*module\s+(\w+)/io && 
             do {push(@moddefs, &$ModCase("$1")) if not (lc($1) eq "procedure")};

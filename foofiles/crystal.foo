@@ -274,9 +274,10 @@ contains
         case ("destroy_spacegroup         "); .spacegroup.destroy_ptr_part
         case ("junk=                      "); .read_junk
         case ("kind=                      "); .read_kind
-        case ("xray_data=                 "); .read_xray_data
+        case ("merge_equivalents          "); .merge_equivalents
         case ("pnd_data=                  "); .read_pnd_data
         case ("prune_asymmetric_unit=     "); .read_prune_asymmetric_unit
+        case ("prune_bad_sigmas           "); .prune_bad_sigmas
         case ("put                        "); .put
         case ("read_cif                   "); .read_CIF
         case ("redirect                   "); .redirect
@@ -285,6 +286,7 @@ contains
         case ("spacegroup=                "); .read_spacegroup
         case ("unitcell=                  "); .read_unitcell
         case ("units=                     "); .read_units
+        case ("xray_data=                 "); .read_xray_data
         case default;                       UNKNOWN(word)
       end
    end
@@ -336,6 +338,7 @@ contains
       .xray_data.read_keywords
       .xray_data.update
       .assign_xray
+      .prune_negative_F_exp
    end
 
    read_pnd_data ::: leaky
@@ -1775,6 +1778,154 @@ contains
                       matmul(transpose(.spacegroup.seitz(1:3,1:3,i)), &
                              transpose(.unitcell.direct_matrix)))
       end
+   end
+
+!  *******************************************
+!  No. of unique reflections, pruning, merging
+!  *******************************************
+
+   n_equivalent_reflections result(res) 
+   ! The number of symmetry equivalent reflections, acording to the spacegroup.
+   ! Friedel pairs are counted as equivalent.
+     self :: IN
+     res :: INT
+   ENSURE(.data.created,"no diffraction data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     i,j,g :: INT
+     p,q,r :: VEC{INT}(3)
+     same :: BIN
+     res = 1
+     do i = 2,.data.reflections.n_refl
+        p(1) = .data.reflections(i).h 
+        p(2) = .data.reflections(i).k 
+        p(3) = .data.reflections(i).l 
+        main: do g = 1,.spacegroup.n_seitz
+           do j = 1,i-1
+              q(1) = .data.reflections(j).h 
+              q(2) = .data.reflections(j).k 
+              q(3) = .data.reflections(j).l 
+              r = nint(matmul(.spacegroup.seitz(1:3,1:3,g),q),kind=INT_KIND)
+              same = p.same_as(r) OR p.same_as(-r)
+              if (NOT same) cycle
+              exit main
+           end
+        end do main
+        if (NOT same) res = res + 1
+     end
+   end
+
+   make_list_of_equivalents(list,n_unique) ::: leaky
+   ! Make a list of the equivalent reflections. For each reflection i,
+   ! list(i).element gives the list of equivalent reflections. If
+   ! list(i).element has only one element and its index is less than i then we
+   ! know it is an equivalent, and this index is the index of its equivalent.
+     self :: IN
+     list :: VEC{VEC_{INT}}*
+     n_unique :: INT
+   ENSURE(.data.created,"no diffraction data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     i,j,g,n_refl :: INT
+     p,q,r :: VEC{INT}(3)
+     same :: BIN
+     n_refl = .data.reflections.n_refl
+     list.create(n_refl)
+     list(1).element.append(1)
+     n_unique = 1
+     do i = 2,n_refl
+        p(1) = .data.reflections(i).h 
+        p(2) = .data.reflections(i).k 
+        p(3) = .data.reflections(i).l 
+        main: do g = 1,.spacegroup.n_seitz
+           do j = 1,i-1
+              q(1) = .data.reflections(j).h 
+              q(2) = .data.reflections(j).k 
+              q(3) = .data.reflections(j).l 
+              r = nint(matmul(.spacegroup.seitz(1:3,1:3,g),q),kind=INT_KIND)
+              same = p.same_as(r) OR p.same_as(-r)
+              if (NOT same) cycle
+              exit main
+           end
+        end do main
+        if (same) then
+           list(j).element.append(i)
+           list(i).element.append(j)
+        else
+           n_unique = n_unique + 1
+           list(i).element.append(i)
+        end
+     end
+   end
+
+   merge_equivalents ::: leaky
+   ! This routine will merge this list of equivalents into a single reflections
+   ! with a particular sigma value associated with it. WARNING: it assumes that
+   ! there are a sufficient number of equivalents so that the sigma value can be
+   ! calculated by the standard formula for the standard deviation.
+   ENSURE(.data.created,"no diffraction data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     list :: VEC{VEC_{INT}}*
+     reflections :: VEC{REFLECTION}*
+     n_unique,n_refl,n,i :: INT
+     n_refl = .data.reflections.n_refl
+     .make_list_of_equivalents(list,n_unique)
+     reflections.create(n_unique)
+     n = 0
+     do i = 1,n_refl
+        if (list(i)[1]<i) cycle
+        n = n + 1
+     stdout.show("merged      = ",n)
+     stdout.show("first       = ",i)
+     stdout.show("equivalents =",list(i)[:])
+        reflections(n) = .data.reflections(i)
+        reflections(n).F_exp   = .data.reflections(list(i)[:]).F_exp.mean
+        reflections(n).F_sigma = .data.reflections(list(i)[:]).F_exp.standard_deviation
+     stdout.show("F_exp's      = ",.data.reflections(list(i)[:]).F_exp)
+     stdout.show("new F_exp    = ",reflections(n).F_exp)
+     stdout.show("new F_sigma  = ",reflections(n).F_sigma)
+     end
+     .data.reflections.destroy
+     .data.reflections => reflections
+     list.destroy
+   end
+
+   prune_bad_sigmas ::: leaky
+   ! This routine will prune away all reflections with sigmas not within a
+   ! certain limit.
+   ENSURE(.data.created,"no diffraction data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     low,high,val :: REAL
+     i,dim :: INT
+     i = 0
+     loop: do 
+        i = i + 1
+        dim = .data.reflections.dim
+        if (i>dim) exit
+        low  = .data.F_sigma_min 
+        high = .data.F_sigma_max
+        val  = .data.reflections(i).F_sigma
+        if (val>=low AND val<=high) cycle
+        .data.reflections(i:dim-1) = .data.reflections(i+1:dim)
+        .data.reflections.shrink(dim-1)
+     end do loop
+   end
+
+   prune_negative_F_exp ::: leaky
+   ! This routine will prune all negative F_exp values. (They are negative if
+   ! the original F2 ws negative).
+   ENSURE(.data.created,"no diffraction data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     val :: REAL
+     i,dim :: INT
+     i = 0
+     loop: do 
+        i = i + 1
+        dim = .data.reflections.dim
+        if (i>dim) exit
+        val  = .data.reflections(i).F_exp
+        if (val>=.data.F_exp_min) cycle
+        .data.reflections(i:dim-1) = .data.reflections(i+1:dim)
+        .data.reflections.shrink(dim-1)
+     end do loop
    end
 
 !  **************

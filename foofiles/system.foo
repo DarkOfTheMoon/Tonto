@@ -1,23 +1,59 @@
 !-------------------------------------------------------------------------------
 !
-! SYSTEM: Contains system level routines, including memory management and error
-! messages.  It allows for the graceful termination of a program.
+! SYSTEM: 
 !
-! An error status is simply an integer, the value is set to 1 if the program
-! terminates, or -1 if a warning condition is encountered.
+! This is the second most basic module in the Tonto system. It depends only on
+! the TYPES module.
 !
-! The memory part stores the total and maximum memory used (in bytes), and the
-! the total and maximum number of blocks of memory allocated.
-! A memory limit is also stored.  It is a fatal error to use more than the
+! The SYSTEM module contains all functions which are deemed to provided by the
+! "system" i.e. error messages, graceful error termination, memory management,
+! call stack management, I/O buffer tracking, timing and profiling, and parallel
+! message passing betwen processes -- including reduction, broadcast and
+! synchronisation. The latter prallel operations are completely inherited from
+! another stand-alone module, PARALLEL. Inheritance is implemented as text
+! inclusion, so there is no fortran dependence betwen the SYSTEM and PARALLEL
+! module.
+!
+! Most of the system functionalities are activated by C macros at compile-time.
+! So, you can turn them off to obtain a lean executable for production. You can
+! see all the macros, which call routines in this module, in the "macros" file.
+! The normal "make" process produces pure Fortran where all the C macros have
+! been expanded.
+!
+! An .error_status is simply an integer, the value is set to 1 if the program
+! terminates, or -1 if a warning condition is encountered. Use the
+! -DUSE_ERROR_MANAGEMENT macro at compile time. Use
+! -DUSE_PRE_AND_POST_CONDITIONS to turn on stricted error checking at the start
+! and sometimes at the end of every routine.
+!
+! The memory management part stores the total and maximum memory used (in
+! bytes), and the the total and maximum number of blocks of memory allocated.  A
+! memory limit is also stored.  It is a fatal error to use more than the
 ! allocated limit.
 !
-! The file part contains the file name and record number of the last acessed
-! file, in the event that this file should cause an error, the exact position
-! will be known.
+! The call stack management keeps track of the current call stack, which makes
+! tracking down errors easier. Use the -DUSE_CALL_STACK_MANAGEMENT macro to
+! activate memory management and call stack management together.
 !
-! A standard system object, "tonto", is provided to hold system information
-! in the current program. In most cases it should not be neccesary to
-! create any other system objects.
+! The I/O part contains the file name and record number of the last acessed
+! file, in the event that this file should cause an error, the exact position
+! will be known. This feature is always on, but you get more detailed feedback
+! if using call stack management.
+!
+! The timing part provides methods to profile and time routines in the program,
+! and to print out the results acording the the call stack level. This part is
+! currently limited by the clock size set by fortran, but it may be useful for
+! rudimentary profiling. This is activated by -DUSE_TIME_PROFILING.
+!
+! The parallel part keeps track of the number of processors, the processor rank,
+! and uses a model where only the rank 0 processor performs I/O. Currently the
+! implementation is tied to MPI, so activate using -DMPI. Appropriate MPI
+! libraries should be available, and supplied in the platform speicific file,
+! and you should also provide MPI.mod file.
+!
+! A standard system object, "tonto", is provided to hold all this system
+! information in the current program. It should not be neccesary to create any
+! other system objects (except for the stdin, stdou, and stdtim objects).
 !
 ! Copyright (C) Dylan Jayatilaka, 1998
 !
@@ -49,7 +85,7 @@ module SYSTEM
 #endif
 
 #ifdef MPI
-  use mpi
+  USE mpi
 #endif
 
    implicit none
@@ -67,7 +103,6 @@ module SYSTEM
 #define STOP_TIMER
 
    tonto :: SYSTEM, target, public, save
-   tonto_parallel :: PARALLEL, public, save
 
 contains
 
@@ -93,19 +128,17 @@ contains
       tonto.delete_memory(SELF_TYPE_SIZE)
    end
 
-!   created result(res)
-!   ! Returns true if self has been created
-!      self :: PTR
-!      res :: BIN
-!      res = associated(self)
-!   end
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
 
-!   destroyed result(res)
-!   ! Returns true if self has *not* been created
-!      self :: PTR
-!      res :: BIN
-!      res = NOT associated(self)
-!   end
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
 
    nullify_ptr_part
    ! Nullify the pointer parts of self
@@ -151,6 +184,7 @@ contains
    !  Initialise the system object and set defaults
       .nullify_ptr_part
       .set_defaults
+      .initialise
    end
 
    unit_conversion_factor result(res) ::: private
@@ -204,7 +238,7 @@ contains
    ! Set the error flag to 1 and terminate the program with a message
       message :: STR
       .error_status = 1
-      if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+      if (.IO_is_allowed) then
         write(.error_output_unit,*)
         write(.error_output_unit,"(a)") &
          "Error in routine "// trim(message) ! message should include the routine name via foo
@@ -214,7 +248,7 @@ contains
       .report_keyword_info
       .report_stack_info
 #ifdef MPI
-      call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
 #endif
       stop
    end
@@ -227,49 +261,6 @@ contains
       if (condition) .die(message)
    end
 
-   unknown(word,name,options)
-   ! Set the error flag to 1 and terminate the program with a message
-   ! "Unknown option". The list of known keywords is dumped.
-      word :: STR, IN
-      name :: STR, IN
-      options :: VEC{STR}, IN
-      .error_status = 1
-      if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
-        write(.error_output_unit,*)
-        write(.error_output_unit,"(a)") &
-        "Error in routine "// trim(name) // " ... unknown option " // trim(word)
-      end
-!      .report_stack_see_info
-      .report_io_file_info
-      .report_keyword_info(options)
-      .report_stack_info
-#ifdef MPI
-      call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
-#endif
-      stop
-   end
-
-   unknown(word,name)
-   ! Set the error flag to 1 and terminate the program with a message
-   ! "Unknown option". The list of known keywords is dumped.
-      word :: STR, IN
-      name :: STR, IN
-      .error_status = 1
-      if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
-        write(.error_output_unit,*)
-        write(.error_output_unit,"(a)") &
-        "Error in routine "// trim(name) // " ... unknown option " // trim(word)
-      end
-!      .report_stack_see_info
-      .report_io_file_info
-      if (associated(.known_keywords)) .report_keyword_info(.known_keywords)
-      .report_stack_info
-#ifdef MPI
-      call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
-#endif
-      stop
-   end
-
    warn(message,iostat,use_stack_name)
    ! Set the error flag to -1 and issue a warning message.
    ! If "use_stack_name" is present, the call stacl routine name is used
@@ -279,31 +270,31 @@ contains
       use_stack_name :: BIN, IN, optional
       name :: STR
       .error_status = -1
-      if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+      if (.IO_is_allowed) then
         write(.error_output_unit,*)
       end
       if (present(use_stack_name)) then
          if (associated(.call_stack)) then
             name = .call_stack(.stack_level)
-            if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+            if (.IO_is_allowed) then
               write(.error_output_unit,"(a)") &
               "Warning in routine "// trim(name) // " ... " // trim(message)
             end
          else
-            if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+            if (.IO_is_allowed) then
               write(.error_output_unit,"(a)") &
               "Warning: " // trim(message)
             end
          end
       else
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
            write(.error_output_unit,"(a)") &
            "Warning in routine "// trim(message) ! message should include the routine name
         end
       end
 !      .report_stack_see_info
       if (present(iostat)) then
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
            write(.error_output_unit,"(a,i4)") "Fortran error ",iostat
         end
       end
@@ -333,7 +324,7 @@ contains
       unit :: INT
       if (associated(.call_stack)) return
       unit = .error_output_unit
-      if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+      if (.IO_is_allowed) then
         write(unit,"(a)") " "
         write(unit,"(a)") "To see a routine call stack locating this error more precisely,"
         write(unit,"(a)") "try compiling with the USE_CALL_STACK_MANAGEMENT macro. See the"
@@ -341,9 +332,56 @@ contains
       end
    end
 
-!  *********************************************************
-!  Call stack management, memory reporting and leak checking
-!  *********************************************************
+!  ***********************************************************
+!  Unknown keywords: the preprocessor can define the "options"
+!  ***********************************************************
+
+   unknown(word,name,options)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! "Unknown option". The list of known keywords is dumped.
+      word :: STR, IN
+      name :: STR, IN
+      options :: VEC{STR}, IN
+      .error_status = 1
+      if (.IO_is_allowed) then
+        write(.error_output_unit,*)
+        write(.error_output_unit,"(a)") &
+        "Error in routine "// trim(name) // " ... unknown option " // trim(word)
+      end
+!      .report_stack_see_info
+      .report_io_file_info
+      .report_keyword_info(options)
+      .report_stack_info
+#ifdef MPI
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+      stop
+   end
+
+   unknown(word,name)
+   ! Set the error flag to 1 and terminate the program with a message
+   ! "Unknown option". The list of known keywords is dumped.
+      word :: STR, IN
+      name :: STR, IN
+      .error_status = 1
+      if (.IO_is_allowed) then
+        write(.error_output_unit,*)
+        write(.error_output_unit,"(a)") &
+        "Error in routine "// trim(name) // " ... unknown option " // trim(word)
+      end
+!      .report_stack_see_info
+      .report_io_file_info
+      if (associated(.known_keywords)) .report_keyword_info(.known_keywords)
+      .report_stack_info
+#ifdef MPI
+      call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
+#endif
+      stop
+   end
+
+!  ********************************
+!  Basic memory allocation tracking
+!  ********************************
 
    add_memory(used) ::: pure
    !  Add memory usage data to the memory manager
@@ -365,6 +403,10 @@ contains
       .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) - used
    end
 
+!  ************************************************************************
+!  Call stack management, per-call level memory reporting and leak checking
+!  ************************************************************************
+
    stack(routine_name)
    ! Add another level to the call stack. Placed at the start of every
    ! non-pure routine. (Pure routines may not have I/O which this has).
@@ -379,7 +421,7 @@ contains
         .call_stack(.stack_level) = "Unknown routine"
       end
       if (.show_call_stack) then
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
           write(.error_output_unit,"(a)") repeat("   ",.stack_level)//trim(routine_name)//" {"
         end
       end
@@ -403,7 +445,7 @@ contains
      l :: INT
      l = .stack_level
      if (l<=0) then
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
           write(.error_output_unit,*)
           write(.error_output_unit,"(a,I2)") &
           "Warning in routine SYSTEM:unstack ... stack level is not positive, ", l
@@ -411,7 +453,7 @@ contains
         .report_io_file_info
         .report_stack_info(full_report=TRUE)
 #ifdef MPI
-        call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
+        call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
 #endif
         stop
      else if (l>.max_stack_level) then
@@ -420,7 +462,7 @@ contains
         "Warning in routine SYSTEM:unstack ... stack level greater than max, ", &
         l,.max_stack_level
 #ifdef MPI
-        call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
+        call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
 #endif
         stop
      else
@@ -436,16 +478,16 @@ contains
         else if (show_call_stack) then
            routine_name = .call_stack(l)
            mem = .memory_used_stack(l)/.unit_conversion_factor
-           if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+           if (.IO_is_allowed) then
              write(memory,"(I9)") mem
            end
            if (mem==0) then
-             if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+             if (.IO_is_allowed) then
                write(.error_output_unit,"(a)") &
                 repeat("   ",l)//trim(routine_name)//" } "//adjustl(memory)
              end
            else
-             if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+             if (.IO_is_allowed) then
                write(.error_output_unit,"(a)") &
                 repeat("---",l)//trim(routine_name)//" } "//adjustl(memory)
              end
@@ -464,7 +506,7 @@ contains
    ! for levels less or equal to than the check_level, unstack produces a stack
    ! report).
       if (.stack_level<=0) then
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
           write(.error_output_unit,*)
           write(.error_output_unit,"(a,I2)") &
           "Warning in routine SYSTEM:check ... stack level is not positive, ", &
@@ -473,7 +515,7 @@ contains
         .report_io_file_info
         .report_stack_info(full_report=TRUE)
 #ifdef MPI
-        call MPI_ABORT(MPI_COMM_WORLD,.error_status,tonto_parallel.mpi_status)
+        call MPI_ABORT(MPI_COMM_WORLD,.error_status,.mpi_status)
 #endif
         stop
       end
@@ -576,7 +618,7 @@ contains
        unit = tonto.error_output_unit
        if (present(out)) unit = out.unit
        fac = .unit_conversion_factor
-       if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+       if (.IO_is_allowed) then
          write(unit,'(/"SYSTEM: Memory usage report:"/)')
          write(unit,'("Memory used                = ",i9," ",a6)') .memory_used/fac,.memory_units
          write(unit,'("Maximum memory used        = ",i9," ",a6)') .max_memory_used/fac,.memory_units
@@ -605,26 +647,26 @@ contains
        if (present(full_report)) full = full_report
        fac = .unit_conversion_factor
        if (.stack_level>0 AND associated(.call_stack)) then
-         if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+         if (.IO_is_allowed) then
            write(unit,*)
            write(unit,'(a)') "Routine call stack:"
            write(unit,*)
            write(unit,'("   Call   Routine name        ",a37)') "Memory Used"
          end
          do l = 1,.stack_level
-           if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+           if (.IO_is_allowed) then
              write(unit,'(3x,i3,".",3x,a48,i9)') &
                          l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
            end
          end
        end
        if (full AND .max_stack_level>.stack_level AND associated(.call_stack)) then
-           if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+           if (.IO_is_allowed) then
              write(unit, &
            '("   ----------------------------------------------------------------")')
            end
          do l = .stack_level+1,.max_stack_level
-           if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+           if (.IO_is_allowed) then
               write(unit,'(3x,i3,".",3x,a48,i9)') &
               l,adjustl(.call_stack(l)),.memory_used_stack(l)/fac
            end
@@ -643,13 +685,13 @@ contains
      unit = tonto.error_output_unit
      item_end = max(1,.io_file.buffer.item_end)
      if (item_end>0) cursor = repeat("-",item_end-1)//"^"
-     if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+     if (.IO_is_allowed) then
        write(unit,*)
        write(unit,'("File name   = ",a)')  trim(.io_file.name)
        write(unit,'("Line number = ",i4)') .io_file.record
        write(unit,'("File buffer = ",a)')  trim(.io_file.buffer.string)
      end
-     if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+     if (.IO_is_allowed) then
        if (item_end>0) then
          write(unit,'("Cursor -------",a)')  trim(cursor)
        end
@@ -664,7 +706,7 @@ contains
       unit :: INT
       unit = tonto.error_output_unit
       if (present(options)) then
-        if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+        if (.IO_is_allowed) then
           write(unit,*)
           write(unit,'("Allowed keyword options:")')
           write(unit,*)
@@ -675,6 +717,10 @@ contains
       end
       .flush_buffer
    end
+
+!  ******************************************************************
+!  Timing and profiling: is limited by fortrans poor clock resolution
+!  ******************************************************************
 
    start_timer(routine_name)
    ! Start timing routine "routine_name". Placed at the start of every routine
@@ -797,7 +843,7 @@ contains
      total_time,total :: REAL
      unit,i,j,n_routine :: INT
      if (.n_timed_routines == 0) return
-     if (tonto_parallel.rank > 0 AND tonto_parallel.do_parallel) return
+     if (.IO_is_allowed) return
      ! Process arguments ...
      unit = tonto.error_output_unit
      if (present(out)) unit = out.unit
@@ -855,7 +901,7 @@ contains
      else
        f_unit = tonto.error_output_unit
      end
-     if (tonto_parallel.rank == 0 OR (NOT tonto_parallel.do_parallel)) then
+     if (.IO_is_allowed) then
 #ifdef FLUSH
        call flush(f_unit)
 #endif
@@ -971,6 +1017,257 @@ contains
       deallocate(equal_indices); deallocate(equal)
       deallocate(small_indices); deallocate(small)
       deallocate(list)
+   end
+
+
+! *************************************
+! These are all inherited from PARALLEL
+! *************************************
+
+   initialise ::: get_from(PARALLEL)
+   ! Initialise the parallel environment.
+   end
+
+   finalise ::: get_from(PARALLEL)
+   ! Finalise the parallel environment.
+   end
+
+! Inquiry routines.
+
+   is_master_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return TRUE if this is the master processor. The index of the master
+   ! processor is normally 0.
+   end
+
+   master_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return the index of the master processor, which is normally 0.
+   end
+
+   this_processor result (res) ::: get_from(PARALLEL), pure
+   ! Return the index of this processor.  First index is zero!
+   end
+
+! Parallel do loops
+
+   parallel_do_start(first,stride) result (res) ::: get_from(PARALLEL), pure
+   ! Return the starting index to be used in a parallel do statement. The
+   ! "first" index and the loop "stride" can optionally be supplied, if they are
+   ! not equal to 1.  In this model, each processor skips through the whole
+   ! length of the loop.  This should be load balanced --- assuming there is no
+   ! systematic dependence in the work for each element of the loop which
+   ! depends on a multiple of the number of processors. See the "do_stride"
+   ! routine.
+   end
+
+   parallel_do_stride(stride) result (res) ::: get_from(PARALLEL), pure
+   ! Return the stride to be used in a parallel do statement.  The "stride"
+   ! length can be optionally supplied, if it is not 1.
+   end
+
+   do_in_parallel result (res) ::: get_from(PARALLEL), pure
+   ! Return TRUE if we are allowed to start to implement a given do-loop in
+   ! parallel. NOTE: Once you have parallelised a loop, remember to prevent
+   ! further parallelisation, using the ".lock_parallel_do" method. This is
+   ! typically used as the first statement after the parallel do loop is
+   ! entered.
+   end
+
+   lock_parallel_do(name) ::: get_from(PARALLEL)
+   ! Sets the parallel do-loop lock to the "name" of the locking routine.
+   ! Only the routine with the same "name" may unlock the loop. WARNING: This
+   ! assumes that the names of the routines are all distinct. NOTE: It is
+   ! currently an error if the routine is recursive, or if there are nested
+   ! parallel loops.
+   end
+
+   unlock_parallel_do(name) ::: get_from(PARALLEL)
+   ! Allow parallelisation again, if the name matches the original.
+   end
+
+! Summation routines.
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(vec) ::: get_from(PARALLEL, VEC_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "vec" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, MAT_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat) ::: get_from(PARALLEL, MAT_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors.
+   end
+
+   parallel_sum(mat,is_symmetric) ::: get_from(PARALLEL)
+   ! This routine adds the versions of "mat" from all processors, and gives the
+   ! result to all processors. If "is_symmetric" is TRUE, only the lower half of
+   ! the "mat" is summed; The upper triangle is forced to be the same as the
+   ! lower triangle.
+   end
+
+   compress_to_triangle(tr,mat) ::: get_from(PARALLEL)
+   ! Converts the lower triangle of matrix "mat" to the triangle "tr".
+   ! using row order.
+   end
+
+   uncompress_from_triangle(tr,mat) ::: get_from(PARALLEL)
+   ! Converts the triangle "tr" into the symmetric matrix "mat".
+   end
+
+! Broadcast variables to all processors.
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>STR, MPI_TYPE=>MPI_CHARACTER, LEN=>len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>BIN, MPI_TYPE=>MPI_LOGICAL, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>INT, MPI_TYPE=>MPI_INTEGER, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>REAL, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>CPX, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>1)
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>VEC{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT3{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT4{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{STR}, MPI_TYPE=>MPI_CHARACTER, LEN=>size(var)*len(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{BIN}, MPI_TYPE=>MPI_LOGICAL, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+!   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{INT}, MPI_TYPE=>MPI_INTEGER, LEN=>size(var))
+!   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+!   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{REAL}, MPI_TYPE=>MPI_DOUBLE_PRECISION, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   broadcast(var,processor) ::: get_from(PARALLEL, VAR_TYPE=>MAT5{CPX}, MPI_TYPE=>MPI_DOUBLE_COMPLEX, LEN=>size(var))
+   ! Broadcast variable "var" from processoressor "processor" to all the other processoressors.
+   end
+
+   IO_is_allowed result (res)
+   ! Return whether or not this processor is allowed to do the I/O operation.
+   ! Here, only the master processor does I/O in a parallel job.
+     res :: BIN
+     res = .is_master_processor OR (NOT .is_parallel)
+   end
+
+   synchronise_processors ::: get_from(PARALLEL)
+   ! Synchronise all processors at this point.
    end
 
 end
