@@ -278,6 +278,7 @@ sub show_options {
   print STDOUT "  --help                 Show this message and then exit.\n";
   print STDOUT "  --srcdir=DIR           The source files are in DIR.\n";
   print STDOUT "  --installdir=DIR       Compiled programs go into DIR.\n";
+  print STDOUT "  --fc=COMPILER          Set the fortran compiler command to COMPILER.\n";
   print STDOUT "  --show_defaults        Show default settings.\n";
 }
 
