@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #*******************************************************************************
-# This script compares two stdout files.
+# This script compares two Tonto output files.
 # It ignores predefined differences, such as date/time, version number, and
 # platform identifier.
 #
