@@ -149,6 +149,7 @@ contains
     BIN, optional :: direct,core,r12
     MAT, PTR :: J,K,P,F
     BIN :: do_direct,add_core,add_r12
+    ENSURE( .density_matrix%restricted.created, "no density matrix")
     .fock_matrix.destroy("restricted")
     do_direct= FALSE
     add_core = TRUE
@@ -181,6 +182,8 @@ contains
     BIN, optional :: direct,core,r12
     MAT, PTR :: J,Ka,Kb,P,Pa,Pb,Fa,Fb
     BIN :: do_direct,add_core,add_r12
+    ENSURE( .density_matrix%alpha.created, "no density matrix")
+    ENSURE( .density_matrix%beta.created, "no density matrix")
     .fock_matrix.destroy("unrestricted")
     do_direct= FALSE
     add_core = TRUE
@@ -223,6 +226,7 @@ contains
   ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
     MAT, PTR :: F,Fa,Fb,S,W
+    ENSURE( .molecular_orbitals%restricted.created, "no orbitals")
     .make_u_fock(direct,core,r12)
     .fock_matrix.destroy("restricted")
     .fock_matrix.create("restricted")
@@ -724,8 +728,6 @@ contains
     select case (.scfdata%kind)
       case ("xray_rhf","xray_constrained_restricted_hartree_fock")
         .constrained_scf_rhf
-      case ("xray_fit","xray_constrained")
-        .constrained_scf
       case default;
         .hf_scf
     end
@@ -741,8 +743,10 @@ contains
     ENSURE( .atom.basis_resolved, "no basis set")
     .get_initial_guess
     .make_fock_matrix
+
     .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
+
     kind = .scfdata.spinorbital_kind
     S.create( .n_bf, .n_bf)
     .get_overlap_matrix(S)
@@ -759,7 +763,6 @@ contains
       .scfdata.put_results
       if (.scfdata.scf_done) exit
     end
-!    .put_mos_and_energies
     .scfdata.cleanup_diis
     S.destroy
     .fock_matrix.destroy(kind)
@@ -1044,7 +1047,8 @@ contains
         case ("fock")
            .make_fock_guess
         case ("atom")
-           .make_atom_guess
+!           .make_atom_guess
+           .make_atom_density
         case("restricted","unrestricted","general", &
              "restricted_complex","unrestricted_complex","general_complex", &
              "complex_restricted","complex_unrestricted","complex_general")
@@ -1182,6 +1186,7 @@ contains
       end
       mol%atom.nullify_ptr_part ! do not destroy these
       nullify(mol%basis)        ! do not destroy this
+ mol.delete_integrals
       mol.destroy
     end
     .density_matrix.convert( .scfdata.spinorbital_kind,factor=HALF)
@@ -1490,6 +1495,14 @@ contains
     .get_initial_guess
     .make_fock_matrix
 
+    .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
+    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
+                   chi2=.xtal%chi2, gof=.xtal%gof, r_factor=.xtal%r_factor, &
+                   weighted_r_factor=.xtal%weighted_r_factor)
+
+    if ( NOT associated( .molecular_orbitals%restricted )) then
+      .make_fock_guess
+    end
     constraint.create( .n_bf, .n_bf)
     temp.create( .n_bf, .n_bf)
     S.create( .n_bf, .n_bf)
@@ -1502,19 +1515,8 @@ contains
     end
 
     .get_ft_ints
-
-    if (.optimise_thermals) then
-      .fit_thermal_parameters
-.put_thermal_tensors
-    else
-      .make_structure_factors
-      .xtal.update_scaled_gof_parameters
-    end
-
-    .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
-    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
-                   chi2=.xtal%chi2, gof=.xtal%gof, r_factor=.xtal%r_factor, &
-                   weighted_r_factor=.xtal%weighted_r_factor)
+    .make_structure_factors
+    .xtal.update_scaled_gof_parameters
 
     do
       .scfdata%diis.cleanup
@@ -1522,32 +1524,24 @@ contains
       do
         temp.to_product(MO,S,transpose_a=TRUE)
 
-        if (.scfdata%lambda >= ONE) then
-          .make_constraint(constraint,ONE)
-          .fock_matrix%restricted.change_basis(MO)
-          .fock_matrix%restricted(.n_a+1:,:.n_a).to_product( ONE/.scfdata%lambda )
-          .fock_matrix%restricted(:.n_a,.n_a+1:).to_product( ONE/.scfdata%lambda )
-          .fock_matrix%restricted.change_basis(temp)
-        else
-          .make_constraint(constraint, .scfdata%lambda)
-        end
+        .make_constraint(constraint, .scfdata%lambda)
 
         constraint.change_basis(MO)            ! Zero out the occ-occ and
         constraint(:.n_a, :.n_a) = ZERO        ! virtual-virtual blocks of the
         constraint(.n_a+1:, .n_a+1:) = ZERO    ! constraint matrix to improve
         constraint.change_basis(temp)          ! convergence.
-
         .fock_matrix%restricted = .fock_matrix%restricted + constraint
+
         .extrapolate_scf
         .update_molecular_orbitals
         MO.schmidt_orthonormalise(S)
-
         .make_scf_density_matrix
         .save_scf_results
         .make_fock_matrix                      ! To get new Hartree-Fock energy.
 
         if (.optimise_thermals) then
           .fit_thermal_parameters
+.put_thermal_tensors
         else
           .make_structure_factors
           .xtal.update_scaled_gof_parameters
@@ -1565,7 +1559,6 @@ contains
 
     .xtal.scale_Fc
     .xtal.put_reflection_data(.out)
-!    .put_mos_and_energies
 
     .scfdata%diis.delete_archives
     S.destroy
@@ -1616,87 +1609,6 @@ contains
 
     archive.close
     fac_times_alpha.destroy
-  end
-
-  constrained_scf [leaky]
-  ! Minimize the chi^2 only.
-  ! These are destroyed and made new:
-  !   .overlap_matrix, .core_matrix, .fock_matrix, 
-  ! The following objects are produced as results:
-  !   .molecular_orbitals, .orbital_energies, .density_matrix  
-  ! The following objects are deleted from memory after execution:
-  !   .overlap_matrix, .core_matrix, .fock_matrix
-    MAT, PTR :: MO,S
-    MAT, PTR :: constraint,temp
-    STR :: kind
-
-    ENSURE( .atom.created,  "no atom list")
-    ENSURE( .atom.basis_resolved, "no basis set")
-    DIE_IF(.mult/=1,"this is not a singlet state")
-
-    .get_initial_guess
-    .fock_matrix%restricted.create(.n_bf,.n_bf)
-    temp.create( .n_bf, .n_bf)
-    constraint.create( .n_bf, .n_bf)
-    S.create( .n_bf, .n_bf)
-    .get_overlap_matrix(S)
-    kind = .scfdata.spinorbital_kind
-    if (kind == "restricted") then
-      MO => .molecular_orbitals%restricted
-    else
-      DIE("can only do restricted calculations.")
-    end
-
-    .make_ft_ints
-    if (.optimise_thermals) .fit_thermal_parameters
-    .make_structure_factors
-    .xtal.update_scaled_gof_parameters
-
-    MO => .molecular_orbitals%restricted
-
-    .make_fock_matrix    ! need for scf_energy.
-    .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
-    .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy, &
-           chi2=.xtal%chi2, gof=.xtal%gof, &
-           r_factor=.xtal%r_factor, weighted_r_factor=.xtal%weighted_r_factor)
-    do
-      .make_constraint(constraint, .scfdata%lambda)
-
-      constraint.change_basis(MO)            ! Zero out the occ-occ and
-      constraint(:.n_a, :.n_a) = ZERO        ! virtual-virtual blocks of the
-      constraint(.n_a+1:, .n_a+1:) = ZERO    ! constraint matrix to improve
-      temp.to_product(MO,S,transpose_a=TRUE) ! convergence.
-      constraint.change_basis(temp)
-
-      .fock_matrix%restricted = constraint
-      .extrapolate_scf
-      .update_molecular_orbitals
-      MO.schmidt_orthonormalise(S)
-      .make_scf_density_matrix
-      .save_scf_results
-      if (.optimise_thermals) then
-        .fit_thermal_parameters
-      else
-        .make_structure_factors
-        .xtal.update_scaled_gof_parameters
-      end
-      .scfdata.update( chi2=.xtal%chi2, gof=.xtal%gof, r_factor=.xtal%r_factor, &
-                       weighted_r_factor=.xtal%weighted_r_factor )
-      .scfdata.put_results
-      if (.scfdata.scf_done) exit
-    end
-
-    .xtal.scale_Fc
-    .xtal.put_reflection_data(.out)
-
-    .out.flush
-    .make_fock_matrix
-!    .put_mos_and_energies
-
-    .scfdata%diis.delete_archives
-    S.destroy
-    constraint.destroy
-    temp.destroy
   end
 
 end 
