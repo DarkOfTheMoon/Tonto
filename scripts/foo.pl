@@ -2578,7 +2578,9 @@ sub do_new_program_scope {
 
 ################################################################################
 sub fortran_do_new_program_scope {
-  $fortran_out .= "\n\n" . "#  include \"${fortranusefile}\"";
+  $fortran_out  = "program run_${module_fort_name}";
+  $fortran_out .= "\n\n" . 
+                  "#  include \"${fortranusefile}\"";
 }
 
 ################################################################################
