@@ -6633,7 +6633,7 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix
   ! The following objects are deleted from memory after execution:
   !   .overlap_matrix, .core_matrix, .fock_matrix
-    OPMAT* :: dP,dF,old_P,old_F,constraint,old_MO
+    OPMAT* :: dP,dF,old_P,old_F,old_C,constraint,old_MO
     DBL :: E_HF,E_K,diis_error
 
     ENSURE(.atom.created,  "no atom list")
@@ -6646,6 +6646,7 @@ contains
     dF.create(.n_bf); old_F.create_copy(.fock_matrix)
     old_MO.create_copy(.molecular_orbitals)
     constraint.create(.n_bf,"restricted")
+    old_C.create(.n_bf,"restricted")
 
     .make_structure_factors
     E_HF = .scf_energy
@@ -6667,19 +6668,30 @@ contains
         old_MO.set_to(.molecular_orbitals)
         old_P.set_to(.density_matrix)
         old_F.set_to(.fock_matrix)
+        old_C.set_to(constraint)
         .extrapolate_scf
         .update_molecular_orbitals
         .schmidt_orthonormalise(.molecular_orbitals)
         .make_scf_density_matrix
         .save_scf_results
-        .make_fock_matrix
-
-        E_HF = .scf_energy
-        E_K = .kinetic_energy
         .make_structure_factors
 
+!        .make_fock_matrix
+!        E_HF = .scf_energy
+!        E_K = .kinetic_energy
+!        .make_constraint(constraint, .scfdata.lambda )
+!        .add_constraint(constraint)
+
+        dP.set_to(.density_matrix)
+        dP.minus(old_P)
+        .make_fock_matrix(dP,dF,core=FALSE)
+        .fock_matrix.set_to(old_F)
+        .fock_matrix.plus(dF)
+        E_HF = .scf_energy
+        E_K = .kinetic_energy
         .make_constraint(constraint, .scfdata.lambda )
-        .add_constraint(constraint)
+        constraint.minus(old_C)
+        .fock_matrix.plus(constraint)
 
         if (.scfdata.apply_camp_king) .camp_king(old_MO,old_F,E_HF,E_K)
 
@@ -6694,8 +6706,9 @@ contains
       if (.scfdata.exceeded_lambda_max) exit
     end
 
-    old_MO.destroy
+    old_C.destroy
     constraint.destroy
+    old_MO.destroy
     .scfdata.cleanup_diis
     .fock_matrix.destroy("all")
     dF.destroy
@@ -6720,6 +6733,7 @@ contains
       DIE("can only do restricted calculations.")
     end
     ! Add the constraint in the MO basis
+
 !    constraint.restricted.change_basis(MO)          ! Zero out the occ-occ and vir-vir
 !    constraint.restricted(:.n_a, :.n_a) = ZERO      ! blocks of the constraint matrix
 !    constraint.restricted(.n_a+1:, .n_a+1:) = ZERO  ! to improve convergence.
@@ -6729,7 +6743,7 @@ contains
 
     .fock_matrix.plus(constraint)
 
-!    ! Change .fock_matrix back to the AO basis
+    ! Change .fock_matrix back to the AO basis
 !    temp.create(.n_bf, .n_bf)
 !    S.create(.n_bf, .n_bf)
 !    .get_overlap_matrix(S)
@@ -6767,6 +6781,7 @@ contains
     Fsig.create(n_refl);  Fsig = .crystal.F_sigma
     Fm.create(n_refl);    Fm = abs(Fc)
     fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+!    fac_times_alpha = fac * alpha * (alpha - Fexp/Fm) / (Fsig * Fsig)
     Fm.destroy
     Fsig.destroy
     Fexp.destroy
@@ -8408,6 +8423,7 @@ contains
     DBL :: ded0,ded1,ded1a,E1,El,lambda
     DBL :: tol,diis0,diis1,diisl
 
+    .scfdata.camp_king_iters=0
     F_backup.create_copy(.fock_matrix)
     MO_backup.create_copy(.molecular_orbitals)
     P_backup.create_copy(.density_matrix)
@@ -8493,13 +8509,13 @@ contains
     ded0 = -FOUR * ded0
     F.destroy
 
- n=0
+    .scfdata.camp_king_iters=0
     if (abs(ded1) > TEN*abs(ded0)) then
       lambda = 0.1
     else
       lambda = HALF
     end
-    .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,n,diis0)
+    .minimise_Camp_King_lambda(lambda,El,ded1a,Q,CV,theta,n_p,diis0)
     .make_diis_error(diisl)
     if (diisl < 0.9*diis1) then ! it's convergence that counts.
       Uh.create(.n_bf,.n_bf)
@@ -8527,7 +8543,6 @@ contains
       .molecular_orbitals.set_to(MO_backup)
       .density_matrix.set_to(P_backup)
     end
-! write(*,*) n
 
     CV.destroy
     theta.destroy
@@ -8537,11 +8552,10 @@ contains
     MO_backup.destroy
   end
 
-  minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,n,diis0) [private]
+  minimise_Camp_King_lambda(lambda,f,dedx,Ql,CV,theta,n_p,diis0) [private]
     DBL, IN :: diis0
     DBL :: lambda,f,tol,dedx
     INT, IN :: n_p
-    INT, OUT :: n
     MAT :: Ql,CV
     VEC :: theta
     INT :: i
@@ -8561,9 +8575,9 @@ contains
     fw=fx
     dv=dx
     dw=dx
- n=0
+    .scfdata.camp_king_iters=0
     do i=1,100
- n=n+1
+      .scfdata.camp_king_iters=.scfdata.camp_king_iters+1
       xm=HALF*(a+b)
       tol1=tol*abs(x)+TOL(10)
       tol2=TWO*tol1
