@@ -31,7 +31,7 @@ print LONG "  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=iso
 print LONG "  <META name=\"robots\" content=\"noindex, nofollow\">";
 print LONG "  <TITLE>Documentation for $filename</TITLE>";
 print LONG "</head>";
-print LONG "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=2>";
+print LONG "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=3>";
 print LONG '<pre>';
 
 print SHORT '<html>';
@@ -40,7 +40,7 @@ print SHORT "  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=is
 print SHORT "  <META name=\"robots\" content=\"noindex, nofollow\">";
 print SHORT "  <TITLE>Documentation for $filename</TITLE>";
 print SHORT "</head>";
-print SHORT "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=2>";
+print SHORT "<body BGCOLOR=\"#FFFBF0\"><BASEFONT SIZE=3>";
 print SHORT '<pre>';
 print SHORT '<B>Synopsis:</B>';
 
