@@ -334,8 +334,9 @@ sub get_includes {
     }
     if ($filehead eq "") { die "Cannot find file $_[0]\n"; }
   }
-  while (<FILE>) {
-    if (/^\s*(\#|\?\?)*\s*include\s+[\"\']([^\"\']+)[\"\']/i) {
+  my $line;
+  while ($line=<FILE>) {
+    if ($line =~ /^\s*(\#|\?\?)*\s*include\s+[\"\']([^\"\']+)[\"\']/i) {
        $inc = $2;
        $inchead="";
        if (! open(INC, $inc)) {          # include file doesnt exist
@@ -348,9 +349,12 @@ sub get_includes {
        close(INC);
        push(@incs, $inchead . $inc);
     }
-    /^\s*use\s+([^\s,!]+)/i && push(@modules, &$ModCase("$1"));
-    /^\s*module\s+([^\s,!]+)/i && do {push(@moddefs, &$ModCase("$1")) if not (lc($1) eq "procedure")};
-    /^\s*program\s+([^\s,!]+)/i && do {$prog = &$ModCase($1)};
+    $line =~ /^\s*use\s+(\w+)/i &&
+            do {push(@modules, &$ModCase("$1"))};
+    $line =~ /^\s*module\s+(\w+)/i && 
+            do {push(@moddefs, &$ModCase("$1")) if not (lc($1) eq "procedure")};
+    $line =~ /^\s*program\s+(\w+)/i && 
+            do {$prog = &$ModCase($1)};
   }
   close(FILE);
   # Remove redundant entries.
