@@ -1,4 +1,4 @@
-# compile_mod.perl
+# compile_mod.pl
 #
 # This is a Perl script that will check to see if a module really needs
 # recompiling, or if we can get away with pretending to compile it.  If the
@@ -13,7 +13,7 @@
 #
 #
 # Usage :
-# perl -w compile_mod.perl -fc command -provides filenames
+# perl -w compile_mod.pl -fc command -provides filenames
 #       -requires filenames -cmp command [-mod_ext ext]
 #
 # Where :
@@ -34,7 +34,7 @@
 #       Use quotes to enclose multiple words as a single argument.
 #
 # Example :
-#       perl -w ./compile_mod.perl -fc "f90 -c a.f90" -provides "a.mod b.mod"
+#       perl -w ./compile_mod.pl -fc "f90 -c a.f90" -provides "a.mod b.mod"
 #               -requires "z.mod y.mod" -cmp "cmp -s"
 #
 #*******************************************************************************
@@ -77,7 +77,7 @@ defined $requires || do {$argerr=1; warn "Error : -requires flag not supplied.\n
 if ($argerr==1) {
   die(
     "\nUsage :\n",
-    "\t perl -w ./compile_mod.perl -fc command -provides filenames \\\n",
+    "\t perl -w ./compile_mod.pl -fc command -provides filenames \\\n",
     "\t\t-requires filenames -cmp command [-mod_ext ext] \n",
     "\n",
     "Where :\n",
@@ -98,7 +98,7 @@ if ($argerr==1) {
     "\tUse quotes to enclose multiple words as a single argument.\n",
     "\n",
     "Example :\n",
-    "\t perl -w ./compile_mod.perl -fc \"f90 -c a.f90\" -provides \"a.mod b.mod\"\n",
+    "\t perl -w ./compile_mod.pl -fc \"f90 -c a.f90\" -provides \"a.mod b.mod\"\n",
     "\t\t-requires \"z.mod y.mod\" -cmp \"cmp -s\"\n",
     "\n");
 }
