@@ -1,0 +1,369 @@
+!---------------------------------------------------------------------------
+!
+! PERIODIC_FMM_LEVEL : One level of the periodic FMM method.  See Lambert,
+! Darden and Board, J. Comp. Phys., 126, 274-285 (1996).
+!
+! Copyright (C) Daniel Grimwood, 2003
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!---------------------------------------------------------------------------
+module PERIODIC_FMM_LEVEL
+
+  implicit none
+
+  contains
+
+   create(unitcell) ::: leaky
+   ! Create an object
+      self :: PTR
+      unitcell :: UNITCELL, IN
+      nullify(self)
+      allocate(self)
+      ADD_MEMORY(SELF_TYPE_SIZE)
+      .nullify_ptr_part
+      .set_defaults
+      .direct_cell_matrix = unitcell.direct_matrix
+      .inverse_cell_matrix = unitcell.inverse_matrix
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+  nullify_ptr_part
+  ! Nullify the pointer parts of the type.
+  end
+
+  destroy_ptr_part
+  ! Destroy the pointer parts of the type.
+  end
+
+  set_defaults
+  ! Set default values for parts of the type.
+    .level_number = 0
+    .box_centre = (/ZERO,ZERO,ZERO/)
+    .direct_cell_matrix(:,1) = (/ONE,ZERO,ZERO/)
+    .direct_cell_matrix(:,2) = (/ZERO,ONE,ZERO/)
+    .direct_cell_matrix(:,3) = (/ZERO,ZERO,ONE/)
+    .inverse_cell_matrix(:,1) = (/ONE,ZERO,ZERO/)
+    .inverse_cell_matrix(:,2) = (/ZERO,ONE,ZERO/)
+    .inverse_cell_matrix(:,3) = (/ZERO,ZERO,ONE/)
+    .divisions = (/3,3,3/)
+  end
+
+  make_box_corners(corners)
+  ! Return the coordinates of the 8 box corners, in the lattice coordinate
+  ! system.
+    corners :: MAT{REAL}
+    ENSURE(corners.dim1==3,"dimension 1 of matrix should be 3")
+    ENSURE(corners.dim2==8,"dimension 2 of matrix should be 8")
+    corners(:,1) = .box_centre + (/ HALF, HALF, HALF/)*.scale_factor
+    corners(:,2) = .box_centre + (/ HALF, HALF,-HALF/)*.scale_factor
+    corners(:,3) = .box_centre + (/ HALF,-HALF, HALF/)*.scale_factor
+    corners(:,4) = .box_centre + (/ HALF,-HALF,-HALF/)*.scale_factor
+    corners(:,5) = .box_centre + (/-HALF, HALF, HALF/)*.scale_factor
+    corners(:,6) = .box_centre + (/-HALF, HALF,-HALF/)*.scale_factor
+    corners(:,7) = .box_centre + (/-HALF,-HALF, HALF/)*.scale_factor
+    corners(:,8) = .box_centre + (/-HALF,-HALF,-HALF/)*.scale_factor
+  end
+
+  sub_box_indices_for_point(point) result (res)
+  ! Return the indices of the sub box a point is in.
+  ! Point must be in cartesians.
+  ! Lower left box is labelled (1,1,1).
+    point :: VEC{REAL}(3)
+    self :: IN
+    res :: VEC{INT}(3)
+    origin,x,sub_lengths :: VEC{REAL}(3)
+    sub_lengths = .scale_factor / .divisions
+    ! Note that these are in fractionals.
+    origin = .box_centre - (/HALF,HALF,HALF/)*.scale_factor
+    x = point
+    ! Convert into fractionals.
+    x.rotate_by(.inverse_cell_matrix)
+    ! Make the position relative to the lower left corner of the box.
+    x = x - origin
+    res = floor(x/sub_lengths)+1
+  end
+
+  shortest_distance_to_unitcell result (res)
+  ! Return the shortest distance from the centre of a subbox at the current
+  ! level to a subbox of the unit cell.
+    self :: IN
+    res :: REAL
+    x,diff,centre :: VEC{REAL}(3)
+    hkl,centre_min,centre_max :: VEC{INT}(3)
+    ucentre :: MAT3{VEC_{REAL}}*
+    dist :: REAL
+    uh,uk,ul,h,k,l :: INT
+
+    ! Just an upper bound on res**2, this initial value is not really important
+    ! as long as it's big enough.
+    x = .scale_factor
+    x.rotate_by(.direct_cell_matrix)
+    dist = (maxval(x))**2
+
+    ! This routine is currently very inneficient.  Most boxes do not need to be
+    ! tested - we don't need to check every subbox of the level.  Only the
+    ! closest row of each face.
+
+    ! Make unit cell centres, to save computation.
+    ucentre.create(.divisions)
+    do uh=1,.divisions(1)
+      do uk=1,.divisions(2)
+        do ul=1,.divisions(3)
+           centre = .subbox_centres(uh,uk,ul).element(:) - .box_centre
+           ucentre(uh,uk,ul).element = centre/.scale_factor + .box_centre
+        end
+      end
+    end
+
+    ! What range of boxes does the lower level already cover.
+    centre_min = THIRD*.divisions+1
+    centre_max = TWO*THIRD*.divisions
+
+    ! Loop over boxes in this level.
+    do h=1,.divisions(1)
+      do k=1,.divisions(2)
+        do l=1,.divisions(3)
+          hkl = (/h,k,l/)
+
+          ! Don't test subboxes that are in a lower level (i.e. if they are in
+          ! the centre box of this 3x3x3 level).
+          if (any(hkl<centre_min) OR any(hkl>centre_max)) then
+
+            !if (all(hkl>=centre_min) AND all(hkl<=centre_max)) cycle
+            centre = .subbox_centres(h,k,l).element(:)
+
+            ! Loop over boxes in the unit cell.
+            do uh=1,.divisions(1)
+              do uk=1,.divisions(2)
+                do ul=1,.divisions(3)
+                  diff = centre - ucentre(uh,uk,ul).element
+                  dist = min(dist,dot_product(diff,diff))
+                end
+              end
+            end
+
+          end
+
+        end
+      end
+    end
+
+    res = sqrt(dist)
+  end
+
+  make_level_to_previous_level_map(first,last)
+  ! Work out which boxes of the previous level get combined to make each box of
+  ! the current level.
+  ! Lower left box is labelled (1,1,1).
+    first,last :: MAT3{VEC_{INT}}
+    ENSURE(mod(.divisions,3)==0,"box divisions must be a multiple of 3")
+    n_l :: VEC{INT}(3)
+    h,k,l :: INT
+
+    ! Number of divisions in a single box of the large level.
+    n_l(:)=.divisions(:)/3
+
+    do h=1,.divisions(1)
+      do k=1,.divisions(2)
+        do l=1,.divisions(3)
+          ! Which portion of the previous level does this box correspond to?
+          first(h,k,l).element(:) = 3*mod((/h-1,k-1,l-1/),n_l(:))+1
+          last(h,k,l).element = first(h,k,l).element + 2
+        end
+      end
+    end
+  end
+
+  make_subbox_centres(subbox_centres)
+  ! Work out what the centre of each sub box is.  This is in cartesians.
+    subbox_centres :: MAT3{VEC_{REAL}}*
+    ENSURE(subbox_centres.dim1==.divisions(1),"incorrect dimensions on subbox_centres")
+    ENSURE(subbox_centres.dim2==.divisions(2),"incorrect dimensions on subbox_centres")
+    ENSURE(subbox_centres.dim3==.divisions(3),"incorrect dimensions on subbox_centres")
+    ENSURE(subbox_centres.element.dim==3,"incorrect dimensions on subbox_centres")
+    origin,sub_lengths,centre :: VEC{REAL}(3)
+    h,k,l :: INT
+
+    ! The length of a subbox along each lattice direction.
+    sub_lengths = .scale_factor / .divisions
+
+    ! The lower left corner of the box.
+    origin = .box_centre - (/HALF,HALF,HALF/)*.scale_factor
+
+    do h=1,.divisions(1)
+      do k=1,.divisions(2)
+        do l=1,.divisions(3)
+          centre = (/h-HALF,k-HALF,l-HALF/)*sub_lengths+origin
+          centre.rotate_by(.direct_cell_matrix)
+          subbox_centres(h,k,l).element(:) = centre(:)
+        end
+      end
+    end
+  end
+
+  to_merged_translated_multipoles(new_position,old_multipoles,old_centres,new_multipole)
+  ! Takes a 3 dimensional list of multipoles on different centres and translates
+  ! them onto a single centre and combines them.
+  ! Multipoles to be merged must all be of the same order.
+    new_position :: VEC{REAL}(3)
+    old_multipoles,old_centres :: MAT3{VEC_{REAL}}
+    new_multipole :: VEC{REAL}
+    h,k,l,dim,dim1,dim2,dim3 :: INT
+    check :: BIN
+
+    ! Check that all multipoles are of the same order.
+    dim = new_multipole.dim
+    dim1 = old_multipoles.dim1
+    dim2 = old_multipoles.dim2
+    dim3 = old_multipoles.dim3
+    check = TRUE
+    outer : do h=1,dim1
+      do k=1,dim2
+        do l=1,dim3
+          if (old_multipoles(h,k,l).element.dim /= dim) then
+            check = FALSE
+            exit outer
+          end
+        end
+      end
+    end do outer
+    ENSURE(check, "order of multipoles is not consistent.")
+
+    new_multipole = ZERO
+    ! Now do the merging.
+    do h=1,dim1
+      do k=1,dim2
+        do l=1,dim3
+!           new_multipole.add_translated_multipole( &
+!                      old_multipoles(h,k,l).element, &
+!                      old_centres(h,k,l).element-new_position)
+        end
+      end
+    end
+  end
+
+  make_level_from_previous_level(previous_level)
+  ! Make the current level from the previous level.
+    previous_level :: PERIODIC_FMM_LEVEL
+    first,last :: MAT3{VEC_{INT}}*
+    prev_multipoles,prev_centres :: MAT3{VEC_{REAL}}*
+    h,k,l,fh,fk,fl,lh,lk,ll :: INT
+    .direct_cell_matrix = previous_level.direct_cell_matrix
+    .inverse_cell_matrix = previous_level.inverse_cell_matrix
+    .divisions = previous_level.divisions
+    .level_number = previous_level.level_number + 1
+    .scale_factor = THREE**.level_number
+    .box_centre = previous_level.box_centre
+
+    first.create(.divisions(1),.divisions(2),.divisions(3),3)
+    last.create(.divisions(1),.divisions(2),.divisions(3),3)
+
+    .subbox_centres.create(.divisions(1),.divisions(2),.divisions(3),3)
+    .make_subbox_centres(.subbox_centres)
+
+    .make_level_to_previous_level_map(first,last)
+
+    do h=1,.divisions(1)
+      do k=1,.divisions(2)
+        do l=1,.divisions(3)
+          fh = first(h,k,l).element(1)
+          fk = first(h,k,l).element(2)
+          fl = first(h,k,l).element(3)
+          lh = last(h,k,l).element(1)
+          lk = last(h,k,l).element(2)
+          ll = last(h,k,l).element(3)
+          prev_multipoles => previous_level.subbox_multipoles(fh:lh,fk:lk,fl:lh)
+          prev_centres => previous_level.subbox_centres(fh:lh,fk:lk,fl:lh)
+!          .subbox_multipoles(h,k,l).element.to_merged_translated_multipoles(.subbox_centres(h,k,l).element,prev_multipoles,prev_centres)
+        end
+      end
+    end
+    last.destroy
+    first.destroy
+  end
+
+  group_points_into_boxes(positions,point_box_map)
+  ! Determine which of the subboxes of self that the positions should go into.
+    positions :: MAT{REAL}
+    point_box_map :: VEC{VEC_{INT}}
+    ENSURE(positions.dim1==3,"incorrect dimensions for array of positions")
+    ENSURE(point_box_map.dim == positions.dim2, "incorrect dimension of point box map")
+    n_pts,i :: INT
+    n_pts = positions.dim2
+    !point_box_map.create(n_pts,3)
+    do i=1,n_pts
+      point_box_map(i).element = .sub_box_indices_for_point(positions(:,i))
+    end
+  end
+
+  make_multipoles_from_grouped_points(multipoles,positions,charges,point_box_map)
+  ! Multipole expand the point "charges" at "positions".  "point_box_map" tells
+  ! which subbox of self that the positions are in, and from this we know what
+  ! the subbox centres are too.
+    multipoles :: VEC{REAL}
+    positions :: MAT{REAL}
+    charges :: VEC{REAL}
+    point_box_map :: VEC{VEC_{INT}}
+    ENSURE(positions.dim1==3,"incorrect dimensions for array of positions")
+    ENSURE(point_box_map.dim == positions.dim2, "array dimensions inconsistent")
+    ENSURE(charges.dim == positions.dim2, "array dimensions inconsistent")
+    hkl :: VEC{INT}(3)
+    h,k,l,n,n_pts :: INT
+    n_pts = charges.dim
+    do h=1,.divisions(1)
+      do k=1,.divisions(1)
+        do l=1,.divisions(1)
+          hkl = (/h,k,l/)
+          do n=1,n_pts
+            if (all(point_box_map(n).element==hkl)) then
+            ! Somehow extract out all the charges for this sub box and then
+            ! form the multipole expansion for the sub box.
+            end
+          end
+        end
+      end
+    end
+  end
+
+  set_number_of_divisions(n_div)
+  ! Set the number of divisions of the shortest unit cell length to be n_div.
+  ! The other unit cell lengths will be subdivided to be at least as short as
+  ! this.
+  ! Number of divisions must be a multiple of three.
+    n_div :: INT, IN
+    ENSURE(mod(n_div,3)==0,"Number of divisions must be a multiple of 3")
+    a,b,c,min_len :: REAL
+
+    ! Get the unit cell lengths.
+    a = .direct_cell_matrix(:,1).norm
+    b = .direct_cell_matrix(:,2).norm
+    c = .direct_cell_matrix(:,3).norm
+
+    ! What is the shortest unit cell length?
+    min_len = min(a,b,c)
+
+    ! Multiply n_div by ratio of lengths.
+    .divisions(1) = ceiling(a/min_len)*n_div
+    .divisions(2) = ceiling(b/min_len)*n_div
+    .divisions(3) = ceiling(c/min_len)*n_div
+  end
+
+end
