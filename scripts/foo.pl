@@ -77,7 +77,8 @@ my $getfile = "";             # The inheritance file.
 my $fortranfile = "";         # The .fortran file produced
 my $fortranintfile = "";      # The .int file produced
 my $fortranusefile = "";      # The .use file produced
-my $routcallfile= "";         # The .usr file produced
+my $routcallfile= "";         # The .rcf file produced
+my $usdfile = "";             # The .usd file produced, for eliminating unused routines
 my $htmlshortfile = "";       # This is the short .html file produced
 my $htmllongfile  = "";       # This is the long .html file produced
 my $tidyfile = "";            # The tidied up foo file
@@ -114,6 +115,7 @@ my @scope = undef;            # The nested list of current scoping units.
 
 ################################################################################
 my %called_routines;          # The Tonto module name, and fortran name of called routines.
+my %usd;                      # The list of used routines.
 my %routine_calls;            # The list of routine calls for each routine
 my %used_modules;             # The list of variables types used NOTENECESARILY method-called
 my %function_res_type;        # Types of function results.
@@ -380,6 +382,7 @@ sub analyse_command_arguments {
            /^-nogeneric\b/      && do { $do_generic     = 0;     next; };
            /^-generic\b/        && do { $do_generic     = 1;     next; };
            /^-routine_calls\b/  && do { $routcallfile   = shift; next; };
+           /^-used_routines\b/  && do { $usdfile        = shift; next; };
            /^-tidy\b/           && do { $do_tidy        = 1;     next; };
            warn "\n Error : unexpected argument $arg\n";
            $argerr=1;
@@ -453,6 +456,16 @@ sub analyse_command_arguments {
 
    if ($routcallfile ne "") {
       $do_routine_calls = 1;
+   }
+
+   if ($usdfile ne "") {
+      if (open(USDFILE,$usdfile)) {
+         my $rout;
+         while ($rout = <USDFILE>) {
+            $usd{$rout} = 1;
+         }
+         close USDFILE;
+      }
    }
    
    return if ($argerr==0);
@@ -3078,6 +3091,9 @@ sub fortran_do_new_module_interface_scope {
   } else {
      $fortran_out = "   public    ${module_fort_type}_$1\n   interface ${module_fort_type}_$1";
   }
+  if ($do_routine_calls && $pass==2) {
+     print RCFILE $1;
+  }
 }
 
 ################################################################################
@@ -3133,6 +3149,10 @@ sub fortran_do_module_interface_scope {
          }
       } else {
             $new_out .= "${pre}module procedure ${mod}${name}";
+      }
+      if ($do_routine_calls && $pass==2) {
+          my $call = "$module_full_name:$name";
+          print RCFILE "   $call";
       }
    }
    $fortran_out = $new_out;
@@ -4979,7 +4999,7 @@ sub analyse_rout_name {
     }
 
     # If this is a template, do the minimum and get out.
-    if ($attr =~ /^template/) {
+    if ($attr =~ /^template/ || defined $usd{$short_name}) {
        $routine{$short_name}{template} = 1;  
        $routine{$short_name}{short_name} = $short_name;
        $routine{$short_name}{real_name}  = $short_name;
