@@ -8520,11 +8520,21 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
 !  Population analysis methods
 !  ***************************
 
+   make_roby_atoms
+   ! Sets up the roby_atoms for various analyses
+   IVEC, PTR :: roby_atom
+   INT :: i,a
+     .read_roby_atom(roby_atom)
+     do i=1,size(roby_atom)
+       a=roby_atom(i)
+       .prepare_roby_atom(a)
+     end
+     roby_atom.destroy   
+   end
+
    prepare_roby_atoms  [leaky]
    ! Provides the preliminary data required to do the Roby population analysis
-      if ( .mult /= 1) then; .make_ANSO_data
-      else;                  .make_ANO_data
-      end
+     .make_ANO_data
    end
 
    prepare_roby_atom(a) [leaky]
@@ -8583,12 +8593,18 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
         nullify(mol.basis)            ! do not destroy this
         mol.destroy
         if (NOT output) cycle
-        n_no = .atom(u).occupation.restricted.no_of_elements_larger_than(real(0.05,kind=DBL_KIND))
+        if (.mult /=1) then
+            n_no = .atom(u).occupation.restricted.no_of_elements_larger_than(real(0.025,kind=DBL_KIND))
+        else 
+            n_no = .atom(u).occupation.restricted.no_of_elements_larger_than(real(0.05,kind=DBL_KIND))
+        end
         stdout.show("n_no=",n_no)
         .atom(u).put_natural_orbitals
       end
    end
 
+   ! I guess we can probably scrap this if the unres. works using only
+   ! spatial orbitals ... or keep it for old times' sake ...  
    make_ANSO_data [leaky]
    ! Prepare the unrestricted atomic natural spin orbital (ASNO) data 
       INT :: k,u,a
@@ -8665,11 +8681,11 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
      do j = 1,i-1
        n2(i,j) = .roby_population((/i,j/)) 
        if (.atom.not_bonded(i,j)) cycle
-       if (.mult /= 1) then 
-         .unrestricted_roby_gould_index((/i,j/), index(i,j), cov(i,j))
-       else
-         .roby_gould_bond_index((/i,j/), index(i,j), cov(i,j)) 
-       end
+             ! if (.mult /= 1) then 
+             !  .unrestricted_roby_gould_index((/i,j/), index(i,j), cov(i,j))
+             ! else
+       .roby_gould_bond_index((/i,j/), index(i,j), cov(i,j)) 
+             ! end
      end
      end
      .put_roby_populations( n1, n2, index, cov)
@@ -8728,28 +8744,16 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
    get_homoleptic_bond_index
    ! Retuns the bond index between groups of atoms
      IVEC, PTR :: roby_atom, roby_atom1, roby_atom2
-     INT :: i,j
+     INT :: i
      DBL :: index, covalency
-     .read_roby_atom(roby_atom)
-     if (size(roby_atom) == 2) then
-       .roby_gould_bond_index(roby_atom,index,covalency)
-       roby_atom.destroy
-     else
-       do i = 1, size(roby_atom)
-         if (roby_atom(i) == 0) then
-            j=i
-            exit
-         end
-       end
-       roby_atom1.create(j-1) 
-       roby_atom2.create(size(roby_atom)-j)
-       roby_atom1 = roby_atom(1:j-1)
-       roby_atom2 = roby_atom(j+1:)
-       roby_atom.destroy
-       .roby_gould_bond_index(roby_atom1,roby_atom2,index,covalency)
+     .read_roby_groups(roby_atom,roby_atom1,roby_atom2)
+     do i = 1, size(roby_atom)
+       .prepare_roby_atom(roby_atom(i))
      end
+     .roby_gould_bond_index(roby_atom1,roby_atom2,index,covalency)
      stdout.show("Bond Index is: ", index)
      stdout.show("% Covalency is: ", covalency) 
+     roby_atom.destroy; roby_atom1.destroy; roby_atom2.destroy
    end
 
 
@@ -8939,22 +8943,32 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       IVEC :: roby_atom
       DBL :: energy
       OPMAT, PTR :: D,D_save
-      INT :: i
-      MAT, PTR :: P
-      P.create(.n_bf, .n_bf)
-      .make_roby_projected_density(P,roby_atom)
+      INT :: i,a
+      MAT, PTR :: P, Q
       D_save => .density_matrix
-      D.create(.n_bf,"restricted")
-      D.restricted = P        ! P is projected density
+      P.create(.n_bf, .n_bf)
+      if (.mult/=1) then
+        Q.create(.n_bf, .n_bf)
+        .make_roby_projected_density(P,.density_matrix.alpha, roby_atom)
+        .make_roby_projected_density(Q,.density_matrix.alpha, roby_atom)
+        D.create(.n_bf,"unrestricted")
+        D.alpha = P        ! P is projected density
+        D.beta = Q        ! P is projected density
+        Q.destroy
+      else
+        D.create(.n_bf,"restricted")
+        D.restricted = P        ! P is projected density
+      end
       .density_matrix => D
       .make_fock_matrix
       energy = .scf_electronic_energy(D,roby_atom)
       stdout.put("Atoms")
       do i=1,size(roby_atom)
-         stdout.put(.atom(roby_atom(i))%label)
+         a=roby_atom(i) 
+         stdout.put_text(trim(.atom(a)%label)//" ")
       end 
       stdout.flush
-      stdout.put("Energy of group of Atoms")
+      stdout.put("Energy of group of Atoms: ")
       stdout.put(energy); stdout.flush
       .density_matrix => D_save
       D.destroy
@@ -8967,20 +8981,30 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       IVEC :: roby_atom
       DBL :: energy
       OPMAT, PTR :: D
-      INT :: i
-      MAT, PTR :: P
+      INT :: i,a
+      MAT, PTR :: P,Q
       P.create(.n_bf, .n_bf)
-      .make_roby_projected_density(P,roby_atom)
-      D.create(.n_bf,"restricted")
-      D.restricted = P        ! P is projected density
+      if (.mult/=1) then
+        Q.create(.n_bf, .n_bf)
+        .make_roby_projected_density(P,.density_matrix.alpha, roby_atom)
+        .make_roby_projected_density(Q,.density_matrix.alpha, roby_atom)
+        D.create(.n_bf,"unrestricted")
+        D.alpha = P        ! P is projected density
+        D.beta = Q        ! P is projected density
+        Q.destroy
+      else
+        D.create(.n_bf,"restricted")
+        D.restricted = P        ! P is projected density
+      end
       .make_fock_matrix
       energy = .scf_electronic_energy(D)
       stdout.put("Atoms")
       do i=1,size(roby_atom)
-         stdout.put(.atom(roby_atom(i))%label)
+         a=roby_atom(i)
+         stdout.put(trim(.atom(a)%label)//" ")
       end 
       stdout.flush
-      stdout.put("Total electronic energy of group of atoms")
+      stdout.put("Total electronic energy of group of atoms ")
       stdout.put(energy); stdout.flush
       D.destroy
       P.destroy
@@ -8992,28 +9016,35 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
 
    plot_subspace_density
    ! plots the density of the subspace given in the input file
-   MAT, PTR :: subspace_NOs, saved_NOs, subspace_density, saved_density
+   OPMAT, PTR :: subspace_NOs, subspace_density, saved_density, saved_NOs
    VEC, PTR :: projected_density_grid
    IVEC, PTR :: roby_atom
    ARCHIVE :: archive
       .read_roby_atom( roby_atom)
-      subspace_density.create( .n_bf, .n_bf)
-      subspace_NOs.create( .n_bf, .n_bf)
-      .make_roby_projected_NOs(subspace_NOs, roby_atom)
-      .make_roby_projected_density(subspace_density, roby_atom)
-      saved_NOs.create( .n_bf, .n_bf)
-      saved_density.create( .n_bf, .n_bf)
-      saved_NOs = .natural_orbitals.restricted
-      saved_density = .density_matrix.restricted
-      .natural_orbitals.restricted = subspace_NOs
-      .density_matrix.restricted = subspace_density
+      if (.mult /= 1)then
+          subspace_density.create( .n_bf, "unrestricted")
+          subspace_NOs.create( .n_bf, "unrestricted")
+          .make_roby_projected_NOs(subspace_NOs.alpha, .natural_orbitals.alpha, roby_atom)
+          .make_roby_projected_NOs(subspace_NOs.beta, .natural_orbitals.beta, roby_atom)
+          .make_roby_projected_density(subspace_density.alpha, .density_matrix.alpha, roby_atom)
+          .make_roby_projected_density(subspace_density.beta, .density_matrix.beta, roby_atom)
+      else
+          subspace_density.create( .n_bf, "restricted")
+          subspace_NOs.create( .n_bf, "restricted")
+          .make_roby_projected_NOs(subspace_NOs.restricted, roby_atom)
+          .make_roby_projected_density(subspace_density.restricted, roby_atom)
+      end
+      saved_NOs => .natural_orbitals
+      saved_density => .density_matrix
+      .natural_orbitals => subspace_NOs
+      .density_matrix => subspace_density
       projected_density_grid.create( .grid.n_pt)
       .make_density_grid(projected_density_grid, make_NOs=FALSE)
       archive.set(.name,"projected_density_grid,gnuplot",format="ascii")
       archive.write_gnuplot(projected_density_grid, .grid.n_x, .grid.n_y, .grid.n_z)
-      .natural_orbitals.restricted = saved_NOs
-      .density_matrix.restricted = saved_density
-      saved_density.destroy; saved_NOs.destroy
+      .natural_orbitals => saved_NOs
+      .density_matrix => saved_density
+      saved_density.nullify_ptr_part; saved_NOs.nullify_ptr_part
       roby_atom.destroy; subspace_NOs.destroy
       subspace_density.destroy
    end
@@ -9022,68 +9053,62 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
 ! Plot covalent and ionic theta orbitals  !
 !-----------------------------------------!
 
-   plot_covalent_orbitals
+   plot_covalent_orbitals(density)
    ! creates the covalent operator for the roby_atom
    ! and plots the theta orbitals
-   IVEC, PTR :: roby_atom
+   ! If density supplied and TRUE will output the orbital density rather
+   ! than the wavefunction 
+   IVEC, PTR :: roby_atom, roby_atom1, roby_atom2
+   BIN, OPTIONAL :: density
+   BIN :: do_density
    INT :: n_bf
    MAT, PTR :: R
-      .read_roby_atom(roby_atom)
-      ENSURE(size(roby_atom)==2,"must specify a diatomic")
-      n_bf= .atom(roby_atom).n_bf
-      R.create(n_bf,n_bf)
-      .make_roby_shared_operator(R,roby_atom(1:1),roby_atom(2:2))
-      .plot_theta_orbitals(roby_atom,R)
-      roby_atom.destroy
-      R.destroy
+     do_density=FALSE
+     if (present(density)) do_density=density
+     .read_roby_groups(roby_atom,roby_atom1,roby_atom2)
+     n_bf= .atom(roby_atom).n_bf
+     R.create(n_bf,n_bf)
+     .make_roby_shared_operator(R,roby_atom1,roby_atom2)
+     .plot_theta_orbitals(roby_atom,R,do_density)
+     roby_atom.destroy
+     roby_atom1.destroy
+     roby_atom2.destroy
+     R.destroy
    end
 
    plot_covalent_density_orbitals
    ! creates the covalent operator for the roby_atom
    ! and plots the theta density orbitals
-   IVEC, PTR :: roby_atom
-   INT :: n_bf
-   MAT, PTR :: R
-      .read_roby_atom(roby_atom)
-      ENSURE(size(roby_atom)==2,"must specify a diatomic")
-      n_bf = .atom(roby_atom).n_bf
-      R.create(n_bf,n_bf)
-      .make_roby_shared_operator(R,roby_atom(1:1),roby_atom(2:2))
-      .plot_theta_orbitals(roby_atom,R,density=TRUE)
-      roby_atom.destroy
-      R.destroy
+      .plot_covalent_orbitals(density=TRUE)
    end
 
-   plot_ionic_orbitals
-   ! creates the covalent operator for the roby_atom
-   ! and plots the thetaorbitals
-   IVEC, PTR :: roby_atom
+   plot_ionic_orbitals(density)
+   ! creates the ionic operator for the roby_atom
+   ! and plots the theta orbitals
+   ! If density supplied and TRUE will output the orbital density rather
+   ! than the wavefunction 
+   IVEC, PTR :: roby_atom, roby_atom1, roby_atom2
+   BIN, OPTIONAL :: density
+   BIN :: do_density
    INT :: n_bf
    MAT, PTR :: I
-      .read_roby_atom(roby_atom)
-      ENSURE(size(roby_atom)==2,"must specify a diatomic")
-      n_bf= .atom(roby_atom).n_bf
-      I.create(n_bf,n_bf)
-      .make_roby_ionic_operator(I,roby_atom(1:1),roby_atom(2:2))
-      .plot_theta_orbitals(roby_atom,I)
-      roby_atom.destroy
-      I.destroy
+     do_density=FALSE
+     if (present(density)) do_density=density
+     .read_roby_groups(roby_atom,roby_atom1,roby_atom2)
+     n_bf= .atom(roby_atom).n_bf
+     I.create(n_bf,n_bf)
+     .make_roby_ionic_operator(I,roby_atom1,roby_atom2)
+     .plot_theta_orbitals(roby_atom,I,do_density)
+     roby_atom.destroy
+     roby_atom1.destroy
+     roby_atom2.destroy
+     I.destroy
    end
 
    plot_ionic_density_orbitals
    ! creates the covalent operator for the roby_atom
    ! and plots the theta density orbitals
-   IVEC, PTR :: roby_atom
-   INT :: n_bf
-   MAT, PTR :: I
-      .read_roby_atom(roby_atom)
-      ENSURE(size(roby_atom)==2,"must specify a diatomic")
-      n_bf = .atom(roby_atom).n_bf
-      I.create(n_bf,n_bf)
-      .make_roby_ionic_operator(I,roby_atom(1:1),roby_atom(2:2))
-      .plot_theta_orbitals(roby_atom,I,density=TRUE)
-      roby_atom.destroy
-      I.destroy
+      .plot_ionic_orbitals(density=TRUE)
    end
 
    plot_theta_orbitals(roby_atom,operator, density)
@@ -9097,22 +9122,27 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       BIN :: make_density
       INT :: i, size_theta
       VEC,PTR :: eigenval
-      MAT, PTR :: proj_NOs
-      MAT, PTR :: theta, saved_NO_matrix
+      OPMAT, PTR :: proj_NOs, saved_NOs
+      MAT, PTR :: theta
       .grid.put
       make_density = FALSE
-      if (present(DENSITY)) make_density = density 
+      if (present(density)) make_density = density 
       size_theta = .atom(roby_atom).n_bf
       theta.create(size_theta,size_theta)
       eigenval.create(size_theta)
       .make_gould_theta_orbitals(operator,roby_atom,theta,eigenval)
-      saved_NO_matrix.create( .n_bf, .n_bf)
-      saved_NO_matrix = .natural_orbitals.restricted
+      saved_NOs => .natural_orbitals
       do i = 1, size_theta
         if (abs(eigenval(i))<1.0d-05) cycle 
-        proj_NOs.create( .n_bf, .n_bf)
-        .make_roby_projected_NOs(proj_NOs, roby_atom, theta(:,i:i))
-        .natural_orbitals.restricted = proj_NOs
+        if (.mult/=1) then
+           proj_NOs.create( .n_bf, "unrestricted")
+           .make_roby_projected_NOs(proj_NOs.alpha, .natural_orbitals.alpha, roby_atom, theta(:,i:i))
+           .make_roby_projected_NOs(proj_NOs.beta, .natural_orbitals.beta, roby_atom, theta(:,i:i))
+        else
+           proj_NOs.create( .n_bf, "restricted")
+           .make_roby_projected_NOs(proj_NOs.restricted, roby_atom, theta(:,i:i))
+        end   
+        .natural_orbitals => proj_NOs
         if (make_density) then
            .make_orbital_density_grid(i,make_NOs=FALSE)
         else
@@ -9124,12 +9154,12 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
         ! ?name?:orbital_density_grid?orb?,gnuplot,ascii     !
         ! regardless of being covalent or ionic orbitals.    !
         !----------------------------------------------------!
-        .natural_orbitals.restricted = saved_NO_matrix
+        .natural_orbitals => saved_NOs
         proj_NOs.destroy
       end 
       eigenval.destroy
       theta.destroy
-      saved_NO_matrix.destroy
+      saved_NOs.nullify_ptr_part
    end
 
 !-----------------------------------------!
@@ -9140,37 +9170,44 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
    ! Return the (total) Roby population for the group of atoms whose
    ! indices are given in "roby_atom".
       IVEC :: roby_atom
-      DBL :: population
+      DBL :: alpha_population, beta_population, population
       STR :: spin
       MAT, PTR :: X,Y, Y_A,Y_B,X_A,X_B
       INT :: n_bf
       n_bf = .atom(roby_atom).no_of_basis_functions
-      if (.mult /= 1) then
-         ! Unrestricted Roby procedure
-         X_A.create( n_bf,  n_bf)
-         Y_A.create(.n_bf, .n_bf)
-         X_B.create( n_bf,  n_bf)
-         Y_B.create(.n_bf, .n_bf)
-         spin="alpha"
-         .make_roby_projection_matrix(X_A,spin,roby_atom)
-         spin="beta"
-         .make_roby_projection_matrix(X_B,spin,roby_atom)
-         .roby_overlap_transform(X_A,Y_A,roby_atom)
-         .roby_overlap_transform(X_B,Y_B,roby_atom)
-         population = HALF * ( Y_A.trace_product_with( .density_matrix.alpha) &
-              + Y_A.trace_product_with( .density_matrix.beta) &
-              + Y_B.trace_product_with( .density_matrix.alpha) &
-              + Y_B.trace_product_with( .density_matrix.beta) )
-      else
+!      if (.mult /= 1) then
+!         ! Unrestricted Roby procedure
+!         X_A.create( n_bf,  n_bf)
+!         Y_A.create(.n_bf, .n_bf)
+!         X_B.create( n_bf,  n_bf)
+!         Y_B.create(.n_bf, .n_bf)
+!         spin="alpha"
+!         .make_roby_projection_matrix(X_A,spin,roby_atom)
+!         spin="beta"
+!         .make_roby_projection_matrix(X_B,spin,roby_atom)
+!         .roby_overlap_transform(X_A,Y_A,roby_atom)
+!         .roby_overlap_transform(X_B,Y_B,roby_atom)
+!         population = HALF * ( Y_A.trace_product_with( .density_matrix.alpha) &
+!              + Y_A.trace_product_with( .density_matrix.beta) &
+!              + Y_B.trace_product_with( .density_matrix.alpha) &
+!              + Y_B.trace_product_with( .density_matrix.beta) )
+!         Y_A.destroy; X_A.destroy; Y_B.destroy; X_B.destroy
+!      else
          ! Restricted Roby procedure
          X.create( n_bf,  n_bf)
          Y.create(.n_bf, .n_bf)
          .make_roby_projection_matrix(X,roby_atom)
          .roby_overlap_transform(X,Y,roby_atom)
-         population = Y.trace_product_with( .density_matrix.restricted)
+         if (.mult/=1) then
+           alpha_population = Y.trace_product_with( .density_matrix.alpha)
+           beta_population = Y.trace_product_with( .density_matrix.beta)
+           population = alpha_population + beta_population
+         else
+           population = Y.trace_product_with( .density_matrix.restricted)
+         end
          Y.destroy
          X.destroy
-      end
+!      end
    end
 
    roby_population_from_rho(roby_atom,rho) result(population) 
@@ -9239,7 +9276,12 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       .roby_project(Y,Z,PA)
       W.create(.n_bf,.n_bf) 
       .roby_overlap_transform(Z,W,roby_atom(atom:atom)) 
-      population = W.trace_product_with( .density_matrix.restricted)
+      if (.mult/=1) then
+        population = W.trace_product_with( .density_matrix.alpha + &
+              .density_matrix.beta)
+      else 
+        population = W.trace_product_with( .density_matrix.restricted)
+      end
       W.destroy 
       Z.destroy 
       PA.destroy 
@@ -9253,7 +9295,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
 
    roby_gould_bond_index(roby_atom, bond_index, pcc)
    ! Calculates the Roby-Gould bond index and percentage covalent
-   ! character for two atoms for restricted molecules
+   ! character for two atoms 
       IVEC :: roby_atom
       DBL :: bond_index, pcc
       INT :: a, b
@@ -9320,6 +9362,7 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       roby_atom.destroy
    end   
 
+   ! can probably get rid of this too
    unrestricted_roby_gould_index(roby_atom, bond_index,pcc)
    ! Calculates the Roby-Gould index and percentage covalent
    ! character for diatomics in unrestricted molecules
@@ -9417,17 +9460,19 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
    ! Output detailed Roby-Gould bond index information
       IVEC :: roby_atom1,roby_atom2
       DBL :: bond_index,pc_covalency,pc_ionicity
-      INT :: i
+      INT :: i, a
       stdout.flush
       stdout.text("Gould bond index data:",flush=2)
       stdout.put("Atom_a           =")
       do i = 1,size(roby_atom1)
-         stdout.put(.atom(roby_atom1(i)).chemical_symbol)
+         a = roby_atom1(i)
+         stdout.put(.atom(a).label)
       end
       stdout.flush
       stdout.put("Atom_b           =")
       do i = 1,size(roby_atom2)
-         stdout.put(.atom(roby_atom2(i)).chemical_symbol)
+         a = roby_atom2(i)
+         stdout.put(.atom(a).label)
       end
       stdout.flush
       stdout.show("Total bond_index =",bond_index)
@@ -9798,15 +9843,15 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       P_A.create(n_a,n_a)
       P_B.create(n_b,n_b)
       P_AB.create(n_ab,n_ab)
-      if ( .mult /= 1) then
-         .make_roby_projection_matrix(P_A , spin_case,roby_atom1  )
-         .make_roby_projection_matrix(P_B , spin_case,roby_atom2  )
-         .make_roby_projection_matrix(P_AB, spin_case,roby_atom)
-      else
+    !  if ( .mult /= 1) then
+    !    .make_roby_projection_matrix(P_A , spin_case,roby_atom1  )
+    !     .make_roby_projection_matrix(P_B , spin_case,roby_atom2  )
+    !     .make_roby_projection_matrix(P_AB, spin_case,roby_atom)
+    !  else
          .make_roby_projection_matrix(P_A , roby_atom1)
          .make_roby_projection_matrix(P_B , roby_atom2)
          .make_roby_projection_matrix(P_AB, roby_atom )
-      end
+    !  end
       R = ZERO
       R(    1:n_a ,     1:n_a ) =  P_A
       R(n_a+1:n_ab, n_a+1:n_ab) =  P_B
@@ -9829,13 +9874,13 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       n_ab = n_a + n_b
       P_A.create(n_a,n_a)
       P_B.create(n_b,n_b)
-      if ( .mult /= 1) then
-         .make_roby_projection_matrix(P_A , spin_case,roby_atom1  )
-         .make_roby_projection_matrix(P_B , spin_case,roby_atom2  )
-      else
+   !  if ( .mult /= 1) then
+   !      .make_roby_projection_matrix(P_A , spin_case,roby_atom1  )
+   !      .make_roby_projection_matrix(P_B , spin_case,roby_atom2  )
+   !   else
          .make_roby_projection_matrix(P_A , roby_atom1 )
          .make_roby_projection_matrix(P_B , roby_atom2  )
-      end
+   !   end
       I = ZERO
       I(    1:n_a ,     1:n_a ) =  P_A
       I(n_a+1:n_ab, n_a+1:n_ab) = -P_B
@@ -9943,6 +9988,28 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       X.destroy
    end
 
+   make_roby_projected_density(rho,rho_old,roby_atom,ANO) 
+   ! Make the Roby-projected density matrix in the concatenated basis 
+   ! of AO functions of the atoms in "roby_atoms" and copy it into
+   ! a matrix .n_bf x .n_bf, where all other matrix elements not 
+   ! corresponding to basis functions in "roby_atoms" are made zero.
+   ! The orbitals for roby projection are supplied in the ANO matrix
+      MAT :: ANO, rho, rho_old
+      IVEC :: roby_atom
+      MAT, PTR :: X, D, rho_W
+      INT :: n_bf
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      D.create(n_bf,n_bf) 
+      .roby_overlap_transform( rho_old,D,col_atom=roby_atom)
+      .make_roby_projection_matrix(X,roby_atom,ANO)
+      rho_W.create(n_bf,n_bf)
+      .roby_project(D,rho_W,X)
+      .AO_subspace_set(rho,rho_W,A_row_atom=roby_atom, A_col_atom=roby_atom) 
+      rho_W.destroy; D.destroy
+      X.destroy
+   end
+
    make_roby_projected_NOs(NOs,roby_atom) 
    ! Make the Roby-projected natural orbitals.
       MAT :: NOs
@@ -9957,6 +10024,25 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       D.create( .n_bf, .n_bf)
       .AO_subspace_set(D,X,A_row_atom=roby_atom, A_col_atom=roby_atom)
       NOs = matmul(D,.natural_orbitals.restricted)
+      D.destroy
+      X.destroy
+   end
+
+   make_roby_projected_NOs(NOs,NO_old,roby_atom) 
+   ! Make the Roby-projected natural orbitals.
+   ! Projects onto the specific NO matrix given in NO_old
+      MAT :: NOs, NO_old
+      IVEC :: roby_atom
+      MAT, PTR :: X, D
+      INT :: n_bf
+      ENSURE(size(NOs,1)==.n_bf, "NOs matrix is wrong size")
+      ENSURE(size(NOs,2)==.n_bf, "NOs matrix is wrong size")
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      .make_roby_projection_matrix(X,roby_atom)
+      D.create( .n_bf, .n_bf)
+      .AO_subspace_set(D,X,A_row_atom=roby_atom, A_col_atom=roby_atom)
+      NOs = matmul(D,NO_old)
       D.destroy
       X.destroy
    end
@@ -9980,6 +10066,27 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       D.destroy
       X.destroy
    end
+   
+   make_roby_projected_NOs(NOs,NO_old,roby_atom,ANO) 
+   ! Make the Roby-projected natural orbitals.
+   ! The orbitals for roby projection are supplied in the ANO matrix
+   ! Projects onto the specific NO matrix given in NO_old
+      MAT :: NOs,NO_old
+      IVEC :: roby_atom
+      MAT :: ANO
+      MAT, PTR :: X, D
+      INT :: n_bf
+      ENSURE(size(NOs,1)==.n_bf, "NOs matrix is wrong size")
+      ENSURE(size(NOs,2)==.n_bf, "NOs matrix is wrong size")
+      n_bf = .atom(roby_atom).no_of_basis_functions
+      X.create( n_bf,  n_bf)
+      .make_roby_projection_matrix(X,roby_atom,ANO)
+      D.create( .n_bf, .n_bf)
+      .AO_subspace_set(D,X,A_row_atom=roby_atom, A_col_atom=roby_atom)
+      NOs = matmul(D,NO_old)
+      D.destroy
+      X.destroy
+   end
 
 !--------------------------------------------!
 ! Low level routines used all over the place !
@@ -9994,6 +10101,30 @@ write(*,'(2i5,2f15.8,i5)') i,total+j,norm,chi2,n_ok
       do k = 1,n_roby_atom
          roby_atom(k) = stdin.next_int
       end
+   end
+
+   read_roby_groups(roby_atom, roby_atom1, roby_atom2) [leaky]
+   ! Reads from the input file the roby_atom for consideration
+   ! and then separates into groups 1 and 2.
+      IVEC, PTR :: roby_atom, roby_atom1, roby_atom2
+      INT :: i, k, n_roby_atom
+      .read_roby_atom(roby_atom)
+      n_roby_atom = size(roby_atom)
+      ENSURE(ANY(roby_atom==0),"Use ZERO (0) to separate atomic groups")
+      do i = 1, n_roby_atom
+       if (roby_atom(i) == 0) then
+          k=i
+          exit
+       end
+      end
+      roby_atom1.create(k-1) 
+      roby_atom2.create(n_roby_atom - k)
+      roby_atom1 = roby_atom(1:k-1)
+      roby_atom2 = roby_atom(k+1:n_roby_atom)
+      roby_atom.destroy
+      roby_atom.create(n_roby_atom-1) 
+      roby_atom(1:size(roby_atom1)) = roby_atom1
+      roby_atom(size(roby_atom1)+1:n_roby_atom - 1) = roby_atom2
    end
 
 
