@@ -525,12 +525,22 @@ contains
    roby_energy_analysis
    ! directs the energy analysis of a diatomic
     IVEC, PTR :: roby_atom
+    DBL :: Ep_A, Ep_B, Ep_AB, E_A, E_B, E_AB
     INT :: a,b
     .read_roby_atom(roby_atom)
     ENSURE( size(roby_atom)==2, "Must supply a diatomic...")
     a = roby_atom(1); b=roby_atom(2)
     .put_roby_atom_energy( (/ a /) )
     .put_roby_atom_energy( (/ b /) )
+    .put_roby_atom_energy( roby_atom )
+    Ep_A = .roby_atom_energy( (/a/))
+    Ep_B = .roby_atom_energy( (/b/))
+    Ep_AB = .roby_atom_energy( roby_atom)
+    E_A = .roby_total_atom_energy((/ a /), nuclei=roby_atom,output=TRUE)
+    E_B = .roby_total_atom_energy((/ b /), nuclei=roby_atom,output=TRUE)
+    E_AB = .roby_total_atom_energy(roby_atom, nuclei=roby_atom,output=TRUE)
+    E_AB = .roby_atom_energy(roby_atom)
+    stdout.show( "Binding Energy: ", HALF * (E_A + E_B - E_AB + Ep_A + Ep_B - Ep_AB) )
     .put_roby_shared_energy(roby_atom)
     .put_roby_ionic_energy(roby_atom)
     stdout.show("Nuclear potential for A:", .atom.nuclear_energy( (/ a /) ))
@@ -625,6 +635,7 @@ contains
       IVEC, OPTIONAL :: atoms
       INT :: n_roby_atom, i, a
       IVEC, PTR :: roby_atom
+      DBL :: E_T, E_P, E_A
       if (PRESENT(atoms)) then
           roby_atom.create(size(atoms))
           roby_atom = atoms
@@ -643,35 +654,30 @@ contains
         a = roby_atom(i)
         stdout.text(trim(.atom(a).label))
       end 
+      E_T = .roby_total_atom_energy(roby_atom)
+      E_P = .roby_atom_energy(roby_atom)
+      E_A = E_T/2 + E_P/2
       stdout.flush
-      stdout.show("Atom Total Energy =", .roby_total_atom_energy(roby_atom))
+      stdout.show("Atom Total Energy =", E_T)
       stdout.flush
-      stdout.show("Promoted Atom Energy =", .roby_atom_energy(roby_atom))
+      stdout.show("Promoted Atom Energy =", E_P)
+      stdout.flush
+      stdout.show("Partitioned Atom Energy =", E_A)
       stdout.flush
       stdout.dash(dbl_fields=3) 
       stdout.flush
       roby_atom.destroy
    end
 
-   roby_atom_energy(roby_atom, atomguess) result(energy) [leaky]
+   roby_atom_energy(roby_atom) result(energy) [leaky]
    ! Return the Roby promoted atom energy for the group of atoms whose
    ! indices are given in "roby_atom".
       IVEC :: roby_atom
-      BIN, optional :: atomguess
-      BIN :: do_guess
       DBL :: energy
       OPMAT, PTR :: D,D_save
       INT :: i,a
       MAT, PTR :: P, Q
-      if (.mult /= 1) then
-        D_save.create( .n_bf, "unrestricted")
-      else
-        D_save.create( .n_bf, "restricted")
-      end
-      D_save = .density_matrix
-      do_guess=FALSE
-      if (present(atomguess)) do_guess=atomguess     ! no need to do this
-      if (do_guess) .make_atom_density(output=FALSE)
+      D_save => .density_matrix
       P.create(.n_bf, .n_bf)
       if (.mult/=1) then
         Q.create(.n_bf, .n_bf)
@@ -686,7 +692,7 @@ contains
         .make_roby_projected_density(P, roby_atom)
         D.restricted = P        ! P is projected density
       end
-      .density_matrix = D
+      .density_matrix => D
       .make_fock_matrix(core=FALSE)
       if (.mult/=1) then
           .add_core_hamiltonian(.fock_matrix.beta, roby_atom)
@@ -695,51 +701,100 @@ contains
           .add_core_hamiltonian(.fock_matrix.restricted, roby_atom)
       end
       energy = .scf_electronic_energy(D,roby_atom) + .atom(roby_atom).nuclear_energy
-      .density_matrix = D_save
-      D_save.destroy
+      .density_matrix => D_save
       D.destroy
       P.destroy
    end
 
-   roby_total_atom_energy(roby_atom, output) result(energy) [leaky]
+   roby_total_atom_energy(roby_atom, nuclei, output) result(energy) [leaky]
    ! Return the total Roby energy for the group of atoms whose
    ! indices are given in "roby_atom" If output is present and false energy breakdown
-   ! output is suppressed. If atomguess is present and true the atomguess density is used
-   ! rather than the true density
+   ! output is suppressed. If nuclei is given then only the nuclei specified
+   ! are used for E_N and N_N and N_E interactions, and the projected atoms specified by nuclei for the E_E
+   ! repulsions
       IVEC :: roby_atom
+      IVEC, optional :: nuclei
       BIN, optional :: output
       BIN :: do_output
-      DBL :: energy, E_k, Na_Em, Na_Ea, Ea_Nm, Ea_Em
+      DBL :: energy, E_k, Na_Em, Na_Ea, Ea_Nm, Ea_Em, Ea_Ea
       MAT, PTR :: Pa, Pb, Za, Zm, T
+      MAT, PTR :: D, D_save
       do_output=TRUE
-      if (present(output)) do_output=output
+      if (present(output)) do_output=output          ! puts out the energies and sub-energies and all that
       T.create(.n_bf, .n_bf); Pa.create(.n_bf, .n_bf)
       Za.create(.n_bf, .n_bf); Zm.create(.n_bf, .n_bf)
-      .make_nuclear_matrix(Zm)          ! The e->n attractions of the atoms electrons for all the nuclei
-      .make_nuclear_matrix(Za,roby_atom) ! The n->e attractions felt by the nuclei in the roby atom
-      .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
-      .make_kinetic_matrix(T,output=FALSE)           ! The electronic kinetic energy matrix
+      if (present(nuclei)) then
+         .make_nuclear_matrix(Zm,nuclei)   ! The e->n attractions of the atoms electrons for the "nuclei"
+      else
+         .make_nuclear_matrix(Zm)          ! The e->n attractions of the atoms electrons for all the nuclei
+      end
+      .make_nuclear_matrix(Za,roby_atom)   ! The n->e attractions felt by the nuclei in the roby atom
+      .make_kinetic_matrix(T,output=FALSE) ! The electronic kinetic energy matrix
       if (.mult/=1) then
         Pb.create(.n_bf, .n_bf)
+        if (present(nuclei)) then   ! if we only want to look at subgroups of the molecule
+          D_save => .density_matrix.alpha
+          D => .density_matrix.beta
+          .make_roby_projected_density(Pa, .density_matrix.alpha, nuclei)
+          .make_roby_projected_density(Pb, .density_matrix.beta, nuclei)
+          .density_matrix.alpha => Pa 
+          .density_matrix.beta => Pb 
+          .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+          Na_Em = Za.trace_of_product(.density_matrix.alpha) + Za.trace_of_product(.density_matrix.beta)
+          .density_matrix.alpha => D_save
+          .density_matrix.beta => D
+        else
+          .make_fock_matrix(core=FALSE)
+          Na_Em = Za.trace_of_product(.density_matrix.alpha) + Za.trace_of_product(.density_matrix.beta)
+        end
+        D_save => .density_matrix.alpha
+        D => .density_matrix.beta
         .make_roby_projected_density(Pa,.density_matrix.alpha, roby_atom)
         .make_roby_projected_density(Pb,.density_matrix.beta, roby_atom)
+        .density_matrix.alpha => Pa
+        .density_matrix.beta => Pb
+        .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+        Ea_Ea = .fock_matrix.alpha.trace_of_product(Pa) + .fock_matrix.beta.trace_of_product(Pb)
+        .density_matrix.alpha => D_save 
+        .density_matrix.beta => D
         E_k = T.trace_of_product(Pa) + T.trace_of_product(Pb)
-        Na_Em = Za.trace_of_product(.density_matrix.alpha) + Za.trace_of_product(.density_matrix.beta)
         Na_Ea = Za.trace_of_product(Pa) + Za.trace_of_product(Pb)
         Ea_Nm = Zm.trace_of_product(Pa) + Zm.trace_of_product(Pb)
+        .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
         Ea_Em = .fock_matrix.alpha.trace_of_product(Pa) + .fock_matrix.beta.trace_of_product(Pb)
-        Ea_Em = HALF * Ea_Em
+        Ea_Em = Ea_Em - Ea_Ea/2
         Pb.destroy
       else
+        if (present(nuclei)) then   ! if we only want to look at the interactions say in the diatomic nuclei
+          D_save => .density_matrix.restricted
+          .make_roby_projected_density(Pa, roby_atom)
+          .density_matrix.restricted => Pa 
+          Na_Em = Za.trace_of_product(.density_matrix.restricted)
+          .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+          .density_matrix.restricted => D_save
+        else
+          Na_Em = Za.trace_of_product(.density_matrix.restricted)
+          .make_fock_matrix(core=FALSE)
+        end
+        D_save => .density_matrix.restricted
+        .make_roby_projected_density(Pa, roby_atom)
+        .density_matrix.restricted => Pa
+        .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+        Ea_Ea = .fock_matrix.restricted.trace_of_product(Pa)
+        .density_matrix.restricted => D_save 
         .make_roby_projected_density(Pa, roby_atom)
         E_k = T.trace_of_product(Pa)
-        Na_Em = Za.trace_of_product(.density_matrix.restricted)
         Na_Ea = Za.trace_of_product(Pa)
         Ea_Nm = Zm.trace_of_product(Pa)
-        Ea_Em = HALF * .fock_matrix.restricted.trace_of_product(Pa)
+        .make_fock_matrix(core=FALSE)      ! no core and for the whole molecule
+        Ea_Em = .fock_matrix.restricted.trace_of_product(Pa) - Ea_Ea/2
       end
       energy = Na_Em + E_k + Ea_Em + Ea_Nm - Na_Ea 
-      energy = energy + .atom.nuclear_energy(roby_atom)
+      if (present(nuclei)) then
+        energy = energy + .atom.nuclear_energy(roby_atom,nuclei)
+      else
+        energy = energy + .atom.nuclear_energy(roby_atom)
+      end
       if (do_output) then
        stdout.dash(dbl_fields=3)
        stdout.show("N_a to E_m:",Na_Em)
@@ -748,6 +803,7 @@ contains
        stdout.show("E_a to E_m:",Ea_Em)
        stdout.show("N_a to N_m:", .atom.nuclear_energy(roby_atom))
        stdout.show("Kinetic Energy:", E_k)
+       stdout.show("Total Energy:", energy)
        stdout.dash(dbl_fields=3)
       end
       Pa.destroy
