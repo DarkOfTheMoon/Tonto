@@ -4191,7 +4191,7 @@ sub module_colon_to_fortran {
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
   }
 
-  while ($X =~ /([A-Z][A-Z0-9{,}.]+):(\w+)/g) { # A function call
+  while ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
      my $pre = $PREMATCH;
      my $rout_type = $1; 
      my $rout = $2; 
