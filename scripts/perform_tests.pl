@@ -7,7 +7,7 @@
 #
 # It expects that the input for the program is the file "stdin", and the output
 # file is "stdout".  Files in the test directory should be matched pairs, with
-# the first part of their name being "stdin" or "stdout", and the rest being
+# the end of their names being "stdin" or "stdout", and the rest being
 # identical.  Files that are not matched pairs like this are skipped.
 #
 # (c) Daniel Grimwood, University of Western Australia, 2004.
@@ -19,8 +19,6 @@
 use strict;
 use English;
 use ExtUtils::Command;
-use File::Basename ('basename');
-use File::Spec ('splitpath','catpath');
 use File::Copy ('copy');
 
 my $testdir = "";
@@ -31,7 +29,7 @@ my $cmp = "";
 
 # read the list of input files
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
-my @inputfiles = grep { /^stdin.+/ && -f "$testdir/$_"} readdir(TESTDIR);
+my @inputfiles = grep { /stdin$/ && -f "$testdir/$_"} readdir(TESTDIR);
 foreach my $x (@inputfiles) { $x = $testdir . "/" . $x; }
 closedir(TESTDIR);
 
@@ -50,9 +48,8 @@ if ($ntests>0) {
 foreach my $input (@inputfiles) {
 
   # Get the output file name from the input file name.
-  my ($volume,$dir,$file) = File::Spec -> splitpath($input);
-  $file =~ s/^stdin/stdout/;
-  my $output = File::Spec -> catpath($volume,$dir,$file);
+  my $output = $input;
+  $output =~ s/stdin$/stdout/;
 
   if (-f $output) {
     print "running \"$input\" ... ";
@@ -109,18 +106,21 @@ sub analyse_arguments {
      }
    }
 
-   if ($testdir eq "" || ! -d $testdir) {
+   if ($testdir eq "") {
+     warn " Error : -testdir option is empty string";
+     $argerr = 1;
+   } elsif (! -d $testdir) {
      warn " Error : \"$testdir\" is not a directory";
      $argerr = 1;
    }
 
    if ($program eq "") {
-     warn " Error : \"$program\" is not an executable program";
+     warn " Error : -program option is empty string";
      $argerr = 1;
    }
 
    if ($cmp eq "") {
-     warn " Error : \"$cmp\" is not an executable program";
+     warn " Error : -cmp option is empty string";
      $argerr = 1;
    }
 
@@ -135,7 +135,7 @@ sub analyse_arguments {
     -testdir dir   means test all files in the directory "dir".  All files
                    beginning with "stdin" are expected to be test jobs.  Those
                    without a corresponding "stdout" file will be skipped.  E.g.
-                   the files "stdin.h2o.rhf" and "stdout.h2o.rhf" go together.
+                   the files "h2o.rhf.stdin" and "h2o.rhf.stdout" go together.
 
     -program prog  "prog" is the program to test.  E.g.
                    INTEL-ifort-on-LINUX/run_molecule.exe
