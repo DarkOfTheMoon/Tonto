@@ -2130,7 +2130,7 @@ sub fortran_dump_use {
     }
   }
 
-  my ($mod,$fort_mod,$fort_typ);
+  my ($mod,$fort_mod,$fort_typ,$fort_fun);
 
   # Loop over the TONTO modules $mod to which the called routines belong
   foreach $mod (keys %called_routines) { 
@@ -2148,6 +2148,7 @@ sub fortran_dump_use {
          # This is the mangled fortran module name of the called routine
          $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
          $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
+         $fort_fun = $called_routines{$mod}{$rout}{function_call};
          if ($mod eq "TEXTFILE" && $first==0 && $mod ne $module_full_name) {
             print USEFILE "   use TEXTFILE_MODULE, only: stdin";
             print USEFILE "   use TEXTFILE_MODULE, only: stdout";
@@ -2166,15 +2167,23 @@ sub fortran_dump_use {
 
          if ($mod ne "unknown" && $mod ne $module_full_name) {
             if ($do_generic) {
-            print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
+               if (defined $fort_fun and $fort_fun==1) {
+                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+               } else {
+                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
+               }
             } else {
-            print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
+                  print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
             }
          } elsif ($mod eq "unknown") {
             if ($do_generic) {
-            print USEFILE "!  use ${fort_mod}_MODULE, only: ${rout}_";
+               if (defined $fort_fun and $fort_fun==1) {
+                  print USEFILE "!  use ${fort_mod}_MODULE, only: ${rout}";
+               } else {
+                  print USEFILE "!  use ${fort_mod}_MODULE, only: ${rout}_";
+               }
             } else {
-            print USEFILE "!  use ${fort_mod}_MODULE, only: ?_${rout}";
+                  print USEFILE "!  use ${fort_mod}_MODULE, only: ?_${rout}";
             }
          }
       }
@@ -4201,6 +4210,7 @@ sub module_colon_to_fortran {
      my $fortran_mod_name  = $info{fortran_mod_name};
      $called_routines{$rout_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
      $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
+     $called_routines{$rout_type}{$rout}{function_call} = 1;
      if ($do_generic) { $X = $pre.$rout.$post; } 
      else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
   }
