@@ -18,6 +18,7 @@ module MOL_SCF
    use MAT
    use MAT3
    use MAT4
+   use MAT4VEC
    use CMAT
    use CMAT3
    use OPVEC
@@ -105,33 +106,69 @@ contains
   !   .molecular_orbitals, .orbital_energies, .density_matrix  
   ! are produced as results.
     MAT, PTR :: S
+    OPMAT, PTR :: dP,dF,old_P,old_F
     STR :: kind
     ENSURE( .atom.created,  "no atom list")
     ENSURE( .atom.basis_resolved, "no basis set")
+    .make_ab_ab_ERI                   ! get the ab|ab eri's
     .get_initial_guess
-    .make_fock_matrix
+
+    .make_fock_matrix(core=TRUE)
+
     .scfdata.set(nuclear_energy=.nuclear_energy, put_file=.out)
     .scfdata.reset(energy=.scf_energy, kinetic_energy=.kinetic_energy)
     .scfdata.put_banner
     kind = .scfdata.spinorbital_kind
+
+    dP.create(.n_bf,kind)
+    dF.create(.n_bf,kind)
+    old_P.create(.n_bf,kind);     old_P.set_to(.density_matrix)
+    old_F.create(.n_bf,kind);     old_F.set_to(.fock_matrix)
+
+    ! first iteration.
+    .extrapolate_scf
+    .update_molecular_orbitals
+
+    S.create( .n_bf, .n_bf)
+    .get_overlap_matrix(S)
+    .molecular_orbitals.schmidt_orthonormalise(S)
+    S.destroy
+
+    .make_scf_density_matrix
+    .save_scf_results
+    .make_fock_matrix(core=TRUE)
+    .scfdata.update( energy=.scf_energy, kinetic_energy=.kinetic_energy )
+    .scfdata.put_results
+
     do
       .extrapolate_scf
       .update_molecular_orbitals
-      if (kind == "restricted") then
-        S.create( .n_bf, .n_bf)
-        .get_overlap_matrix(S)
-        .molecular_orbitals%restricted.schmidt_orthonormalise(S)
-        S.destroy
-      end
+      S.create( .n_bf, .n_bf)
+      .get_overlap_matrix(S)
+      .molecular_orbitals.schmidt_orthonormalise(S)
+      S.destroy
       .make_scf_density_matrix
       .save_scf_results
-      .make_fock_matrix
+      dP.set_to(.density_matrix)
+      dP.minus(old_P)
+      .make_fock_matrix(dP,dF,core=FALSE)
+      .fock_matrix.set_to(old_F)
+      .fock_matrix.plus(dF)
+      old_P.set_to(.density_matrix)
+      old_F.set_to(.fock_matrix)
       .scfdata.update( energy=.scf_energy, kinetic_energy=.kinetic_energy )
       .scfdata.put_results
       if (.scfdata.scf_done) exit
     end
+
+    dF.destroy
+    dP.destroy
+    old_F.destroy
+    old_P.destroy
+
     .scfdata.cleanup_diis
     .fock_matrix.destroy(kind)
+    .ab_ab_ERI.destroy
   end
 
   update_molecular_orbitals
@@ -349,7 +386,8 @@ contains
   end
 
   delete_integrals
-  ! Delete all integral files. This is required whenever the geometry is changed.
+  ! Delete all integral files.
+  ! This is required whenever the geometry is changed.
      ARCHIVE :: archive
      archive.set(.name,"overlap_matrix")
      archive.delete
@@ -435,7 +473,8 @@ contains
   end
 
   make_core_guess [leaky]
-  ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and ".orbital_energies"
+  ! Do a core scf for the ".density_matrix", ".molecular_orbitals" and
+  ! ".orbital_energies"
     STR :: kind
     .destroy_scf_results
     .orbital_energies.destroy("restricted")
@@ -450,56 +489,6 @@ contains
     .make_scf_density_matrix
     .make_fock_matrix  ! Make a fock matrix
     .make_fock_guess   ! Get a reasonable set of starting MO's
-!    select case (kind)
-!       case ("rhf","restricted_hartree_fock","rohf","restricted_open_shell_hartree_fock", &
-!             "xray_rhf","xray_constrained_restricted_hartree_fock", &
-!             "xray_fit","xray_constrained")
-!          .orbital_energies.destroy("restricted")
-!          .orbital_energies.create("restricted")
-!          .molecular_orbitals.destroy("restricted")
-!          .molecular_orbitals.create("restricted")
-!          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
-!       case ("uhf","unrestricted_hartree_fock")
-!          .orbital_energies.destroy("unrestricted")
-!          .orbital_energies.create("unrestricted")
-!          .molecular_orbitals.destroy("unrestricted")
-!          .molecular_orbitals.create("unrestricted")
-!          .get_r_core_guess(.orbital_energies%alpha,.molecular_orbitals%alpha)
-!          .orbital_energies%beta   = .orbital_energies%alpha
-!          .molecular_orbitals%beta = .molecular_orbitals%alpha
-!       case ("gchf","cghf","general_complex_hartree_fock","complex_general_hartree_fock")
-!          .orbital_energies.destroy("restricted")
-!          .orbital_energies.create("restricted")
-!          .molecular_orbitals.destroy("restricted")
-!          .molecular_orbitals.create("restricted")
-!          .get_r_core_guess(.orbital_energies%restricted,.molecular_orbitals%restricted)
-!          .orbital_energies.destroy("general")
-!          .orbital_energies.create("general")
-!          eg  => .orbital_energies%general
-!          er  => .orbital_energies%restricted
-!          eg(1:2*.n_b-1:2)  = er(1:.n_b)
-!          eg(2:2*.n_b  :2)  = er(1:.n_b)
-!          eg(2*.n_b+1:.n_e) = er(.n_b+1:.n_a)
-!          eg(.n_e+1:2*.n_a)        = er(.n_b+1:.n_a)
-!          eg(2*.n_a+1:2*.n_bf-1:2) = er(.n_a+1:.n_bf)
-!          eg(2*.n_a+2:2*.n_bf  :2) = er(.n_a+1:.n_bf)
-!          .orbital_energies.destroy("restricted")
-!          .molecular_orbitals.destroy("general_complex")
-!          .molecular_orbitals.create("general_complex")
-!          MOg => .molecular_orbitals%general_complex
-!          MOr => .molecular_orbitals%restricted
-!          MOg = ZERO
-!          MOg(1:.n_bf ,1:2*.n_b-1:2)  = MOr(:,1:.n_b)
-!          MOg(.n_bf+1:,2:2*.n_b  :2)  = MOr(:,1:.n_b)
-!          MOg(1:.n_bf ,2*.n_b+1:.n_e) = MOr(:,.n_b+1:.n_a)
-!          MOg(.n_bf+1:,.n_e+1:2*.n_a) = MOr(:,.n_b+1:.n_a)
-!          MOg(1:.n_bf ,2*.n_a+1:2*.n_bf-1:2) = MOr(:,.n_a+1:.n_bf)
-!          MOg(.n_bf+1:,2*.n_a+2:2*.n_bf  :2) = MOr(:,.n_a+1:.n_bf)
-!          .molecular_orbitals.destroy("restricted")
-!       case default; DIE("don't know what to do for " // kind)
-!    end
-!    .make_scf_density_matrix
-!    .save_scf_results
   end
 
   make_r_core_guess(MO_energies,MO)
@@ -564,6 +553,7 @@ contains
       if (mol.no_of_electrons >= 1) then
         mol%scfdata%convergence = 0.0001
         mol%scfdata%output = FALSE
+        mol%scfdata%direct = TRUE
         mol.scf
         mol.make_ao_density_matrix
         mol%pointgroup.create("oh")
@@ -738,23 +728,15 @@ contains
             .fock_matrix.uncompress
             error.destroy
          case ("gchf","cghf","complex_general_hartree_fock","general_complex_hartree_fock")
-    ! .out.text("1")
             error.create(.n_bf,"general_complex")
-    ! .out.text("2")
             err => error%general_complex
             F   => .fock_matrix%general_complex
             P   => .density_matrix%general_complex
-    ! .out.text("3")
             .make_gc_diis_error(err,F,P)
-    ! .out.text("4")
             error.compress
-    ! .out.text("5")
             .fock_matrix.compress
-    ! .out.text("6")
             .scfdata%diis.extrapolate(.fock_matrix%square,error%square)
-    ! .out.text("7")
             .fock_matrix.uncompress
-    ! .out.text("8")
             error.destroy
       end
    end
@@ -889,13 +871,37 @@ contains
     select case (scf_kind)
        case ("rhf","restricted_hartree_fock", &
              "xray_rhf","xray_constrained_restricted_hartree_fock")
-                                                            .make_r_fock(direct,core,r12)
-       case("rohf","restricted_open_shell_hartree_fock");   .make_ro_fock(direct,core,r12)
-       case("uhf","unrestricted_hartree_fock");             .make_u_fock(direct,core,r12)
-       case("gchf","cghf", &
-            "general_complex_hartree_fock","complex_general_hartree_fock")
-                                                            .make_gc_fock(direct,core,r12) 
-                                                            .make_gc_so_fock 
+                                 .make_r_fock(direct,core,r12)
+       case("rohf","restricted_open_shell_hartree_fock")
+                                 .make_ro_fock(direct,core,r12)
+       case("uhf","unrestricted_hartree_fock")
+                                 .make_u_fock(direct,core,r12)
+       case("gchf","cghf", "general_complex_hartree_fock","complex_general_hartree_fock")
+                                 .make_gc_fock(direct,core,r12) 
+                                 .make_gc_so_fock 
+       case default; DIE("unknown scf kind, "// scf_kind.trim)
+    end
+  end
+
+  make_fock_matrix(P,F,core,r12) [leaky]
+  ! For the quicker ERI method.
+    OPMAT :: P,F
+    BIN, optional :: core,r12
+    STR :: scf_kind 
+    BIN :: direct
+    scf_kind = .scfdata%kind 
+    direct = .scfdata%direct 
+    select case (scf_kind)
+       case ("rhf","restricted_hartree_fock", &
+             "xray_rhf","xray_constrained_restricted_hartree_fock")
+                                 .make_r_fock(P,F,direct,core,r12)
+       case("rohf","restricted_open_shell_hartree_fock")
+                                 .make_ro_fock(P,F,direct,core,r12)
+       case("uhf","unrestricted_hartree_fock")
+                                 .make_u_fock(P,F,direct,core,r12)
+       case("gchf","cghf", "general_complex_hartree_fock","complex_general_hartree_fock")
+                                 .make_gc_fock(P,F,direct,core,r12) 
+                                 .make_gc_so_fock(P,F)
        case default; DIE("unknown scf kind, "// scf_kind.trim)
     end
   end
@@ -1025,184 +1031,224 @@ contains
      end
      HH.make_hermitian
      F = HH + F
-        ! .out.set_dbl_width(15)
-        ! .out.set_dbl_precision(8)
-        ! .out.set_fields(7)
-        ! .out.text("h, real")
-        ! .out.put(real(HH))
-        ! .out.text("h, imag")
-        ! .out.put(aimag(HH))
-        ! stop
      HH.destroy
   end
 
   make_r_fock(direct,core,r12) [leaky]
   ! Make a new restricted Fock matrix. 
-  ! If present and TRUE , "direct" means calculate integrals on the fly
-  ! If present and FALSE, "core" removes the core matrix contribution
-  ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
-    MAT, PTR :: J,K,P,F
-    BIN :: do_direct,add_core,add_r12
-    ENSURE( .density_matrix%restricted.created, "no density matrix")
     .fock_matrix.destroy("restricted")
-    do_direct= FALSE
-    add_core = TRUE
-    add_r12  = TRUE
-    if (present(direct)) do_direct = direct
-    if (present(core))   add_core = core
-    if (present(r12))    add_r12  = r12
-    F.create(.n_bf,.n_bf)
-    F = ZERO
-    if (add_r12) then
-       P => .density_matrix%restricted
-       J.create( .n_bf, .n_bf)
-       K.create( .n_bf, .n_bf)
-       if (do_direct) then; .make_r_JK_direct(J,K,P)
-       else;                .make_r_JK_disk(J,K,P)
-       end
-       F = J - HALF*K 
-       K.destroy
-       J.destroy
-    end
-    if (add_core) .add_core_hamiltonian(F)
-    .fock_matrix%restricted => F
+    .fock_matrix.create(.n_bf,"restricted")
+    .make_r_fock(.density_matrix,.fock_matrix,direct,core,r12)
   end
 
   make_u_fock(direct,core,r12) [leaky]
   ! Make a new unrestricted Fock matrix. 
+    BIN, optional :: direct,core,r12
+    .fock_matrix.destroy("unrestricted")
+    .fock_matrix.create(.n_bf,"unrestricted")
+    .make_u_fock(.density_matrix,.fock_matrix,direct,core,r12)
+  end
+
+  make_ro_fock(direct,core,r12) [leaky]
+  ! Make a new restricted open shell Fock matrix. 
+    BIN, optional :: direct,core,r12
+    .fock_matrix.destroy("restricted")
+    .fock_matrix.create("restricted")
+    .make_ro_fock(.fock_matrix,.density_matrix,direct,core,r12)
+  end
+
+  make_gc_fock(direct,core,r12) [leaky]
+  ! Make a new complex general Fock matrix.
+    BIN, optional :: direct,core,r12
+    .fock_matrix.destroy("general_complex")
+    .fock_matrix%general_complex.create(2*.n_bf,2*.n_bf)
+    .make_gc_fock(.density_matrix,.fock_matrix,direct,core,r12)
+  end
+
+  make_gc_so_fock [leaky]
+  ! Make the general complex two electron spin orbit contribution to the Fock matrix. 
+    .make_gc_so_fock(.density_matrix,.fock_matrix)
+  end
+
+  make_r_fock(P,F,direct,core,r12) [leaky]
+  ! Make a new restricted Fock matrix "F" from the density matrix "P".
   ! If present and TRUE , "direct" means calculate integrals on the fly
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
-    MAT, PTR :: J,Ka,Kb,P,Pa,Pb,Fa,Fb
+    OPMAT :: P,F
+    MAT, PTR :: J,K
     BIN :: do_direct,add_core,add_r12
-    ENSURE( .density_matrix%alpha.created, "no density matrix")
-    ENSURE( .density_matrix%beta.created, "no density matrix")
-    .fock_matrix.destroy("unrestricted")
+
+    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
+    ENSURE(F.restricted.created, "no fock matrix")
+    ENSURE(P.restricted.created, "no density matrix")
+
     do_direct= FALSE
     add_core = TRUE
     add_r12  = TRUE
     if (present(direct)) do_direct = direct
     if (present(core))   add_core = core
     if (present(r12))    add_r12  = r12
-    Fa.create(.n_bf,.n_bf)
-    Fb.create(.n_bf,.n_bf)
-    Fa = ZERO
-    Fb = ZERO
     if (add_r12) then
-       Pa => .density_matrix%alpha
-       Pb => .density_matrix%beta
+       J.create(.n_bf,.n_bf)
+       K.create(.n_bf,.n_bf)
+       if (do_direct) then; .make_r_JK_direct(J,K,P.restricted)
+       else;                .make_r_JK_disk(J,K,P.restricted)
+       end
+       F.restricted = J - HALF*K 
+       K.destroy
+       J.destroy
+    else
+       F.restricted = ZERO
+    end
+    if (add_core) .add_core_hamiltonian(F.restricted)
+  end
+
+  make_u_fock(P,F,direct,core,r12) [leaky]
+  ! Make a new unrestricted Fock matrix. 
+  ! If present and TRUE , "direct" means calculate integrals on the fly
+  ! If present and FALSE, "core" removes the core matrix contribution
+  ! If present and FALSE, "r12"  removes the two electron contribution
+    OPMAT :: P,F
+    BIN, optional :: direct,core,r12
+    MAT, PTR :: J,Ka,Kb,Pab
+    BIN :: do_direct,add_core,add_r12
+
+    ENSURE(F.alpha.created, "no fock matrix")
+    ENSURE(F.beta.created, "no fock matrix")
+    ENSURE(P.alpha.created,"no density matrix")
+    ENSURE(P.beta.created, "no density matrix")
+    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Density matrix dimensions wrong")
+    do_direct= FALSE
+    add_core = TRUE
+    add_r12  = TRUE
+    if (present(direct)) do_direct = direct
+    if (present(core))   add_core = core
+    if (present(r12))    add_r12  = r12
+    if (add_r12) then
        J.create(.n_bf,.n_bf)
        Ka.create(.n_bf,.n_bf)
        Kb.create(.n_bf,.n_bf)
-       P.create(.n_bf,.n_bf)
-       P  = Pa + Pb
-       if (do_direct) then; .make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
-       else;                .make_u_JK_disk(J,Ka,Kb,P,Pa,Pb)
+       Pab.create(.n_bf,.n_bf)
+       Pab  = P.alpha + P.beta
+       if (do_direct) then; .make_u_JK_direct(J,Ka,Kb,Pab,P.alpha,P.beta)
+       else;                .make_u_JK_disk(J,Ka,Kb,Pab,P.alpha,P.beta)
        end
-       P.destroy
-       Fa = J - Ka 
-       Fb = J - Kb 
+       Pab.destroy
+       F.alpha = J - Ka 
+       F.beta = J - Kb 
        Kb.destroy
        Ka.destroy
        J.destroy
+    else
+       F.alpha = ZERO
+       F.beta  = ZERO
     end
-    if (add_core) .add_core_hamiltonian(Fa)
-    if (add_core) .add_core_hamiltonian(Fb)
-    .fock_matrix%alpha => Fa
-    .fock_matrix%beta  => Fb
+    if (add_core) .add_core_hamiltonian(F.alpha)
+    if (add_core) .add_core_hamiltonian(F.beta)
   end
 
-  make_ro_fock(direct,core,r12) [leaky]
+  make_ro_fock(P,F,direct,core,r12) [leaky]
   ! Make a new restricted open shell Fock matrix. 
   ! If present and TRUE , "direct" means calculate integrals on the fly
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
+    OPMAT :: F,P
     BIN, optional :: direct,core,r12
-    MAT, PTR :: F,Fa,Fb,S,W
+    MAT, PTR :: Fr,Fa,Fb,S,W
     ENSURE( .molecular_orbitals%restricted.created, "no orbitals")
-    .make_u_fock(direct,core,r12)
-    .fock_matrix.destroy("restricted")
-    .fock_matrix.create("restricted")
-    F => .fock_matrix%restricted
-    Fa.create(.n_bf,.n_bf); Fa = .fock_matrix%alpha
-    Fb.create(.n_bf,.n_bf); Fb = .fock_matrix%beta
+    ENSURE(F.restricted.created, "no density matrix")
+    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
+
+    .make_u_fock(F,P,direct,core,r12)
+
+    Fr => F.restricted
+    Fa.create(.n_bf,.n_bf); Fa = F.alpha
+    Fb.create(.n_bf,.n_bf); Fb = F.beta
     Fa.change_basis(.molecular_orbitals%restricted)
     Fb.change_basis(.molecular_orbitals%restricted)
-    F = HALF*(Fa+Fb)
-    F(.n_b+1:.n_a,     1:.n_b) = Fb(.n_b+1:.n_a,     1:.n_b)
-    F(     1:.n_b,.n_b+1:.n_a) = Fb(     1:.n_b,.n_b+1:.n_a)
-    F(.n_a+1:    ,.n_b+1:.n_a) = Fa(.n_a+1:    ,.n_b+1:.n_a)
-    F(.n_b+1:.n_a,.n_a+1:    ) = Fa(.n_b+1:.n_a,.n_a+1:    )
+    Fr = HALF*(Fa+Fb)
+    Fr(.n_b+1:.n_a,     1:.n_b) = Fb(.n_b+1:.n_a,     1:.n_b)
+    Fr(     1:.n_b,.n_b+1:.n_a) = Fb(     1:.n_b,.n_b+1:.n_a)
+    Fr(.n_a+1:    ,.n_b+1:.n_a) = Fa(.n_a+1:    ,.n_b+1:.n_a)
+    Fr(.n_b+1:.n_a,.n_a+1:    ) = Fa(.n_b+1:.n_a,.n_a+1:    )
     S => Fb; .get_overlap_matrix(S)
     W => Fa; W.to_product(.molecular_orbitals%restricted,S,transpose_a=TRUE)
-    F.change_basis(W) ! change to AO basis
+    Fr.change_basis(W) ! change to AO basis
     Fb.destroy
     Fa.destroy
   end
 
-  make_gc_fock(direct,core,r12) [leaky]
+  make_gc_fock(P,F,direct,core,r12) [leaky]
   ! Make a new complex general Fock matrix.
   ! If present and TRUE , "direct" means calculate integrals on the fly
   ! If present and FALSE, "core" removes the core matrix contribution
   ! If present and FALSE, "r12"  removes the two electron contribution
     BIN, optional :: direct,core,r12
-    CMAT, PTR :: Ka,Kb,Kba,Pa,Pb,Pba,F
-    MAT, PTR :: J, P
+    OPMAT :: P,F
+    CMAT, PTR :: Ka,Kb,Kba,Pa,Pb,Pba,Fgc
+    MAT, PTR :: J, Pab
     BIN :: do_direct,add_core,add_r12
-    .fock_matrix.destroy("general_complex")
+    ENSURE(F.general_complex.created, "no density matrix")
+    ENSURE(P.general_complex.created, "no density matrix")
+    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Fock matrix dimensions wrong")
     do_direct= FALSE
     add_core = TRUE
     add_r12  = TRUE
     if (present(direct)) do_direct = direct
     if (present(core)) add_core = core
     if (present(r12))  add_r12  = r12
-    F.create(2*.n_bf,2*.n_bf)
-    F = ZERO
+    Fgc => F.general_complex
     if (add_r12) then
        J.create(.n_bf,.n_bf)
        Ka.create(.n_bf,.n_bf)
        Kb.create(.n_bf,.n_bf)
        Kba.create(.n_bf,.n_bf)
-       Pa.create(.n_bf,.n_bf);  .density_matrix%general_complex.alpha_alpha_put_to(Pa)
-       Pb.create(.n_bf,.n_bf);  .density_matrix%general_complex.beta_beta_put_to(Pb)
-       Pba.create(.n_bf,.n_bf); .density_matrix%general_complex.beta_alpha_put_to(Pba)
-       P.create(.n_bf,.n_bf)
-       P  = Pa + Pb
-       if (do_direct) then; .make_gc_JK_direct(J,Ka,Kb,Kba,P,Pa,Pb,Pba)
-       else;                .make_gc_JK_disk(J,Ka,Kb,Kba,P,Pa,Pb,Pba)
+       Pa.create(.n_bf,.n_bf);  P.general_complex.alpha_alpha_put_to(Pa)
+       Pb.create(.n_bf,.n_bf);  P.general_complex.beta_beta_put_to(Pb)
+       Pba.create(.n_bf,.n_bf); P.general_complex.beta_alpha_put_to(Pba)
+       Pab.create(.n_bf,.n_bf)
+       Pab  = Pa + Pb
+       if (do_direct) then; .make_gc_JK_direct(J,Ka,Kb,Kba,Pab,Pa,Pb,Pba)
+       else;                .make_gc_JK_disk(J,Ka,Kb,Kba,Pab,Pa,Pb,Pba)
        end
-       P.destroy
+       Pab.destroy
        Pba.destroy
        Pb.destroy
        Pa.destroy
-       Ka = J - Ka; F.alpha_alpha_set_to(Ka)
-       Kb = J - Kb; F.beta_beta_set_to(Kb)
-       Kba = -Kba;  F.beta_alpha_set_to(Kba)
+       Ka = J - Ka; Fgc.alpha_alpha_set_to(Ka)
+       Kb = J - Kb; Fgc.beta_beta_set_to(Kb)
+       Kba = -Kba;  Fgc.beta_alpha_set_to(Kba)
        Kba.destroy
        Kb.destroy
        Ka.destroy
        J.destroy
+    else
+       Fgc = ZERO
     end
-    if (add_core) .add_core_hamiltonian(F)
-    F.make_hermitian
-    .fock_matrix%general_complex => F
-        ! .out.text("F, real:")
-        ! .out.put( real(F) )
-        ! .out.text("F, imag:")
-        ! .out.put( aimag(F) )
+    if (add_core) .add_core_hamiltonian(Fgc)
+    Fgc.make_hermitian
   end
 
-  make_gc_so_fock [leaky]
+  make_gc_so_fock(P,F) [leaky]
   ! Make the general complex two electron spin orbit contribution to the Fock matrix. 
+    OPMAT      :: P,F
     CMAT5, PTR :: JS,KS,JO,KO
-    CMAT4, PTR :: P
-    CMAT, PTR  :: F,Faa,Fbb,Fba
+    CMAT4, PTR :: Pgc
+    CMAT, PTR  :: Faa,Fbb,Fba
     ARCHIVE    :: SOx_archive,SOy_archive,SOz_archive,ind_archive
     CDBL :: I
     DBL :: fac
     INT :: a,b,x,y,z
+    ENSURE(F.general_complex.created, "no density matrix")
+    ENSURE(P.general_complex.created, "no density matrix")
+    ENSURE(F.n_bf == .n_bf, "Fock matrix dimensions wrong")
+    ENSURE(P.n_bf == .n_bf, "Fock matrix dimensions wrong")
     if (.scfdata%using_2e_sl_term) then
       .get_spin_orbit_integrals
       Faa.create(.n_bf,.n_bf)
@@ -1210,19 +1256,19 @@ contains
       Fba.create(.n_bf,.n_bf)
       JS.create(.n_bf,.n_bf,2,2,3); KS.create(.n_bf,.n_bf,2,2,3)
       JO.create(.n_bf,.n_bf,2,2,3); KO.create(.n_bf,.n_bf,2,2,3)
-      P.create(.n_bf,.n_bf,2,2)
-      .density_matrix%general_complex.alpha_alpha_put_to(P(:,:,1,1))
-      .density_matrix%general_complex.beta_alpha_put_to(P(:,:,2,1))
-      .density_matrix%general_complex.alpha_beta_put_to(P(:,:,1,2))
-      .density_matrix%general_complex.beta_beta_put_to(P(:,:,2,2))
+      Pgc.create(.n_bf,.n_bf,2,2)
+      P.general_complex.alpha_alpha_put_to(Pgc(:,:,1,1))
+      P.general_complex.beta_alpha_put_to(Pgc(:,:,2,1))
+      P.general_complex.alpha_beta_put_to(Pgc(:,:,1,2))
+      P.general_complex.beta_beta_put_to(Pgc(:,:,2,2))
       SOx_archive.set(.name,"SOx_integrals")
       SOy_archive.set(.name,"SOy_integrals")
       SOz_archive.set(.name,"SOz_integrals")
       ind_archive.set(.name,"SO_indices")
-      .make_gc_so_JK_disk(JS(:,:,:,:,1),KS(:,:,:,:,1),JO(:,:,:,:,1),KO(:,:,:,:,1),P,SOx_archive,ind_archive)
-      .make_gc_so_JK_disk(JS(:,:,:,:,2),KS(:,:,:,:,2),JO(:,:,:,:,2),KO(:,:,:,:,2),P,SOy_archive,ind_archive)
-      .make_gc_so_JK_disk(JS(:,:,:,:,3),KS(:,:,:,:,3),JO(:,:,:,:,3),KO(:,:,:,:,3),P,SOz_archive,ind_archive)
-      P.destroy
+      .make_gc_so_JK_disk(JS(:,:,:,:,1),KS(:,:,:,:,1),JO(:,:,:,:,1),KO(:,:,:,:,1),Pgc,SOx_archive,ind_archive)
+      .make_gc_so_JK_disk(JS(:,:,:,:,2),KS(:,:,:,:,2),JO(:,:,:,:,2),KO(:,:,:,:,2),Pgc,SOy_archive,ind_archive)
+      .make_gc_so_JK_disk(JS(:,:,:,:,3),KS(:,:,:,:,3),JO(:,:,:,:,3),KO(:,:,:,:,3),Pgc,SOz_archive,ind_archive)
+      Pgc.destroy
       I = (ZERO,ONE)
       a = 1; b = 2; x = 1; y = 2; z = 3
       Faa =  THREE*JO(:,:,a,a,z) +       JO(:,:,b,b,z) + THREE*JS(:,:,a,a,z) -   JS(:,:,b,b,z) &
@@ -1243,32 +1289,25 @@ contains
           -  I*TWO*KO(:,:,a,a,y) -     I*KO(:,:,b,b,y) - I*TWO*KS(:,:,b,b,y) - I*KS(:,:,a,a,y) &
           +        KO(:,:,b,a,z) -       KS(:,:,b,a,z)
       KO.destroy; JO.destroy; KS.destroy; JS.destroy
-      F => .fock_matrix%general_complex
+
       fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
       fac = fac * .scfdata%sl_2e_factor
-      F.alpha_alpha_plus(Faa,factor=I*fac)
-      F.beta_beta_plus(Fbb,factor=I*fac)
-      F.beta_alpha_plus(Fba,factor=I*fac)
+      F.general_complex.alpha_alpha_plus(Faa,factor=I*fac)
+      F.general_complex.beta_beta_plus(Fbb,factor=I*fac)
+      F.general_complex.beta_alpha_plus(Fba,factor=I*fac)
       Fbb = conjg(transpose(Fba))
-      F.alpha_beta_plus(Fbb,factor=-I*fac)
+      F.general_complex.alpha_beta_plus(Fbb,factor=-I*fac)
       Fba.destroy; Fbb.destroy; Faa.destroy
-          ! .out.set_dbl_width(15)
-          ! .out.set_dbl_precision(8)
-          ! .out.set_fields(7)
-          ! .out.text("F, real:")
-          ! .out.put( real(F) )
-          ! .out.text("F, imag:")
-          ! .out.put( aimag(F) )
-          ! stop
     end
   end
 
   make_gc_so_JK_disk(JS,KS,JO,KO,P,SO_archive,ind_archive)
-  ! Make the general complex spin orbit cLassical and Exchange matrices.
+  ! Make the general complex spin orbit Classical and Exchange matrices.
     CMAT4 :: JS,KS,JO,KO,P
     ARCHIVE :: SO_archive,ind_archive
     MAT4, PTR   :: S,O
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,n_quartets, m,n
+    INT :: q,n_quartets
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,m,n
     DBL :: S_abcd,O_abcd
     CDBL :: I
     ENSURE( .atom.created,  "no atom list")
@@ -1276,7 +1315,7 @@ contains
     ENSURE( SO_archive.exists,  "no spin orbit integral file!")
     ENSURE( ind_archive.exists, "no spin orbit integral index file")
     SO_archive.open(for="read-only",buffered=TRUE,type="dbl")
-    ind_archive.open(for="read-only",buffered=TRUE,type="int")
+    ind_archive.open(for="read-only",buffered=TRUE,type="dbl")
     JS = ZERO; KS = ZERO; JO = ZERO; KO = ZERO
     I = (ZERO,ONE)
     n_quartets = .n_shell_quartets
@@ -1352,60 +1391,141 @@ contains
   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a 
   ! symmetric density matrix "P" directly. 
     MAT :: J,K,P
-    MAT4, PTR   :: I
+    MAT4, PTR   :: Iabab,I
+    VEC, PTR :: max_I
     SHELL4 :: shell4
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,atom_a,atom_b,atom_c,atom_d
-    DBL :: I_abcd,factor,P_dc,P_db,P_cb
+    INT :: ab,cd,i_a,i_b,i_c,i_d,n_comp_a,n_comp_b
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,a1,b1,c1,d1
+    DBL :: I_abcd,factor,P_dc,P_db,P_cb,k_ab,k_cd,cutoff
+    DBL :: Jcd,Kbc,Kbd,Iab,Icd,Pmax,Imax,Ptemp
+    BIN :: do_it
+
+    ENSURE( .ab_ab_ERI.created, "ab|ab integrals not made")
     J = ZERO
     K = ZERO
-    do q = 1,.n_shell_quartets
-       if (.scfdata%nddo) then
-         .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b AND atom_c==atom_d) then
-           shell4.destroy_ptr_part
-           .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-         else
-           cycle
-         end
-       else
-         .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-       end
-       if (shell4.skip_ERI) then
-         shell4.destroy_ptr_part
-         cycle
-       end
-       I.create(fa,la,fb,lb,fc,lc,fd,ld)
-       shell4.get_ERI(I)
-       factor = ONE                         ! Evaluate the integrals
-       if (a==b) factor = HALF              ! Coincidence factors   
-       if (c==d) factor = HALF * factor
-       if (a==c AND b==d) factor = HALF * factor
-       do d = fd,ld
-       do c = fc,lc
-         P_dc=P(d,c)
-       do b = fb,lb
-         P_db=P(d,b)
-         P_cb=P(c,b)
-       do a = fa,la
-          I_abcd = factor * I(a,b,c,d)
-          J(a,b) = J(a,b) + I_abcd*P_dc
-          J(c,d) = J(c,d) + I_abcd*P(b,a)
-          K(a,c) = K(a,c) + I_abcd*P_db
-          K(a,d) = K(a,d) + I_abcd*P_cb
-          K(b,c) = K(b,c) + I_abcd*P(d,a)
-          K(b,d) = K(b,d) + I_abcd*P(c,a)
-       end
-       end
-       end
-       end
-       I.destroy
-       shell4.destroy_ptr_part
+    cutoff = .scfdata%eri_cutoff
+    max_I.create( .n_shell_pairs )
+    do ab = 1, .n_shell_pairs
+      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      fa = .first_basis_fn_for_shell(i_a)
+      fb = .first_basis_fn_for_shell(i_b)
+      la = .last_basis_fn_for_shell(i_a)
+      lb = .last_basis_fn_for_shell(i_b)
+      Iabab => .ab_ab_ERI(ab)%mat4
+      n_comp_a = la-fa+1
+      n_comp_b = lb-fb+1
+      Imax = ZERO
+      do a=1,n_comp_a
+        do b=1,n_comp_b
+          Iab = abs(Iabab(a,b,a,b))
+          Imax = max(Iab,Imax)
+        end
+      end
+      max_I(ab) = sqrt(Imax)
     end
+
+    do ab = 1, .n_shell_pairs
+      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      fa = .first_basis_fn_for_shell(i_a)
+      fb = .first_basis_fn_for_shell(i_b)
+      la = .last_basis_fn_for_shell(i_a)
+      lb = .last_basis_fn_for_shell(i_b)
+      .set_shell_quartet_ab(shell4,i_a,i_b)
+      do cd = 1,ab
+        .get_shell_pair(cd,i_c,i_d)                    ! c & d shell indices.
+
+        fc = .first_basis_fn_for_shell(i_c)
+        fd = .first_basis_fn_for_shell(i_d)
+        lc = .last_basis_fn_for_shell(i_c)
+        ld = .last_basis_fn_for_shell(i_d)
+
+        Pmax = ZERO
+        do d = fd,ld
+          do c = fc,lc
+            Pmax = max(abs(P(d,c)),Pmax)
+            do b = fb,lb
+              Pmax = max(abs(P(d,b)),abs(P(c,b)),Pmax)
+              do a = fa,la
+                Pmax = max(abs(P(b,a)),abs(P(d,a)),abs(P(c,a)),Pmax)
+              end
+            end
+          end
+        end
+        if (Pmax * max_I(ab) * max_I(cd) > cutoff) then
+          do_it = TRUE
+        else
+          do_it = FALSE
+        end
+
+        if (do_it) then                ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+          fc = .first_basis_fn_for_shell(i_c)
+          fd = .first_basis_fn_for_shell(i_d)
+          lc = .last_basis_fn_for_shell(i_c)
+          ld = .last_basis_fn_for_shell(i_d)
+          .set_shell_quartet_cd(shell4,i_c,i_d)
+    
+          factor = ONE                         ! Evaluate the integrals'
+          if (i_a==i_b) factor = HALF          ! coincidence factors
+          if (i_c==i_d) factor = HALF * factor
+          if (i_a==i_c AND i_b==i_d) factor = HALF * factor
+    
+          I.create(fa,la,fb,lb,fc,lc,fd,ld)
+          shell4.get_ERI(I)
+          do d = fd,ld
+            do c = fc,lc
+              P_dc = P(d,c)
+              Jcd = ZERO
+              do b = fb,lb
+                P_db = P(d,b)
+                P_cb = P(c,b)
+                Kbc = ZERO
+                Kbd = ZERO
+                do a = fa,la
+                  I_abcd = factor * I(a,b,c,d)
+                  J(a,b) = J(a,b) + I_abcd*P_dc
+                  Jcd    = Jcd    + I_abcd*P(b,a)
+                  K(a,c) = K(a,c) + I_abcd*P_db
+                  K(a,d) = K(a,d) + I_abcd*P_cb
+                  Kbc    = Kbc    + I_abcd*P(d,a)
+                  Kbd    = Kbd    + I_abcd*P(c,a)
+                end
+                K(b,c) = K(b,c) + Kbc
+                K(b,d) = K(b,d) + Kbd
+              end
+              J(c,d) = J(c,d) + Jcd
+            end
+          end
+          I.destroy
+        end
+        shell4.destroy_cd
+      end
+      shell4.destroy_ab
+    end
+    max_I.destroy
     .weight_diagonal_blocks(J,TWO)
     .blockwise_symmetric_fold(K)
     J.make_symmetric
     K.make_symmetric
     J = TWO*J 
+  end
+
+  make_ab_ab_ERI [leaky]
+  ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a 
+  ! symmetric density matrix "P" directly. 
+  ! ab_ab should be already created, and of size .n_shell_pairs.
+    SHELL4 :: shell4
+    INT :: ab,i_a,i_b
+    INT :: a,b
+    .ab_ab_ERI.create( .n_shell_pairs )
+    do ab = 1, .n_shell_pairs
+      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      .set_shell_quartet_ab(shell4,i_a,i_b)
+      .set_shell_quartet_cd(shell4,i_a,i_b)
+      .ab_ab_ERI(ab)%mat4.create(shell4%a%n_comp, shell4%b%n_comp, &
+                       shell4%c%n_comp, shell4%d%n_comp)
+      shell4.get_ERI(.ab_ab_ERI(ab)%mat4)
+      shell4.destroy_ptr_part
+    end
   end
 
   make_r_JK_disk(J,K,P)
@@ -1414,9 +1534,8 @@ contains
     MAT :: J,K,P
     ARCHIVE :: eri_archive,ind_archive
     MAT4, PTR :: I             ! a block of ERI's for shell4
-    INT :: q,a,b,c,d
-    INT :: fa,la,fb,lb,fc,lc,fd,ld,n_quartets
-    DBL :: I_abcd
+    INT :: q,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld,n_quartets
+    DBL :: I_abcd,P_dc,P_db,P_cb
     eri_archive.set(.name,"eri_integrals")
     ind_archive.set(.name,"eri_index")
     ENSURE( .atom.created,  "no atom list")
@@ -1428,7 +1547,6 @@ contains
     J = ZERO
     K = ZERO
     n_quartets = .n_shell_quartets
-    q = 0
     do
       ind_archive%file.read(q)
       if (q > n_quartets) exit
@@ -1436,19 +1554,22 @@ contains
       I.create(fa,la,fb,lb,fc,lc,fd,ld)
       eri_archive%file.read(I)
       do d = fd,ld
-      do c = fc,lc
-      do b = fb,lb
-      do a = fa,la
-         I_abcd = I(a,b,c,d)
-         J(a,b) = J(a,b) + I_abcd*P(d,c)
-         J(c,d) = J(c,d) + I_abcd*P(b,a)
-         K(a,c) = K(a,c) + I_abcd*P(d,b)
-         K(a,d) = K(a,d) + I_abcd*P(c,b)
-         K(b,c) = K(b,c) + I_abcd*P(d,a)
-         K(b,d) = K(b,d) + I_abcd*P(c,a)
-      end
-      end
-      end
+        do c = fc,lc
+          P_dc = P(d,c)
+          do b = fb,lb
+            P_db = P(d,b)
+            P_cb = P(c,b)
+            do a = fa,la
+               I_abcd = I(a,b,c,d)
+               J(a,b) = J(a,b) + I_abcd*P_dc
+               J(c,d) = J(c,d) + I_abcd*P(b,a)
+               K(a,c) = K(a,c) + I_abcd*P_db
+               K(a,d) = K(a,d) + I_abcd*P_cb
+               K(b,c) = K(b,c) + I_abcd*P(d,a)
+               K(b,d) = K(b,d) + I_abcd*P(c,a)
+            end
+          end
+        end
       end
       I.destroy
     end
@@ -1464,58 +1585,123 @@ contains
   make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
   ! Make the real coulomb matrices "J" and exchange matrices "Ka" and "Kb"
   ! matrix from a symmetric density matrices "P", "Pa", and "Pb" directly. 
-    MAT :: J,Ka,Kb,P,Pa,Pb
-    MAT4, PTR   :: I
+    MAT,target :: J,Ka,Kb,P,Pa,Pb
+    MAT4, PTR   :: Iabab,Icdcd,I
+    MAT, PTR :: abs_P
     SHELL4 :: shell4
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,atom_a,atom_b,atom_c,atom_d
-    DBL :: I_abcd,factor
+    VEC, PTR :: Kac,Kad,Kbc,Kbd
+    INT :: ab,cd,i_a,i_b,i_c,i_d
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,a1,b1,c1,d1
+    DBL :: I_abcd,factor,Pa_db,Pa_cb,Pa_dc,Pb_db,Pb_cb,Pb_dc,cutoff
+    DBL :: P_dc,P_db,P_cb,Iab,Icd,Pmax,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd
+    BIN :: do_it
+    ENSURE( .ab_ab_ERI.created, "ab|ab integrals not made")
     J  = ZERO
     Ka = ZERO
     Kb = ZERO
-    do q = 1,.n_shell_quartets
-       if (.scfdata%nddo) then
-         .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b AND atom_c==atom_d) then
-           shell4.destroy_ptr_part
-           .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-         else
-           cycle
-         end
-       else
-         .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-       end
-       if (shell4.skip_ERI) then
-         shell4.destroy_ptr_part
-         cycle
-       end
-       I.create(fa,la,fb,lb,fc,lc,fd,ld)
-       shell4.get_ERI(I)
-       factor = ONE                          ! Evaluate the integrals
-       if (a==b) factor = HALF               ! Coincidence factors   
-       if (c==d) factor = HALF * factor
-       if (a==c AND b==d) factor = HALF * factor
-       do d = fd,ld
-       do c = fc,lc
-       do b = fb,lb
-       do a = fa,la
-          I_abcd = factor * I(a,b,c,d)
-          J(a,b)  = J(a,b)  + I_abcd*P(d,c)
-          J(c,d)  = J(c,d)  + I_abcd*P(b,a)
-          Ka(a,c) = Ka(a,c) + I_abcd*Pa(d,b)
-          Ka(a,d) = Ka(a,d) + I_abcd*Pa(c,b)
-          Ka(b,c) = Ka(b,c) + I_abcd*Pa(d,a)
-          Ka(b,d) = Ka(b,d) + I_abcd*Pa(c,a)
-          Kb(a,c) = Kb(a,c) + I_abcd*Pb(d,b)
-          Kb(a,d) = Kb(a,d) + I_abcd*Pb(c,b)
-          Kb(b,c) = Kb(b,c) + I_abcd*Pb(d,a)
-          Kb(b,d) = Kb(b,d) + I_abcd*Pb(c,a)
-       end
-       end
-       end
-       end
-       I.destroy
-       shell4.destroy_ptr_part
+    cutoff = .scfdata%eri_cutoff
+    abs_P.create( .n_bf, .n_bf)
+    abs_P = max(abs(P),abs(Pa),abs(Pb))
+
+    do ab = 1, .n_shell_pairs
+      .get_shell_pair(ab,i_a,i_b)                      ! a & b shell indices.
+      fa = .first_basis_fn_for_shell(i_a)
+      fb = .first_basis_fn_for_shell(i_b)
+      la = .last_basis_fn_for_shell(i_a)
+      lb = .last_basis_fn_for_shell(i_b)
+      Iabab => .ab_ab_ERI(ab)%mat4
+      .set_shell_quartet_ab(shell4,i_a,i_b)
+      do cd = 1,ab
+        .get_shell_pair(cd,i_c,i_d)                    ! c & d shell indices.
+        Icdcd => .ab_ab_ERI(cd)%mat4
+
+        fc = .first_basis_fn_for_shell(i_c)
+        fd = .first_basis_fn_for_shell(i_d)
+        lc = .last_basis_fn_for_shell(i_c)
+        ld = .last_basis_fn_for_shell(i_d)
+
+        do_it = FALSE                ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+        do d = fd,ld
+          d1 = d-fd+1
+          do c = fc,lc
+            c1 = c-fc+1
+            Icd = Icdcd(c1,d1,c1,d1)
+            P_dc = abs_P(d,c)
+            do b = fb,lb
+              b1 = b-fb+1
+              P_db = abs_P(d,b)
+              P_cb = abs_P(c,b)
+              do a = fa,la
+                a1 = a-fa+1
+                Iab = Iabab(a1,b1,a1,b1)
+                Pmax = max(P_dc,abs_P(b,a),P_db,P_cb,abs_P(d,a),abs_P(c,a))
+                if (Pmax * sqrt(Iab * Icd) > cutoff) then
+                  do_it = TRUE
+                end
+              end
+            end
+          end
+        end
+
+        if (do_it) then            ! do the ab|cd integrals
+          fc = .first_basis_fn_for_shell(i_c)
+          fd = .first_basis_fn_for_shell(i_d)
+          lc = .last_basis_fn_for_shell(i_c)
+          ld = .last_basis_fn_for_shell(i_d)
+          .set_shell_quartet_cd(shell4,i_c,i_d)
+    
+          factor = ONE                         ! Evaluate the integrals'
+          if (i_a==i_b) factor = HALF          ! coincidence factors
+          if (i_c==i_d) factor = HALF * factor
+          if (i_a==i_c AND i_b==i_d) factor = HALF * factor
+    
+          I.create(fa,la,fb,lb,fc,lc,fd,ld)
+          shell4.get_ERI(I)
+          do d = fd,ld
+            Kad => Ka(:,d)
+            Kbd => Kb(:,d)
+            do c = fc,lc
+              P_dc = P(d,c)
+              Kac => Ka(:,c)
+              Kbc => Kb(:,c)
+              Jcd = ZERO
+              do b = fb,lb
+                Pa_db = Pa(d,b)
+                Pb_db = Pb(d,b)
+                Pa_cb = Pa(c,b)
+                Pb_cb = Pb(c,b)
+                Ka_bc = ZERO
+                Kb_bc = ZERO
+                Ka_bd = ZERO
+                Kb_bd = ZERO
+                do a = fa,la
+                  I_abcd = factor * I(a,b,c,d)
+                  J(a,b) = J(a,b) + I_abcd*P_dc
+                  Jcd    = Jcd    + I_abcd*P(b,a)
+                  Kac(a) = Kac(a) + I_abcd*Pa_db
+                  Kad(a) = Kad(a) + I_abcd*Pa_cb
+                  Ka_bc  = Ka_bc  + I_abcd*Pa(d,a)
+                  Ka_bd  = Ka_bd  + I_abcd*Pa(c,a)
+                  Kbc(a) = Kbc(a) + I_abcd*Pb_db
+                  Kbd(a) = Kbd(a) + I_abcd*Pb_cb
+                  Kb_bc  = Kb_bc  + I_abcd*Pb(d,a)
+                  Kb_bd  = Kb_bd  + I_abcd*Pb(c,a)
+                end
+                Ka(b,c) = Ka(b,c) + Ka_bc
+                Ka(b,d) = Ka(b,d) + Ka_bd
+                Kb(b,c) = Kb(b,c) + Kb_bc
+                Kb(b,d) = Kb(b,d) + Kb_bd
+              end
+              J(c,d) = J(c,d) + Jcd
+            end
+          end
+          I.destroy
+        end
+        shell4.destroy_cd
+      end
+      shell4.destroy_ab
     end
+    abs_P.destroy
     .weight_diagonal_blocks(J,TWO)
     .blockwise_symmetric_fold(Ka)
     .blockwise_symmetric_fold(Kb)
@@ -1531,8 +1717,8 @@ contains
     MAT :: J,Ka,Kb,P,Pa,Pb
     ARCHIVE, PTR :: eri_archive,ind_archive
     MAT4, PTR   :: I
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,n_quartets
-    DBL :: I_abcd
+    INT :: q,n_quartets,a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
+    DBL :: I_abcd,P_dc,Pa_db,Pa_cb,Pb_db,Pb_cb
     eri_archive.create(.name,"eri_integrals")
     ind_archive.create(.name,"eri_index")
     ENSURE( .atom.created,  "no atom list")
@@ -1552,23 +1738,28 @@ contains
       I.create(fa,la,fb,lb,fc,lc,fd,ld)
       eri_archive%file.read(I)
       do d = fd,ld
-      do c = fc,lc
-      do b = fb,lb
-      do a = fa,la
-         I_abcd = I(a,b,c,d)
-         J(a,b)  = J(a,b)  + I_abcd*P(d,c)
-         J(c,d)  = J(c,d)  + I_abcd*P(b,a)
-         Ka(a,c) = Ka(a,c) + I_abcd*Pa(d,b)
-         Ka(a,d) = Ka(a,d) + I_abcd*Pa(c,b)
-         Ka(b,c) = Ka(b,c) + I_abcd*Pa(d,a)
-         Ka(b,d) = Ka(b,d) + I_abcd*Pa(c,a)
-         Kb(a,c) = Kb(a,c) + I_abcd*Pb(d,b)
-         Kb(a,d) = Kb(a,d) + I_abcd*Pb(c,b)
-         Kb(b,c) = Kb(b,c) + I_abcd*Pb(d,a)
-         Kb(b,d) = Kb(b,d) + I_abcd*Pb(c,a)
-      end
-      end
-      end
+        do c = fc,lc
+          P_dc = P(d,c)
+          do b = fb,lb
+            Pa_db = Pa(d,b)
+            Pb_db = Pb(d,b)
+            Pa_cb = Pa(c,b)
+            Pb_cb = Pb(c,b)
+            do a = fa,la
+               I_abcd = I(a,b,c,d)
+               J(a,b) = J(a,b) + I_abcd*P_dc
+               J(c,d) = J(c,d) + I_abcd*P(b,a)
+               Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
+               Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
+               Ka(b,c) = Ka(b,c) + I_abcd*Pa(d,a)
+               Ka(b,d) = Ka(b,d) + I_abcd*Pa(c,a)
+               Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
+               Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
+               Kb(b,c) = Kb(b,c) + I_abcd*Pb(d,a)
+               Kb(b,d) = Kb(b,d) + I_abcd*Pb(c,a)
+            end
+          end
+        end
       end
       I.destroy
     end
@@ -1591,62 +1782,70 @@ contains
     CMAT :: Ka,Kb,Kba,Pa,Pb,Pba
     MAT4, PTR   :: I
     SHELL4, PTR :: shell4
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,atom_a,atom_b,atom_c,atom_d
+    INT :: ac,ab,cd,aa,cc
+    INT :: a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,atom_a,atom_b,atom_c,atom_d
     DBL :: I_abcd,factor
     J   = ZERO
     Ka  = ZERO
     Kb  = ZERO
     Kba = ZERO
     shell4.create
-    do q = 1,.n_shell_quartets
-       if (.scfdata%nddo) then
-         .get_shell_quartet(q,shell4,a,b,c,d,atom_a,atom_b,atom_c,atom_d)
-         if (atom_a==atom_b AND atom_c==atom_d) then
-           shell4.destroy_ptr_part
-           .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-         else; cycle
-         end
-       else
-         .get_shell_quartet(q,shell4,a,b,c,d,fa,la,fb,lb,fc,lc,fd,ld)
-       end
-       if (shell4.skip_ERI) then
-         shell4.destroy_ptr_part
-         cycle
-       end
-       I.create(fa,la,fb,lb,fc,lc,fd,ld)
-       shell4.get_ERI(I)
-       factor = ONE                          ! Evaluate the integrals
-       if (a==b) factor = HALF               ! Coincidence factors   
-       if (c==d) factor = HALF * factor
-       if (a==c AND b==d) factor = HALF * factor
-       do d = fd,ld
-       do c = fc,lc
-       do b = fb,lb
-       do a = fa,la
-          I_abcd = factor * I(a,b,c,d)
-          J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
-          J(c,d)   = J(c,d)   + I_abcd*P(b,a)
-          Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric but must be folded
-          Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  
-          Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
-          Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
-          Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric but must be folded
-          Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  
-          Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
-          Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
-          Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
-          Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
-          Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
-          Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
-          Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
-          Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
-          Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
-          Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
-       end
-       end
-       end
-       end
-       I.destroy
+    do ac = 1, .n_shell_pairs
+      .get_shell_pair(ac,ab,cd)
+      do aa = 1,ab
+        .get_shell_pair(ab,a,b)
+        fa = .first_basis_fn_for_shell(a)
+        fb = .first_basis_fn_for_shell(b)
+        la = .last_basis_fn_for_shell(a)
+        lb = .last_basis_fn_for_shell(b)
+        do cc = 1,cd
+          .get_shell_pair(cd,c,d)
+          fc = .first_basis_fn_for_shell(c)
+          fd = .first_basis_fn_for_shell(d)
+          lc = .last_basis_fn_for_shell(c)
+          ld = .last_basis_fn_for_shell(d)
+          .get_shell_quartet(shell4,a,b,c,d)
+          if (shell4.skip_ERI) then
+            shell4.destroy_ptr_part
+            cycle
+          end
+          I.create(fa,la,fb,lb,fc,lc,fd,ld)
+          shell4.get_ERI(I)
+          factor = ONE                          ! Evaluate the integrals
+          if (a==b) factor = HALF               ! Coincidence factors   
+          if (c==d) factor = HALF * factor
+          if (a==c AND b==d) factor = HALF * factor
+          do d = fd,ld
+            do c = fc,lc
+              do b = fb,lb
+                do a = fa,la
+                   I_abcd = factor * I(a,b,c,d)
+                   J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
+                   J(c,d)   = J(c,d)   + I_abcd*P(b,a)
+                   Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
+                   Ka(a,c)  = Ka(a,c)  + I_abcd*Pa(b,d)  ! but must be folded
+                   Ka(b,c)  = Ka(b,c)  + I_abcd*Pa(a,d)
+                   Ka(b,d)  = Ka(b,d)  + I_abcd*Pa(a,c)
+                   Kb(a,d)  = Kb(a,d)  + I_abcd*Pb(b,c)  ! These are symmetric
+                   Kb(a,c)  = Kb(a,c)  + I_abcd*Pb(b,d)  ! but must be folded
+                   Kb(b,c)  = Kb(b,c)  + I_abcd*Pb(a,d)
+                   Kb(b,d)  = Kb(b,d)  + I_abcd*Pb(a,c)
+                   Kba(a,d) = Kba(a,d) + I_abcd*Pba(b,c) ! These are asymmetric
+                   Kba(a,c) = Kba(a,c) + I_abcd*Pba(b,d) 
+                   Kba(b,c) = Kba(b,c) + I_abcd*Pba(a,d)
+                   Kba(b,d) = Kba(b,d) + I_abcd*Pba(a,c)
+                   Kba(d,a) = Kba(d,a) + I_abcd*Pba(c,b)
+                   Kba(c,a) = Kba(c,a) + I_abcd*Pba(d,b)
+                   Kba(c,b) = Kba(c,b) + I_abcd*Pba(d,a)
+                   Kba(d,b) = Kba(d,b) + I_abcd*Pba(c,a)
+                end
+              end
+            end
+          end
+          I.destroy
+          shell4.destroy_ptr_part
+        end
+      end
     end
     shell4.destroy
     .weight_diagonal_blocks(J,TWO)
@@ -1665,7 +1864,7 @@ contains
     CMAT :: Ka,Kb,Kba,Pa,Pb,Pba
     ARCHIVE, PTR :: eri_archive,ind_archive
     MAT4, PTR   :: I
-    INT :: q, a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld,n_quartets
+    INT :: q,n_quartets,a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld
     DBL :: I_abcd
     eri_archive.create(.name,"eri_integrals")
     ind_archive.create(.name,"eri_index")
@@ -1821,9 +2020,9 @@ contains
     kind = .scfdata.spinorbital_kind
 
     .get_initial_guess
+    .get_ft_ints
     .make_fock_matrix
 
-    .get_ft_ints
     .make_structure_factors
     .xtal.update_scaled_gof_parameters
 
@@ -1870,9 +2069,6 @@ contains
 
         .extrapolate_scf
         .update_molecular_orbitals
-        S.create( .n_bf, .n_bf)
-        .molecular_orbitals.schmidt_orthonormalise(S)
-        S.destroy
         .make_scf_density_matrix
         .save_scf_results
         .make_fock_matrix                      ! To get new Hartree-Fock energy.
@@ -1958,14 +2154,15 @@ contains
 
     archive.set(.name,"ft_ints")
     archive.open(for="read-only",buffered=TRUE,type="cdbl")
-    constraint=ZERO
+!    constraint=ZERO
     do q=1, .n_shell_pairs
       .get_shell_pair(q,a,b,fa,la,fb,lb)
       ft_ints.create((/1,n_refl/),(/fa,la/),(/fb,lb/))
       archive%file.read(ft_ints)
       do i = fa,la
         do j = fb,min(lb,i)
-          constraint(i,j) = constraint(i,j) + sum( fac_times_alpha(:) * ft_ints(:,i,j) )
+!          constraint(i,j) = constraint(i,j) + sum( fac_times_alpha(:) * ft_ints(:,i,j) )
+          constraint(i,j) = sum( fac_times_alpha(:) * ft_ints(:,i,j) )
         end
       end
       ft_ints.destroy
