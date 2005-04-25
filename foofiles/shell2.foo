@@ -1964,14 +1964,14 @@ contains
       n_pts = 2*n*n
       theta.create 
       theta.set_kind("gauss_legendre")
-      theta.set_limits([ZERO,PI])
       theta.set_n_points(n)
-      theta.finalise
+      theta.set_quadrature_points
+      theta.set_limits([ZERO,PI])
       phi.create 
       phi.set_kind("gauss_legendre")
-      phi.set_limits([ZERO,2*PI])
       phi.set_n_points(2*n)
-      phi.finalise
+      phi.set_quadrature_points
+      phi.set_limits([ZERO,2*PI])
       ! Loop over each k_value one by one
       res = ZERO
       wt.create(n_pts)
@@ -1986,8 +1986,8 @@ contains
          do t = 1,theta.n_points
          do p = 1,phi.n_points
             n = n + 1
-            th = theta.root(t)
-            ph = phi.root(p)
+            th = theta.point(t)
+            ph = phi.point(p)
             ct = cos(th); st = sin(th)
             cp = cos(ph); sp = sin(ph)
             k_val_st = k_val*st
@@ -2056,9 +2056,9 @@ contains
       n_pts = 2*n*(n_theta+1) ! 
       phi.create 
       phi.set_kind("gauss_legendre")
-      phi.set_limits([ZERO,2*PI])
       phi.set_n_points(2*n)
-      phi.finalise
+      phi.set_quadrature_points
+      phi.set_limits([ZERO,2*PI])
       ! Loop over each k_value one by one
       res = ZERO
       wt.create(n_pts)
@@ -2074,7 +2074,7 @@ contains
          do p = 1,phi.n_points
             n = n + 1
             th = t*angle
-            ph = phi.root(p)
+            ph = phi.point(p)
             ct = cos(th); st = sin(th)
             cp = cos(ph); sp = sin(ph)
             k_val_st = k_val*st
@@ -2155,28 +2155,30 @@ contains
       .normalise(S)
    end
 
-   make_oscillator_overlap_ints(S,c,l_c,d,l_d)
-   ! Calculates overlap integral matrix, using Gauss-Hermite quadrature, like in
-   ! CADPAC
+   make_oscillator_overlap_ints(S,c,d,lc_min,lc_max,ld_min,ld_max)
+   ! Calculates oscillator overlap integral matrix, using Gauss-Hermite
+   ! quadrature, like in CADPAC
       S :: MAT4{REAL}
       c,d :: VEC{REAL}(3)
-      l_c,l_d :: INT
+      lc_min,lc_max,ld_min,ld_max :: INT
    ENSURE(S.dim1==.a.n_comp,"wrong size for S")
    ENSURE(S.dim2==.b.n_comp,"wrong size for S")
-   ENSURE(S.dim3==l_c.n_comp_sum,"wrong size for S")
-   ENSURE(S.dim4==l_d.n_comp_sum,"wrong size for S")
+   ENSURE(S.dim3==(lc_max.n_comp_sum-(lc_min-1).n_comp_sum),"wrong size for S")
+   ENSURE(S.dim4==(ld_max.n_comp_sum-(ld_min-1).n_comp_sum),"wrong size for S")
       SS :: MAT4{REAL}*
       G :: GAUSSIAN2
       cacb :: REAL
-      a,b :: INT
+      a,b,nc,nd :: INT
       S = ZERO
-      SS.create(.a.n_comp,.b.n_comp,l_c.n_comp_sum,l_d.n_comp_sum)
+      nc = lc_max.n_comp_sum - (lc_min-1).n_comp_sum
+      nd = ld_max.n_comp_sum - (ld_min-1).n_comp_sum
+      SS.create(.a.n_comp,.b.n_comp,nc,nd)
       G.set(.a.l,.a.pos,ZERO,.b.l,.b.pos,ZERO)
       do a = 1,.a.n_cc
       do b = 1,.b.n_cc
          G.set(.a.ex(a),.b.ex(b))
          cacb = .a.cc(a)*.b.cc(b)
-         G.make_oscillator_overlap_ints(SS,c,l_c,d,l_d)
+         G.make_oscillator_overlap_ints(SS,c,d,lc_min,lc_max,ld_min,ld_max)
          S = S + SS*cacb
       end
       end
@@ -3241,7 +3243,7 @@ contains
            Ix(1) = ONE
            Iy(1) = ONE
            Iz(1) = wt
-           if (.l_sum>0) then
+                    if (.l_sum>0) then
               rzt   = rysa.r(n)*rho_zinv
               Ix2 = PAx+rzt*QPx
               Iy2 = PAy+rzt*QPy
@@ -3926,6 +3928,122 @@ contains
          momenta.destroy
      end
    end
+
+!   transfer_l_a_highest(es,ab) ::: private
+!   ! Applies the transfer equation to the basic integrals (e|s), where e are all
+!   ! gaussian functions up to angular momentum .a.l+.b.l, to give the required
+!   ! integrals (a|b), in the case where a has the higher angular momentum out of
+!   ! a and b.
+!     self :: IN
+!     es :: VEC{REAL}, IN
+!     ab :: MAT{REAL}, target, OUT
+!     AB :: VEC{REAL}(3)
+!     pe :: MAT{INT}*
+!     index_of :: MAT3{INT}*
+!     pa,pb :: VEC{INT}(3)
+!     int_new,int_old :: MAT{REAL}*
+!     a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum :: INT
+!     a1,b1,z,eadd :: INT
+!     ABt :: REAL
+!     select case (.b.l)
+!       case (0)                                     ! b = s function
+!         ab(:,1) = es
+!       case (1)                                     ! b = p function
+!         AB = .a.pos - .b.pos           ! position difference
+!         fa = (.l_max-1).n_comp_sum     ! Minimum for gaussian component powers
+!         na = a.n_comp                  ! No. of "a" components to do
+!         index_of.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         0.make_gaussian_xyz_powers(pe,.l_sum,index_of)
+!         do a = 1,na
+!            aa = a + fa
+!            pa = pe(:,aa)
+!            a1 = index_of( pa(1)+1,pa(2)  ,pa(3)  )
+!            a2 = index_of( pa(1)  ,pa(2)+1,pa(3)  )
+!            a3 = index_of( pa(1)  ,pa(2)  ,az(2)+1)
+!            ab(a,1) = es(a1) + AB(1) * es(a)
+!            ab(a,2) = es(a2) + AB(2) * es(a)
+!            ab(a,3) = es(a3) + AB(3) * es(a)
+!         end
+!         index_of.destroy
+!         ez.destroy; ey.destroy; ex.destroy
+!       case default
+!         AB = .a.pos - .b.pos
+!         ! The lexical indices for the gaussian functions for all integrals 
+!         ! (including intermediate (e|s) integrals) always start from one more 
+!         ! than this index. 
+!         fa = (.l_max-1).n_comp_sum      
+!         la = (.l_sum-1).n_comp_sum 
+!         ne =.l_sum.n_comp_sum
+!         ! The new integrals go up to angular momentum .l_sum-1. "na" is the
+!         ! maximum lexical index of the new integrals minus the lowest possible
+!         ! lexical index "la".
+!         na = la - fa
+!         pe.create(3,ne)
+!         transfer.create(ne)
+!         index_of.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         0.make_gaussian_xyz_powers(pe,.l_sum,index_of,transfer) ! keep as zero for global
+!         ! Make the first p-type b integrals in "new_ints"
+!         ! Need to do this separately since "es" is a vector
+!         new_ints.create(na,3)
+!         do a = 1,na
+!            aa = a + fa
+!            pa = pe(:,aa)
+!            a1 = index_of( pa(1)+1,pa(2)  ,pa(3)  )
+!            a2 = index_of( pa(1)  ,pa(2)+1,pa(3)  )
+!            a3 = index_of( pa(1)  ,pa(2)  ,az(2)+1)
+!            new_ints(a,1) = es(a1) + AB(1) * es(a)
+!            new_ints(a,2) = es(a2) + AB(2) * es(a)
+!            new_ints(a,3) = es(a3) + AB(3) * es(a)
+!         end
+!         ! Now make the d-type -> .b.l type b integrals in "new_ints"
+!         ! The last time "new_ints" stand for the target "ab" integrals.
+!         fb = 1 ! first b of the "new_ints" (minus 1)
+!         nb = 3
+!         do lb = 2,.b.l
+!           fo = fb                ! first b of the "old_ints" (minus 1)
+!           fb = fb + nb           ! first b of the "new_ints" (minus 1)
+!           nb = lb.n_comp         ! Only produce the required lb-shell of "b" ints
+!           la = (.l_sum-lb).n_comp_sum
+!           na = la - fa
+!           old_ints => new_ints
+!           if (lb<.b.l) then; new_ints.create(na,nb)
+!           else;              new_ints => ab
+!           end
+!
+!           if (lb==1) then
+!              do a = 1,na
+!                 aa = a + fa
+!                 pa = pe(:,aa)
+!                 a1 = index_of( pa(1)+1,pa(2)  ,pa(3)  )
+!                 a2 = index_of( pa(1)  ,pa(2)+1,pa(3)  )
+!                 a3 = index_of( pa(1)  ,pa(2)  ,pa(3)+1)
+!                 new_ints(a,1) = es(a1) + AB(1) * es(a)
+!                 new_ints(a,2) = es(a2) + AB(2) * es(a)
+!                 new_ints(a,3) = es(a3) + AB(3) * es(a)
+!              end
+!           else
+!              do b = 1,nb         ! Loop over "b" shell component
+!                bb = b + fb       ! Offset into gaussian power array
+!                pb = pe(:,bb)     ! powers of the current "b" shell component
+!                t  = transfer(bb) ! transfer this component
+!                pb(t) = pb(t) - 1 ! Index of the transferred compenent in "old_ints"
+!                b1 = index_of(pb(1),pb(2),pb(3)) - fo
+!                ABt = AB(t)       ! The AB transfer component difference
+!                do a = 1,na
+!                  aa = a + fa
+!                  pa = pe(:,aa)
+!                  pa(t) = pa(t) + 1
+!                  a1 = index_of(pa(1),pa(2),pa(3)) - fa
+!                  new_ints(a,b) = old_ints(a1,b1) + ABt * old_ints(a,b1)
+!                end
+!              end
+!           end
+!           old_ints.destroy
+!         end
+!         index_of.destroy
+!         pe.destroy
+!     end
+!   end
 
  ! Normalization routines and functions
 
