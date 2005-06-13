@@ -2913,6 +2913,9 @@ sub analyse_new_end_scope {
           my @inherit = split('\n',$inherit_string);
           $inherit[0] =~ s/\s*$//o;
           $inherit[0] =~ s/\s*:::.*//o;
+          if ($routine{$name}{parent_routine}) {
+             $inherit[0] =~ s/\w+/$routine{$name}{parent_routine}/;
+          }
           my $i = 0;
           my $found = 0;
           my $inh;
@@ -5405,7 +5408,14 @@ sub analyse_rout_name {
         /^recursive/        && do { $routine{$name}{recursive}=1;        next}; # recursive
         /^get_from/         && do { /[(]\s*([^ ]*)/; # remove first brackets
                                     $routine{$name}{inherited}=1;               # inherited routine
-                                    $routine{$name}{parent_module}=$1;          # where inherited from
+                                    my $parent_module=$1;                       # where inherited from
+                                    if ($parent_module=~/([^ ]*):([^ ]*)/) {
+                                       $routine{$name}{parent_module} =$1;      # where inherited from
+                                       $routine{$name}{parent_routine}=$2;      # new routine name
+                                    } else {
+                                       $routine{$name}{parent_module}=$parent_module;   
+                                       $routine{parent_routine}=undef;          # no new routine name
+                                    }
                                     $inherit_string = "";                       # the inherit match string
 #print "---inherit---";
 #print "parent=$1";
