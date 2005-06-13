@@ -145,7 +145,7 @@ sub get_deps {
 print STDERR @gets;
   while (<FILE>) {
     if (m'get_from'io) {
-      /(?:.+):::(?:.+)get_from\(\s*([^ )]+)\s*[),]/io && do { $x=$1; push(@gets, lc($x))};
+      /(?:.+):::(?:.+)get_from\(\s*([^ ):]+)\s*[),]/io && do { $x=$1; push(@gets, lc($x))};
     }
   }
   close(FILE);
