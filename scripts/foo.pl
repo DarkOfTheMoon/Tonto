@@ -5306,7 +5306,7 @@ sub analyse_rout_name {
     }
 
     # Count the number of times the name is used
-    if ($#scope<=2) { 
+    if ($#scope<=2 && $attr !~ /^template/ && $attr !~ /inlined_by_foo/ ) { 
        $overload_count{$short_name}++; # This is reset every pass
        if ($pass==1) { $first_overload_count{$short_name}++; }
     }
@@ -5319,8 +5319,10 @@ sub analyse_rout_name {
     if ($#scope > 2) { # Don't worry about routines within interfaces.
           $real_name = $short_name;
     } else {
-       if ($first_overload_count{$short_name}>1 || 
-                 $overload_count{$short_name}>1) {
+       if (defined $first_overload_count{$short_name} &&
+           defined $overload_count{$short_name} &&
+           ($first_overload_count{$short_name}>1 || 
+                  $overload_count{$short_name}>1)) {
           my $n = $overload_count{$short_name} - 1;
           $real_name = $short_name . "_" . $n;
        } else {
