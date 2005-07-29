@@ -391,17 +391,8 @@ contains
 !  I/O Routines
 !  ************
 
-   read_keywords ::: leaky
+   read_keywords ::: get_from(OBJECT), recursive, leaky
    ! Read data from "stdin" using keyword style input.
-   ENSURE(stdin.next_item=="{","expecting an open bracket symbol, {")
-     keyword :: STR
-     stdin.read(keyword)         ! Read opening brace
-     do                          ! Loop over keywords
-       stdin.read(keyword)
-       if (keyword=="}")   exit  ! Exit on closing brace
-       if (stdin.reverted) exit  ! Exit if internal file reverted
-       .process_keyword(keyword)
-     end
    end
 
    process_keyword(keyword) ::: leaky
@@ -416,6 +407,8 @@ contains
        case ("axis_system=                 "); .read_axis_system
        case ("basis=                       "); .read_basis
        case ("basis_label=                 "); .read_basis_label
+       case ("b_eq=                        "); .read_B_iso
+       case ("b_iso=                       "); .read_B_iso
        case ("coppensbasis=                "); .read_coppensbasis
        case ("group=                       "); .read_group
        case ("junk=                        "); .read_junk
@@ -440,6 +433,7 @@ contains
        case ("slaterbasis=                 "); .read_slaterbasis
        case ("thermal_axis_system=         "); .read_thermal_axis_system
        case ("thermal_tensor=              "); .read_thermal_tensor
+       case ("u_eq=                        "); .read_U_iso
        case ("u_iso=                       "); .read_U_iso
        case ("u_tensor=                    "); .read_thermal_tensor
        case ("units=                       "); .read_units
@@ -640,6 +634,13 @@ contains
       stdin.read(.U_iso)
    end
 
+   read_B_iso
+   ! Read the isotropic B factor.NOTE: units are Bohr^2, not Angstrom^2.
+      B_iso :: REAL
+      stdin.read(B_iso)
+      .U_iso = B_iso/(EIGHT*PI*PI)
+   end
+
    read_thermal_tensor
    ! Read thermal parameters from "stdin". These are assumed to be in the
    ! cartesian axis system, and in bohr^2.  The expansion of the thermal
@@ -783,20 +784,25 @@ contains
    end
 
    thermal_tensor_from(crystal)
-   ! Change thermal parameters in the crystal axis system to the
+   ! Change thermal parameters from the crystal axis system to the
    ! cartesian axis system
      crystal :: CRYSTAL, IN
      select case (.thermal_axis_system)
        case ("crystal  ")
-         if (.U_iso>ZERO) then ! convert U_iso first
+         ! Convert U_iso only when there is no anisotropic U tensor
+         if (.U_iso>ZERO AND .thermal_tensor.is_zero) then 
             .thermal_tensor(1,1) = .U_iso
             .thermal_tensor(2,2) = .U_iso
             .thermal_tensor(3,3) = .U_iso
             .thermal_tensor(1,2) = .U_iso * cos(crystal.unitcell.gamma_star)
             .thermal_tensor(1,3) = .U_iso * cos(crystal.unitcell.beta_star)
             .thermal_tensor(2,3) = .U_iso * cos(crystal.unitcell.alpha_star)
-         end
+            .thermal_tensor(2,1) = .thermal_tensor(1,2)
+            .thermal_tensor(3,1) = .thermal_tensor(1,3)
+            .thermal_tensor(3,2) = .thermal_tensor(2,3)
+         end 
          .thermal_tensor.change_basis_using(crystal.unitcell.direct_U_matrix)
+         ! After conversion, we should have U_iso for all diagonal elements in the cartesian basis
          .thermal_axis_system = "cartesian"
        case ("cartesian")
          ! do nothing
@@ -815,6 +821,34 @@ contains
        case ("cartesian")
          .thermal_tensor.change_basis_using(crystal.unitcell.reciprocal_U_matrix)
          .thermal_axis_system = "crystal"
+       case default
+         UNKNOWN(.thermal_axis_system)
+     end
+   end
+
+   thermal_tensor_from_U_iso(crystal)
+   ! Set the thermal parameters in the crystal axis system from to the
+   ! cartesian axis system
+     crystal :: CRYSTAL, IN
+     select case (.thermal_axis_system)
+       case ("crystal  ")
+         ! Convert U_iso only when there is no anisotropic U tensor
+         if (.U_iso>ZERO AND .thermal_tensor.is_zero) then 
+            .thermal_tensor(1,1) = .U_iso
+            .thermal_tensor(2,2) = .U_iso
+            .thermal_tensor(3,3) = .U_iso
+            .thermal_tensor(1,2) = .U_iso * cos(crystal.unitcell.gamma_star)
+            .thermal_tensor(1,3) = .U_iso * cos(crystal.unitcell.beta_star)
+            .thermal_tensor(2,3) = .U_iso * cos(crystal.unitcell.alpha_star)
+            .thermal_tensor(2,1) = .thermal_tensor(1,2)
+            .thermal_tensor(3,1) = .thermal_tensor(1,3)
+            .thermal_tensor(3,2) = .thermal_tensor(2,3)
+         end 
+         .thermal_tensor.change_basis_using(crystal.unitcell.direct_U_matrix)
+         ! After conversion, we should have U_iso for all diagonal elements in the cartesian basis
+         .thermal_axis_system = "cartesian"
+       case ("cartesian")
+         ! do nothing
        case default
          UNKNOWN(.thermal_axis_system)
      end
@@ -1898,6 +1932,7 @@ contains
       square :: BIN, optional, IN
    ENSURE(.basis.created,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
+   ENSURE(pt.dim2==3,"wrong size, pt")
       sq :: BIN
       sh :: SHELL1
       sh_grid :: MAT{REAL}*
@@ -1932,6 +1967,7 @@ contains
       square :: BIN, optional, IN
    ENSURE(.basis.created,"no basis set")
    ENSURE(.basis.no_of_basis_functions==orb.dim,"incorrect suize, orb")
+   ENSURE(pt.dim2==3,"wrong size, pt")
       sq :: BIN
       sh :: SHELL1
       sh_grid :: MAT{REAL}*
@@ -1977,6 +2013,84 @@ contains
    ! Make a the slaterbasis interpolator.
    ENSURE(.slaterbasis.created,"no slater basis")
       .slaterbasis.make_interpolator
+   end
+
+!  ********************************
+!  DFT grid for all basis functions
+!  ********************************
+
+   make_bf_grid(grid,pt)
+   ! Make a "grid" on which all the atom basis functions are evaluated, for the
+   ! supplied points "pt".
+     self :: IN
+     grid :: MAT{REAL}, OUT
+     pt :: MAT{REAL}, IN
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(pt.dim2==3,"wrong dimension for pt array")
+   ENSURE(grid.dim1==pt.dim1,"incompatible grid and pt arrays")
+   ENSURE(grid.dim2==.no_of_basis_functions,"wrong size, grid array")
+      sh :: SHELL1
+      s,f,l :: INT
+      l = 0
+      do s = 1,.basis.n_shell
+         sh.set(.basis.shell(s),.pos)
+         f = l + 1
+         l = l + sh.n_comp
+         sh.make_grid(grid(:,f:l),pt)
+      end
+   end
+
+   make_nabla_bf_grid(nabla_grid,pt)
+   ! Make a "nabla_grid" on which the gradient of all the atom basis functions
+   ! are evaluated, for the supplied points "pt". 
+     self :: IN
+     nabla_grid :: MAT3{REAL}, target, OUT
+     pt :: MAT{REAL}, IN
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(pt.dim2==3,"wrong dimension for pt array")
+   ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
+   ENSURE(nabla_grid.dim2==.no_of_basis_functions,"wrong size, nabla_grid array")
+   ENSURE(nabla_grid.dim3==3,"wrong size, nabla_grid array")
+      sh :: SHELL1
+      s,f,l :: INT
+      l = 0
+      do s = 1,.basis.n_shell
+         sh.set(.basis.shell(s),.pos)
+         f = l + 1
+         l = l + sh.n_comp
+         sh.make_nabla_grid(nabla_grid,pt)
+      end
+   end
+
+   make_nabla_bf_grid(nabla_grid,grid,pt)
+   ! Make a "nabla_grid" on which the gradient of all the atom basis functions
+   ! are evaluated, for the supplied points "pt". Also return "grid", which
+   ! tabluates the values of all the atom basis functions on the grid points.
+     self :: IN
+     nabla_grid :: MAT3{REAL}, target, OUT
+     grid :: MAT{REAL}, target, OUT
+     pt :: MAT{REAL}, IN
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(pt.dim2==3,"wrong dimension for pt array")
+   ENSURE(nabla_grid.dim1==pt.dim1,"incompatible nabla_grid and pt arrays")
+   ENSURE(nabla_grid.dim2==.no_of_basis_functions,"wrong size, nabla_grid array")
+   ENSURE(nabla_grid.dim3==3,"wrong size, nabla_grid array")
+   ENSURE(grid.dim1==pt.dim1,"incompatible grid and pt arrays")
+   ENSURE(grid.dim2==.no_of_basis_functions,"wrong size, grid array")
+      sh :: SHELL1
+      s,f,l :: INT
+      Gx,Gy,Gz,G :: MAT{REAL}*
+      l = 0
+      do s = 1,.basis.n_shell
+         sh.set(.basis.shell(s),.pos)
+         f = l + 1
+         l = l + sh.n_comp
+         Gx => nabla_grid(:,f:l,1) ! These are contiguous in memory
+         Gy => nabla_grid(:,f:l,2) ! which are passed below ...
+         Gz => nabla_grid(:,f:l,3)
+         G  =>       grid(:,f:l)
+         sh.make_nabla_grid(Gx,Gy,Gz,G,pt)
+      end
    end
 
 !  ***************************

@@ -1,0 +1,482 @@
+!-------------------------------------------------------------------------------
+!
+! DFT_FUNCTIONAL: Functionals for density functional calculations.
+!
+! This module collects together functionals and their derivatives neccesary for
+! DFT calculations. A uniform notation is used for the routines and their
+! arguments to make things easy to debug and check.
+!
+! Restricted and unrestricted functional forms:
+!
+! There are two types of routines: those for restricted (closed shell), and
+! those for unrestricted (open shell) functionals. The restricted functionals
+! are prefixed with "r_". The unrestricted functionals are prefixed with "u_".
+!
+! Adding of contributions:
+!
+! Since functionals are usually separated into exchange and correlation parts,
+! these routines always *add* their contributions. You must ensure that the
+! output arrays they add to are zero beforehand.
+!
+! Inputs and outputs -- unrestricted case:
+!
+! In the UNRESTRICTED case, for local functionals, the inputs are "rho_a" and
+! "rho_b" the alpha and beta density, and the output is "V_a" and "V_b", the
+! potential
+!
+!                 V_a = d F/d rho_a
+!                 V_b = d F/d rho_b
+!
+! For GGA functionals, the input is "rho0_a", "rho0_b", and "rho1_a", "rho1_b",
+! the alpha and beta densities, and the gradients. The outputs are "V0_a",
+! "V0_b", and "V1_a", "V1_b", the derivatives w.r.t. the densities and
+! the derivatives w.r.t. the squares of the gradients of the density
+!
+!                 V0_a = d F/d rho_a
+!                 V0_b = d F/d rho_b
+!                 V1_a = 2*(d F/d gamma_aa) + (d F/d gamma_ab)
+!                 V1_b = 2*(d F/d gamma_bb) + (d F/d gamma_ba)
+!
+! Copyright (C) Dylan Jayatilaka, University of Western Australia, 2005
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!
+!-------------------------------------------------------------------------------
+
+module DFT_FUNCTIONAL
+
+   implicit none
+
+contains
+
+
+!  **************************
+!  Create and destroy methods
+!  **************************
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
+   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts 
+   end
+
+   destroy_ptr_part 
+   ! Destroy the pointer parts
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(d) ::: leaky
+   ! Copy a dftgrid "d"
+      d :: DFT_FUNCTIONAL
+      self = d
+   end
+
+   set_defaults
+   ! Set up a defaults
+      .name = "none"
+      .Xalpha = DFT_FUNCTIONAL_XALPHA
+   end
+
+!  *************
+!  Input methods
+!  *************
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      keyword :: STR
+      word :: STR
+      word = keyword
+      word.to_lower_case
+      select case (word)
+         case ("}        ")  ! exit case
+         case ("name=    "); .read_name
+         case ("xalpha=  "); .read_Xalpha
+         case default;     UNKNOWN(word)
+      end
+   end
+
+   read_name
+   ! Read the ".name" of the DFT functional
+      stdin.read(.name)
+   end
+
+   read_Xalpha
+   ! Read ".Xalpha", the alpha value to use for the Xalpha functional.
+      stdin.read(.Xalpha)
+   end
+
+! ***************
+! Enquiry methods
+! ***************
+
+   is_GGA_functional(name) result (res)
+   ! Return TRUE if the functional uses the GGA approximation.
+      name :: STR, IN, optional
+      res :: BIN
+      kind :: STR
+      kind = .name
+      if (present(name)) kind = name
+      select case (kind)
+         case("           "); res = FALSE
+         case("none       "); res = FALSE
+         case("slater     "); res = FALSE
+         case("xalpha     "); res = FALSE
+         case("becke88    "); res = TRUE
+         case("gill96     "); res = TRUE
+         case("vwn        "); res = FALSE
+         case("lyp        "); res = TRUE
+         case default;        UNKNOWN(kind)
+      end
+   end
+
+   is_LDA_functional(name) result (res)
+   ! Return TRUE if the functional uses the GGA approximation.
+      name :: STR, IN, optional
+      res :: BIN
+      kind :: STR
+      kind = .name
+      if (present(name)) kind = name
+      select case (kind)
+         case("           "); res = TRUE 
+         case("none       "); res = TRUE 
+         case("slater     "); res = TRUE 
+         case("xalpha     "); res = TRUE 
+         case("becke88    "); res = FALSE
+         case("gill96     "); res = FALSE
+         case("vwn        "); res = TRUE 
+         case("lyp        "); res = FALSE
+         case default;        UNKNOWN(kind)
+      end
+   end
+
+! *****************************************
+! Restricted DFT functionals and potentials
+! *****************************************
+
+   r_functional(name,E,rho0,rho1)
+   ! For a DFT functional named "name", ADD the *restricted* functional "E"
+   ! as a function of the (total) density "rho0" and its gradient "rho1".
+     name :: STR, IN
+     E    :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     rho1 :: MAT{REAL}, IN, optional
+   ENSURE(present(rho1) OR .is_LDA_functional(name),"rho1 must be present for GGA functionals")
+     .name = name
+     select case (name)
+       case ("none   ")  ! Don't add anything.
+       case ("becke88"); .r_Becke88_x_functional(E,rho0,rho1)
+       case ("lyp    "); .r_LYP_c_functional(E,rho0,rho1)
+       case ("slater "); .r_LDA_x_functional(E,rho0)
+       case ("xalpha "); .r_Xalpha_x_functional(E,rho0)
+       case default;     UNKNOWN(name)
+     end
+   end
+
+   r_potential(name,V0,rho0,V1,rho1)
+   ! For a DFT functional named "name", ADD the *restricted* potentials "V0"
+   ! and "V1" as a function of the (total) density "rho0" and its gradient "rho1".
+   ! "V0" and "V1" are defined by
+   !       V0 = d F/d rho_a
+   !       V1 = 2*(d F/d gamma_aa) + (d F/d gamma_ab)
+   ! where 
+   !       gamma_xy = nabla rho_x . nabla rho_y, 
+   ! and 
+   !       x,y = alpha or beta. 
+   ! NOTE: the derivatives are w.r.t. rho_a, or gamma_aa, which involve the
+   ! alpha and beta densities, but the inputs are the *restricted* density
+   ! "rho0" and its gradient "rho1". In practical calculations, "V1" is
+   ! integrated with nabla of the basis function pair to get the matrix element
+   ! of the exchange correlation potential of the exchange correlation
+   ! potential. 
+     name :: STR, IN
+     V0   :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     V1   :: MAT{REAL}, OUT, optional
+     rho1 :: MAT{REAL}, IN, optional
+   ENSURE(present(rho1) EQV present(V1),"rho1 and V1 must be both present, or both absent")
+   ENSURE(present(rho1) OR .is_LDA_functional(name),"rho1 and V1 must be present for GGA functionals")
+     .name = name
+     select case (name)
+       case ("none   ")  ! Don't add anything.
+       case ("becke88"); .r_Becke88_x_potential(V0,rho0,V1,rho1)
+       case ("lyp    "); .r_LYP_c_potential(V0,rho0,V1,rho1)
+       case ("slater "); .r_LDA_x_potential(V0,rho0)
+       case ("xalpha "); .r_Xalpha_x_potential(V0,rho0)
+       case default;     UNKNOWN(name)
+     end
+   end
+
+! Details of the functionals
+
+   r_LDA_x_functional(E,rho0)
+   ! The restricted LDA exchange functional
+   ! LDA = -c \sum_s (\rho_s)^{4/3}, c = (3/2) (3/4\pi)^{1/3}
+     self :: IN
+     E :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     const :: REAL
+     const = THREE/FOUR * (THREE/PI)**THIRD
+     E = E - const*rho0**(FOUR/THREE)
+   end
+
+   r_LDA_x_potential(V0,rho0)
+   ! The restricted LDA exchange potential.
+     self :: IN
+     V0 :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     const :: REAL
+     const = (THREE/PI)**THIRD
+     V0 = V0 - const*rho0**THIRD
+   end
+
+   r_Xalpha_x_functional(E,rho0)
+   ! The restricted X alpha exchange functional. 
+   ! Untested.
+     self :: IN
+     E :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     const :: REAL
+     const = NINE/EIGHT * .Xalpha * (THREE/PI)**THIRD
+     E = E - const*rho0**(FOUR/THREE)
+   end
+
+   r_Xalpha_x_potential(V0,rho0)
+   ! The restricted X alpha exchange potential.
+   ! Untested.
+     self :: IN
+     V0 :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     const :: REAL
+     const = THREE/TWO * .Xalpha * (THREE/PI)**THIRD
+     V0 = V0 - const*rho0**THIRD
+   end
+
+   r_Becke88_x_functional(E,rho0,rho1)
+   ! The restricted Becke 88 exchange functional.
+     self :: IN
+     E :: VEC{REAL}, OUT
+     rho0 :: VEC{REAL}, IN
+     rho1 :: MAT{REAL}, IN
+     beta,beta6,const,rho,rho_43,gx,gy,gz,gg,x,x2 :: REAL
+     i :: INT
+     beta = 0.0042d0  ! beta parameter
+     beta6 = SIX*beta
+     const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+     do i = 1,rho0.dim
+        rho = rho0(i)
+        if (rho<TOL(20)) cycle
+        rho_43 = (HALF*rho) ** (FOUR/THREE)
+        gx = rho1(i,1)
+        gy = rho1(i,2)
+        gz = rho1(i,3)
+        gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+      ! x  = min(gg/rho_43,TOL(20))
+        x  = gg/rho_43
+        x2 = x*x
+        E(i) = E(i) - TWO*rho_43*(const+beta*x2/(ONE+beta6*x*log(x+sqrt(ONE+x2))))
+     end
+   end
+
+   r_Becke88_x_potential(V0,rho0,V1,rho1)
+   ! The restricted Becke 88 exchange potential.  These equations are
+   ! essentially the same as in the appendix of JCP 98(7) 5612-5626.
+   ! Note that (A5) is in error because the \gamma variables should be square
+   ! rooted. Note that (A6) is in error because the power of \rho_\alpha should
+   ! be 1/3 not 4/3.
+      V0 :: VEC{REAL}, OUT
+      rho0 :: VEC{REAL}, IN
+      V1 :: MAT{REAL}, OUT
+      rho1 :: MAT{REAL}, IN
+      beta,beta2,beta6,bbta6,const,rho,rho_13,rho_43 :: REAL
+      gx,gy,gz,gg,x,x2,sq,as,d,d2,g0,g1 :: REAL
+      i :: INT
+      beta  = 0.0042d0  ! beta parameter
+      beta2 = TWO*beta
+      beta6 = SIX*beta
+      bbta6 = SIX*beta*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,rho0.dim
+        rho = rho0(i)
+        if (rho<TOL(20)) cycle
+        rho = HALF*rho
+        rho_13 = rho**(THIRD)
+        rho_43 = rho*rho_13
+        gx = rho1(i,1) ! should have a 1/2 here
+        gy = rho1(i,2)
+        gz = rho1(i,3) ! but it is put below
+        gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+        x  = gg/rho_43
+        x2 = x*x
+        sq = sqrt(ONE+x2)
+        as = log(x+sq)
+        d  = ONE/(ONE+beta6*x*as)
+        d2 = d*d
+        g0 = const + beta*x2*d
+        g1 = (beta2*x+bbta6*x2*(as-x/sq))*d2
+        gg = HALF*g1/gg ! a factor 1/2 x 2 which cancel, here
+        V0(i)   = V0(i) - FOURTHIRD*rho_13*(g0 - x*g1)
+        V1(i,1) = V1(i,1) - gg*gx
+        V1(i,2) = V1(i,2) - gg*gy
+        V1(i,3) = V1(i,3) - gg*gz
+      end
+   end
+
+   r_gill96_x_functional(p,np,f)
+   ! Return the values of the Gill 96 exchange functional.
+     self :: IN
+     p :: VEC{REAL}, IN
+     f :: VEC{REAL}, OUT
+     np :: MAT{REAL}, IN
+     np_i :: VEC{REAL}(3)
+     alpha,fac,x,pft :: REAL
+     i :: INT
+     alpha = -THREE/TWO * (THREE/(FOUR*PI))**THIRD
+     fac = ONE/137
+     do i=1,size(p)
+       pft = (HALF*p(i)) ** (FOUR/THREE)
+       np_i = HALF*np(i,:)
+       x = max(sqrt(dot_product(np_i,np_i)) / pft,TOL(20))
+       f(i) = TWO*pft * (alpha - fac*x*sqrt(x))
+     end
+   end
+
+   r_gill96_x_potential(p,np,local,non_local)
+   ! Return the derivatives of the Gill 96 exchange functional.
+      self :: IN
+      p :: VEC{REAL}, IN
+      np :: MAT{REAL}, IN
+      local :: VEC{REAL}, OUT
+      non_local :: MAT{REAL}, OUT
+      np_i :: VEC{REAL}(3)
+      alpha,ft,fac,fac1,p_i,p_third,x,x2,nl :: REAL
+      i :: INT
+      alpha = -THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      ft = FOUR/THREE
+      fac = ONE/274
+      fac1 = -THREE/548
+      do i=1,size(p)
+        p_i = HALF*p(i)
+        np_i = HALF*np(i,:)
+        p_third = p_i**(THIRD)
+        x = max(sqrt(dot_product(np_i,np_i))/(p_i*p_third),TOL(20))
+        x2 = sqrt(x)
+        local(i) = ft*p_third*(alpha+fac*x*x2)
+        if (x < TOL(19)) then
+          non_local(i,:) = ZERO
+        else
+          nl = TWO*fac1*x2/(x*p_i*p_third)
+          non_local(i,:) = nl*np_i(:)
+        end
+      end
+   end
+
+   r_LYP_c_functional(f,p,np)
+   ! Return the values of the Lee-Yang-Parr functional.
+     self :: IN
+     f :: VEC{REAL}, OUT
+     p :: VEC{REAL}, IN
+     np :: MAT{REAL}, IN
+     c_f,a,b,c,d,fac,p_i,npnp,p_third :: REAL
+     gamma,a_b_omega,delta,p2,fi :: REAL
+     i :: INT
+     c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
+     a = 0.04918
+     b = 0.132
+     c = 0.2533
+     d = 0.349
+     fac = TWO**(11*THIRD)*c_f
+     if (DO_IN_PARALLEL) f = ZERO
+     parallel do i = 1,size(p)
+       p_i = HALF*p(i)
+       p2 = p_i*p_i
+       npnp = QUARTER*dot_product(np(i,:),np(i,:))
+       p_third = (TWO*p_i)**THIRD
+       gamma = ONE + d/p_third
+       a_b_omega = a*b*exp(-c/p_third)/(gamma*p_third**11)
+       delta = (c+d/gamma)/p_third
+       fi = -a * TWO*p_i/gamma &
+            +a_b_omega*p2*npnp*(6+14*delta)/NINE &
+            -a_b_omega*fac*TWO*p_i**(14*THIRD)
+       f(i) = f(i) + fi
+     end
+     PARALLEL_VECTOR_SUM(f)
+   end
+
+   r_LYP_c_potential(local,p,non_local,np)
+   ! Return the derivatives of the LYP correlation functional.
+   ! These equations are essentially the same as in the appendix of JCP 98(7)
+   ! 5612-5626.
+     local :: VEC{REAL}
+     p :: VEC{REAL}, IN
+     non_local :: MAT{REAL}
+     np :: MAT{REAL}, IN
+     npa :: VEC{REAL}(3)
+     a,b,c,d,e,c_f,ab9 :: REAL
+     pa,pa_third,p_third,npanpa :: REAL
+     gamma_inv,mu,abw9_pa,delta :: REAL
+     i :: INT
+
+     c_f = (THREE/TEN)*(3*PI*PI)**(TWOTHIRDS)
+     a = 0.04918
+     b = 0.132
+     c = 0.2533
+     d = 0.349
+     e = (TWO)**(11*THIRD) * c_f
+     ab9 = a*b/NINE
+
+     do i=1,size(p)
+       pa = HALF*p(i)
+       npa = HALF*np(i,:)
+       npanpa = dot_product(npa,npa)
+       pa_third = pa**(THIRD)
+       p_third = TWO**(THIRD)*pa_third
+       gamma_inv = ONE/(ONE + d / p_third)
+       mu=d*gamma_inv/p_third
+       abw9_pa = (HALF)**4 * ab9*exp(-c/p_third) * p_third/(pa*pa*pa) * gamma_inv
+       delta = c/p_third + mu
+
+       local(i) = local(i) -a*gamma_inv*(ONE+THIRD*mu) &
+         +abw9_pa*npanpa*(SEVEN/3*(mu*mu+delta*delta)-13*delta-5) &
+         -abw9_pa*e*(3*delta+9)*pa*pa*pa/pa_third
+       non_local(i,:) = non_local(i,:) + abw9_pa*pa*npa*(6+14*delta)
+     end
+   end
+
+end

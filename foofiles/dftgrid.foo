@@ -109,9 +109,9 @@ contains
    copy(d) ::: leaky
    ! Copy a dftgrid "d"
       d :: DFTGRID
+      self = d
       if (d.reference_atom_points.created) .reference_atom_points.create_copy(d.reference_atom_points)
       if (d.reference_atom_weights.created) .reference_atom_weights.create_copy(d.reference_atom_weights)
-      self = d
       .archive.copy(d.archive)
    end
 
@@ -2273,83 +2273,120 @@ contains
      end
    end
 
-!*******************************************************************************
-!                  DFT functionals and derivatives
-!*******************************************************************************
+! *******************************
+! DFT functionals and derivatives
+! *******************************
 
-   d_r_lda_exchange_functional(p,local,alpha)
-   ! Return the derivatives of the local density exchange functional.
+   add_r_LDA_x_functional(rho,E)
+   ! The restricted LDA exchange functional
+   ! LDA = -c \sum_s (\rho_s)^{4/3}, c = (3/2) (3/4\pi)^{1/3}
      self :: IN
-     p :: VEC{REAL}, IN
-     local :: VEC{REAL}, OUT
-     alpha :: REAL, IN
+     rho :: VEC{REAL}, IN
+     E :: VEC{REAL}, OUT
      const :: REAL
-     const = - SIX * alpha * (THREE/(EIGHT*PI))**THIRD
-     local = const * p**THIRD
+     const = THREE/FOUR * (THREE/PI)**THIRD
+     E = E - const*rho**(FOUR/THREE)
    end
 
-   r_lda_exchange_functional(p,f,alpha)
-   ! Return the values of the local density exchange functional.
+   add_r_LDA_x_potential(rho,V)
+   ! The restricted LDA exchange potential.
      self :: IN
-     p :: VEC{REAL}, IN
-     f :: VEC{REAL}, OUT
-     alpha :: REAL, IN
+     rho :: VEC{REAL}, IN
+     V :: VEC{REAL}, OUT
      const :: REAL
-     const = - NINE/16 * alpha * (THREE/PI)**THIRD
-     f = const * p**(FOUR/THREE)
+     const = (THREE/PI)**THIRD
+     V = V - const*rho**THIRD
    end
 
-   r_becke88_exchange_functional(p,np,f)
-   ! Return the values of the Becke 88 exchange functional.
+   add_r_Xalpha_x_functional(rho,E,alpha)
+   ! The restricted X alpha exchange functional. 
+   ! Untested.
      self :: IN
-     p :: VEC{REAL}, IN
-     f :: VEC{REAL}, OUT
-     np :: MAT{REAL}, IN
-     beta,fac,x,pft :: REAL
+     rho :: VEC{REAL}, IN
+     E :: VEC{REAL}, OUT
+     alpha :: REAL, IN
+     const :: REAL
+     const = NINE/EIGHT * alpha * (THREE/PI)**THIRD
+     E = E - const*rho**(FOUR/THREE)
+   end
+
+   add_r_Xalpha_x_potential(rho,V,alpha)
+   ! The restricted X alpha exchange potential.
+   ! Untested.
+     self :: IN
+     rho :: VEC{REAL}, IN
+     V :: VEC{REAL}, OUT
+     alpha :: REAL, IN
+     const :: REAL
+     const = THREE/TWO * alpha * (THREE/PI)**THIRD
+     V = V - const*rho**THIRD
+   end
+
+   add_r_Becke88_x_functional(rho0,rho1,E)
+   ! The restricted Becke 88 exchange functional.
+     self :: IN
+     rho0 :: VEC{REAL}, IN
+     rho1 :: MAT{REAL}, IN
+     E :: VEC{REAL}, OUT
+     beta,beta6,const,rho_43,gx,gy,gz,gg,x,x2 :: REAL
      i :: INT
-     beta = 0.0042  ! beta parameter
-     fac = -THREE/TWO * (THREE/(FOUR*PI))**THIRD
-     do i=1,size(p)
-       pft = (HALF*p(i)) ** (FOUR/THREE)
-       x = HALF * max(sqrt(dot_product(np(i,:),np(i,:))) / pft,TOL(20))
-       f(i) = TWO * pft * (fac - beta*x*x/(ONE+SIX*beta*x*x.arcsinh))
+     beta = 0.0042d0  ! beta parameter
+     beta6 = SIX*beta
+     const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+     do i = 1,rho0.dim
+        rho_43 = (HALF*rho0(i)) ** (FOUR/THREE)
+        gx = rho1(i,1)
+        gy = rho1(i,2)
+        gz = rho1(i,3)
+        gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+      ! x  = min(gg/rho_43,TOL(20))
+        x  = gg/rho_43
+        x2 = x*x
+        E(i) = E(i) - TWO*rho_43*(const+beta*x2/(ONE+beta6*x*log(x+sqrt(ONE+x2))))
      end
    end
 
-   d_r_b88_exchange_functional(p,np,local,non_local)
-   ! Return the derivatives of the Becke 88 exchange functional.
-   ! These equations are essentially the same as in the appendix of JCP 98(7)
-   ! 5612-5626.
-      p :: VEC{REAL}, IN
-      np :: MAT{REAL}, IN
-      local :: VEC{REAL}
-      non_local :: MAT{REAL}
-      np_i :: VEC{REAL}(3)
-      c,d,e,p_i,p_i_third,x,k,x2,k2,z,beta,nl,p_i_ft :: REAL
+   add_r_Becke88_x_potential(rho0,rho1,V0,V1)
+   ! The restricted Becke 88 exchange potential.  These equations are
+   ! essentially the same as in the appendix of JCP 98(7) 5612-5626.
+   ! Note that (A5) is in error because the \gamma variables should be square
+   ! rooted. Note that (A6) is in error because the power of \rho_\alpha should
+   ! be 1/3 not 4/3.
+      rho0 :: VEC{REAL}, IN
+      rho1 :: MAT{REAL}, IN
+      V0 :: VEC{REAL}, OUT
+      V1 :: MAT{REAL}, OUT
+      beta,beta2,beta6,bbta6,const,rho,rho_13,rho_43 :: REAL
+      gx,gy,gz,gg,x,x2,sq,as,d,d2,g0,g1 :: REAL
       i :: INT
-      beta = 0.0042  ! beta parameter
-      c = beta*HALF
-      d = - (SIX/PI)**THIRD
-      e = FOUR*THIRD*beta
-      do i=1,size(p)
-        p_i = HALF*p(i)
-        np_i = HALF*np(i,:)
-        p_i_third = p_i**(THIRD)
-        p_i_ft = p_i*p_i_third
-        x = max(sqrt(dot_product(np_i,np_i)) / p_i_ft,TOL(20))
+      beta  = 0.0042d0  ! beta parameter
+      beta2 = TWO*beta
+      beta6 = SIX*beta
+      bbta6 = SIX*beta*beta
+      const = THREE/TWO * (THREE/(FOUR*PI))**THIRD
+      do i = 1,rho0.dim
+        rho = HALF*rho0(i)
+        rho_13 = rho**(THIRD)
+        rho_43 = rho*rho_13
+        gx = rho1(i,1)
+        gy = rho1(i,2)
+        gz = rho1(i,3)
+        gg = HALF*sqrt(gx*gx+gy*gy+gz*gz)
+        x  = gg/rho_43
         x2 = x*x
-        k = ONE + SIX * beta * x * x.arcsinh
-        k2 = k*k
-        z = SIX*beta*x2/sqrt(ONE+x2)
-        local(i) = d * p_i_third + e * p_i_third * x2 * (ONE-z) / k2
-        if (x < TOL(19)) then
-          non_local(i,:) = ZERO
-        else
-          nl = beta * (z-ONE-k)/(k2*p_i_ft)
-          non_local(i,:) = nl*np_i(:)
-        end
+        sq = sqrt(ONE+x2)
+        as = log(x+sq)
+        d  = ONE/(ONE+beta6*x*as)
+        d2 = d*d
+        g0 = const + beta*x2*d
+        g1 = (beta2*x*+bbta6*x2*(as-x/sq))*d2
+        gg = HALF*g1/gg
+        V0(i)   = V0(i) - FOURTHIRD*rho_13*(g0 - x*g1)
+        V1(i,1) = V1(i,1) - gg*gx
+        V1(i,2) = V1(i,2) - gg*gy
+        V1(i,3) = V1(i,3) - gg*gz
       end
-    end
+   end
 
    d_r_gill96_exchange_functional(p,np,local,non_local)
    ! Return the derivatives of the Gill 96 exchange functional.
@@ -2400,7 +2437,7 @@ contains
      end
    end
 
-   r_lyp_correlation_functional(p,np,f)
+   add_r_LYP_c_functional(p,np,f)
    ! Return the values of the Lee-Yang-Parr functional.
      self :: IN
      p :: VEC{REAL}, IN
@@ -2427,12 +2464,12 @@ contains
        fi = -a * TWO*p_i/gamma &
             +a_b_omega*p2*npnp*(6+14*delta)/NINE &
             -a_b_omega*fac*TWO*p_i**(14*THIRD)
-       f(i) = fi
+       f(i) = f(i) + fi
      end
      PARALLEL_VECTOR_SUM(f)
    end
 
-   d_r_lyp_correlation_functional(p,np,local,non_local)
+   add_r_LYP_c_potential(p,np,local,non_local)
    ! Return the derivatives of the LYP correlation functional.
    ! These equations are essentially the same as in the appendix of JCP 98(7)
    ! 5612-5626.
@@ -2446,7 +2483,7 @@ contains
      gamma_inv,mu,abw9_pa,delta :: REAL
      i :: INT
 
-     c_f = (THREE/TEN)*(3*PI*PI)**(THIRD+THIRD)
+     c_f = (THREE/TEN)*(3*PI*PI)**(TWOTHIRDS)
      a = 0.04918
      b = 0.132
      c = 0.2533
@@ -2465,10 +2502,10 @@ contains
        abw9_pa = (HALF)**4 * ab9*exp(-c/p_third) * p_third/(pa*pa*pa) * gamma_inv
        delta = c/p_third + mu
 
-       local(i) = -a*gamma_inv*(ONE+THIRD*mu) &
+       local(i) = local(i) -a*gamma_inv*(ONE+THIRD*mu) &
          +abw9_pa*npanpa*(SEVEN/3*(mu*mu+delta*delta)-13*delta-5) &
          -abw9_pa*e*(3*delta+9)*pa*pa*pa/pa_third
-       non_local(i,:) = abw9_pa*pa*npa*(6+14*delta)
+       non_local(i,:) = non_local(i,:) + abw9_pa*pa*npa*(6+14*delta)
      end
    end
 

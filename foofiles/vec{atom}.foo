@@ -300,19 +300,8 @@ contains
 ! Non-list based I/O routines
 ! ***************************
 
-   read_keywords ::: leaky
+   read_keywords ::: get_from(VEC{OBJECT}), recursive, leaky
    ! Read in and process normal (non list-type) keywords from "stdin".
-     self :: PTR
-   ENSURE(stdin.next_item=="{","expecting open bracket symbol, {")
-     word :: STR
-     stdin.read(word)
-     do                 ! Loop over input keywords
-       stdin.read(word)
-       word.to_lower_case
-       if (word=="}")      exit
-       if (stdin.reverted) exit
-       .process_keyword(word)
-     end
    end
 
    process_keyword(keyword) ::: leaky
@@ -324,6 +313,7 @@ contains
      word.to_lower_case
      select case (word)
        case("}") ! do nothing.
+     ! case("b_iso_to_u_iso         "); .B_iso_to_U_iso
        case("put                    "); .put
        case("put_bond_angle_table   "); .put_bond_angle_table
        case("put_bond_length_table  "); .put_bond_length_table
@@ -367,6 +357,9 @@ contains
       IDs,labels,symbols :: VEC{STR}*
       i,j,ind :: INT
       pos,U :: MAT{REAL}*
+      U_iso :: VEC{REAL}*
+      unitcell :: UNITCELL
+      fac,a,b,c :: REAL
       ! Read the site labels FIRST because these seem to correlate with
       ! the anisotropic U's.
       nullify(symbols)
@@ -374,6 +367,16 @@ contains
       cif.read_looped_item("_atom_site_type_symbol",symbols,fs)
       cif.read_looped_item("_atom_site_label",labels,fl)
       ENSURE(fs OR fl,"no atom site label information in CIF file")
+      .destroy
+      .create(labels.dim)
+      if (symbols.created) then
+         .set_labels_and_atomic_numbers(symbols) ! For Z's
+         if (labels.created) .set_labels(labels) ! For U's
+      else if (labels.created) then
+         .set_labels_and_atomic_numbers(labels)  ! This may not work
+      end
+      labels.destroy
+      symbols.destroy
       ! Read the site coordinates, and possibly occupancies
       cif.find_looped_item("_atom_site_occupancy",fo)
       if (fo) then
@@ -392,23 +395,25 @@ contains
       end
       ENSURE(fc,"no atom coordinate information in CIF file")
       ! Assign the CIF info to the atom list
-      .destroy
-      .create(labels.dim)
-      if (symbols.created) then
-         .set_labels_and_atomic_numbers(symbols) ! For Z's
-         if (labels.created) .set_labels(labels) ! For U's
-      else if (labels.created) then
-         .set_labels_and_atomic_numbers(labels)  ! This may not work
-      end
+      self(:).axis_system = "crystal"
       self(:).pos(1) = pos(1,:)
       self(:).pos(2) = pos(2,:)
       self(:).pos(3) = pos(3,:)
-      self(:).axis_system = "crystal"
       if (fo) self(:).site_occupancy = pos(4,:)
       pos.destroy
       IDs.destroy
-      labels.destroy
-      symbols.destroy
+      ! Read the U_iso values if there
+      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fu)
+      if (fu) then
+         ! Change units if required 
+         if (cif.U_iso_is_B_iso) then
+            fac = ONE/(EIGHT*PI*PI)
+            U_iso = fac*U_iso
+         end
+         U_iso.convert_from("angstrom^2")
+         self(:).U_iso = U_iso
+         U_iso.destroy
+      end
       ! Now read U tensor if it is there ...
       IDs.create(6)
       IDs = ["_atom_site_aniso_U_11", &
@@ -419,37 +424,137 @@ contains
              "_atom_site_aniso_U_23"]
       cif.read_looped_item("_atom_site_aniso_label",labels,fl)
       cif.read_looped_items(IDs,U,found=fu)
-      if (NOT fl OR NOT fu) return
-      ! Match the labels and assign the U tensors
-      fail = FALSE
-      U.convert_from("angstrom^2")
-      DIE_IF(self(:).label.no_of_unique_elements/=.dim,"for the ADP's, every site symbol must be distinct!")
-      do i = 1,labels.dim
-         ind = self(:).label.index_of(labels(i))
-         if (ind<=0) then
-            WARN("label "//labels(i).trim//" cant be found, failed to read U's")
-            fail = TRUE 
-            exit
+      if (fl AND fu) then
+         ! Change units if required 
+         if (cif.U_is_B) then
+            fac = ONE/(EIGHT*PI*PI)
+            U = fac*U
+         else if (cif.U_is_beta) then
+            unitcell.read_CIF(cif)
+            a = unitcell.length(1)
+            b = unitcell.length(2)
+            c = unitcell.length(3)
+            fac = ONE/(TWO*PI*PI)
+            U = fac*U
+            do i = 1,.dim
+               U(1,i) = U(1,i)/(a*a)
+               U(2,i) = U(1,i)/(b*b)
+               U(3,i) = U(1,i)/(c*c)
+               U(4,i) = U(1,i)/(a*b)
+               U(5,i) = U(1,i)/(a*c)
+               U(6,i) = U(1,i)/(b*c)
+            end
          end
-         self(ind).thermal_tensor(1,1) = U(1,i)
-         self(ind).thermal_tensor(2,2) = U(2,i)
-         self(ind).thermal_tensor(3,3) = U(3,i)
-         self(ind).thermal_tensor(1,2) = U(4,i)
-         self(ind).thermal_tensor(2,1) = U(4,i)
-         self(ind).thermal_tensor(1,3) = U(5,i)
-         self(ind).thermal_tensor(3,1) = U(5,i)
-         self(ind).thermal_tensor(2,3) = U(6,i)
-         self(ind).thermal_tensor(3,2) = U(6,i)
-      end
-      if (NOT fail) then
-         self(:).thermal_axis_system = "crystal"
-      else
+         U.convert_from("angstrom^2")
+         ! Match the anisotropic U labels and assign the U tensors
+         fail = FALSE
+         DIE_IF(self(:).label.no_of_unique_elements/=.dim,"for the ADP's, every site symbol must be distinct!")
          do i = 1,labels.dim
-         self(i).thermal_tensor = ZERO
+            ind = self(:).label.index_of(labels(i))
+            if (ind<=0) then
+               WARN("label "//labels(i).trim//" cant be found, failed to read U's")
+               fail = TRUE 
+               exit
+            end
+            self(ind).thermal_tensor(1,1) = U(1,i)
+            self(ind).thermal_tensor(2,2) = U(2,i)
+            self(ind).thermal_tensor(3,3) = U(3,i)
+            self(ind).thermal_tensor(1,2) = U(4,i)
+            self(ind).thermal_tensor(2,1) = U(4,i)
+            self(ind).thermal_tensor(1,3) = U(5,i)
+            self(ind).thermal_tensor(3,1) = U(5,i)
+            self(ind).thermal_tensor(2,3) = U(6,i)
+            self(ind).thermal_tensor(3,2) = U(6,i)
+         end
+         if (NOT fail) then
+            self(:).thermal_axis_system = "crystal"
+         else
+            do i = 1,labels.dim
+            self(i).thermal_tensor = ZERO
+            end
          end
       end
-      U.destroy
-      labels.destroy
+      if (fu) U.destroy
+      if (fl) labels.destroy
+      IDs.destroy
+   end
+
+   read_CIF_ADPs(cif) ::: leaky
+   ! Read ADP information from a Crystallographic Information File, "cif".
+   ! It is an error if the thermal tensors are missing in the "cif" file.
+   ! It is an error if self is not defined or does not have the same
+   ! length as the ADP list. NOTE: it is up to you to ensure that the
+   ! atom order in the CIF is the same as the atom order in self.
+      self :: PTR
+      cif :: CIF
+   ENSURE(.created,"no atom list exists")
+      fu  :: BIN
+      IDs :: VEC{STR}*
+      i   :: INT
+      U   :: MAT{REAL}*
+      U_iso :: VEC{REAL}*
+      unitcell :: UNITCELL
+      fac,a,b,c :: REAL
+      ! Read the U_iso values if there
+      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fu)
+      if (fu) then
+         DIE_IF(U_iso.dim/=.dim,"inconsistent number of atoms and U's")
+         ! Change units if required 
+         if (cif.U_iso_is_B_iso) then
+            fac = ONE/(EIGHT*PI*PI)
+            U_iso = fac*U_iso
+         end
+         U_iso.convert_from("angstrom^2")
+         self(:).U_iso = U_iso
+         self(:).thermal_axis_system = "crystal"
+         U_iso.destroy
+      end
+      ! Now read U tensor if it is there ...
+      IDs.create(6)
+      IDs = ["_atom_site_aniso_U_11", &
+             "_atom_site_aniso_U_22", &
+             "_atom_site_aniso_U_33", &
+             "_atom_site_aniso_U_12", &
+             "_atom_site_aniso_U_13", &
+             "_atom_site_aniso_U_23"]
+      cif.read_looped_items(IDs,U,found=fu)
+      if (fu) then
+         ! Change units if required 
+         if (cif.U_is_B) then
+            fac = ONE/(EIGHT*PI*PI)
+            U = fac*U
+         else if (cif.U_is_beta) then
+            unitcell.read_CIF(cif)
+            a = unitcell.length(1)
+            b = unitcell.length(2)
+            c = unitcell.length(3)
+            fac = ONE/(TWO*PI*PI)
+            U = fac*U
+            do i = 1,.dim
+               U(1,i) = U(1,i)/(a*a)
+               U(2,i) = U(1,i)/(b*b)
+               U(3,i) = U(1,i)/(c*c)
+               U(4,i) = U(1,i)/(a*b)
+               U(5,i) = U(1,i)/(a*c)
+               U(6,i) = U(1,i)/(b*c)
+            end
+         end
+         U.convert_from("angstrom^2")
+         ! Match the labels and assign the U tensors
+         do i = 1,.dim
+            self(i).thermal_tensor(1,1) = U(1,i)
+            self(i).thermal_tensor(2,2) = U(2,i)
+            self(i).thermal_tensor(3,3) = U(3,i)
+            self(i).thermal_tensor(1,2) = U(4,i)
+            self(i).thermal_tensor(2,1) = U(4,i)
+            self(i).thermal_tensor(1,3) = U(5,i)
+            self(i).thermal_tensor(3,1) = U(5,i)
+            self(i).thermal_tensor(2,3) = U(6,i)
+            self(i).thermal_tensor(3,2) = U(6,i)
+            self(i).thermal_axis_system = "crystal"
+         end
+         U.destroy
+      end
       IDs.destroy
    end
 
@@ -1056,18 +1161,48 @@ contains
    ! thermal tensors are changed back afterwards.
       crystal :: CRYSTAL, IN, optional
    ENSURE(.has_cartesian_thermal_axes,"thermals tensors are not in cartesian system")
-      i :: INT
-      stdout.flush
-      stdout.text("Thermal tensors in cartesian coordinates/(bohr^2):")
-      .put_thermal_tensors_helper
-      stdout.text("Thermal tensors in cartesian coordinates/(angstrom^2):")
-      .put_thermal_tensors_helper(units="angstrom^2")
-      if (present(crystal)) then
-         .change_thermal_axis_system_to("crystal",crystal)
-         stdout.text("Thermal tensors in crystal axis system/(angstrom^2):")
-         .put_thermal_tensors_helper(units="angstrom^2")
-         .change_thermal_axis_system_to("cartesian",crystal)
+      if (.has_U_iso) then
+         stdout.flush
+         stdout.text("Isotropic thermal factors U_iso in cartesian coordinates/(bohr^2):")
+         .put_U_iso_helper
+         stdout.text("Isotropic thermal factors U_iso in cartesian coordinates/(angstrom^2):")
+         .put_U_iso_helper(units="angstrom^2")
       end
+      if (.has_thermal_tensors) then
+         stdout.flush
+         stdout.text("Thermal tensors (ADP's) in cartesian coordinates/(bohr^2):")
+         .put_thermal_tensors_helper
+         stdout.text("Thermal tensors (ADP's) in cartesian coordinates/(angstrom^2):")
+         .put_thermal_tensors_helper(units="angstrom^2")
+         if (present(crystal)) then
+            .change_thermal_axis_system_to("crystal",crystal)
+            stdout.text("Thermal tensors in crystal axis system/(angstrom^2):")
+            .put_thermal_tensors_helper(units="angstrom^2")
+            .change_thermal_axis_system_to("cartesian",crystal)
+         end
+      end
+   end
+
+   put_U_iso_helper(units) ::: private
+   ! Output the U_iso values -- helper routine. 
+      units :: STR, optional
+      i :: INT
+      fac :: REAL
+      fac = ONE
+      if (present(units)) fac.convert_to(units)
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("U_iso")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      do i = 1,size(self)
+        stdout.put(i)
+        stdout.put(fac*self(i).U_iso)
+        stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.flush
    end
 
    put_thermal_tensors_helper(units) ::: private
@@ -1464,6 +1599,15 @@ contains
       a :: INT
       do a = 1,.n_atom
          coord(:,a) = self(a).pos
+      end
+   end
+
+   transposed_coordinates result (coord)
+   ! Get the atom coordinates in a matrix object "coord"
+      coord :: MAT{REAL}(.dim,3)
+      a :: INT
+      do a = 1,.n_atom
+         coord(a,:) = self(a).pos
       end
    end
 
@@ -1957,6 +2101,20 @@ contains
         res = TRUE 
         exit
       end  
+   end
+
+   has_U_iso result (res)
+   ! Return TRUE if any atom in the list has a non zero U_iso
+      res :: BIN
+      res = any(self.U_iso>ZERO)
+   end
+
+   has_thermal_factors result (res)
+   ! Return TRUE if any atom in the list has a non zero thermal tensor
+   ! OR non zero isotropic thermal factor.
+      res :: BIN
+      i :: INT
+      res = .has_thermal_tensors OR .has_U_iso
    end
 
    has_residue_names result (res)
@@ -3496,6 +3654,16 @@ contains
        self(n).thermal_tensor_from(crystal)
      end
    end
+
+!   B_iso_to_U_iso
+!   ! Pretend all the U_iso values are B_iso values, and divide them all by 
+!   ! 8 PI^2 ... this maybe needed when the U_iso's are entered as B_iso values
+!   ! in a cif file.
+!     n :: INT
+!     do n=1,.n_atom
+!       self(n).U_iso = self(n).U_iso/(EIGHT*PI*PI)
+!     end
+!   end
 
    ensure_in_unitcell(crystal)
    ! Translate the position of self to be in the unitcell.
