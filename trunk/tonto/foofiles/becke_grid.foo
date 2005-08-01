@@ -150,7 +150,6 @@ module BECKE_GRID
 !   end
 
    ! These are the Bragg slater radii.
-   ! i.e. two times the recommended Becke zeta values ...
    ! WARNING: These are in Angstroms.
    bragg_slater_radius :: VEC{REAL}(89), private 
    data bragg_slater_radius/ &
@@ -362,9 +361,9 @@ contains
       if (b.weight.created) .weight.create_copy(b.weight)
    end
 
-   set_defaults
+   set_defaults ::: leaky
    ! Set up a default dftgrid object
-      .set_kind(BECKE_GRID_KIND)
+      .set_kind(BECKE_GRID_KIND) ! leaky, because of .set_zeta
       .set_accuracy(BECKE_GRID_DEFAULT_ACCURACY)
       .n_extra_points_per_shell = BECKE_GRID_EXTRA_POINTS_PER_SHELL
       .reduce_core_angular_grid = BECKE_GRID_REDUCE_CORE_ANGULAR_GRID
@@ -393,17 +392,17 @@ contains
          case ("mura_knowles             ")                
          case default; UNKNOWN(.kind)
       end
-      .atom_zeta.destroy
-      .atom_zeta.create(89)
-      .set_zeta
+      .set_zeta ! leaky here
    end
 
-   set_zeta ::: private
+   set_zeta ::: leaky, private
    ! Set the atom_zeta scaling parameters. We store them in case they need to be
    ! manually changed ...
    ENSURE(.kind/=" ","no kind specified")
       i :: INT
       fac :: REAL
+      .atom_zeta.destroy
+      .atom_zeta.create(89)
       select case (.kind)
          case ("becke                    ")                
             .atom_zeta.create_copy(bragg_slater_radius) 
@@ -644,6 +643,9 @@ contains
          case ("partition_scheme=         "); .read_partition_scheme
          case ("partition_scaling_scheme= "); .read_partition_scaling_scheme
          case ("put                       "); .put
+         case ("put_atom_info             "); .put_atom_info
+         case ("put_grid                  "); .put_grid         
+         case ("set_grid_data             "); .set_grid_data
          case ("set_defaults              "); .set_defaults
          case default;                    UNKNOWN(word)
       end
@@ -657,7 +659,7 @@ contains
       .set_accuracy(word)
    end
 
-   read_kind
+   read_kind ::: leaky
    ! Read the .kind of quadrature desired
       word :: STR
       stdin.read(word)
@@ -821,7 +823,7 @@ contains
    ! generated for the entire atom list.
       radial_grid :: QUADRATURE
       nr :: INT
-      i  :: INT
+      i :: INT
       r,w,rr,ww,rp1,rm1,ra1,ra,ln2,a,a1,tmp :: REAL
       radial_grid.set_n_points(nr)
       radial_grid.set_kind("gauss_chebyshev_2nd")
@@ -844,6 +846,8 @@ contains
          radial_grid.point(i) = rr
          radial_grid.weight(i) = ww
       end
+    ! radial_grid.point.reverse_order
+    ! radial_grid.weight.reverse_order
    end
 
    set_MK_radial_grid(radial_grid,nr) ::: private, leaky
@@ -858,6 +862,8 @@ contains
       r,w,rr,ww,rm1,rm,tmp :: REAL
       radial_grid.set_n_points(nr)
       radial_grid.set_kind("open_rectangle") ! eliminate end points
+    ! radial_grid.set_kind("open_extended_simpson") ! eliminate end points
+    ! radial_grid.set_kind("open_extended_trapezoid") ! eliminate end points
       radial_grid.set_quadrature_points ! leaky here
       ! Apply the Mura-Knowles log 3 mapping
       ! r = -ln (1-x^3), for x in [0,1]
@@ -983,6 +989,16 @@ contains
       end
    end
 
+   no_of_points_for_atom(a) result (res)
+   ! Calculate the total number of points for atom "a"
+      a :: INT, IN
+      res :: INT
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.n_points_for_row.created,"no n_points_for_row array")
+   ENSURE(.atom_Z.created,"no atom_Z array")
+      res = .n_points_for_row(period(.atom_Z(a)))
+   end
+
    no_of_points result (res)
    ! Calculate the total number of points in the total grid over all atoms (i.e.
    ! not just the number of points in the reference atom grid).
@@ -1043,7 +1059,7 @@ contains
             l = na(a) + .n_unscaled_points
             .scale(pt(f:l,:),wt(f:l),a)
             .displace(pt(f:l,:),a)
-            .partition(pt(f:l,:),wt(f:l),a)
+            .partition(wt(f:l),pt(f:l,:),a)
          end
          .destroy_unscaled_grid
       end
@@ -1084,12 +1100,32 @@ contains
       na.destroy
    end
 
-   make_weights(pt,wt)
+   make_points(pt,a)
+   ! Make *only* the integration grid points "pt" for atom "a".
+      pt :: MAT{REAL}, OUT
+      a  :: INT, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+   ENSURE(.n_points_for_row.created,"no n_points_for_row array")
+   ENSURE(.atom_Z.created,"no atom_Z array")
+   ENSURE(pt.dim2==3,"wrong size, pt array")
+   ENSURE(pt.dim1==.n_points_for_row(period(.atom_Z(a))),"wrong size, pt")
+      r :: INT
+      r = period(.atom_Z(a))
+      .set_unscaled_grid(r)  
+      .n_points = .n_unscaled_points
+      .scale(pt,a) ! Scale only points, and displace
+      .displace(pt,a)
+      .destroy_unscaled_grid
+   end
+
+   make_weights(wt,pt)
    ! Make *only* the integration grid weights "wt" for the given list of atoms.
    ! The grid points "pt" must have been previously calculated using
    ! .make_points and are required as input.
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
    ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
    ENSURE(.radial_grid.created,"no radial_grid")
    ENSURE(.lebedev_grid.created,"no lebedev_grid")
@@ -1115,11 +1151,35 @@ contains
             f = na(a) + 1
             l = na(a) + .n_unscaled_points
             .scale(wt(f:l),a)            ! Scale only weights, and partition
-            .partition(pt(f:l,:),wt(f:l),a)
+            .partition(wt(f:l),pt(f:l,:),a)
          end
          .destroy_unscaled_grid
       end
       na.destroy
+   end
+
+   make_weights(wt,pt,a)
+   ! Make *only* the integration grid weights "wt" for atom "a".
+   ! The grid points "pt" for atom "a" only must have been previously calculated
+   ! using .make_points and are required as input.
+      wt :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      a  :: INT, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.radial_grid.created,"no radial_grid")
+   ENSURE(.lebedev_grid.created,"no lebedev_grid")
+   ENSURE(.n_points_for_row.created,"no n_points_for_row array")
+   ENSURE(.atom_Z.created,"no atom_Z array")
+   ENSURE(pt.dim2==3,"wrong size, pt array")
+   ENSURE(pt.dim1==.n_points_for_row(period(.atom_Z(a))),"wrong size, pt")
+   ENSURE(pt.dim1==wt.dim,"wrong size, wt")
+      r :: INT
+      r = period(.atom_Z(a))
+      .set_unscaled_grid(r)  
+      .n_points = .n_unscaled_points
+      .scale(wt,a) ! Scale only weights, and partition
+      .partition(wt,pt,a)
+      .destroy_unscaled_grid
    end
 
    scale(pt,wt,a) ::: private
@@ -1196,6 +1256,7 @@ contains
       wt = .unscaled_weight
       ! Rescale the extend of the reference grid
       if (NOT .scale_atomic_grids) return
+      s  = .atom_zeta(.atom_Z(a))
       s3 = s*s*s
       wt = s3*wt
    end
@@ -1214,9 +1275,9 @@ contains
       end
    end
 
-!  Becke partition function
+!  Partition function
 
-   partition(pt,wt,a) ::: private
+   partition(wt,pt,a) ::: private
    ! Partition the grid ("pt","wt") for the atom "a" whose position is in
    ! "pos(a,:)" so that the weights work with all the other atomic positions
    ! given in "pos" using Becke's or Delley's partition function. Schematically:
@@ -1227,27 +1288,27 @@ contains
    ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
    !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
    !             Perez-Jorda and Yang 1995, CPL 241 p.469
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
       a :: INT, IN
       select case (.partition_scheme)
          case ("becke            ")
             select case (.partition_scaling_scheme)
-               case ("none             "); .partition_B_no_adj(pt,wt,a)
-               case ("becke            "); .partition_B_B_adj(pt,wt,a)
-               case ("treutler_ahlrichs"); .partition_B_TA_adj(pt,wt,a)
+               case ("none             "); .partition_B_no_adj(wt,pt,a)
+               case ("becke            "); .partition_B_B_adj(wt,pt,a)
+               case ("treutler_ahlrichs"); .partition_B_TA_adj(wt,pt,a)
                case default; UNKNOWN(.partition_scaling_scheme)
             end
          case ("delley           ")
             select case (.partition_scaling_scheme)
-               case ("none             "); .partition_D(pt,wt,a)
+               case ("none             "); .partition_D(wt,pt,a)
                case default; UNKNOWN(.partition_scaling_scheme)
             end
          case default; UNKNOWN(.partition_scheme)
       end
    end
 
-   partition_D(pt,wt,a) ::: private
+   partition_D(wt,pt,a) ::: private
    ! Using a modified Delley partition function (as described by Perez-Jorda and
    ! Yang 1995, CPL 241 p.469), partition the grid ("pt","wt") for the
    ! atom "a" so that the weights work with all the other atomic positions given
@@ -1255,8 +1316,8 @@ contains
    !         ("pt","wt") <-- ("pt", partition*"wt"). 
    ! In this version no atomic size adjustments is made.
    ! NOTE : all the positions in "pos" must be distinct!!!!!!
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
       a :: INT, IN
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim1==.n_unscaled_points,"pt incorrectly dimensioned")
@@ -1289,7 +1350,7 @@ contains
       partition.destroy
    end
 
-   partition_B_no_adj(pt,wt,a) ::: private
+   partition_B_no_adj(wt,pt,a) ::: private
    ! Using Becke's partition function, partition the grid ("pt","wt") for the
    ! atom "a" so that the weights work with all the other atomic positions given
    ! in ".atom_pos". Schematically:
@@ -1298,8 +1359,8 @@ contains
    ! NOTE : all the positions in "pos" must be distinct!!!!!!
    ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
    !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
       a :: INT, IN
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim1==.n_unscaled_points,"pt incorrectly dimensioned")
@@ -1347,7 +1408,7 @@ contains
       partition.destroy
    end
 
-   partition_B_B_adj(pt,wt,a) ::: private
+   partition_B_B_adj(wt,pt,a) ::: private
    ! Using Becke's partition function, partition the grid ("pt","wt") for the
    ! atom "a" so that the weights work with all the other atomic positions given
    ! in ".atom_pos". Schematically:
@@ -1356,8 +1417,8 @@ contains
    ! NOTE : all the positions in "pos" must be distinct!!!!!!
    ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
    !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
       a :: INT, IN
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim1==.n_unscaled_points,"pt incorrectly dimensioned")
@@ -1411,7 +1472,7 @@ contains
       partition.destroy
    end
 
-   partition_B_TA_adj(pt,wt,a) ::: private
+   partition_B_TA_adj(wt,pt,a) ::: private
    ! Using Becke's partition function, partition the grid ("pt","wt") for the
    ! atom "a" so that the weights work with all the other atomic positions given
    ! in ".atom_pos". Schematically:
@@ -1420,8 +1481,8 @@ contains
    ! NOTE : all the positions in "pos" must be distinct!!!!!!
    ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
    !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      pt :: MAT{REAL}, IN
       wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
       a :: INT, IN
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim1==.n_unscaled_points,"pt incorrectly dimensioned")
