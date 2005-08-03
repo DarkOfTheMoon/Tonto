@@ -66,6 +66,7 @@ contains
       nullify(.isosurface)
       nullify(.dftgrid)
       nullify(.becke_grid)
+      nullify(.rough_becke_grid)
       nullify(.crystal)
       nullify(.cluster)
       nullify(.cif)
@@ -83,6 +84,7 @@ contains
       nullify(.precomputed_basis_shellpair)
       nullify(.atom_kind)
       nullify(.unique_atom)
+      nullify(.overlapping_atoms)
       nullify(.scfdata)
       nullify(.orbital_energies)
       nullify(.molecular_orbitals)
@@ -119,6 +121,7 @@ contains
       .isosurface.destroy
       .dftgrid.destroy
       .becke_grid.destroy
+      .rough_becke_grid.destroy
       .crystal.destroy
       .cluster.destroy
       .cif.destroy
@@ -136,6 +139,7 @@ contains
       .precomputed_basis_shellpair.destroy
       .atom_kind.destroy
       .unique_atom.destroy
+      .overlapping_atoms.destroy
       .scfdata.destroy
       .orbital_energies.destroy
       .molecular_orbitals.destroy
@@ -243,6 +247,8 @@ contains
          .dftgrid.create_copy(mol.dftgrid)
       if (mol.becke_grid.created) &
          .becke_grid.create_copy(mol.becke_grid)
+      if (mol.rough_becke_grid.created) &
+         .rough_becke_grid.create_copy(mol.rough_becke_grid)
       if (mol.crystal.created) &
          .crystal.create_copy(mol.crystal)
       if (mol.cluster.created) &
@@ -271,6 +277,8 @@ contains
          .atom_kind.create_copy(mol.atom_kind)
       if (mol.unique_atom.created) &
          .unique_atom.create_copy(mol.unique_atom)
+      if (mol.overlapping_atoms.created) &
+         .overlapping_atoms.create_copy(mol.overlapping_atoms)
       if (mol.first_basis_fn_for_atom.created) &
          .first_basis_fn_for_atom.create_copy(mol.first_basis_fn_for_atom)
       if (mol.last_basis_fn_for_atom.created) &
@@ -852,6 +860,41 @@ contains
 !   ! end
 !   end
 
+   make_overlapping_atoms ::: leaky
+   ! Make the list of overlapping atoms
+   ENSURE(.basis_info_made,"no basis set")
+   ENSURE(.scfdata.created,"no scfdata")
+      S_max :: VEC{REAL}*
+      n_atom_pairs :: INT
+      n_atom_pairs = .no_of_atom_pairs
+      .overlapping_atoms.destroy
+      .overlapping_atoms.create(n_atom_pairs)
+      S_max.create(n_atom_pairs)
+      .make_S_max_for_atom_pairs(S_max)
+      .overlapping_atoms = S_max>.scfdata.atom_overlap_cutoff
+      S_max.destroy
+   end
+
+   make_S_max_for_atom_pairs(S_max)
+   ! Make "S_max", the maximum of the overlap integrals between *pairs of atoms*
+     S_max :: VEC{REAL}
+   ENSURE(S_max.dim==.no_of_atom_pairs,"wrong size, S_max")
+     ab,a,b,fa,fb,la,lb :: INT
+     S :: MAT{REAL}*
+     S.create(.n_bf,.n_bf)
+     .get_overlap_matrix(S)
+     do ab = 1, .no_of_atom_pairs
+       a = (1+int(sqrt(EIGHT*ab-SEVEN)))/2
+       b = ab - a*(a-1)/2
+       fa = .first_basis_fn_for_atom(a)
+       la = .last_basis_fn_for_atom(a)
+       fb = .first_basis_fn_for_atom(b)
+       lb = .last_basis_fn_for_atom(b)
+       S_max(ab) = maxval(S(fa:la,fb:lb))
+     end
+     S.destroy
+   end
+
 !  ******************
 !  Shell pair indices
 !  ******************
@@ -1325,16 +1368,16 @@ contains
      D_old,P_old :: OPMATRIX*
      MO,D,MOa,MOb,Da,Db :: MAT{REAL}*
      CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
-     scf_method,orb_kind :: STR
+     scf_method,genre :: STR
      archive :: ARCHIVE
      ! Determine (or guess) the kind of SCF method to be used.
      if      (present(scf_kind)) then; scf_method = scf_kind
      else if (.scfdata.created)  then; scf_method = .scfdata.scf_kind
      else;                             scf_method = .molecular_orbitals.guess_scf_kind
      end
-     ! Determine (or guess) the orb_kind of density matrix to be made
-     if (.scfdata.created) then; orb_kind = .scfdata.spinorbital_kind
-     else;                       orb_kind = .molecular_orbitals.spinorbital_kind
+     ! Determine (or guess) the genre of density matrix to be made
+     if (.scfdata.created) then; genre = .scfdata.spinorbital_kind
+     else;                       genre = .molecular_orbitals.spinorbital_kind
      end
      ! Is this an embeded SCF? If so performs some checks.
      embedded = scf_method.includes("embedded_",at_start=TRUE)
@@ -1353,7 +1396,7 @@ contains
      else;                                                     do_archive = FALSE
      end
      ! Determine whether to archive the delta density matrix
-     archive.set(.name,"density_matrix",orb_kind)
+     archive.set(.name,"density_matrix",genre)
      do_delta_archive = do_archive AND archive.exists
      if (.scfdata.created) do_delta_archive = do_delta_archive AND .scfdata.do_delta_build
      ! Determine if density matrix damping is to be used
@@ -1363,8 +1406,8 @@ contains
      end
      ! Create the density matrix
      if (.density_matrix.destroyed) .density_matrix.create(.n_bf)
-     .density_matrix.destroy(orb_kind)
-     .density_matrix.create(orb_kind)
+     .density_matrix.destroy(genre)
+     .density_matrix.create(genre)
      ! Create/read the previous density matrix from disk ... needed for embedded
      ! or crystal SCF calculations where the current density matrix may not be
      ! the correct one.
@@ -1461,14 +1504,12 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
-      orb_kind :: STR
-      if (.scfdata.created) then
-         orb_kind = .scfdata.spinorbital_kind
-      else
-         orb_kind = .density_matrix.spinorbital_kind
+      genre :: STR
+      if (.scfdata.created) then; genre = .scfdata.spinorbital_kind
+      else;                       genre = .density_matrix.spinorbital_kind
       end
 
-      select case (orb_kind)
+      select case (genre)
          case ("restricted")
             ! do nothing
          case ("unrestricted")
@@ -1492,7 +1533,7 @@ contains
             .density_matrix.create("restricted_complex")
             .density_matrix.restricted_complex = .density_matrix.general_complex.alpha_alpha &
                                                + .density_matrix.general_complex.beta_beta
-         case default;    DIE("unknown kind, "//trim(orb_kind))
+         case default;    DIE("unknown kind, "//trim(genre))
       end
       .archive_density_matrix
    end
@@ -1502,17 +1543,17 @@ contains
    ! matrix. The result is placed in the "restricted" part of the density matrix
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.density_matrix.created, "no density matrix")
-      orb_kind :: STR
-      orb_kind = .density_matrix.spinorbital_kind
-      if (orb_kind=="restricted") return
-      if (orb_kind.includes("complex")) then
+      genre :: STR
+      genre = .density_matrix.spinorbital_kind
+      if (genre=="restricted") return
+      if (genre.includes("complex")) then
          .density_matrix.destroy("restricted_complex")
          .density_matrix.create("restricted_complex")
       else
          .density_matrix.destroy("restricted")
          .density_matrix.create("restricted")
       end
-      select case (orb_kind)
+      select case (genre)
          case ("unrestricted")
             .density_matrix.restricted = .density_matrix.alpha - .density_matrix.beta
          case ("general")
@@ -1524,7 +1565,7 @@ contains
          case ("general_complex")
             .density_matrix.restricted_complex = .density_matrix.general_complex.alpha_alpha &
                                                - .density_matrix.general_complex.beta_beta
-         case default;   DIE("unknown kind, "//trim(orb_kind))
+         case default;   DIE("unknown kind, "//trim(genre))
       end
    end
 
@@ -1538,7 +1579,7 @@ contains
    ENSURE(.molecular_orbitals.created, "no molecular orbitals")
       MO,D,MOa,MOb,Da,Db :: MAT{REAL}*
       CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
-      orb_kind :: STR
+      genre :: STR
       arch :: ARCHIVE
       m :: INT
       uhf :: BIN
@@ -1546,12 +1587,11 @@ contains
       WARN_IF(present(nb) AND (NOT uhf), "nb ignored")
       m = n
       if (present(nb)) m = nb
-      orb_kind = .scfdata.spinorbital_kind
-      .density_matrix.destroy(orb_kind)
-      .density_matrix.create(orb_kind)
-      arch.set(.name,"density_matrix",orb_kind)
-      orb_kind = .scfdata.scf_kind
-      select case (orb_kind)
+      genre = .scfdata.spinorbital_kind
+      .density_matrix.destroy(genre)
+      .density_matrix.create(genre)
+      arch.set(.name,"density_matrix",genre)
+      select case (.scfdata.scf_kind)
          case ("rhf","rks","xray_rhf","xray_rks","noninteracting-group-rhf")
             ENSURE(.mult==1,"this is not a singlet state")
             D  => .density_matrix.restricted
@@ -1633,7 +1673,7 @@ contains
                CD = ZERO
             end
          case default;
-            DIE("unknown kind, "//trim(orb_kind))
+            DIE("unknown kind, "//trim(.scfdata.scf_kind))
       end
       arch.write(.density_matrix)
    end
@@ -1720,13 +1760,13 @@ contains
    ENSURE(.natural_orbitals.created, "no natural orbitals")
      NO,D :: MAT{REAL}*
      occ :: VEC{REAL}*
-     orb_kind :: STR
+     genre :: STR
      arch :: ARCHIVE
-     orb_kind = .natural_orbitals.spinorbital_kind
-     .density_matrix.destroy(orb_kind)
-     .density_matrix.create(orb_kind)
-     arch.set(.name,"density_matrix",orb_kind)
-     select case (orb_kind)
+     genre = .natural_orbitals.spinorbital_kind
+     .density_matrix.destroy(genre)
+     .density_matrix.create(genre)
+     arch.set(.name,"density_matrix",genre)
+     select case (genre)
        case ("restricted")
          ENSURE(.natural_orbitals.created("restricted"),"no NO's")
          occ.create(.n_bf)
@@ -1738,108 +1778,9 @@ contains
          NO.destroy
          occ.destroy
        case default
-         DIE("unknown SCF kind, "//trim(orb_kind))
+         DIE("unknown SCF kind, "//trim(genre))
      end
      arch.write(.density_matrix)
-   end
-
-!****************************
-!* Overlap Matrix formation *
-!****************************
-
-   get_overlap_matrix(S)
-   ! Set "S" to the overlap matrix.
-   ! If the archive file exists, read it; otherwise make it.
-      S :: MAT{REAL}
-      arch :: ARCHIVE
-      write_archive,calc_it,group :: BIN
-      arch.set(.name,"overlap_matrix")
-      if (.scfdata.destroyed) then
-         calc_it = TRUE
-         write_archive = TRUE
-         group = FALSE
-      else
-         calc_it = .scfdata.using_direct_scf
-         write_archive = NOT .scfdata.using_direct_scf
-         group = .scfdata.scf_kind=="noninteracting-group-rhf"
-      end
-      if (NOT calc_it) then
-        if (arch.exists) then
-          arch.read(S)
-          calc_it = FALSE
-          write_archive = FALSE
-        else
-          calc_it = TRUE
-        end
-      end
-      if (calc_it) then
-         if (group) then; .make_group_overlap_matrix(S)
-         else;            .make_overlap_matrix(S)
-         end
-      end
-      if (write_archive) arch.write(S)
-   end
-
-   make_overlap_matrix(S)
-   ! Calculate the overlap matrix "S"
-     S :: MAT{REAL}, target
-   ENSURE(.atom.created,  "no atom list")
-   ENSURE(.basis_info_made, "no basis info")
-     q,fa,la,fb,lb :: INT
-     sh :: SHELL2
-     if (DO_IN_PARALLEL) S = ZERO
-     parallel do q = 1,.n_shell_pairs
-       .get_shell_pair(sh,q,fa,la,fb,lb)
-       sh.make_overlap(S(fa:la,fb:lb))
-       sh.destroy_ptr_part
-     end
-     if (DO_IN_PARALLEL) then
-        PARALLEL_MATRIX_SUM(S,is_symmetric=TRUE)
-     else
-        S.symmetric_reflect
-     end
-   end
-
-!   make_rxhf_overlap_matrix(S)
-!   ! Calculate the overlap matrix "S" for a restricted crystal Hartree-Fock
-!   ! calculation.
-!     S :: MAT{REAL}, target
-!   ENSURE(.atom.created,  "no fragment atom list")
-!   ENSURE(.basis_info_made, "no basis info")
-!   ENSURE(.crystal.created,"no crystal data")
-!   ENSURE(.cluster.created,"no cluster data")
-!   ENSURE(.cluster.atom.created,"no cluster atom data")
-!   ENSURE(.cluster.info_made,"no cluster data")
-!   ENSURE(S.is_square,"S is not square")
-!   ENSURE(S.dim1==.cluster.atom.no_of_basis_functions,"S has wrong shape")
-!     n_shell_pairs,q,fa,la,fb,lb,start,step :: INT
-!     sh :: SHELL2
-!     stdout.text("here")
-!     n_shell_pairs = .cluster.atom.n_shell_pairs
-!     stdout.show("n_shell_pairs = ",n_shell_pairs)
-!     do q = start,n_shell_pairs,step
-!       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
-!       sh.make_overlap(S(fa:la,fb:lb))
-!       sh.destroy_ptr_part
-!     end
-!     stdout.text("here2")
-!     S.symmetric_reflect
-!   end
-
-   make_group_overlap_matrix(S)
-   ! Calculate the noninteracting group overlap matrix "S"
-     S :: MAT{REAL}, target
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-   ENSURE(.atom_group.created,"no atom_group info")
-     q,fa,la,fb,lb, atom_a,atom_b :: INT
-     sh :: SHELL2
-     do q=1,.n_shell_pairs
-       .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
-       if (.in_same_atom_group(atom_a,atom_b)) sh.make_overlap(S(fa:la,fb:lb))
-       sh.destroy_ptr_part
-     end
-     S.symmetric_reflect
    end
 
 !  ***************
@@ -1917,14 +1858,14 @@ contains
       end
    end
 
-   no_of_occupied_NOs(orb_kind,tol) result (res)
+   no_of_occupied_NOs(genre,tol) result (res)
    ! Returns the number of non-zero occupied natural orbitals. For this purpose,
    ! zero is defined to be "tol" if present, or TOL(7) otherwise
-      orb_kind :: STR, optional
+      genre :: STR, optional
       tol :: REAL, optional
       res :: INT
    ENSURE(.occupation_numbers.created,"no occupation numbers")
-      res = .occupation_numbers.no_of_occupied(orb_kind,tol)
+      res = .occupation_numbers.no_of_occupied(genre,tol)
    end
 
 !  ****************
@@ -2155,6 +2096,109 @@ contains
       stdout.text("Mulliken matrix:")
       stdout.put(mulliken_matrix)
    end
+
+!  ************************
+!  Overlap matrix formation
+!  ************************
+
+   get_overlap_matrix(S)
+   ! Set "S" to the overlap matrix.
+   ! If the archive file exists, read it; otherwise make it.
+      S :: MAT{REAL}
+      arch :: ARCHIVE
+      write_archive,calc_it,group :: BIN
+      arch.set(.name,"overlap_matrix")
+      if (.scfdata.destroyed) then
+         calc_it = TRUE
+         write_archive = TRUE
+         group = FALSE
+      else
+         calc_it = .scfdata.using_direct_scf
+         write_archive = NOT .scfdata.using_direct_scf
+         group = .scfdata.scf_kind=="noninteracting-group-rhf"
+      end
+      if (NOT calc_it) then
+        if (arch.exists) then
+          arch.read(S)
+          calc_it = FALSE
+          write_archive = FALSE
+        else
+          calc_it = TRUE
+        end
+      end
+      if (calc_it) then
+         if (group) then; .make_group_overlap_matrix(S)
+         else;            .make_overlap_matrix(S)
+         end
+      end
+      if (write_archive) arch.write(S)
+   end
+
+   make_overlap_matrix(S)
+   ! Calculate the overlap matrix "S"
+     S :: MAT{REAL}, target
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+     q,fa,la,fb,lb :: INT
+     sh :: SHELL2
+     if (DO_IN_PARALLEL) S = ZERO
+     parallel do q = 1,.n_shell_pairs
+       .get_shell_pair(sh,q,fa,la,fb,lb)
+       sh.make_overlap(S(fa:la,fb:lb))
+       sh.destroy_ptr_part
+     end
+     if (DO_IN_PARALLEL) then
+        PARALLEL_MATRIX_SUM(S,is_symmetric=TRUE)
+     else
+        S.symmetric_reflect
+     end
+   end
+
+!   make_rxhf_overlap_matrix(S)
+!   ! Calculate the overlap matrix "S" for a restricted crystal Hartree-Fock
+!   ! calculation.
+!     S :: MAT{REAL}, target
+!   ENSURE(.atom.created,  "no fragment atom list")
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.crystal.created,"no crystal data")
+!   ENSURE(.cluster.created,"no cluster data")
+!   ENSURE(.cluster.atom.created,"no cluster atom data")
+!   ENSURE(.cluster.info_made,"no cluster data")
+!   ENSURE(S.is_square,"S is not square")
+!   ENSURE(S.dim1==.cluster.atom.no_of_basis_functions,"S has wrong shape")
+!     n_shell_pairs,q,fa,la,fb,lb,start,step :: INT
+!     sh :: SHELL2
+!     stdout.text("here")
+!     n_shell_pairs = .cluster.atom.n_shell_pairs
+!     stdout.show("n_shell_pairs = ",n_shell_pairs)
+!     do q = start,n_shell_pairs,step
+!       .cluster.atom.get_shell_pair(sh,q,fa,la,fb,lb)
+!       sh.make_overlap(S(fa:la,fb:lb))
+!       sh.destroy_ptr_part
+!     end
+!     stdout.text("here2")
+!     S.symmetric_reflect
+!   end
+
+   make_group_overlap_matrix(S)
+   ! Calculate the noninteracting group overlap matrix "S"
+     S :: MAT{REAL}, target
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.atom_group.created,"no atom_group info")
+     q,fa,la,fb,lb, atom_a,atom_b :: INT
+     sh :: SHELL2
+     do q=1,.n_shell_pairs
+       .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+       if (.in_same_atom_group(atom_a,atom_b)) sh.make_overlap(S(fa:la,fb:lb))
+       sh.destroy_ptr_part
+     end
+     S.symmetric_reflect
+   end
+
+!  ****************************
+!  Other one electron integrals
+!  ****************************
 
    get_kinetic_matrix(T)
    ! Set "T" to the kinetic matrix
@@ -4043,17 +4087,15 @@ contains
    ENSURE(.density_matrix.created, "no density matrix")
       sf_eq,Fc :: VEC{CPX}*
       k_pts :: MAT{REAL}*
-      orb_kind :: STR
-      complx :: BIN
+      genre :: STR
       .crystal.assign_xray
       Fc.create(.crystal.n_refl)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
       .crystal.make_unique_SF_k_pts(k_pts)
       sf_eq.create(size(k_pts,1))
       .make_ao_density_matrix
-      orb_kind = .density_matrix.spinorbital_kind
-      complx = orb_kind.includes("complex")
-      if (complx) then
+      genre = .density_matrix.spinorbital_kind
+      if (genre.includes("complex")) then
         .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
       else
         .make_ft(sf_eq,.density_matrix.restricted,k_pts)
@@ -4084,7 +4126,7 @@ contains
       sf_eq,Fc :: VEC{CPX}*
       k_pts :: MAT{REAL}*
       arch :: ARCHIVE
-      orb_kind :: STR
+      genre :: STR
       complx :: BIN
       .crystal.assign_pnd  ! <------------ Assign PND data here
    ENSURE(.crystal.created, "no crystal")
@@ -4095,8 +4137,8 @@ contains
       .crystal.make_unique_SF_k_pts(k_pts)
       sf_eq.create(size(k_pts,1))
       .make_ao_sz_density_matrix ! make S_z density matrix
-      orb_kind = .density_matrix.spinorbital_kind
-      complx = orb_kind.includes("complex")
+      genre = .density_matrix.spinorbital_kind
+      complx = genre.includes("complex")
       if (complx) then; .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
       else;              .make_ft(sf_eq,.density_matrix.restricted,k_pts)
       end
@@ -4158,13 +4200,13 @@ contains
    make_PND_spin_sf
    ! Make the PND structure factors
    ENSURE(.density_matrix.created, "no density")
-      orb_kind :: STR
-      orb_kind = .density_matrix.spinorbital_kind
-      select case (orb_kind)
+      genre :: STR
+      genre = .density_matrix.spinorbital_kind
+      select case (genre)
          case ("unrestricted");    .make_u_PND_spin_sf
          case ("general_complex"); .make_gc_PND_spin_sf
          case default
-            DIE("not implemented for "//orb_kind.trim)
+            DIE("not implemented for "//trim(genre))
       end
    end
 
@@ -4299,12 +4341,12 @@ contains
    make_PND_nabla_sf
    ! Make PND nabla structure factors
    ENSURE(.density_matrix.created, "no density")
-      orb_kind :: STR
-      orb_kind = .density_matrix.spinorbital_kind
-      select case (orb_kind)
+      genre :: STR
+      genre = .density_matrix.spinorbital_kind
+      select case (genre)
          case ("general_complex"); .make_gc_PND_nabla_sf
          case default
-            DIE("not implemented for "//orb_kind.trim)
+            DIE("not implemented for "//trim(genre))
       end
    end
 
@@ -6286,7 +6328,7 @@ contains
    ENSURE(.scfdata.created,"no scfdata")
      dft_energy_correction :: REAL
      if (.scfdata.is_DFT_calculation) then
-       dft_energy_correction =.dft_energy_correction
+       dft_energy_correction = .scfdata.dft_energy_correction ! save this
        .scfdata.reset(nuclear_energy=.nuclear_energy, &
                       energy=.scf_energy+dft_energy_correction, &
                       kinetic_energy=.kinetic_energy, &
@@ -6308,6 +6350,7 @@ contains
      dft_energy_correction :: REAL
      if (.scfdata.is_DFT_calculation) then
        dft_energy_correction =.dft_energy_correction
+       dft_energy_correction = .scfdata.dft_energy_correction ! save this
        .scfdata.update(energy=.scf_energy+dft_energy_correction, &
                        kinetic_energy=.kinetic_energy, &
                        dft_energy_correction=dft_energy_correction, &
@@ -6357,14 +6400,25 @@ contains
 
    initialise_usual_scf ::: leaky
    ! Initialise the usual SCF procedure
-     if (.scfdata.is_DFT_calculation AND .dftgrid.destroyed) then
+     DFT_calculation :: BIN
+     DFT_calculation = .scfdata.is_DFT_calculation
+     if (DFT_calculation AND .dftgrid.destroyed) then
        .dftgrid.create
        .dftgrid.set_defaults
      end
-     if (.scfdata.is_DFT_calculation AND .becke_grid.destroyed) then
-       .becke_grid.create
-       .becke_grid.set_defaults
-       .becke_grid.set_grid_data
+     if (DFT_calculation) then
+       if (.becke_grid.destroyed) then
+          .becke_grid.create
+          .becke_grid.set_defaults
+          .becke_grid.set_grid_data
+       end
+       if (.rough_becke_grid.destroyed) then
+          .rough_becke_grid.create
+          .rough_becke_grid.set_defaults
+          .rough_becke_grid.set_accuracy("very_low")
+          .rough_becke_grid.set_grid_data
+       end
+       .make_overlapping_atoms
      end
      .get_initial_guess
      .make_fock_matrix
@@ -6375,16 +6429,26 @@ contains
 
    initialise_constrained_scf ::: leaky
    ! Initialise the constrained SCF procedure
-     if (.scfdata.is_DFT_calculation AND .dftgrid.destroyed) then
+     DFT_calculation :: BIN
+     DFT_calculation = .scfdata.is_DFT_calculation
+     if (DFT_calculation AND .dftgrid.destroyed) then
        .dftgrid.create
        .dftgrid.set_defaults
      end
-     if (.scfdata.is_DFT_calculation AND .becke_grid.destroyed) then
-       .becke_grid.create
-       .becke_grid.set_defaults
-       .becke_grid.set_grid_data
+     if (DFT_calculation) then
+       if (.becke_grid.destroyed) then
+          .becke_grid.create
+          .becke_grid.set_defaults
+          .becke_grid.set_grid_data
+       end
+       if (.rough_becke_grid.destroyed) then
+          .rough_becke_grid.create
+          .rough_becke_grid.set_defaults
+          .rough_becke_grid.set_accuracy("very_low")
+          .rough_becke_grid.set_grid_data
+       end
      end
-     .scfdata.using_rough_convergence = FALSE
+   ! .scfdata.using_rough_convergence = FALSE
      .get_initial_guess
      .make_fock_matrix
      .make_constraint_data
@@ -6393,7 +6457,6 @@ contains
      .initialise_scfdata_error
      .scfdata.diis.cleanup
    end
-
 
 !   test_average_energy
 !   ! Test the avergae energy for UEDIIS
@@ -6507,14 +6570,24 @@ contains
    ENSURE(.cluster.created,"no cluster")
    ENSURE(.cluster.n_fragment_symop>0,"no cluster fragment symops")
    ENSURE(.n_bf==.saved.n_bf*.cluster.n_fragment_symop,"cluster is not a whole multiple of the fragment")
+      DFT_calculation :: BIN
+      DFT_calculation = .scfdata.is_DFT_calculation
       if (.dftgrid.destroyed) then
         .dftgrid.create
         .dftgrid.set_defaults
       end
-      if (.becke_grid.destroyed) then
-        .becke_grid.create
-        .becke_grid.set_defaults
-        .becke_grid.set_grid_data
+      if (DFT_calculation) then
+       if (.becke_grid.destroyed) then
+          .becke_grid.create
+          .becke_grid.set_defaults
+          .becke_grid.set_grid_data
+       end
+       if (.rough_becke_grid.destroyed) then
+          .rough_becke_grid.create
+          .rough_becke_grid.set_defaults
+          .rough_becke_grid.set_accuracy("very_low")
+          .rough_becke_grid.set_grid_data
+       end
       end
       ! Initialise and archive the MO's
       .initialise_embedded_orbitals
@@ -7556,6 +7629,7 @@ contains
    ! Schmidt orthonormalise the ".molecular_orbitals" and archive
       .schmidt_orthonormalise(.molecular_orbitals)
       .archive_molecular_orbitals
+      .archive_orbital_energies
    end
 
    schmidt_orthonormalise(MO,scale)
@@ -7628,6 +7702,7 @@ contains
            DIE("unknown scf kind, "//scf_kind.trim)
      end
      .archive_molecular_orbitals
+     .archive_orbital_energies
    end
 
    MO_r_eigen_update(MO_energies,MO,F)
@@ -7790,7 +7865,7 @@ contains
      stdout.show("The SCF energy is ", .scf_energy)
      stdout.show("The kinetic energy is ", .kinetic_energy)
      if (.scfdata.is_DFT_calculation) &
-     stdout.show("The Kohn-Sham DFT energy is ", .scf_energy+.dft_energy_correction)
+     stdout.show("The Kohn-Sham DFT energy is ", .scf_energy+.scfdata.dft_energy_correction)
    end
 
    kinetic_energy result (res)
@@ -8089,15 +8164,27 @@ contains
      end
    end
 
-   archive(opvector,archive_name,genre)
+   archive(opvector,archive_name,genre,with_lambda)
    ! Save "opvector" to an archive on disk with name "archive_name". The genre
    ! is guessed from "opvector" unless "genre" is present.
      opvector :: OPVECTOR
      archive_name :: STR
      genre :: STR, optional
+     with_lambda :: BIN, optional
      archive :: ARCHIVE
+     avec_lambda :: BIN
+     avec_lambda = FALSE
+     if (present(with_lambda)) avec_lambda = with_lambda
      archive.set(.name,archive_name)
      archive.write(opvector,genre)
+     if (avec_lambda) then
+        if (.scfdata.created) then
+        if (.scfdata.scf_kind.includes("xray_")) then
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.write(opvector,genre)
+        end
+        end
+     end
    end
 
    archive_scf_results
@@ -8135,7 +8222,7 @@ contains
      archive :: ARCHIVE
      name = "orbital_energies"
      if (present(archive_name)) name = archive_name
-     .archive(.orbital_energies,name)
+     .archive(.orbital_energies,name,with_lambda=TRUE)
    end
 
    archive_fock_matrix(archive_name)
@@ -8317,6 +8404,7 @@ contains
    delete_tmp_scf_archives
    ! Delete any temporary SCF archives.
       archive :: ARCHIVE
+      archive.set(.name,"hartree_matrix");         archive.delete_all_genres
       archive.set(.name,"delta_density_matrix");   archive.delete_all_genres
       archive.set(.name,"constraint_matrix");      archive.delete_all_genres
       .scfdata.diis.cleanup
@@ -8991,6 +9079,8 @@ contains
      J,C :: OPMATRIX*
      energy :: VEC{REAL}*
      if (NOT .scfdata.using_fock_diis) return
+     ! Reset DIIS if convergence criteria altered
+     if (.scfdata.eri_cutoff_altered) .scfdata.diis.kept = 0
      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
      energy => .scf_electronic_energies
      scf_kind = .scfdata.scf_kind
@@ -9069,9 +9159,9 @@ contains
       error.make_antihermitian
    end
 
-!*********************
+! ********************
 ! Fock matrix routines
-!*********************
+! ********************
 
    get_fock_matrix ::: leaky
    ! Get the Fock matrix.
@@ -9094,36 +9184,43 @@ contains
    ENSURE(.density_matrix.created,"no density matrix")
    ENSURE(.density_matrix.created(.scfdata.spinorbital_kind),"incompatible density")
      dP,dF :: OPMATRIX*
-     orb_kind :: STR
-     do_delta_build :: BIN
-     delta_archive,fock_archive :: ARCHIVE
+     genre :: STR
+     do_delta_build,DFT_calculation :: BIN
+     delta_archive,archive :: ARCHIVE
      .fock_matrix.destroy
      .fock_matrix.create(.n_bf)
      ! Determine whether to use a delta fock matrix build
-     orb_kind = .density_matrix.spinorbital_kind
-     delta_archive.set(.name,"delta_density_matrix",orb_kind)
-     fock_archive.set(.name,"fock_matrix",orb_kind)
-     do_delta_build = .scfdata.do_delta_build AND delta_archive.exists AND fock_archive.exists
+     genre = .density_matrix.spinorbital_kind
+     delta_archive.set(.name,"delta_density_matrix",genre)
+     DFT_calculation = .scfdata.is_DFT_calculation
+     if (DFT_calculation) then; archive.set(.name,"hartree_matrix",genre)
+     else;                      archive.set(.name,"fock_matrix",genre)   
+     end
+     do_delta_build = .scfdata.do_delta_build AND delta_archive.exists AND archive.exists
      if (do_delta_build) then
         dF.create(.n_bf)
         dP.create(.n_bf)
         delta_archive.read(dP)
-        .make_fock_matrix(dP,dF,core=FALSE,r12=r12)
+        .make_fock_matrix(dP,dF,core=FALSE,r12=r12,xc=FALSE)
         dP.destroy
-        fock_archive.read(.fock_matrix)
+        archive.read(.fock_matrix)
         .fock_matrix.plus(dF)
         dF.destroy
      else
-        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12)
+        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12,xc=FALSE)
+     end
+     if (DFT_calculation) then
+        if (.scfdata.using_delta_build) archive.write(.fock_matrix) ! Archive for delta build
+        .add_XC_matrix(.fock_matrix)
      end
      .archive_fock_matrix
    end
 
-   make_fock_matrix(P,F,core,r12) ::: leaky
+   make_fock_matrix(P,F,core,r12,xc) ::: leaky
    ! For the quicker ERI method.
    ! If r12  is present and FALSE, the r12 part is not computed
      P,F :: OPMATRIX*
-     core,r12 :: BIN, optional
+     core,r12,xc :: BIN, optional
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(P.created,"no density matrix")
    ENSURE(P.created(.scfdata.spinorbital_kind),"incompatible density")
@@ -9134,11 +9231,11 @@ contains
         case ("rhf","xray_rhf","embedded_rhf")
            .make_r_fock(P,F,direct,core,r12)
         case ("rks","xray_rks")
-           .make_r_KS_fock(P,F,direct,core,r12)
+           .make_r_KS_fock(P,F,direct,core,r12,xc)
         case ("crystal_rhf")
            .make_r_crystal_fock(P,F,direct,core,r12)
         case ("uks","xray_uks")
-           .make_u_KS_fock(P,F,direct,core,r12)
+           .make_u_KS_fock(P,F,direct,core,r12,xc)
         case ("noninteracting-group-rhf")
            .make_r_group_fock(P,F,direct,core,r12)
         case ("rohf","restricted_open_shell_hartree_fock")
@@ -9322,43 +9419,38 @@ contains
      if (add_core) .add_core_hamiltonian(F.restricted)
    end
 
-   make_r_KS_fock(P,F,direct,core,r12) ::: leaky
+   make_r_KS_fock(P,F,direct,core,r12,xc) ::: leaky
    ! Make a new restricted Kohn-Sham Fock matrix "F" from the density matrix "P".
    ! If present and TRUE , "direct" means calculate integrals on the fly
    ! If present and FALSE, "core" removes the core matrix contribution
    ! If present and FALSE, "r12"  removes the two electron contribution
-     direct,core,r12 :: BIN, optional
+   ! If present and FALSE, "xc"  removes the exchange correlation part
+     direct,core,r12,xc :: BIN, optional
      P,F :: OPMATRIX*
    ENSURE(P.created,"no density matrix")
    ENSURE(F.created,"no fock matrix")
    ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
    ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
    ENSURE(P.restricted.created, "no density matrix")
-     J,K :: MAT{REAL}*
-     do_direct,add_core,add_r12 :: BIN
+     J :: MAT{REAL}*
+     do_direct,add_core,add_r12,add_xc :: BIN
      F.destroy("restricted")
      F.create("restricted")
      do_direct= FALSE
      add_core = TRUE
      add_r12  = TRUE
+     add_xc   = TRUE
      if (present(direct)) do_direct = direct
-     if (present(core))   add_core = core
-     if (present(r12))    add_r12  = r12
+     if (present(core))   add_core  = core
+     if (present(r12))    add_r12   = r12
+     if (present(xc))     add_xc    = xc
      if (add_r12) then
-        J.create(.n_bf,.n_bf)
-        K.create(.n_bf,.n_bf)
+        J => F.restricted
         if (do_direct) then; .make_r_J_direct(J,P.restricted)
         else;                .make_r_J_disk(J,P.restricted)
         end
-        ! Ensure the NO's exist so we can calculate the density for the XC part
-        if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals
-        else;                                        .assign_NOs_to_MOs
-        end
-        K = ZERO
-        .add_ex_corr_matrix(K)
-        F.restricted = J + K
-        K.destroy
-        J.destroy
+      ! .archive(F,"J_matrix")        ! Archive for delta build
+        if (add_xc) .add_XC_matrix(F) ! Exchange correlation matrix
      else
         F.restricted = ZERO
      end
@@ -9413,12 +9505,13 @@ contains
      stop
    end
 
-   make_u_KS_fock(P,F,direct,core,r12) ::: leaky
+   make_u_KS_fock(P,F,direct,core,r12,xc) ::: leaky
    ! Make a new restricted Kohn-Sham Fock matrix "F" from the density matrix "P".
    ! If present and TRUE , "direct" means calculate integrals on the fly
    ! If present and FALSE, "core" removes the core matrix contribution
    ! If present and FALSE, "r12"  removes the two electron contribution
-     direct,core,r12 :: BIN, optional
+   ! If present and FALSE, "xc" removes the texchange correlation
+     direct,core,r12,xc :: BIN, optional
      P,F :: OPMATRIX*
    ENSURE(P.created,"no density matrix")
    ENSURE(F.created,"no fock matrix")
@@ -9426,8 +9519,8 @@ contains
    ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
    ENSURE(P.alpha.created, "no density matrix")
    ENSURE(P.beta.created, "no density matrix")
-     J,Ka,Kb,Pab :: MAT{REAL}*
-     do_direct,add_core,add_r12 :: BIN
+     J,Pab,h :: MAT{REAL}*
+     do_direct,add_core,add_r12,add_xc :: BIN
      F.destroy("alpha")
      F.create("alpha")
      F.destroy("beta")
@@ -9435,31 +9528,32 @@ contains
      do_direct= FALSE
      add_core = TRUE
      add_r12  = TRUE
+     add_xc   = TRUE
      if (present(direct)) do_direct = direct
      if (present(core))   add_core = core
      if (present(r12))    add_r12  = r12
+     if (present(xc))     add_xc   = xc
      if (add_r12) then
         J.create(.n_bf,.n_bf)
-        Ka.create(.n_bf,.n_bf)
-        Kb.create(.n_bf,.n_bf)
         Pab.create(.n_bf,.n_bf)
-        Pab  = P.alpha + P.beta
+        Pab = P.alpha + P.beta
         .make_r_J_direct(J,Pab)
         Pab.destroy
-        Ka=ZERO
-        Kb=ZERO
-        .add_ex_corr_matrix(Ka,Kb)
-        F.alpha = J + Ka
-        F.beta = J + Kb
-        Kb.destroy
-        Ka.destroy
         J.destroy
+        F.alpha = J
+        F.beta = J
+        if (add_xc) .add_XC_matrix(F)
      else
         F.alpha = ZERO
         F.beta  = ZERO
      end
-     if (add_core) .add_core_hamiltonian(F.alpha)
-     if (add_core) .add_core_hamiltonian(F.beta)
+     if (add_core) then
+        h.create(.n_bf,.n_bf)
+        h = ZERO
+        F.alpha = h + F.alpha
+        F.beta  = h + F.beta 
+        h.destroy
+     end
    end
 
    make_r_group_fock(P,F,direct,core,r12) ::: leaky
@@ -10970,36 +11064,53 @@ contains
 !  Restricted DFT
 !*******************************************************************************
 
-   add_ex_corr_matrix(K)
+   add_XC_matrix(K) ::: leaky
+   ! Add the DFT exchange correlation matrix to "K".
+      K :: OPMATRIX*
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
+   ENSURE(.density_matrix.created, "no density matrix")
+   ENSURE(.density_matrix.any_created, "no density matrix")
+   ENSURE(K.created,"K not created")
+   ENSURE(K.created(.scfdata.spinorbital_kind),"appropriate part of K not created")
+      saved_becke_grid :: BECKE_GRID*
+      apply_rough,do_rough :: BIN
+      roughly_converged :: BIN, save
+      ! Adjust grid accuracy lower if required
+      if (.scfdata.iteration==0) roughly_converged = FALSE
+      if (.scfdata.roughly_converged) roughly_converged = TRUE
+      do_rough = .scfdata.apply_rough_convergence AND NOT roughly_converged
+      if (do_rough) then
+         saved_becke_grid => .becke_grid
+         .becke_grid => .rough_becke_grid
+      end
+      ! Ensure the NO's exist so we can calculate the density for the XC part
+      if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals !  leaky
+      else;                                        .assign_NOs_to_MOs
+      end
+      ! Now add the contribution
+      select case (.scfdata.scf_kind)
+        case ("rks","xray_rks"); .add_XC_matrix(K.restricted)
+        case ("uks","xray_uks"); .add_XC_matrix(K.alpha,K.beta)
+        case default;            DIE("unknown DFT SCF kind, "//trim(.scfdata.scf_kind))
+      end
+      ! Put back accurate grid, if required
+      if (do_rough) .becke_grid => saved_becke_grid
+   end
+
+   add_XC_matrix(K)
    ! Calculate the exchange correlation matrix numerically.
       K :: MAT{REAL}
+   ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
-      if (.scfdata.using_GGA_functional) then; .add_GGA_ex_corr_matrix(K)
-      else;                                    .add_LDA_ex_corr_matrix(K)
+      E :: REAL
+      if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(K,E)
+      else;                                    .add_LDA_XC_matrix(K)
       end
+      .scfdata.set(dft_energy_correction=E)
    end
 
-   make_max_Sab_integrals(S_max)
-   ! Make "S_max", the maximum of the overlap integrals between *pairs of atoms*
-     S_max :: VEC{REAL}
-   ENSURE(S_max.dim==.no_of_atom_pairs,"wrong size, S_max")
-     ab,a,b,fa,fb,la,lb :: INT
-     S :: MAT{REAL}*
-     S.create(.n_bf,.n_bf)
-     .get_overlap_matrix(S)
-     do ab = 1, .no_of_atom_pairs
-       a = (1+int(sqrt(EIGHT*ab-SEVEN)))/2
-       b = ab - a*(a-1)/2
-       fa = .first_basis_fn_for_atom(a)
-       la = .last_basis_fn_for_atom(a)
-       fb = .first_basis_fn_for_atom(b)
-       lb = .last_basis_fn_for_atom(b)
-       S_max(ab) = maxval(S(fa:la,fb:lb))
-     end
-     S.destroy
-   end
-
-   add_LDA_ex_corr_matrix(K)
+   add_LDA_XC_matrix(K)
    ! Add the exchange and correlation matrices to K.
    ! This routine supports local functionals only.
       K :: MAT{REAL}, target
@@ -11051,30 +11162,35 @@ contains
       end
    end
 
-   add_GGA_ex_corr_matrix(K)
+   add_GGA_XC_matrix(K,E)
    ! Add the exchange and correlation matrices to K. This routine supports
    ! non-local functionals, either exchange or correlation.
       K :: MAT{REAL}, target
+      E :: REAL, optional
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
-      pt,rho1,V1,ga0,gb0 :: MAT{REAL}*
+      pt,rho1,V1,ga0,gb0,V,W :: MAT{REAL}*
       ga1,gb1 :: MAT3{REAL}*
-      wt,rho0,V0 :: VEC{REAL}*
+      wt,rho0,V0,E0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
       atom_a,atom_b,old_a,old_b,i :: INT
-      if (DO_IN_PARALLEL) K = ZERO
+      V_ab :: REAL
+      if (present(E)) W.create(.n_bf,.n_bf)
+      V.create(.n_bf,.n_bf)
       atom_a = 0; atom_b = 0
-      parallel do q = 1,.no_of_atom_pairs
+      do q = 1,.no_of_atom_pairs
+         if (NOT .overlapping_atoms(q)) cycle
          old_a = atom_a; old_b = atom_b
          .get_atom_pair_indices(q,atom_a,atom_b,old_a,old_b,fa,la,na,fb,lb,nb)
          .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
          n_pt = .becke_grid.no_of_points
-         ga0.create(n_pt,na); gb0.create(n_pt,nb)
+         ga0.create(n_pt,na);   gb0.create(n_pt,nb)
          ga1.create(n_pt,na,3); gb1.create(n_pt,nb,3)
          V0.create(n_pt)                  ! local potential values on grid
          V1.create(n_pt,3)                ! non local potential values on grid
+         if (present(E)) E0.create(n_pt)  ! energy density
          pt.create(n_pt,3)                ! integration grid points
          .becke_grid.make_points(pt)      ! <---
          .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
@@ -11085,277 +11201,286 @@ contains
          V0 = ZERO
          V1 = ZERO
          .add_r_XC_potentials(V0,rho0,V1,rho1)
+         if (present(E)) .set_r_XC_energy_density(E0,rho0,rho1)
          rho1.destroy
          wt => rho0
          .becke_grid.make_weights(wt,pt)  ! <---
          V0 = wt*V0
          forall (i=1:3) V1(:,i) = wt*V1(:,i)
+         if (present(E)) E0 = wt*E0
          rho0.destroy
          pt.destroy
          ! Make the exchange correlation matrix
          do a = 1,na
          do b = 1,nb
+            V_ab = sum(V0*ga0(:,a)*gb0(:,b)) &
+                 + sum(V1(:,1)*(ga1(:,a,1)*gb0(:,b)+ga0(:,a)*gb1(:,b,1))) &
+                 + sum(V1(:,2)*(ga1(:,a,2)*gb0(:,b)+ga0(:,a)*gb1(:,b,2))) &
+                 + sum(V1(:,3)*(ga1(:,a,3)*gb0(:,b)+ga0(:,a)*gb1(:,b,3)))
             aa = fa + a
             bb = fb + b
-            K(aa,bb) = K(aa,bb) + sum(V0*ga0(:,a)*gb0(:,b))
-            K(aa,bb) = K(aa,bb) + sum(V1(:,1)*(ga1(:,a,1)*gb0(:,b)+ga0(:,a)*gb1(:,b,1)))
-            K(aa,bb) = K(aa,bb) + sum(V1(:,2)*(ga1(:,a,2)*gb0(:,b)+ga0(:,a)*gb1(:,b,2)))
-            K(aa,bb) = K(aa,bb) + sum(V1(:,3)*(ga1(:,a,3)*gb0(:,b)+ga0(:,a)*gb1(:,b,3)))
+            V(aa,bb) = V_ab 
+            if (NOT present(E)) cycle
+            ! Make the DFT energy correction matrix if required
+            W(aa,bb) = -HALF*V_ab + sum(E0*ga0(:,a)*gb0(:,b))
          end
          end
+         if (present(E)) E0.destroy
          V1.destroy; V0.destroy
          gb1.destroy; ga1.destroy
          gb0.destroy; ga0.destroy
       end
       .becke_grid.destroy_atoms_and_positions
-      if (DO_IN_PARALLEL) then
-         PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
-      else
-         K.symmetric_reflect
-      end
+      K = K + V
+      V.destroy
+      K.symmetric_reflect
+      if (NOT present(E)) return
+      W.symmetric_reflect
+      E = W.trace_of_product_with(.density_matrix.restricted)
+      W.destroy
    end
 
-   add_LDA_ex_corr_matrix_old(K)
-   ! Add the exchange and correlation matrices to K.
-   ! This routine supports local functionals only.
-     K :: MAT{REAL}, target
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-   ENSURE(.dftgrid.created, "need to specify dftgrid")
-   ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
-     sh1 :: SHELL1
-     atomlist2 :: VEC{ATOM}(2)
-     atomlist1 :: VEC{ATOM}(1)
-     pos1,pos2 :: VEC{REAL}(3)
-     pt,a_grid,b_grid :: MAT{REAL}*
-     wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
-     q,fa,la,fb,lb,sa,sb,n_pt :: INT
-     atom1,atom2,i,j,a,b,n_comp_a,n_comp_b :: INT
-     thresh :: REAL
-     thresh = 1.0e-30
+!   add_LDA_ex_corr_matrix_old(K)
+!   ! Add the exchange and correlation matrices to K.
+!   ! This routine supports local functionals only.
+!     K :: MAT{REAL}, target
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.dftgrid.created, "need to specify dftgrid")
+!   ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
+!     sh1 :: SHELL1
+!     atomlist2 :: VEC{ATOM}(2)
+!     atomlist1 :: VEC{ATOM}(1)
+!     pos1,pos2 :: VEC{REAL}(3)
+!     pt,a_grid,b_grid :: MAT{REAL}*
+!     wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
+!     q,fa,la,fb,lb,sa,sb,n_pt :: INT
+!     atom1,atom2,i,j,a,b,n_comp_a,n_comp_b :: INT
+!     thresh :: REAL
+!     thresh = 1.0e-30
+!
+!     if (DO_IN_PARALLEL) K = ZERO
+!
+!     parallel do q = 1,.no_of_atom_pairs
+!       atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
+!       atom2 = q - atom1*(atom1-1)/2
+!       if (atom1/=atom2) then
+!         atomlist2(1) = .atom(atom1)
+!         atomlist2(2) = .atom(atom2)
+!         n_pt = .dftgrid.n_pts*2
+!         wt.create(n_pt)
+!         pt.create(n_pt,3)
+!         .dftgrid.make_grid(pt,wt,atomlist2)
+!       else
+!         atomlist1(1) = .atom(atom1)
+!         n_pt = .dftgrid.n_pts
+!         wt.create(n_pt)
+!         pt.create(n_pt,3)
+!         .dftgrid.make_grid(pt,wt,atomlist1)
+!       end
+!       pos1 = .atom(atom1).pos
+!       pos2 = .atom(atom2).pos
+!
+!       p.create(n_pt)
+!       local.create(n_pt)
+!
+!       ! Get the densities and their gradients.
+!       if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals
+!       else;                                        .assign_NOs_to_MOs
+!       end
+!       .make_density_grid(p,pt)
+!       p = max(thresh,p)
+!
+!       ! Get the local and nonlocal contributions.
+!       local=ZERO
+!       .add_r_exchange_matrix(p,local)
+!       .add_r_correlation_matrix(p,local)
+!
+!       ! Multiply by the weights.
+!       local = wt*local
+!
+!       ! Calculate orbital grids, then multiply by the orbital grids and put in
+!       ! ex-corr matrix.
+!       do i=.first_shell_for_atom(atom1),.last_shell_for_atom(atom1)
+!         fa = .first_basis_fn_for_shell(i)
+!         la = .last_basis_fn_for_shell(i)
+!         sa = .atom_shell_for_shell(i)
+!         sh1.set(.atom(atom1).basis.shell(sa),pos1)
+!         n_comp_a = sh1%n_comp
+!         a_grid.create(n_pt,n_comp_a)
+!         sh1.make_grid(a_grid,pt)
+!         sh1.nullify_ptr_part
+!
+!         do j=.first_shell_for_atom(atom2),.last_shell_for_atom(atom2)
+!           fb = .first_basis_fn_for_shell(j)
+!           lb = .last_basis_fn_for_shell(j)
+!           sb = .atom_shell_for_shell(j)
+!           sh1.set(.atom(atom2).basis.shell(sb),pos2)
+!           n_comp_b = sh1%n_comp
+!           b_grid.create(n_pt,n_comp_b)
+!           sh1.make_grid(b_grid,pt)
+!           sh1.nullify_ptr_part
+!
+!           ! ------------------------------------------------------------
+!           do a = 1,n_comp_a
+!             a_grid_a => a_grid(:,a)
+!             do b = 1,n_comp_b
+!               b_grid_b => b_grid(:,b)
+!               K(fa-1+a,fb-1+b) = K(fa-1+a,fb-1+b) + sum(local*a_grid_a*b_grid_b)
+!             end
+!           end
+!           ! ------------------------------------------------------------
+!
+!           b_grid.destroy
+!         end
+!         a_grid.destroy
+!       end
+!       atomlist1.nullify_ptr_part
+!       atomlist2.nullify_ptr_part
+!       local.destroy
+!       p.destroy
+!       wt.destroy
+!       pt.destroy
+!     end
+!
+!     if (DO_IN_PARALLEL) then
+!        PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
+!     else
+!        K.symmetric_reflect
+!     end
+!   end
 
-     if (DO_IN_PARALLEL) K = ZERO
-
-     parallel do q = 1,.no_of_atom_pairs
-       atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
-       atom2 = q - atom1*(atom1-1)/2
-       if (atom1/=atom2) then
-         atomlist2(1) = .atom(atom1)
-         atomlist2(2) = .atom(atom2)
-         n_pt = .dftgrid.n_pts*2
-         wt.create(n_pt)
-         pt.create(n_pt,3)
-         .dftgrid.make_grid(pt,wt,atomlist2)
-       else
-         atomlist1(1) = .atom(atom1)
-         n_pt = .dftgrid.n_pts
-         wt.create(n_pt)
-         pt.create(n_pt,3)
-         .dftgrid.make_grid(pt,wt,atomlist1)
-       end
-       pos1 = .atom(atom1).pos
-       pos2 = .atom(atom2).pos
-
-       p.create(n_pt)
-       local.create(n_pt)
-
-       ! Get the densities and their gradients.
-       if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals
-       else;                                        .assign_NOs_to_MOs
-       end
-       .make_density_grid(p,pt)
-       p = max(thresh,p)
-
-       ! Get the local and nonlocal contributions.
-       local=ZERO
-       .add_r_exchange_matrix(p,local)
-       .add_r_correlation_matrix(p,local)
-
-       ! Multiply by the weights.
-       local = wt*local
-
-       ! Calculate orbital grids, then multiply by the orbital grids and put in
-       ! ex-corr matrix.
-       do i=.first_shell_for_atom(atom1),.last_shell_for_atom(atom1)
-         fa = .first_basis_fn_for_shell(i)
-         la = .last_basis_fn_for_shell(i)
-         sa = .atom_shell_for_shell(i)
-         sh1.set(.atom(atom1).basis.shell(sa),pos1)
-         n_comp_a = sh1%n_comp
-         a_grid.create(n_pt,n_comp_a)
-         sh1.make_grid(a_grid,pt)
-         sh1.nullify_ptr_part
-
-         do j=.first_shell_for_atom(atom2),.last_shell_for_atom(atom2)
-           fb = .first_basis_fn_for_shell(j)
-           lb = .last_basis_fn_for_shell(j)
-           sb = .atom_shell_for_shell(j)
-           sh1.set(.atom(atom2).basis.shell(sb),pos2)
-           n_comp_b = sh1%n_comp
-           b_grid.create(n_pt,n_comp_b)
-           sh1.make_grid(b_grid,pt)
-           sh1.nullify_ptr_part
-
-           ! ------------------------------------------------------------
-           do a = 1,n_comp_a
-             a_grid_a => a_grid(:,a)
-             do b = 1,n_comp_b
-               b_grid_b => b_grid(:,b)
-               K(fa-1+a,fb-1+b) = K(fa-1+a,fb-1+b) + sum(local*a_grid_a*b_grid_b)
-             end
-           end
-           ! ------------------------------------------------------------
-
-           b_grid.destroy
-         end
-         a_grid.destroy
-       end
-       atomlist1.nullify_ptr_part
-       atomlist2.nullify_ptr_part
-       local.destroy
-       p.destroy
-       wt.destroy
-       pt.destroy
-     end
-
-     if (DO_IN_PARALLEL) then
-        PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
-     else
-        K.symmetric_reflect
-     end
-   end
-
-   add_GGA_ex_corr_matrix_old(K)
-   ! Add the exchange and correlation matrices to K. This routine supports
-   ! non-local functionals, either exchange or correlation.
-     K :: MAT{REAL}, target
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
-     sh1 :: SHELL1
-     atomlist2 :: VEC{ATOM}(2)
-     atomlist1 :: VEC{ATOM}(1)
-     pos1,pos2 :: VEC{REAL}(3)
-     nabla_a_grid,nabla_b_grid :: MAT3{REAL}*
-     pt,np,a_grid,b_grid,non_local :: MAT{REAL}*
-     wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
-     q,fa,la,fb,lb,sa,sb,n_pt :: INT
-     atom1,atom2,i,j,a,b,z,n_comp_a,n_comp_b :: INT
-     thresh,KK :: REAL
-     ! n :: INT
-     ! nabla_phiaphib :: REAL
-     thresh = 1.0e-30
-
-     if (DO_IN_PARALLEL) K = ZERO
-
-     parallel do q = 1,.no_of_atom_pairs
-       atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
-       atom2 = q - atom1*(atom1-1)/2
-       if (atom1/=atom2) then
-         atomlist2(1) = .atom(atom1)
-         atomlist2(2) = .atom(atom2)
-         n_pt = .dftgrid.n_pts*2
-         wt.create(n_pt)
-         pt.create(n_pt,3)
-         .dftgrid.make_grid(pt,wt,atomlist2)
-       else
-         atomlist1(1) = .atom(atom1)
-         n_pt = .dftgrid.n_pts
-         wt.create(n_pt)
-         pt.create(n_pt,3)
-         .dftgrid.make_grid(pt,wt,atomlist1)
-       end
-       pos1 = .atom(atom1).pos
-       pos2 = .atom(atom2).pos
-
-       p.create(n_pt)
-       np.create(n_pt,3)
-       local.create(n_pt)
-       non_local.create(n_pt,3)
-!       phia_phib.create(n_pt)
-
-       ! Get the densities and their gradients.
-       .make_density_grid(p,pt)
-       .make_nabla_density_grid(np,pt)
-       p = max(thresh,p)
-
-       ! Get the local and nonlocal contributions.
-       local=ZERO
-       non_local=ZERO
-       .add_r_exchange_matrix(p,local,np,non_local)
-       .add_r_correlation_matrix(p,local,np,non_local)
-
-       ! Multiply by the weights.
-       local = wt*local
-       forall (i=1:3) non_local(:,i) = wt*non_local(:,i)
-
-       ! Calculate orbital grids, then multiply by the orbital grids and put in
-       ! ex-corr matrix.
-       do i=.first_shell_for_atom(atom1),.last_shell_for_atom(atom1)
-         fa = .first_basis_fn_for_shell(i)
-         la = .last_basis_fn_for_shell(i)
-         sa = .atom_shell_for_shell(i)
-         sh1.set(.atom(atom1).basis.shell(sa),pos1)
-         n_comp_a = sh1%n_comp
-         nabla_a_grid.create(n_pt,n_comp_a,3)
-         a_grid.create(n_pt,n_comp_a)
-         sh1.make_nabla_grid(nabla_a_grid,a_grid,pt)
-         sh1.nullify_ptr_part
-
-         do j=.first_shell_for_atom(atom2),.last_shell_for_atom(atom2)
-           fb = .first_basis_fn_for_shell(j)
-           lb = .last_basis_fn_for_shell(j)
-           sb = .atom_shell_for_shell(j)
-           sh1.set(.atom(atom2).basis.shell(sb),pos2)
-           n_comp_b = sh1%n_comp
-           b_grid.create(n_pt,n_comp_b)
-           nabla_b_grid.create(n_pt,n_comp_b,3)
-           sh1.make_nabla_grid(nabla_b_grid,b_grid,pt)
-           sh1.nullify_ptr_part
-
-           ! ------------------------------------------------------------
-           do a = 1,n_comp_a
-             a_grid_a => a_grid(:,a)
-             do b = 1,n_comp_b
-               b_grid_b => b_grid(:,b)
-!               phia_phib = a_grid_a*b_grid_b
-!               KK = sum(local(:)*phia_phib(:))
-               KK = sum(local*a_grid_a*b_grid_b)
-               do z=1,3
-!                 do n=1,n_pt
-!                   nabla_phiaphib = nabla_a_grid(n,a,z)*b_grid_b(n) + &
-!                                    nabla_b_grid(n,b,z)*a_grid_a(n)
-!                   KK = KK + non_local(n,z)*nabla_phiaphib
-!                 end
-                 KK = KK + sum(non_local(:,z)*(nabla_a_grid(:,a,z)*b_grid_b(:)+nabla_b_grid(:,b,z)*a_grid_a(:)))
-               end
-               K(fa-1+a,fb-1+b) = K(fa-1+a,fb-1+b) + KK
-             end
-           end
-           ! ------------------------------------------------------------
-
-           nabla_b_grid.destroy
-           b_grid.destroy
-         end
-         nabla_a_grid.destroy
-         a_grid.destroy
-       end
-       atomlist1.nullify_ptr_part
-       atomlist2.nullify_ptr_part
-!       phia_phib.destroy
-       local.destroy; non_local.destroy
-       np.destroy
-       p.destroy
-       wt.destroy
-       pt.destroy
-     end
-
-     if (DO_IN_PARALLEL) then
-        PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
-     else
-        K.symmetric_reflect
-     end
-   end
+!   add_GGA_ex_corr_matrix_old(K)
+!   ! Add the exchange and correlation matrices to K. This routine supports
+!   ! non-local functionals, either exchange or correlation.
+!     K :: MAT{REAL}, target
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
+!     sh1 :: SHELL1
+!     atomlist2 :: VEC{ATOM}(2)
+!     atomlist1 :: VEC{ATOM}(1)
+!     pos1,pos2 :: VEC{REAL}(3)
+!     nabla_a_grid,nabla_b_grid :: MAT3{REAL}*
+!     pt,np,a_grid,b_grid,non_local :: MAT{REAL}*
+!     wt,p,local,a_grid_a,b_grid_b :: VEC{REAL}*
+!     q,fa,la,fb,lb,sa,sb,n_pt :: INT
+!     atom1,atom2,i,j,a,b,z,n_comp_a,n_comp_b :: INT
+!     thresh,KK :: REAL
+!     ! n :: INT
+!     ! nabla_phiaphib :: REAL
+!     thresh = 1.0e-30
+!
+!     if (DO_IN_PARALLEL) K = ZERO
+!
+!     parallel do q = 1,.no_of_atom_pairs
+!       atom1 = (1+int(sqrt(8.0d0*q-7.0d0)))/2
+!       atom2 = q - atom1*(atom1-1)/2
+!       if (atom1/=atom2) then
+!         atomlist2(1) = .atom(atom1)
+!         atomlist2(2) = .atom(atom2)
+!         n_pt = .dftgrid.n_pts*2
+!         wt.create(n_pt)
+!         pt.create(n_pt,3)
+!         .dftgrid.make_grid(pt,wt,atomlist2)
+!       else
+!         atomlist1(1) = .atom(atom1)
+!         n_pt = .dftgrid.n_pts
+!         wt.create(n_pt)
+!         pt.create(n_pt,3)
+!         .dftgrid.make_grid(pt,wt,atomlist1)
+!       end
+!       pos1 = .atom(atom1).pos
+!       pos2 = .atom(atom2).pos
+!
+!       p.create(n_pt)
+!       np.create(n_pt,3)
+!       local.create(n_pt)
+!       non_local.create(n_pt,3)
+!!       phia_phib.create(n_pt)
+!
+!       ! Get the densities and their gradients.
+!       .make_density_grid(p,pt)
+!       .make_nabla_density_grid(np,pt)
+!       p = max(thresh,p)
+!
+!       ! Get the local and nonlocal contributions.
+!       local=ZERO
+!       non_local=ZERO
+!       .add_r_exchange_matrix(p,local,np,non_local)
+!       .add_r_correlation_matrix(p,local,np,non_local)
+!
+!       ! Multiply by the weights.
+!       local = wt*local
+!       forall (i=1:3) non_local(:,i) = wt*non_local(:,i)
+!
+!       ! Calculate orbital grids, then multiply by the orbital grids and put in
+!       ! ex-corr matrix.
+!       do i=.first_shell_for_atom(atom1),.last_shell_for_atom(atom1)
+!         fa = .first_basis_fn_for_shell(i)
+!         la = .last_basis_fn_for_shell(i)
+!         sa = .atom_shell_for_shell(i)
+!         sh1.set(.atom(atom1).basis.shell(sa),pos1)
+!         n_comp_a = sh1%n_comp
+!         nabla_a_grid.create(n_pt,n_comp_a,3)
+!         a_grid.create(n_pt,n_comp_a)
+!         sh1.make_nabla_grid(nabla_a_grid,a_grid,pt)
+!         sh1.nullify_ptr_part
+!
+!         do j=.first_shell_for_atom(atom2),.last_shell_for_atom(atom2)
+!           fb = .first_basis_fn_for_shell(j)
+!           lb = .last_basis_fn_for_shell(j)
+!           sb = .atom_shell_for_shell(j)
+!           sh1.set(.atom(atom2).basis.shell(sb),pos2)
+!           n_comp_b = sh1%n_comp
+!           b_grid.create(n_pt,n_comp_b)
+!           nabla_b_grid.create(n_pt,n_comp_b,3)
+!           sh1.make_nabla_grid(nabla_b_grid,b_grid,pt)
+!           sh1.nullify_ptr_part
+!
+!           ! ------------------------------------------------------------
+!           do a = 1,n_comp_a
+!             a_grid_a => a_grid(:,a)
+!             do b = 1,n_comp_b
+!               b_grid_b => b_grid(:,b)
+!!               phia_phib = a_grid_a*b_grid_b
+!!               KK = sum(local(:)*phia_phib(:))
+!               KK = sum(local*a_grid_a*b_grid_b)
+!               do z=1,3
+!!                 do n=1,n_pt
+!!                   nabla_phiaphib = nabla_a_grid(n,a,z)*b_grid_b(n) + &
+!!                                    nabla_b_grid(n,b,z)*a_grid_a(n)
+!!                   KK = KK + non_local(n,z)*nabla_phiaphib
+!!                 end
+!                 KK = KK + sum(non_local(:,z)*(nabla_a_grid(:,a,z)*b_grid_b(:)+nabla_b_grid(:,b,z)*a_grid_a(:)))
+!               end
+!               K(fa-1+a,fb-1+b) = K(fa-1+a,fb-1+b) + KK
+!             end
+!           end
+!           ! ------------------------------------------------------------
+!
+!           nabla_b_grid.destroy
+!           b_grid.destroy
+!         end
+!         nabla_a_grid.destroy
+!         a_grid.destroy
+!       end
+!       atomlist1.nullify_ptr_part
+!       atomlist2.nullify_ptr_part
+!!       phia_phib.destroy
+!       local.destroy; non_local.destroy
+!       np.destroy
+!       p.destroy
+!       wt.destroy
+!       pt.destroy
+!     end
+!
+!     if (DO_IN_PARALLEL) then
+!        PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
+!     else
+!        K.symmetric_reflect
+!     end
+!   end
 
    r_KS_energy_correction result(res)
    ! The total Kohn-Sham electronic energy can be written as....
@@ -11370,9 +11495,12 @@ contains
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
      pt,np,non_local :: MAT{REAL}*
      wt,p,local,total :: VEC{REAL}*
-   ! THRESH :: REAL
      n_pt :: INT
-   ! THRESH = TOL(90)
+     tmp :: REAL
+      ! Ensure the NO's exist so we can calculate the density for the XC part
+      if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals !  leaky
+      else;                                        .assign_NOs_to_MOs
+      end
      ! Get the integration grid
      .becke_grid.set_atoms_and_positions(.atom.atomic_number,.atom.transposed_coordinates)
      n_pt = .becke_grid.no_of_points
@@ -11386,7 +11514,6 @@ contains
         .make_nabla_density_grid(np,pt)
      end
      pt.destroy
-   ! p = max(thresh,p)
      ! Get the local and nonlocal contributions.
      local.create(n_pt)
      local = ZERO
@@ -11395,8 +11522,6 @@ contains
         non_local = ZERO
      end
      .add_r_XC_potentials(local,p,non_local,np)
-   ! .add_r_exchange_matrix(p,local,np,non_local)
-   ! .add_r_correlation_matrix(p,local,np,non_local)
      ! This is -1/2 \int v_xc rho dr.
      total.create(n_pt)
      total = local*p
@@ -11405,12 +11530,14 @@ contains
         non_local.destroy
      end
      total = -HALF*total
+ ! tmp = sum(wt*total)
+ ! stdout.show("KS v term =",tmp)
      local.destroy
      ! Now add Exc
      .add_r_XC_functionals(total,p,np)
-   ! .add_r_exchange_functional(p,np,total)
-   ! .add_r_correlation_functional(p,np,total)
      res = sum(wt*total)
+ ! stdout.show("KS E term =",res-tmp)
+ ! stdout.show("KS cxn    =",res)
      wt.destroy
      total.destroy
      np.destroy
@@ -11418,66 +11545,66 @@ contains
      .becke_grid.destroy_atoms_and_positions
    end
 
-   r_KS_energy_correction_old result(res)
-   ! The total Kohn-Sham electronic energy can be written as....
-   !   E = sum(P*(F+H)) + correction
-   ! where the Kohn-Sham energy correction is
-   !   correction = -(sum(P*K)) + Exc
-   ! where K is the exchange-correlation contribution to the Fock matrix.
-     res :: REAL
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
-     pt,np,non_local :: MAT{REAL}*
-     wt,p,local,total :: VEC{REAL}*
-     THRESH :: REAL
-     n_pt :: INT
-     THRESH = TOL(90)
-     n_pt = .dftgrid.n_pts*.n_atom
-     wt.create(n_pt)
-     pt.create(n_pt,3)
-     .dftgrid.make_grid(pt,wt,.atom)
-
-     ! Get the densities and their gradients.
-     p.create(n_pt)
-     np.create(n_pt,3)
-
-     .make_density_grid(p,pt)
-     .make_nabla_density_grid(np,pt)
-
-     pt.destroy
-     p = max(thresh,p)
-
-     ! Get the local and nonlocal contributions.
-     local.create(n_pt)
-     local=ZERO
-     if (.scfdata.using_GGA_functional) then
-        non_local.create(n_pt,3)
-        non_local=ZERO
-     end
-     .add_r_exchange_matrix(p,local,np,non_local)
-     .add_r_correlation_matrix(p,local,np,non_local)
-
-     ! This is -1/2 integral v_xc rho dr.
-     total.create(n_pt)
-     total = local*p
-     if (.scfdata.using_GGA_functional) then
-        total = total + sum(non_local(:,:)*np(:,:),2)
-        non_local.destroy
-     end
-     total = -HALF*total
-     local.destroy
-
-     ! Now add Exc
-     .add_r_exchange_functional(p,np,total)
-     .add_r_correlation_functional(p,np,total)
-     res = sum(wt*total)
-     wt.destroy
-     total.destroy
-
-     np.destroy
-     p.destroy
-   end
+!   r_KS_energy_correction_old result(res)
+!   ! The total Kohn-Sham electronic energy can be written as....
+!   !   E = sum(P*(F+H)) + correction
+!   ! where the Kohn-Sham energy correction is
+!   !   correction = -(sum(P*K)) + Exc
+!   ! where K is the exchange-correlation contribution to the Fock matrix.
+!     res :: REAL
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
+!     pt,np,non_local :: MAT{REAL}*
+!     wt,p,local,total :: VEC{REAL}*
+!     THRESH :: REAL
+!     n_pt :: INT
+!     THRESH = TOL(90)
+!     n_pt = .dftgrid.n_pts*.n_atom
+!     wt.create(n_pt)
+!     pt.create(n_pt,3)
+!     .dftgrid.make_grid(pt,wt,.atom)
+!
+!     ! Get the densities and their gradients.
+!     p.create(n_pt)
+!     np.create(n_pt,3)
+!
+!     .make_density_grid(p,pt)
+!     .make_nabla_density_grid(np,pt)
+!
+!     pt.destroy
+!     p = max(thresh,p)
+!
+!     ! Get the local and nonlocal contributions.
+!     local.create(n_pt)
+!     local=ZERO
+!     if (.scfdata.using_GGA_functional) then
+!        non_local.create(n_pt,3)
+!        non_local=ZERO
+!     end
+!     .add_r_exchange_matrix(p,local,np,non_local)
+!     .add_r_correlation_matrix(p,local,np,non_local)
+!
+!     ! This is -1/2 integral v_xc rho dr.
+!     total.create(n_pt)
+!     total = local*p
+!     if (.scfdata.using_GGA_functional) then
+!        total = total + sum(non_local(:,:)*np(:,:),2)
+!        non_local.destroy
+!     end
+!     total = -HALF*total
+!     local.destroy
+!
+!     ! Now add Exc
+!     .add_r_exchange_functional(p,np,total)
+!     .add_r_correlation_functional(p,np,total)
+!     res = sum(wt*total)
+!     wt.destroy
+!     total.destroy
+!
+!     np.destroy
+!     p.destroy
+!   end
 
 !   r_ex_corr_energy result (res)
 !   ! Return the exchange-correlation energy
@@ -11581,6 +11708,23 @@ contains
       if (corr/="none") add.r_functional(corr,E,rho0,rho1)
    end
 
+   set_r_XC_energy_density(E,rho0,rho1)
+   ! Set the *restricted* exchange correlation energy density "E", for given
+   ! densities "rho0" and gradient densities "rho1".
+      E    :: VEC{REAL}, OUT
+      rho0 :: VEC{REAL}, IN
+      rho1 :: MAT{REAL}, IN, optional
+   ENSURE(.scfdata.created,"no scfdata")
+      exch,corr :: STR
+      add :: DFT_FUNCTIONAL
+      if (NOT .scfdata.is_DFT_calculation) return
+      exch = .scfdata.dft_exchange_functional
+      corr = .scfdata.dft_correlation_functional
+      E = ZERO
+      if (exch/="none") add.r_energy_density(exch,E,rho0,rho1)
+      if (corr/="none") add.r_energy_density(corr,E,rho0,rho1)
+   end
+
    add_r_XC_potentials(V0,rho0,V1,rho1)
    ! For given densities "rho0" and gradient densities "rho1", return "V0" and
    ! "V1", the local and non_local terms necessary to calculate the matrix
@@ -11626,77 +11770,77 @@ contains
 !     end
 !   end
 
-   add_r_exchange_matrix(p,local,np,non_local)
-   ! Get terms necessary to calculate the exchange functional matrix.  "p" and
-   ! "np" are input density and gradient density, respectively, evaluated on the
-   ! grid points.  "local" and "non_local" are the output functional derivatives
-   ! w.r.t. the density and gradient density, respectively. The "non_local" term
-   ! must be integrated with nabla of the basis function pair to get the full
-   ! matrix element.
-     p,local :: VEC{REAL}
-     np,non_local :: MAT{REAL}, optional
-     l :: VEC{REAL}*
-     nl :: MAT{REAL}*
-     alpha :: REAL
-     n_pt :: INT
-     n_pt = size(p)
-     select case (.scfdata.dft_exchange_functional)
-       case ("none")
-       ! Don't add anything.
-       case ("slater");  .dftgrid.add_r_LDA_x_potential(p,local)
-       case ("xalpha");  .dftgrid.add_r_Xalpha_x_potential(p,local,0.7d0)
-       case ("becke88"); .dftgrid.add_r_Becke88_x_potential(p,np,local,non_local)
-     ! case ("gill96")
-     !   ENSURE(present(np),"program bug!")
-     !   ENSURE(present(non_local),"program bug!")
-     !   l.create(n_pt)
-     !   nl.create(n_pt,3)
-     !   .dftgrid.d_r_gill96_exchange_functional(p,np,l,nl)
-     !   local = local + l
-     !   non_local = non_local + nl
-     !   nl.destroy
-     !   l.destroy
-       case default
-         DIE("unknown exchange functional")
-     end
-   end
+!   add_r_exchange_matrix(p,local,np,non_local)
+!   ! Get terms necessary to calculate the exchange functional matrix.  "p" and
+!   ! "np" are input density and gradient density, respectively, evaluated on the
+!   ! grid points.  "local" and "non_local" are the output functional derivatives
+!   ! w.r.t. the density and gradient density, respectively. The "non_local" term
+!   ! must be integrated with nabla of the basis function pair to get the full
+!   ! matrix element.
+!     p,local :: VEC{REAL}
+!     np,non_local :: MAT{REAL}, optional
+!     l :: VEC{REAL}*
+!     nl :: MAT{REAL}*
+!     alpha :: REAL
+!     n_pt :: INT
+!     n_pt = size(p)
+!     select case (.scfdata.dft_exchange_functional)
+!       case ("none")
+!       ! Don't add anything.
+!       case ("slater");  .dftgrid.add_r_LDA_x_potential(p,local)
+!       case ("xalpha");  .dftgrid.add_r_Xalpha_x_potential(p,local,0.7d0)
+!       case ("becke88"); .dftgrid.add_r_Becke88_x_potential(p,np,local,non_local)
+!     ! case ("gill96")
+!     !   ENSURE(present(np),"program bug!")
+!     !   ENSURE(present(non_local),"program bug!")
+!     !   l.create(n_pt)
+!     !   nl.create(n_pt,3)
+!     !   .dftgrid.d_r_gill96_exchange_functional(p,np,l,nl)
+!     !   local = local + l
+!     !   non_local = non_local + nl
+!     !   nl.destroy
+!     !   l.destroy
+!       case default
+!         DIE("unknown exchange functional")
+!     end
+!   end
 
-   add_r_correlation_matrix(p,local,np,non_local)
-   ! Get terms necessary to calculate the correlation functional matrix.
-   ! Input is p,np.
-   ! Output is local,non_local.
-   ! np and non_local are optional arguments.
-   ! (p means density, np means nabla density).
-   !
-   ! NOTE: When adding a new functional, alter the subroutine
-   !       scfdata.foo/read_dft_correlation also.
-   !
-     p,local :: VEC{REAL}
-     np,non_local :: MAT{REAL}, optional
-     l :: VEC{REAL}*
-     nl :: MAT{REAL}*
-     n_pt :: INT
-     n_pt = size(p)
-     select case (.scfdata.dft_correlation_functional)
-       case ("none") ! Don't add anything.
-       case ("lyp"); .dftgrid.add_r_LYP_c_potential(p,np,local,non_local)
-       case default; DIE("unknown correlation functional")
-     end
-   end
+!   add_r_correlation_matrix(p,local,np,non_local)
+!   ! Get terms necessary to calculate the correlation functional matrix.
+!   ! Input is p,np.
+!   ! Output is local,non_local.
+!   ! np and non_local are optional arguments.
+!   ! (p means density, np means nabla density).
+!   !
+!   ! NOTE: When adding a new functional, alter the subroutine
+!   !       scfdata.foo/read_dft_correlation also.
+!   !
+!     p,local :: VEC{REAL}
+!     np,non_local :: MAT{REAL}, optional
+!     l :: VEC{REAL}*
+!     nl :: MAT{REAL}*
+!     n_pt :: INT
+!     n_pt = size(p)
+!     select case (.scfdata.dft_correlation_functional)
+!       case ("none") ! Don't add anything.
+!       case ("lyp"); .dftgrid.add_r_LYP_c_potential(p,np,local,non_local)
+!       case default; DIE("unknown correlation functional")
+!     end
+!   end
 
 !*******************************************************************************
 !  Unrestricted DFT
 !*******************************************************************************
 
-   add_ex_corr_matrix(Ka,Kb)
+   add_XC_matrix(Ka,Kb)
    ! Calculate the exchange correlation matrix numerically.
       Ka,Kb :: MAT{REAL}
-      if (.scfdata.using_GGA_functional) then; .add_GGA_ex_corr_matrix(Ka,Kb)
-      else;                                    .add_LDA_ex_corr_matrix(Ka,Kb)
+      if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(Ka,Kb)
+      else;                                    .add_LDA_XC_matrix(Ka,Kb)
       end
    end
 
-   add_LDA_ex_corr_matrix(Ka,Kb)
+   add_LDA_XC_matrix(Ka,Kb)
    ! Add the exchange and correlation matrices to Ka and Kb.
    ! This routine supports only local functionals.
      Ka,Kb :: MAT{REAL}, target
@@ -11780,7 +11924,7 @@ contains
      pt.destroy
    end
 
-   add_GGA_ex_corr_matrix(Ka,Kb)
+   add_GGA_XC_matrix(Ka,Kb)
    ! Add the exchange and correlation matrices to Ka and Kb.
    ! This routine supports non-local functionals.
      Ka,Kb :: MAT{REAL}, target
@@ -14010,6 +14154,7 @@ contains
      n_occ,n,n_pts :: INT
      n_pts = size(pts,1)
      nabla_grid = ZERO
+     grid = ZERO
      orb.create(n_pts)
      nabla_orb.create(n_pts,3)
      n_occ = .no_of_occupied_NOs
@@ -17864,8 +18009,7 @@ contains
      res :: VEC{REAL}(size(U))
      sf_deriv,sf_deriv_eq :: MAT{CPX}*
      k_pts :: MAT{REAL}*
-     orb_kind :: STR
-     complex :: BIN
+     genre :: STR
      self :: MOLECULE*
      self => saved_self
      ENSURE(.crystal.created, "no crystal")
@@ -17875,9 +18019,8 @@ contains
      .crystal.make_unique_SF_k_pts(k_pts)
      sf_deriv.create( .crystal.n_refl, .n_atom * 6) ! d_Fc/d_U
      sf_deriv_eq.create(.n_atom * 6,.crystal.n_unique_SF_k_pts)
-     orb_kind = .density_matrix.spinorbital_kind
-     complex = orb_kind.includes("complex")
-     if (complex) then
+     genre = .density_matrix.spinorbital_kind
+     if (genre.includes("complex")) then
        .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted_complex,k_pts)
      else
        .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted,k_pts)
