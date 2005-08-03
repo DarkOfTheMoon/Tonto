@@ -860,21 +860,6 @@ contains
 !   ! end
 !   end
 
-   make_overlapping_atoms ::: leaky
-   ! Make the list of overlapping atoms
-   ENSURE(.basis_info_made,"no basis set")
-   ENSURE(.scfdata.created,"no scfdata")
-      S_max :: VEC{REAL}*
-      n_atom_pairs :: INT
-      n_atom_pairs = .no_of_atom_pairs
-      .overlapping_atoms.destroy
-      .overlapping_atoms.create(n_atom_pairs)
-      S_max.create(n_atom_pairs)
-      .make_S_max_for_atom_pairs(S_max)
-      .overlapping_atoms = S_max>.scfdata.atom_overlap_cutoff
-      S_max.destroy
-   end
-
    make_S_max_for_atom_pairs(S_max)
    ! Make "S_max", the maximum of the overlap integrals between *pairs of atoms*
      S_max :: VEC{REAL}
@@ -893,6 +878,40 @@ contains
        S_max(ab) = maxval(S(fa:la,fb:lb))
      end
      S.destroy
+   end
+
+   is_overlapping_atom(a,list) result (res)
+   ! Return TRUE if atom "a" overlaps with any atom in "list".
+      a :: INT, IN
+      list :: VEC{INT}, IN
+      res :: BIN
+   ENSURE(.overlapping_atoms.created,"no .overlapping_atoms")
+      i,b,aa,bb,ab :: INT
+      res = FALSE
+      do i = 1,list.dim
+         b = list(i)
+         aa = max(a,b)
+         bb = min(a,b)
+         ab = HALF*aa*(aa-1) + bb
+         if (NOT .overlapping_atoms(ab)) cycle
+         res = TRUE
+         exit
+      end
+   end
+
+   make_overlapping_atoms ::: leaky
+   ! Make the list of overlapping atoms
+   ENSURE(.basis_info_made,"no basis set")
+   ENSURE(.scfdata.created,"no scfdata")
+      S_max :: VEC{REAL}*
+      n_atom_pairs :: INT
+      n_atom_pairs = .no_of_atom_pairs
+      .overlapping_atoms.destroy
+      .overlapping_atoms.create(n_atom_pairs)
+      S_max.create(n_atom_pairs)
+      .make_S_max_for_atom_pairs(S_max)
+      .overlapping_atoms = S_max>.scfdata.atom_overlap_cutoff
+      S_max.destroy
    end
 
 !  ******************
@@ -11197,7 +11216,8 @@ contains
          .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
          rho0.create(n_pt)                ! density grid
          rho1.create(n_pt,3)              ! nabla density grid
-         .make_nabla_density_grid(rho1,rho0,pt) 
+         .make_nabla_density_grid_r(rho1,rho0,pt,[atom_a,atom_b]) 
+       ! .make_nabla_density_grid(rho1,rho0,pt) 
          V0 = ZERO
          V1 = ZERO
          .add_r_XC_potentials(V0,rho0,V1,rho1)
@@ -14170,6 +14190,230 @@ contains
      orb.destroy
      nabla_orb.destroy
    end
+
+!   make_nabla_density_grid_r(grid1,grid0,pt,atoms)
+!   ! Evaluate the nabla orbital density grid "g1" as well as the orbital grid
+!   ! "g0" on a set of grid points "pt", for use in matrix elements needed by DFT
+!   ! grid integration. "atoms" lists the atoms whose grid points are to be used
+!   ! in DFT integrations.  Normally they will be the atoms on which the basis
+!   ! functions are centered.  We don't have to calculate the density
+!   ! contributions for any atoms which do not have basis functions which overlap
+!   ! with those in "atoms", because the orbital density from those atoms
+!   ! evaluated at those in the "atoms" list will be negligible. NOTE: this
+!   ! routine depends on having the .overlapping_atoms array defined. NOTE: it
+!   ! does noot depend on having the natural orbitals defined.
+!      grid1 :: MAT{REAL}
+!      grid0 :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      atoms :: VEC{INT}
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(.density_matrix.created,"no density matrix")
+!   ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+!   ENSURE(grid1.dim1==pt.dim1,"grid1 has wrong 1st dimension")
+!   ENSURE(grid1.dim2==3,"grid1 has wrong 2nd dimension")
+!   ENSURE(grid0.dim==pt.dim1,"grid0 has wrong 1st dimension")
+!   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+!      sha,shb :: SHELL1
+!      a1 :: MAT3{REAL}*
+!      a0,b0,bP :: MAT{REAL}*
+!      n_pt,a,sa,fa,la,b,sb,fb,lb :: INT
+!      fac :: REAL
+!      grid1 = ZERO
+!      grid0 = ZERO
+!      n_pt = pt.dim1
+!         do sa = 1,.n_shell
+!            .get_shell(sha,sa,fa,la)
+!            a1.create(n_pt,sha.n_comp,3)
+!            a0.create(n_pt,sha.n_comp)
+!            sha.make_nabla_grid(a1,a0,pt)         ! Call this as little as possible
+!               do sb = 1,.n_shell
+!                  .get_shell(shb,sb,fb,lb)
+!                  bP.create(n_pt,sha.n_comp)
+!                  b0.create(n_pt,shb.n_comp)
+!                  shb.make_grid(b0,pt)            ! Call this as little as possible
+!                  bP = matmul(b0,.density_matrix.restricted(fb:lb,fa:la))
+!                  b0.destroy
+!                  grid0      = grid0      + sum(a0*bP,dim=2)
+!                  grid1(:,1) = grid1(:,1) + sum(a1(:,:,1)*bP,dim=2)
+!                  grid1(:,2) = grid1(:,2) + sum(a1(:,:,2)*bP,dim=2)
+!                  grid1(:,3) = grid1(:,3) + sum(a1(:,:,3)*bP,dim=2)
+!                  bP.destroy
+!                  shb.destroy_ptr_part
+!               end
+!            a0.destroy; a1.destroy
+!            sha.destroy_ptr_part
+!         end
+!      grid1 = TWO*grid1
+!   end
+
+   make_nabla_density_grid_r(grid1,grid0,pt,atoms)
+   ! Evaluate the nabla orbital density grid "g1" as well as the orbital grid
+   ! "g0" on a set of grid points "pt", for use in matrix elements needed by DFT
+   ! grid integration. "atoms" lists the atoms whose grid points are to be used
+   ! in DFT integrations.  Normally they will be the atoms on which the basis
+   ! functions are centered.  We don't have to calculate the density
+   ! contributions for any atoms which do not have basis functions which overlap
+   ! with those in "atoms", because the orbital density from those atoms
+   ! evaluated at those in the "atoms" list will be negligible. NOTE: this
+   ! routine depends on having the .overlapping_atoms array defined. NOTE: it
+   ! does noot depend on having the natural orbitals defined.
+      grid1 :: MAT{REAL}
+      grid0 :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+   ENSURE(grid1.dim1==pt.dim1,"grid1 has wrong 1st dimension")
+   ENSURE(grid1.dim2==3,"grid1 has wrong 2nd dimension")
+   ENSURE(grid0.dim==pt.dim1,"grid0 has wrong 1st dimension")
+   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+      sha,shb :: SHELL1
+      a1 :: MAT3{REAL}*
+      a0,b0,bP :: MAT{REAL}*
+      n_pt,a,sa,fa,la,b,sb,fb,lb :: INT
+      fac :: REAL
+      grid1 = ZERO
+      grid0 = ZERO
+      n_pt = pt.dim1
+      do a = 1,.n_atom
+         if (NOT .is_overlapping_atom(a,atoms)) cycle
+         do sa = .first_shell_for_atom(a),.last_shell_for_atom(a)
+            .get_shell(sha,sa,fa,la)
+            a1.create(n_pt,sha.n_comp,3)
+            a0.create(n_pt,sha.n_comp)
+            sha.make_nabla_grid(a1,a0,pt)         ! Call this as little as possible
+            do b = 1,.n_atom
+               if (NOT .is_overlapping_atom(b,atoms)) cycle
+               do sb = .first_shell_for_atom(b),.last_shell_for_atom(b)
+                  .get_shell(shb,sb,fb,lb)
+                  bP.create(n_pt,sha.n_comp)
+                  b0.create(n_pt,shb.n_comp)
+                  shb.make_grid(b0,pt)            ! Call this as little as possible
+                  bP = matmul(b0,.density_matrix.restricted(fb:lb,fa:la))
+                  b0.destroy
+                  grid0      = grid0      + sum(a0*bP,dim=2)
+                  grid1(:,1) = grid1(:,1) + sum(a1(:,:,1)*bP,dim=2)
+                  grid1(:,2) = grid1(:,2) + sum(a1(:,:,2)*bP,dim=2)
+                  grid1(:,3) = grid1(:,3) + sum(a1(:,:,3)*bP,dim=2)
+                  bP.destroy
+                  shb.destroy_ptr_part
+               end
+            end
+            a0.destroy; a1.destroy
+            sha.destroy_ptr_part
+         end
+      end
+      grid1 = TWO*grid1
+   end
+
+!   make_nabla_density_grid_r(nabla_grid,grid,pts,atoms)
+!   ! Work out nabla of the density, "nabla_grid", and the density grid, "grid",
+!   ! using the grid "pts" and the ".natural_orbitals" and the ".occupation"
+!   ! number vector. This version eliminates any extra work due to atoms which do
+!   ! not overlap with "atoms". It is intended for use with DFT grid integration
+!   ! of the exchange correlation matrix elements, where "atoms" are the atoms on
+!   ! which the basis functions are centered.
+!     nabla_grid :: MAT{REAL}, OUT
+!     grid :: VEC{REAL}, OUT
+!     pts :: MAT{REAL}, IN
+!     atoms :: VEC{INT}
+!   ENSURE(pts.dim2==3,  "wrong dimension for points array")
+!   ENSURE(nabla_grid.dim2==3,  "wrong dimension for nabla_grid array")
+!   ENSURE(nabla_grid.dim1==pts.dim1,"wrong dimension for nabla_grid array")
+!   ENSURE(grid.dim==pts.dim1,"wrong dimension for grid array")
+!   ENSURE(.natural_orbitals.created, "no natural orbitals")
+!   ENSURE(.natural_orbitals.created("restricted"), "no restricted NO's")
+!   ENSURE(.occupation_numbers.created, "no occupation numbers")
+!   ENSURE(.occupation_numbers.created("restricted"),"no occupation numbers")
+!     orb :: VEC{REAL}*
+!     nabla_orb :: MAT{REAL}*
+!     occ :: REAL
+!     n_occ,n,n_pts :: INT
+!     n_pts = size(pts,1)
+!     nabla_grid = ZERO
+!     grid = ZERO
+!     orb.create(n_pts)
+!     nabla_orb.create(n_pts,3)
+!     n_occ = .no_of_occupied_NOs
+!     do n = 1,n_occ
+!       .make_nabla_orbital_grid_r(nabla_orb,orb,.natural_orbitals.restricted(:,n), pts)
+!       occ = .occupation_numbers.restricted(n)
+!       nabla_grid(:,1) = nabla_grid(:,1) + occ*orb(:)*nabla_orb(:,1)
+!       nabla_grid(:,2) = nabla_grid(:,2) + occ*orb(:)*nabla_orb(:,2)
+!       nabla_grid(:,3) = nabla_grid(:,3) + occ*orb(:)*nabla_orb(:,3)
+!       grid(:) = grid(:) + occ*orb(:)*orb(:)
+!     end
+!     nabla_grid = TWO*nabla_grid
+!     orb.destroy
+!     nabla_orb.destroy
+!   end
+
+!   make_nabla_orbital_grid_r(g1,g0,orb,pt,atoms)
+!   ! Evaluate the nabla orbital density grid "g1" as well as the orbital grid
+!   ! "g0" for *one* AO-basis orbital vector "orb" on a set of grid points "pt",
+!   ! for use in matrix elements needed by DFT grid integration. "atoms" is a
+!   ! list of indices of the atoms whose grid points are to be used in DFT
+!   ! integrations.  Normally they will be the atoms on which the basis functions
+!   ! are centered.  We don't have to calculate the density contributions for any
+!   ! atoms which do not have basis functions which overlap with those in
+!   ! "atoms", because the orbital density from those atoms evaluated at those in
+!   ! the "atoms" list will be negligible. NOTE: this routine depends on having
+!   ! the .overlapping_atoms array defined.
+!      g1 :: MAT{REAL}
+!      g0 :: VEC{REAL}
+!      orb :: VEC{REAL}, IN, target
+!      pt :: MAT{REAL}, IN
+!      atoms :: VEC{INT}
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(g1.dim1==pt.dim1,"grid array has wrong 1st dimension")
+!   ENSURE(g.dim2==3,"grid array has wrong 2nd dimension")
+!   ENSURE(h.dim==pt.dim1,"grid array has wrong 1st dimension")
+!   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+!      orb_a :: VEC{CPX}*
+!      sh :: SHELL1
+!      sh_grid1 :: MAT3{REAL}*
+!      sh_grid0 :: MAT{REAL}*
+!      n_pt,a,fa,la,fs,ls :: INT
+!      n_pt = pt.dim1
+!      n_occ = .no_of_occupied_NOs
+!      natural_orbitals => .natural_orbitals.restricted(:,:n_occ)
+!      g1.create(n_pt,n_occ,3)
+!      g0.create(n_pt,n_occ)
+!      g1 = ZERO
+!      g0 = ZERO
+!      do a = 1,.n_atom
+!         if (NOT .is_overlapping_atom(a,atoms)) cycle
+!         fa = .first_shell_for_atom(a)
+!         la =  .last_shell_for_atom(a)
+!         do s = fa,la
+!            .get_shell(sh,s,fs,ls)
+!            sh_grid1.create(n_pt,sh.n_comp,3)
+!            sh_grid0.create(n_pt,sh.n_comp)
+!            sh.make_nabla_grid(sh_grid,sh_grid0,pt)          ! Call this as little as possible
+!            NO => .natural_orbitals.restricted(fs:ls,:n_occ) ! Multiply by all orbitals
+!            g1(:,:,1) = g1(:,:,1) + matmul(sh_grid1(:,:,1),NO)
+!            g1(:,:,2) = g1(:,:,2) + matmul(sh_grid1(:,:,2),NO)
+!            g1(:,:,3) = g1(:,:,3) + matmul(sh_grid1(:,:,3),NO)
+!            g0 = g0 + matmul(sh_grid0,NO)
+!            sh_grid0.destroy
+!            sh_grid1.destroy
+!            sh.destroy_ptr_part
+!         end
+!         do n = 1,n_occ
+!            occ = .occupation_numbers.restricted(n)
+!            grid1(:,1) = grid1(:,1) + occ*g0(:,n)*g1(:,n,1)
+!            grid1(:,2) = grid1(:,2) + occ*g0(:,n)*g1(:,n,2)
+!            grid1(:,3) = grid1(:,3) + occ*g0(:,n)*g1(:,n,3)
+!            grid0      = grid0      + occ*g0(:,n)*g0(:,n)
+!         end
+!      end
+!      g0.destroy; g1.destroy
+!      grid1 = TWO*grid1
+!   end
 
    make_nabla_density_grid(np_a,np_b,pt)
    ! Make the alpha and beta nabla density grids, "np_a" and "np_b"
