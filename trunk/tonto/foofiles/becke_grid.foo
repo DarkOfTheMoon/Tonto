@@ -477,8 +477,10 @@ contains
    ! Set the atom atomic numbers "atom_Z" and their corresponding positions
    ! "atom_pos". The atoms define the peaks and extent of the 3D integrand.
    ! If "use_unique" is present and TRUE, then the list of atom positions is
-   ! checked to see if they are all different; if not, only the unique set of
-   ! positions is used.
+   ! checked to see if they are all different; if they are not all different,
+   ! only the unique set of positions is used. NOTE: "use_unique" should really
+   ! always be set TRUE, but we don't do it to save calculation in cases when
+   ! the atoms are known to be distinct.
       atom_Z :: VEC{INT}
       atom_pos :: MAT{REAL}
       use_unique :: BIN, optional
@@ -775,7 +777,7 @@ contains
       p  :: INT
    ENSURE(.kind/=" ","no grid kind set")
       nr :: INT
-      nr = .n_radial_points + .n_extra_points_per_shell*(p-1)
+      nr = .no_of_radial_points(p)
       select case (.kind)
          case ("becke            "); .set_B_radial_grid(radial,nr)
          case ("treutler_ahlrichs"); .set_TA_radial_grid(radial,nr)
@@ -924,7 +926,7 @@ contains
    ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
    ENSURE(.radial_grid.created,"no radial_grid")
    ENSURE(.lebedev_grid.created,"no lebedev_grid")
-      i,j,k, np,n3,n2 :: INT
+      i,j,k, np,nr,n3,n2 :: INT
       pi4,r,w,pi4r2w :: REAL
       lebedev_grid :: LEBEDEV*
       radial_grid :: QUADRATURE*
@@ -934,9 +936,12 @@ contains
       .unscaled_point.create(np,3)
       .unscaled_weight.create(np)
       radial_grid => .radial_grid(p)
+      nr = radial_grid.n_points
+      n3 = nr/3
+      n2 = nr/2
       pi4 = FOUR*PI ! Include the factor 4*pi*r^2 in the weights.
       k = 0
-      do i = 1,radial_grid.n_points     ! <-- Loop on radial grid
+      do i = 1,nr                       ! <-- Loop on radial grid
          r = radial_grid.point(i)
          w = radial_grid.weight(i)
          pi4r2w = pi4*r*r*w
@@ -946,10 +951,6 @@ contains
          if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
          ! Reset lebedev grids for points near the core
          if (.reduce_core_angular_grid) then
-          ! n3 = .n_radial_points/3
-          ! n2 = .n_radial_points/2
-            n3 = .n_radial_points/6
-            n2 = .n_radial_points/3
             if      (i <= n3) then;           lebedev_grid => .lebedev_L5_grid
             else if (n3<i AND i<=n2) then;    lebedev_grid => .lebedev_L11_grid
             end
@@ -962,10 +963,18 @@ contains
       end
    end
 
+   no_of_radial_points(p) result (res) 
+   ! Return the number of radial points in the grid.
+      p   :: INT, IN
+      res :: INT
+      res = .n_radial_points + .n_extra_points_per_shell*(p-1)
+   end
+
    no_of_points_for_row(p) result (res) ::: private
    ! Return the number of points in the (radial x spherical) grid, assuming that
    ! the atom is in period "p", and assuming the Treutler-Ahlrichs scheme to
-   ! reduce the order of the angular mesh near the nucleus.
+   ! reduce the order of the angular mesh near the nucleus. WARNING: this
+   ! routine must be compatible with .set_unscaled_grid
       p   :: INT, IN
       res :: INT
    ENSURE(p>=0 AND p<=7,"p out of range")
@@ -973,7 +982,9 @@ contains
    ENSURE(.lebedev_grid.created,"no lebedev_grid")
       lebedev_grid :: LEBEDEV*
       nr,i,n3,n2 :: INT
-      nr = .n_radial_points + .n_extra_points_per_shell*(p-1)
+      nr = .radial_grid(p).n_points
+      n3 = nr/3
+      n2 = nr/2
       res = 0
       do i = 1,nr
          ! Set default lebedev grid
@@ -982,8 +993,6 @@ contains
          if (.reduce_H_angular_grid AND p==1) lebedev_grid => .lebedev_H_grid
          ! Reset lebedev grids for points near the core
          if (.reduce_core_angular_grid) then
-            n3 = .n_radial_points/3
-            n2 = .n_radial_points/2
             if      (i <= n3) then;           lebedev_grid => .lebedev_L5_grid
             else if (n3<i AND i<=n2) then;    lebedev_grid => .lebedev_L11_grid
             end
@@ -1014,6 +1023,7 @@ contains
       res = 0    
       do a = 1,.atom_Z.dim   
          res = res + .n_points_for_row(period(.atom_Z(a)))
+       ! res = res + .n_points_for_atom(a)
       end
    end
 
@@ -1061,7 +1071,7 @@ contains
             if (period(.atom_Z(a))/=r) cycle
             f = na(a) + 1
             l = na(a) + .n_unscaled_points
-            .scale(pt(f:l,:),wt(f:l),a)
+            .set_and_scale(pt(f:l,:),wt(f:l),a)
             .displace(pt(f:l,:),a)
             .partition(wt(f:l),pt(f:l,:),a)
          end
@@ -1096,7 +1106,7 @@ contains
             if (period(.atom_Z(a))/=r) cycle
             f = na(a) + 1
             l = na(a) + .n_unscaled_points
-            .scale(pt(f:l,:),a)          ! Scale only points, and displace
+            .set_and_scale(pt(f:l,:),a)  ! Scale only points, and displace
             .displace(pt(f:l,:),a)
          end
          .destroy_unscaled_grid
@@ -1119,7 +1129,7 @@ contains
       r = period(.atom_Z(a))
       .set_unscaled_grid(r)  
       .n_points = .n_unscaled_points
-      .scale(pt,a) ! Scale only points, and displace
+      .set_and_scale(pt,a) ! Scale only points, and displace
       .displace(pt,a)
       .destroy_unscaled_grid
    end
@@ -1154,7 +1164,7 @@ contains
             if (period(.atom_Z(a))/=r) cycle
             f = na(a) + 1
             l = na(a) + .n_unscaled_points
-            .scale(wt(f:l),a)            ! Scale only weights, and partition
+            .set_and_scale(wt(f:l),a)    ! Scale only weights, and partition
             .partition(wt(f:l),pt(f:l,:),a)
          end
          .destroy_unscaled_grid
@@ -1181,12 +1191,12 @@ contains
       r = period(.atom_Z(a))
       .set_unscaled_grid(r)  
       .n_points = .n_unscaled_points
-      .scale(wt,a) ! Scale only weights, and partition
+      .set_and_scale(wt,a) ! Scale only weights, and partition
       .partition(wt,pt,a)
       .destroy_unscaled_grid
    end
 
-   scale(pt,wt,a) ::: private
+   set_and_scale(pt,wt,a) ::: private
    ! Scales the unscaled atom quadrature grid ("pt","wt") by the zeta scale
    ! factor for atom "a", ".atom_zeta(a)". Schematically:
    !           ("pt","wt") <-- (scale*"pt", scale^3*"wt"). 
@@ -1215,7 +1225,7 @@ contains
       wt = s3*wt
    end
 
-   scale(pt,a) ::: private
+   set_and_scale(pt,a) ::: private
    ! Scales the unscaled atom quadrature grid ("pt","wt") by the zeta scale
    ! factor for atom "a", ".atom_zeta(a)". Schematically:
    !           ("pt","wt") <-- (scale*"pt", scale^3*"wt"). 
@@ -1240,7 +1250,7 @@ contains
       pt = s*pt
    end
 
-   scale(wt,a) ::: private
+   set_and_scale(wt,a) ::: private
    ! Scales the unscaled atom quadrature grid ("pt","wt") by the zeta scale
    ! factor for atom "a", ".atom_zeta(a)". Schematically:
    !           ("pt","wt") <-- (scale*"pt", scale^3*"wt"). 
