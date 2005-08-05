@@ -11213,6 +11213,7 @@ contains
       wt,rho0,V0,E0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
       atom_a,atom_b,i :: INT
+      same_atoms :: BIN
       atom1 :: VEC{INT}(1), target
       atom2 :: VEC{INT}(2), target
       atoms :: VEC{INT}*
@@ -11223,23 +11224,29 @@ contains
          if (NOT .overlapping_atoms(q)) cycle
          .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
        ! .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
-         if (atom_a==atom_b) then; atom1 = [atom_a];        atoms => atom1
-         else;                     atom2 = [atom_a,atom_b]; atoms => atom2
+         same_atoms = atom_a==atom_b
+         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
          end
          .becke_grid.set_atoms_and_positions(.atom(atoms).atomic_number,.atom(atoms).transposed_coordinates) ! leaky
          n_pt = .becke_grid.no_of_points
-         ga0.create(n_pt,na);   gb0.create(n_pt,nb)
-         ga1.create(n_pt,na,3); gb1.create(n_pt,nb,3)
+         ga0.create(n_pt,na); ga1.create(n_pt,na,3)
+         if (NOT same_atoms) then
+            gb0.create(n_pt,nb); gb1.create(n_pt,nb,3)
+         end
          V0.create(n_pt)                  ! local potential values on grid
          V1.create(n_pt,3)                ! non local potential values on grid
          if (present(E)) E0.create(n_pt)  ! energy density
          pt.create(n_pt,3)                ! integration grid points
          .becke_grid.make_points(pt)      ! <--- Make only the grid points
          .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
-         .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
+         if (same_atoms) then; gb1 => ga1; gb0 => ga0
+         else;                 .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
+         end
          rho0.create(n_pt)                ! density grid
          rho1.create(n_pt,3)              ! nabla density grid
-         .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms) 
+         .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,ga1,ga0,gb1,gb0) 
+       ! .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms) 
        ! .make_nabla_density_grid(rho1,rho0,pt) 
          V0 = ZERO                        ! Evaluation the XC potentials
          V1 = ZERO
@@ -11270,8 +11277,10 @@ contains
          end
          if (present(E)) E0.destroy
          V1.destroy; V0.destroy
-         gb1.destroy; ga1.destroy
-         gb0.destroy; ga0.destroy
+         if (NOT same_atoms) then
+            gb1.destroy; gb0.destroy
+         end
+         ga1.destroy; ga0.destroy
       end
       .becke_grid.destroy_atoms_and_positions
       K = K + V
@@ -14388,6 +14397,97 @@ contains
             sh_grid0.destroy
             sh_grid1.destroy
             sh.destroy_ptr_part
+         end
+      end
+      ! Now square up each natural orbital. We can't skip any NO's since they
+      ! could be all delocalised.
+      grid1 = ZERO
+      grid0 = ZERO
+      do n = 1,n_occ
+         occ = .occupation_numbers.restricted(n)
+         grid1(:,1) = grid1(:,1) + occ*g0(:,n)*g1(:,n,1)
+         grid1(:,2) = grid1(:,2) + occ*g0(:,n)*g1(:,n,2)
+         grid1(:,3) = grid1(:,3) + occ*g0(:,n)*g1(:,n,3)
+         grid0      = grid0      + occ*g0(:,n)*g0(:,n)
+      end
+      g0.destroy; g1.destroy
+      grid1 = TWO*grid1
+   end
+
+   make_nabla_density_grid_r_B(grid1,grid0,pt,atoms,a1,a0,b1,b0)
+   ! Evaluate the nabla density grid "grid1" as well as the density grid
+   ! "grid0" on a set of grid points "pt", for use in matrix elements needed by
+   ! DFT grid integration. "atoms" is a list of indices of the atoms whose grid
+   ! points are to be used in DFT integrations. "a1", "a0", and "b1", "b0" are
+   ! the basis function grids for the atoms listed in "atoms". These are the
+   ! grids for the atoms whose matrix elements are to be evaluated. We don't have
+   ! to calculate the density contributions for any atoms which do not have
+   ! basis functions which overlap with those in "atoms", because the orbital
+   ! density from those atoms evaluated at those in the "atoms" list will be
+   ! negligible. NOTE: this routine depends on having the .overlapping_atoms
+   ! array defined. NOTE: it depends on having the natural orbitals defined, and
+   ! it may take much more memory than the version above, but it may be quicker.
+      grid1 :: MAT{REAL}, OUT
+      grid0 :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}
+      a1,b1 :: MAT3{REAL}
+      a0,b0 :: MAT{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(grid1.dim1==pt.dim1,"grid1 has wrong 1st dimension")
+   ENSURE(grid1.dim2==3,"grid1 has wrong 2nd dimension")
+   ENSURE(grid0.dim==pt.dim1,"grid0 has wrong 1st dimension")
+   ENSURE(pt.dim2==3,"pt has wrong 2nd dimension")
+   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+   ENSURE(.natural_orbitals.created, "no natural orbitals")
+   ENSURE(.natural_orbitals.created("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.created, "no occupation numbers")
+   ENSURE(.occupation_numbers.created("restricted"),"no occupation numbers")
+      sh :: SHELL1
+      g1,sh_grid1 :: MAT3{REAL}*
+      g0,sh_grid0,NO :: MAT{REAL}*
+      n_pt,n_occ,a,s,f,l,fs,ls,n :: INT
+      occ :: REAL
+      n_pt = pt.dim1
+      n_occ = .no_of_occupied_NOs
+      ! Evaluate *all* the natural orbitals on the grid, to save calling
+      ! make_nabla_grid too many times
+      g1.create(n_pt,n_occ,3)
+      g0.create(n_pt,n_occ)
+      g1 = ZERO
+      g0 = ZERO
+      do a = 1,.n_atom
+         if (any(a==atoms)) then                               ! Use the supplied grids
+            f = .first_basis_fn_for_atom(a)
+            l =  .last_basis_fn_for_atom(a)
+            NO => .natural_orbitals.restricted(f:l,:n_occ)     ! Multiply by all orbitals
+            if (a==atoms(1)) then
+               g1(:,:,1) = g1(:,:,1) + matmul(a1(:,:,1),NO)
+               g1(:,:,2) = g1(:,:,2) + matmul(a1(:,:,2),NO)
+               g1(:,:,3) = g1(:,:,3) + matmul(a1(:,:,3),NO)
+               g0        = g0        + matmul(a0,NO)
+            else
+               g1(:,:,1) = g1(:,:,1) + matmul(b1(:,:,1),NO)
+               g1(:,:,2) = g1(:,:,2) + matmul(b1(:,:,2),NO)
+               g1(:,:,3) = g1(:,:,3) + matmul(b1(:,:,3),NO)
+               g0        = g0        + matmul(b0,NO)
+            end
+         else if (.is_overlapping_atom(a,atoms)) then           ! Do only overlapping atoms
+            do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
+               .get_shell(sh,s,fs,ls)
+               sh_grid1.create(n_pt,sh.n_comp,3)
+               sh_grid0.create(n_pt,sh.n_comp)
+               sh.make_nabla_grid(sh_grid1,sh_grid0,pt)         ! Call this as little as possible
+               NO => .natural_orbitals.restricted(fs:ls,:n_occ) ! Multiply by all orbitals
+               g1(:,:,1) = g1(:,:,1) + matmul(sh_grid1(:,:,1),NO)
+               g1(:,:,2) = g1(:,:,2) + matmul(sh_grid1(:,:,2),NO)
+               g1(:,:,3) = g1(:,:,3) + matmul(sh_grid1(:,:,3),NO)
+               g0        = g0        + matmul(sh_grid0,NO)
+               sh_grid0.destroy
+               sh_grid1.destroy
+               sh.destroy_ptr_part
+            end
          end
       end
       ! Now square up each natural orbital. We can't skip any NO's since they
