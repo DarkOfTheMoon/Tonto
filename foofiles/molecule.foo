@@ -4908,8 +4908,13 @@ contains
 
    read_becke_grid ::: leaky
    ! Read in the Becke integration grid data
+   ENSURE(.atom.created,"input atom information before becke_grid information")
       if (.becke_grid.destroyed) .becke_grid.create
       .becke_grid.read_keywords
+      .becke_grid.set_atom_info(.atom.atomic_number &
+                               ,.atom.transposed_coordinates &
+                               ,.atom.minimum_basis_exponents &
+                               ,.atom) ! leaky
       .becke_grid.set_grid_data
    end
 
@@ -6386,7 +6391,6 @@ contains
    ENSURE(.scfdata.created,"no scfdata")
      dft_energy_correction :: REAL
      if (.scfdata.is_DFT_calculation) then
-       dft_energy_correction =.dft_energy_correction
        dft_energy_correction = .scfdata.dft_energy_correction ! save this
        .scfdata.update(energy=.scf_energy+dft_energy_correction, &
                        kinetic_energy=.kinetic_energy, &
@@ -6437,26 +6441,7 @@ contains
 
    initialise_usual_scf ::: leaky
    ! Initialise the usual SCF procedure
-     DFT_calculation :: BIN
-     DFT_calculation = .scfdata.is_DFT_calculation
-     if (DFT_calculation AND .dftgrid.destroyed) then
-       .dftgrid.create
-       .dftgrid.set_defaults
-     end
-     if (DFT_calculation) then
-       if (.becke_grid.destroyed) then
-          .becke_grid.create
-          .becke_grid.set_defaults
-          .becke_grid.set_grid_data
-       end
-       if (.rough_becke_grid.destroyed) then
-          .rough_becke_grid.create
-          .rough_becke_grid.set_defaults
-          .rough_becke_grid.set_accuracy("very_low")
-          .rough_becke_grid.set_grid_data
-       end
-       .make_overlapping_atoms
-     end
+     .initialise_DFT_grids
      .get_initial_guess
      .make_fock_matrix
      .initialise_scfdata
@@ -6466,25 +6451,7 @@ contains
 
    initialise_constrained_scf ::: leaky
    ! Initialise the constrained SCF procedure
-     DFT_calculation :: BIN
-     DFT_calculation = .scfdata.is_DFT_calculation
-     if (DFT_calculation AND .dftgrid.destroyed) then
-       .dftgrid.create
-       .dftgrid.set_defaults
-     end
-     if (DFT_calculation) then
-       if (.becke_grid.destroyed) then
-          .becke_grid.create
-          .becke_grid.set_defaults
-          .becke_grid.set_grid_data
-       end
-       if (.rough_becke_grid.destroyed) then
-          .rough_becke_grid.create
-          .rough_becke_grid.set_defaults
-          .rough_becke_grid.set_accuracy("very_low")
-          .rough_becke_grid.set_grid_data
-       end
-     end
+     .initialise_DFT_grids
    ! .scfdata.using_rough_convergence = FALSE
      .get_initial_guess
      .make_fock_matrix
@@ -6493,6 +6460,39 @@ contains
      .add_constraint_to_fock_matrix
      .initialise_scfdata_error
      .scfdata.diis.cleanup
+   end
+
+   initialise_DFT_grids ::: leaky
+   ! Initialise DFT grids, if not already done so.
+     if (NOT .scfdata.is_DFT_calculation) return
+     if (.dftgrid.destroyed) then
+       .dftgrid.create
+       .dftgrid.set_defaults
+     end
+     if (.becke_grid.destroyed) then
+       .becke_grid.create
+       .becke_grid.set_defaults
+       .becke_grid.set_atom_info(.atom.atomic_number &
+                                ,.atom.transposed_coordinates &
+                                ,.atom.minimum_basis_exponents &
+                                ,.atom) ! leaky
+       .becke_grid.set_grid_data
+     end
+     if (.rough_becke_grid.destroyed) then
+       .rough_becke_grid.create
+       .rough_becke_grid.set_defaults
+       .rough_becke_grid.set_accuracy("very_low")
+       .rough_becke_grid.set_atom_info(.atom.atomic_number &
+                                      ,.atom.transposed_coordinates &
+                                      ,.atom.minimum_basis_exponents &
+                                      ,.atom) ! leaky
+       .rough_becke_grid.set_grid_data
+     end
+     .make_overlapping_atoms
+   ! .becke_grid.put
+   ! .becke_grid.put_atom_info
+   ! .becke_grid.put_radial_angular_grids
+   ! .becke_grid.put_unique_atom_grids
    end
 
 !   test_average_energy
@@ -6607,25 +6607,7 @@ contains
    ENSURE(.cluster.created,"no cluster")
    ENSURE(.cluster.n_fragment_symop>0,"no cluster fragment symops")
    ENSURE(.n_bf==.saved.n_bf*.cluster.n_fragment_symop,"cluster is not a whole multiple of the fragment")
-      DFT_calculation :: BIN
-      DFT_calculation = .scfdata.is_DFT_calculation
-      if (.dftgrid.destroyed) then
-        .dftgrid.create
-        .dftgrid.set_defaults
-      end
-      if (DFT_calculation) then
-       if (.becke_grid.destroyed) then
-          .becke_grid.create
-          .becke_grid.set_defaults
-          .becke_grid.set_grid_data
-       end
-       if (.rough_becke_grid.destroyed) then
-          .rough_becke_grid.create
-          .rough_becke_grid.set_defaults
-          .rough_becke_grid.set_accuracy("very_low")
-          .rough_becke_grid.set_grid_data
-       end
-      end
+      .initialise_DFT_grids
       ! Initialise and archive the MO's
       .initialise_embedded_orbitals
       .transform_embedded_orbitals(.molecular_orbitals,do_virtual=TRUE)
@@ -11169,7 +11151,7 @@ contains
          ga.create(n_pt,na); gb.create(n_pt,nb)
          V0.create(n_pt)                  ! local potential values on grid
          pt.create(n_pt,3)                ! integration grid points
-         .becke_grid.make_points(pt)      ! <---
+         .becke_grid.make_fat_points(pt)      ! <---
          .atom(atom_a).make_bf_grid(ga,pt)
          .atom(atom_b).make_bf_grid(gb,pt)
          rho.create(n_pt)                 ! density grid
@@ -11177,7 +11159,7 @@ contains
          V0 = ZERO
          .add_r_XC_potentials(V0,rho)
          wt => rho
-         .becke_grid.make_weights(wt,pt)  ! <---
+         .becke_grid.make_fat_weights(wt,pt)  ! <---
          V0 = wt*V0
          rho.destroy
          pt.destroy
@@ -11191,7 +11173,7 @@ contains
          V0.destroy
          gb.destroy; ga.destroy
       end
-      .becke_grid.destroy_atoms_and_positions
+      .becke_grid.destroy_atom_info
       if (DO_IN_PARALLEL) then
          PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
       else
@@ -11219,7 +11201,8 @@ contains
       atoms :: VEC{INT}*
       V_ab :: REAL
       if (present(E)) W.create(.n_bf,.n_bf)
-      V.create(.n_bf,.n_bf)               ! Use temporary V for parallelisation
+      V.create(.n_bf,.n_bf)                     ! Use temporary V for parallelisation
+      nullify(gb0); nullify(gb1)
       do q = 1,.no_of_atom_pairs
          if (NOT .overlapping_atoms(q)) cycle
          .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
@@ -11228,33 +11211,47 @@ contains
          if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
          else;                 atom2 = [atom_a,atom_b]; atoms => atom2
          end
-         .becke_grid.set_atoms_and_positions(.atom(atoms).atomic_number,.atom(atoms).transposed_coordinates) ! leaky
-         n_pt = .becke_grid.no_of_points
+       ! .becke_grid.set_atom_info(.atom(atoms).atomic_number &
+       !                          ,.atom(atoms).transposed_coordinates &
+       !                          ,.atom(atoms).minimum_basis_exponents) ! leaky
+       ! n_pt = .becke_grid.no_of_fat_points
+         n_pt = .becke_grid.no_of_points(atoms)
          ga0.create(n_pt,na); ga1.create(n_pt,na,3)
          if (NOT same_atoms) then
             gb0.create(n_pt,nb); gb1.create(n_pt,nb,3)
          end
-         V0.create(n_pt)                  ! local potential values on grid
-         V1.create(n_pt,3)                ! non local potential values on grid
-         if (present(E)) E0.create(n_pt)  ! energy density
-         pt.create(n_pt,3)                ! integration grid points
-         .becke_grid.make_points(pt)      ! <--- Make only the grid points
-         .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
-         if (same_atoms) then; gb1 => ga1; gb0 => ga0
-         else;                 .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
-         end
-         rho0.create(n_pt)                ! density grid
-         rho1.create(n_pt,3)              ! nabla density grid
+         V0.create(n_pt)                        ! local potential values on grid
+         V1.create(n_pt,3)                      ! non local potential values on grid
+         if (present(E)) E0.create(n_pt)        ! energy density
+         pt.create(n_pt,3)                      ! integration grid points
+       ! .becke_grid.make_fat_points(pt)      ! <--- Make only the grid points
+         .becke_grid.make_points(pt,atoms)      ! <--- Make only the grid points
+
+       ! .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
+       ! if (same_atoms) then; gb1 => ga1; gb0 => ga0
+       ! else;                 .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
+       ! end
+         .becke_grid.make_bf_grids(ga0,ga1,gb0,gb1,pt,[atom_a,atom_b])
+
+         rho0.create(n_pt)                      ! density grid
+         rho1.create(n_pt,3)                    ! nabla density grid
          .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,ga1,ga0,gb1,gb0) 
        ! .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms) 
        ! .make_nabla_density_grid(rho1,rho0,pt) 
-         V0 = ZERO                        ! Evaluation the XC potentials
+         V0 = ZERO                              ! Evaluation the XC potentials
          V1 = ZERO
          .add_r_XC_potentials(V0,rho0,V1,rho1)
          if (present(E)) .set_r_XC_energy_density(E0,rho0,rho1)
          rho1.destroy
          wt => rho0
-         .becke_grid.make_weights(wt,pt)  ! <--- Now make the grid weights
+       ! .becke_grid.make_fat_weights(wt,pt)  ! <--- Now make the grid weights
+         .becke_grid.make_weights(wt,pt,atoms)  ! <--- Now make the grid weights
+   ! stdout.show("q    =",q)
+   ! stdout.show("n_pt =",n_pt)
+   ! stdout.text("pt:")
+   ! stdout.put(pt)
+   ! stdout.text("wt:")
+   ! stdout.put(wt,"column")
          V0 = wt*V0
          forall (i=1:3) V1(:,i) = wt*V1(:,i)
          if (present(E)) E0 = wt*E0
@@ -11282,7 +11279,7 @@ contains
          end
          ga1.destroy; ga0.destroy
       end
-      .becke_grid.destroy_atoms_and_positions
+    ! .becke_grid.destroy_atom_info
       K = K + V
       V.destroy
       K.symmetric_reflect
@@ -11554,7 +11551,7 @@ contains
       else;                                        .assign_NOs_to_MOs
       end
      ! Get the integration grid
-     .becke_grid.set_atoms_and_positions(.atom.atomic_number,.atom.transposed_coordinates)
+   ! .becke_grid.set_atoms_and_positions(.atom.atomic_number,.atom.transposed_coordinates)
      n_pt = .becke_grid.no_of_points
      wt.create(n_pt); pt.create(n_pt,3)
      .becke_grid.make_grid(pt,wt)
@@ -11594,7 +11591,7 @@ contains
      total.destroy
      np.destroy
      p.destroy
-     .becke_grid.destroy_atoms_and_positions
+   ! .becke_grid.destroy_atom_info
    end
 
 !   r_KS_energy_correction_old result(res)
