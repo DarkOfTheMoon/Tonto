@@ -11141,17 +11141,25 @@ contains
       wt,rho,V0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
       atom_a,atom_b,old_a,old_b :: INT
+      same_atoms :: BIN
+      atom1 :: VEC{INT}(1), target
+      atom2 :: VEC{INT}(2), target
+      atoms :: VEC{INT}*
       if (DO_IN_PARALLEL) K = ZERO    ! <------ ???
       atom_a = 0; atom_b = 0
       parallel do q = 1,.no_of_atom_pairs ! loop over atom pairs
          old_a = atom_a; old_b = atom_b
          .get_atom_pair_indices(q,atom_a,atom_b,old_a,old_b,fa,la,na,fb,lb,nb)
          .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
+         same_atoms = atom_a==atom_b
+         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+         end                                    ! Make the grid points and weights
          n_pt = .becke_grid.no_of_points
          ga.create(n_pt,na); gb.create(n_pt,nb)
          V0.create(n_pt)                  ! local potential values on grid
          pt.create(n_pt,3)                ! integration grid points
-         .becke_grid.make_fat_points(pt)      ! <---
+         .becke_grid.make_points(pt,atoms)      ! <---
          .atom(atom_a).make_bf_grid(ga,pt)
          .atom(atom_b).make_bf_grid(gb,pt)
          rho.create(n_pt)                 ! density grid
@@ -11159,7 +11167,7 @@ contains
          V0 = ZERO
          .add_r_XC_potentials(V0,rho)
          wt => rho
-         .becke_grid.make_fat_weights(wt,pt)  ! <---
+         .becke_grid.make_weights(wt,pt,atoms)  ! <---
          V0 = wt*V0
          rho.destroy
          pt.destroy
@@ -11190,8 +11198,8 @@ contains
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
-      pt,rho1,V1,ga0,gb0,V,W :: MAT{REAL}*
-      ga1,gb1 :: MAT3{REAL}*
+      pt,rho1,V1,a0,b0,V,W :: MAT{REAL}*
+      a1,b1 :: MAT3{REAL}*
       wt,rho0,V0,E0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
       atom_a,atom_b,i :: INT
@@ -11202,84 +11210,58 @@ contains
       V_ab :: REAL
       if (present(E)) W.create(.n_bf,.n_bf)
       V.create(.n_bf,.n_bf)                     ! Use temporary V for parallelisation
-      nullify(gb0); nullify(gb1)
+      nullify(a0); nullify(a1)
+      nullify(b0); nullify(b1)
       do q = 1,.no_of_atom_pairs
          if (NOT .overlapping_atoms(q)) cycle
          .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
-       ! .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
          same_atoms = atom_a==atom_b
          if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
          else;                 atom2 = [atom_a,atom_b]; atoms => atom2
-         end
-       ! .becke_grid.set_atom_info(.atom(atoms).atomic_number &
-       !                          ,.atom(atoms).transposed_coordinates &
-       !                          ,.atom(atoms).minimum_basis_exponents) ! leaky
-       ! n_pt = .becke_grid.no_of_fat_points
-         n_pt = .becke_grid.no_of_points(atoms)
-         ga0.create(n_pt,na); ga1.create(n_pt,na,3)
-         if (NOT same_atoms) then
-            gb0.create(n_pt,nb); gb1.create(n_pt,nb,3)
-         end
-         V0.create(n_pt)                        ! local potential values on grid
-         V1.create(n_pt,3)                      ! non local potential values on grid
-         if (present(E)) E0.create(n_pt)        ! energy density
-         pt.create(n_pt,3)                      ! integration grid points
-       ! .becke_grid.make_fat_points(pt)      ! <--- Make only the grid points
-         .becke_grid.make_points(pt,atoms)      ! <--- Make only the grid points
-
-       ! .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
-       ! if (same_atoms) then; gb1 => ga1; gb0 => ga0
-       ! else;                 .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
-       ! end
-         .becke_grid.make_bf_grids(ga0,ga1,gb0,gb1,pt,[atom_a,atom_b])
-
-         rho0.create(n_pt)                      ! density grid
-         rho1.create(n_pt,3)                    ! nabla density grid
-         .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,ga1,ga0,gb1,gb0) 
-       ! .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms) 
-       ! .make_nabla_density_grid(rho1,rho0,pt) 
-         V0 = ZERO                              ! Evaluation the XC potentials
-         V1 = ZERO
+         end                                    ! Make the grid points and weights
+       ! .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=FALSE)
+         .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
+       ! .becke_grid.make_grid(pt,wt,atoms,compress=FALSE)
+         n_pt = pt.dim1                         ! Keep the weight_is_0 array
+         V0.create(n_pt); V1.create(n_pt,3)     ! local/non-local potential grids
+         if (present(E)) E0.create(n_pt)        ! The energy density
+         .becke_grid.make_bf_grids(a0,a1,b0,b1,pt,[atom_a,atom_b])
+         rho0.create(n_pt); rho1.create(n_pt,3) ! The density/nabla density grids
+         .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,a1,a0,b1,b0) 
+         V0 = ZERO                              ! re-use a0, b0 grids
+         V1 = ZERO                              ! Evaluation the XC potentials
          .add_r_XC_potentials(V0,rho0,V1,rho1)
          if (present(E)) .set_r_XC_energy_density(E0,rho0,rho1)
-         rho1.destroy
-         wt => rho0
-       ! .becke_grid.make_fat_weights(wt,pt)  ! <--- Now make the grid weights
-         .becke_grid.make_weights(wt,pt,atoms)  ! <--- Now make the grid weights
-   ! stdout.show("q    =",q)
-   ! stdout.show("n_pt =",n_pt)
-   ! stdout.text("pt:")
-   ! stdout.put(pt)
-   ! stdout.text("wt:")
-   ! stdout.put(wt,"column")
+         rho1.destroy; rho0.destroy
          V0 = wt*V0
          forall (i=1:3) V1(:,i) = wt*V1(:,i)
          if (present(E)) E0 = wt*E0
-         rho0.destroy
-         pt.destroy
+         wt.destroy; pt.destroy
          ! Make the exchange correlation matrix
          do a = 1,na
          do b = 1,nb
-            V_ab = sum(V0*ga0(:,a)*gb0(:,b)) &
-                 + sum(V1(:,1)*(ga1(:,a,1)*gb0(:,b)+ga0(:,a)*gb1(:,b,1))) &
-                 + sum(V1(:,2)*(ga1(:,a,2)*gb0(:,b)+ga0(:,a)*gb1(:,b,2))) &
-                 + sum(V1(:,3)*(ga1(:,a,3)*gb0(:,b)+ga0(:,a)*gb1(:,b,3)))
+            V_ab = sum(V0*a0(:,a)*b0(:,b)) &
+                 + sum(V1(:,1)*(a1(:,a,1)*b0(:,b)+a0(:,a)*b1(:,b,1))) &
+                 + sum(V1(:,2)*(a1(:,a,2)*b0(:,b)+a0(:,a)*b1(:,b,2))) &
+                 + sum(V1(:,3)*(a1(:,a,3)*b0(:,b)+a0(:,a)*b1(:,b,3)))
             aa = fa + a
             bb = fb + b
             V(aa,bb) = V_ab 
             if (NOT present(E)) cycle
             ! Make the DFT energy correction matrix if required
-            W(aa,bb) = -HALF*V_ab + sum(E0*ga0(:,a)*gb0(:,b))
+            W(aa,bb) = -HALF*V_ab + sum(E0*a0(:,a)*b0(:,b))
          end
          end
          if (present(E)) E0.destroy
          V1.destroy; V0.destroy
-         if (NOT same_atoms) then
-            gb1.destroy; gb0.destroy
+         if (same_atoms) then
+            a1.destroy; a0.destroy
+            nullify(b1); nullify(b0)
+         else
+            b1.destroy; b0.destroy
+            a1.destroy; a0.destroy
          end
-         ga1.destroy; ga0.destroy
       end
-    ! .becke_grid.destroy_atom_info
       K = K + V
       V.destroy
       K.symmetric_reflect
@@ -11288,6 +11270,117 @@ contains
       E = W.trace_of_product_with(.density_matrix.restricted)
       W.destroy
    end
+
+!   add_GGA_XC_matrix(K,E)
+!   ! Add the exchange and correlation matrices to K. This routine supports
+!   ! non-local functionals, either exchange or correlation.
+!      K :: MAT{REAL}, target
+!      E :: REAL, optional
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
+!   ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
+!      pt,rho1,V1,ga0,gb0,V,W :: MAT{REAL}*
+!      ga1,gb1 :: MAT3{REAL}*
+!      wt,rho0,V0,E0 :: VEC{REAL}*
+!      q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
+!      atom_a,atom_b,i :: INT
+!      same_atoms :: BIN
+!      atom1 :: VEC{INT}(1), target
+!      atom2 :: VEC{INT}(2), target
+!      atoms :: VEC{INT}*
+!      V_ab :: REAL
+!      if (present(E)) W.create(.n_bf,.n_bf)
+!      V.create(.n_bf,.n_bf)                     ! Use temporary V for parallelisation
+!      nullify(gb0); nullify(gb1)
+!      do q = 1,.no_of_atom_pairs
+!         if (NOT .overlapping_atoms(q)) cycle
+!         .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
+!       ! .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
+!         same_atoms = atom_a==atom_b
+!         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+!         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+!         end
+!       ! .becke_grid.set_atom_info(.atom(atoms).atomic_number &
+!       !                          ,.atom(atoms).transposed_coordinates &
+!       !                          ,.atom(atoms).minimum_basis_exponents) ! leaky
+!       ! n_pt = .becke_grid.no_of_fat_points
+!         n_pt = .becke_grid.no_of_points(atoms)
+!         ga0.create(n_pt,na); ga1.create(n_pt,na,3)
+!         if (NOT same_atoms) then
+!            gb0.create(n_pt,nb); gb1.create(n_pt,nb,3)
+!         end
+!         V0.create(n_pt)                        ! local potential values on grid
+!         V1.create(n_pt,3)                      ! non local potential values on grid
+!         if (present(E)) E0.create(n_pt)        ! energy density
+!       ! pt.create(n_pt,3)                      ! integration grid points
+!       ! wt.create(n_pt)                        ! integration grid weights
+!       ! .becke_grid.make_fat_points(pt)      ! <--- Make only the grid points
+!       ! .becke_grid.make_points(pt,atoms)      ! <--- Make only the grid points
+!         .becke_grid.make_grid(pt,wt,atoms)      ! <--- Make only the grid points
+!
+!       ! .atom(atom_a).make_nabla_bf_grid(ga1,ga0,pt)
+!       ! if (same_atoms) then; gb1 => ga1; gb0 => ga0
+!       ! else;                 .atom(atom_b).make_nabla_bf_grid(gb1,gb0,pt)
+!       ! end
+!         .becke_grid.make_bf_grids(ga0,ga1,gb0,gb1,pt,[atom_a,atom_b])
+!
+!         rho0.create(n_pt)                      ! density grid
+!         rho1.create(n_pt,3)                    ! nabla density grid
+!         .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,ga1,ga0,gb1,gb0) 
+!       ! .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms) 
+!       ! .make_nabla_density_grid(rho1,rho0,pt) 
+!         V0 = ZERO                              ! Evaluation the XC potentials
+!         V1 = ZERO
+!         .add_r_XC_potentials(V0,rho0,V1,rho1)
+!         if (present(E)) .set_r_XC_energy_density(E0,rho0,rho1)
+!         rho1.destroy
+!       ! wt => rho0
+!       ! .becke_grid.make_fat_weights(wt,pt)  ! <--- Now make the grid weights
+!       ! .becke_grid.make_weights(wt,pt,atoms)  ! <--- Now make the grid weights
+!   ! stdout.show("q    =",q)
+!   ! stdout.show("n_pt =",n_pt)
+!   ! stdout.text("pt:")
+!   ! stdout.put(pt)
+!   ! stdout.text("wt:")
+!   ! stdout.put(wt,"column")
+!         V0 = wt*V0
+!         forall (i=1:3) V1(:,i) = wt*V1(:,i)
+!         if (present(E)) E0 = wt*E0
+!         rho0.destroy
+!         wt.destroy
+!         pt.destroy
+!         ! Make the exchange correlation matrix
+!         do a = 1,na
+!         do b = 1,nb
+!            V_ab = sum(V0*ga0(:,a)*gb0(:,b)) &
+!                 + sum(V1(:,1)*(ga1(:,a,1)*gb0(:,b)+ga0(:,a)*gb1(:,b,1))) &
+!                 + sum(V1(:,2)*(ga1(:,a,2)*gb0(:,b)+ga0(:,a)*gb1(:,b,2))) &
+!                 + sum(V1(:,3)*(ga1(:,a,3)*gb0(:,b)+ga0(:,a)*gb1(:,b,3)))
+!            aa = fa + a
+!            bb = fb + b
+!            V(aa,bb) = V_ab 
+!            if (NOT present(E)) cycle
+!            ! Make the DFT energy correction matrix if required
+!            W(aa,bb) = -HALF*V_ab + sum(E0*ga0(:,a)*gb0(:,b))
+!         end
+!         end
+!         if (present(E)) E0.destroy
+!         V1.destroy; V0.destroy
+!         if (NOT same_atoms) then
+!            gb1.destroy; gb0.destroy
+!         end
+!         ga1.destroy; ga0.destroy
+!      end
+!    ! .becke_grid.destroy_atom_info
+!      K = K + V
+!      V.destroy
+!      K.symmetric_reflect
+!      if (NOT present(E)) return
+!      W.symmetric_reflect
+!      E = W.trace_of_product_with(.density_matrix.restricted)
+!      W.destroy
+!   end
 
 !   add_LDA_ex_corr_matrix_old(K)
 !   ! Add the exchange and correlation matrices to K.
