@@ -11124,69 +11124,145 @@ contains
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
       E :: REAL
       if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(K,E)
-      else;                                    .add_LDA_XC_matrix(K)
+      else;                                    .add_LDA_XC_matrix(K,E)
       end
       .scfdata.set(dft_energy_correction=E)
    end
 
-   add_LDA_XC_matrix(K)
-   ! Add the exchange and correlation matrices to K.
-   ! This routine supports local functionals only.
+!   add_LDA_XC_matrix(K)
+!   ! Add the exchange and correlation matrices to K.
+!   ! This routine supports local functionals only.
+!      K :: MAT{REAL}, target
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.dftgrid.created, "need to specify dftgrid")
+!   ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
+!      pt,ga,gb  :: MAT{REAL}*
+!      wt,rho,V0 :: VEC{REAL}*
+!      q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
+!      atom_a,atom_b,old_a,old_b :: INT
+!      same_atoms :: BIN
+!      atom1 :: VEC{INT}(1), target
+!      atom2 :: VEC{INT}(2), target
+!      atoms :: VEC{INT}*
+!      if (DO_IN_PARALLEL) K = ZERO    ! <------ ???
+!      atom_a = 0; atom_b = 0
+!      parallel do q = 1,.no_of_atom_pairs ! loop over atom pairs
+!         old_a = atom_a; old_b = atom_b
+!         .get_atom_pair_indices(q,atom_a,atom_b,old_a,old_b,fa,la,na,fb,lb,nb)
+!         .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
+!         same_atoms = atom_a==atom_b
+!         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+!         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+!         end                                    ! Make the grid points and weights
+!         n_pt = .becke_grid.no_of_fat_points
+!         ga.create(n_pt,na); gb.create(n_pt,nb)
+!         V0.create(n_pt)                  ! local potential values on grid
+!         pt.create(n_pt,3)                ! integration grid points
+!         .becke_grid.make_points(pt,atoms)      ! <---
+!         .atom(atom_a).make_bf_grid(ga,pt)
+!         .atom(atom_b).make_bf_grid(gb,pt)
+!         rho.create(n_pt)                 ! density grid
+!         .make_density_grid(rho,pt)       ! <---
+!         V0 = ZERO
+!         .add_r_XC_potentials(V0,rho)
+!         wt => rho
+!         .becke_grid.make_weights(wt,pt,atoms)  ! <---
+!         V0 = wt*V0
+!         rho.destroy
+!         pt.destroy
+!         do a = 1,na                      ! Make the exchange correlation matrix
+!         do b = 1,nb
+!            aa = fa + a
+!            bb = fb + b
+!            K(aa,bb) = K(aa,bb) + sum(V0*ga(:,a)*gb(:,b))
+!         end
+!         end
+!         V0.destroy
+!         gb.destroy; ga.destroy
+!      end
+!      .becke_grid.destroy_atom_info
+!      if (DO_IN_PARALLEL) then
+!         PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
+!      else
+!         K.symmetric_reflect
+!      end
+!   end
+
+   add_LDA_XC_matrix(K,E)
+   ! Add the exchange and correlation matrices to K. This routine supports
+   ! local functional only, either exchange or correlation.
       K :: MAT{REAL}, target
+      E :: REAL, optional
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
-   ENSURE(.dftgrid.created, "need to specify dftgrid")
+   ENSURE(.dftgrid.created, "need to specify dftgrid for ZORA")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
-      pt,ga,gb  :: MAT{REAL}*
-      wt,rho,V0 :: VEC{REAL}*
+      pt,a0,b0,V,W :: MAT{REAL}*
+      wt,rho0,V0,E0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt :: INT
-      atom_a,atom_b,old_a,old_b :: INT
+      atom_a,atom_b,i :: INT
       same_atoms :: BIN
       atom1 :: VEC{INT}(1), target
       atom2 :: VEC{INT}(2), target
       atoms :: VEC{INT}*
-      if (DO_IN_PARALLEL) K = ZERO    ! <------ ???
-      atom_a = 0; atom_b = 0
-      parallel do q = 1,.no_of_atom_pairs ! loop over atom pairs
-         old_a = atom_a; old_b = atom_b
-         .get_atom_pair_indices(q,atom_a,atom_b,old_a,old_b,fa,la,na,fb,lb,nb)
-         .set_atom_pair_grid_info(atom_a,atom_b,n_pt)
+      V_ab :: REAL
+      if (present(E)) W.create(.n_bf,.n_bf)
+      V.create(.n_bf,.n_bf)                     ! Use temporary V for parallelisation
+      nullify(a0)
+      nullify(b0)
+      do q = 1,.no_of_atom_pairs
+         if (NOT .overlapping_atoms(q)) cycle
+         .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
          same_atoms = atom_a==atom_b
          if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
          else;                 atom2 = [atom_a,atom_b]; atoms => atom2
          end                                    ! Make the grid points and weights
-         n_pt = .becke_grid.no_of_points
-         ga.create(n_pt,na); gb.create(n_pt,nb)
-         V0.create(n_pt)                  ! local potential values on grid
-         pt.create(n_pt,3)                ! integration grid points
-         .becke_grid.make_points(pt,atoms)      ! <---
-         .atom(atom_a).make_bf_grid(ga,pt)
-         .atom(atom_b).make_bf_grid(gb,pt)
-         rho.create(n_pt)                 ! density grid
-         .make_density_grid(rho,pt)       ! <---
-         V0 = ZERO
-         .add_r_XC_potentials(V0,rho)
-         wt => rho
-         .becke_grid.make_weights(wt,pt,atoms)  ! <---
+       ! .becke_grid.make_grid(pt,wt,atoms,compress=FALSE)
+       ! .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=FALSE)
+         .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
+         n_pt = pt.dim1                         ! Keep the weight_is_0 array
+         V0.create(n_pt)                        ! local potential grids
+         if (present(E)) E0.create(n_pt)        ! The energy density
+         .becke_grid.make_bf_grids(a0,b0,pt,atoms)
+         rho0.create(n_pt)                      ! The density grids
+         .make_density_grid_r_B(rho0,pt,atoms,a0,b0) 
+         V0 = ZERO                              ! re-use a0, b0 grids
+         .add_r_XC_potentials(V0,rho0)          ! Evaluation the XC potentials
+         if (present(E)) .set_r_XC_energy_density(E0,rho0)
+         rho0.destroy
          V0 = wt*V0
-         rho.destroy
-         pt.destroy
-         do a = 1,na                      ! Make the exchange correlation matrix
+         if (present(E)) E0 = wt*E0
+         wt.destroy; pt.destroy
+         ! Make the exchange correlation matrix
+         do a = 1,na
          do b = 1,nb
+            V_ab = sum(V0*a0(:,a)*b0(:,b)) 
             aa = fa + a
             bb = fb + b
-            K(aa,bb) = K(aa,bb) + sum(V0*ga(:,a)*gb(:,b))
+            V(aa,bb) = V_ab 
+            if (NOT present(E)) cycle
+            ! Make the DFT energy correction matrix if required
+            W(aa,bb) = -HALF*V_ab + sum(E0*a0(:,a)*b0(:,b))
          end
          end
+         if (present(E)) E0.destroy
          V0.destroy
-         gb.destroy; ga.destroy
+         if (same_atoms) then
+            a0.destroy
+            nullify(b0)
+         else
+            b0.destroy
+            a0.destroy
+         end
       end
-      .becke_grid.destroy_atom_info
-      if (DO_IN_PARALLEL) then
-         PARALLEL_MATRIX_SUM(K,is_symmetric=TRUE)
-      else
-         K.symmetric_reflect
-      end
+      K = K + V
+      V.destroy
+      K.symmetric_reflect
+      if (NOT present(E)) return
+      W.symmetric_reflect
+      E = W.trace_of_product_with(.density_matrix.restricted)
+      W.destroy
    end
 
    add_GGA_XC_matrix(K,E)
@@ -11219,18 +11295,18 @@ contains
          if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
          else;                 atom2 = [atom_a,atom_b]; atoms => atom2
          end                                    ! Make the grid points and weights
+       ! .becke_grid.make_grid(pt,wt,atoms,compress=FALSE)
        ! .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=FALSE)
          .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
-       ! .becke_grid.make_grid(pt,wt,atoms,compress=FALSE)
          n_pt = pt.dim1                         ! Keep the weight_is_0 array
          V0.create(n_pt); V1.create(n_pt,3)     ! local/non-local potential grids
          if (present(E)) E0.create(n_pt)        ! The energy density
-         .becke_grid.make_bf_grids(a0,a1,b0,b1,pt,[atom_a,atom_b])
+         .becke_grid.make_bf_grids(a0,a1,b0,b1,pt,atoms)
          rho0.create(n_pt); rho1.create(n_pt,3) ! The density/nabla density grids
          .make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,a1,a0,b1,b0) 
          V0 = ZERO                              ! re-use a0, b0 grids
-         V1 = ZERO                              ! Evaluation the XC potentials
-         .add_r_XC_potentials(V0,rho0,V1,rho1)
+         V1 = ZERO                              
+         .add_r_XC_potentials(V0,rho0,V1,rho1)  ! Evaluation the XC potentials
          if (present(E)) .set_r_XC_energy_density(E0,rho0,rho1)
          rho1.destroy; rho0.destroy
          V0 = wt*V0
@@ -14504,6 +14580,72 @@ contains
       grid1 = TWO*grid1
    end
 
+   make_density_grid_r_B(grid0,pt,atoms,a0,b0)
+   ! Evaluate the density grid "grid0" on a set of grid points "pt", for use in
+   ! matrix elements needed by DFT grid integration. "atoms" is a list of
+   ! indices of the atoms whose grid points are to be used in DFT integrations.
+   ! "a0" and "b0" are the basis function grids for the atoms listed in "atoms".
+   ! These are the grids for the atoms whose matrix elements are to be
+   ! evaluated. We don't have to calculate the density contributions for any
+   ! atoms which do not have basis functions which overlap with those in
+   ! "atoms", because the orbital density from those atoms evaluated at those in
+   ! the "atoms" list will be negligible. NOTE: this routine depends on having
+   ! the .overlapping_atoms array defined. NOTE: it depends on having the
+   ! natural orbitals defined, and it may take much more memory than version A
+   ! above, but it may be quicker.
+      grid0 :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}
+      a0,b0 :: MAT{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(grid0.dim==pt.dim1,"grid0 has wrong 1st dimension")
+   ENSURE(pt.dim2==3,"pt has wrong 2nd dimension")
+   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+   ENSURE(.natural_orbitals.created, "no natural orbitals")
+   ENSURE(.natural_orbitals.created("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.created, "no occupation numbers")
+   ENSURE(.occupation_numbers.created("restricted"),"no occupation numbers")
+      sh :: SHELL1
+      g0,sh_grid0,NO :: MAT{REAL}*
+      n_pt,n_occ,a,s,f,l,fs,ls,n :: INT
+      occ :: REAL
+      n_pt = pt.dim1
+      n_occ = .no_of_occupied_NOs
+      ! Evaluate *all* the natural orbitals on the grid, to save calling
+      ! make_nabla_grid too many times
+      g0.create(n_pt,n_occ)
+      g0 = ZERO
+      do a = 1,.n_atom
+         if (any(a==atoms)) then                                ! Use the supplied grids
+            f = .first_basis_fn_for_atom(a)
+            l =  .last_basis_fn_for_atom(a)
+            NO => .natural_orbitals.restricted(f:l,:n_occ)      ! Multiply by all orbitals
+            if (a==atoms(1)) then; g0 = g0 + matmul(a0,NO)      ! Re-use a0
+            else;                  g0 = g0 + matmul(b0,NO)      ! Re-use b0
+            end
+         else if (.is_overlapping_atom(a,atoms)) then           ! Do only overlapping atoms
+            do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
+               .get_shell(sh,s,fs,ls)
+               sh_grid0.create(n_pt,sh.n_comp)
+               sh.make_grid(sh_grid0,pt)                        ! Call this as little as possible
+               NO => .natural_orbitals.restricted(fs:ls,:n_occ) ! Multiply by all orbitals
+               g0 = g0 + matmul(sh_grid0,NO)
+               sh_grid0.destroy
+               sh.destroy_ptr_part
+            end
+         end
+      end
+      ! Now square up each natural orbital. We can't skip any NO's since they
+      ! could be all delocalised.
+      grid0 = ZERO
+      do n = 1,n_occ
+         occ = .occupation_numbers.restricted(n)
+         grid0 = grid0 + occ*g0(:,n)*g0(:,n)
+      end
+      g0.destroy
+   end
+
    make_nabla_density_grid_r_B(grid1,grid0,pt,atoms,a1,a0,b1,b0)
    ! Evaluate the nabla density grid "grid1" as well as the density grid
    ! "grid0" on a set of grid points "pt", for use in matrix elements needed by
@@ -14516,7 +14658,7 @@ contains
    ! density from those atoms evaluated at those in the "atoms" list will be
    ! negligible. NOTE: this routine depends on having the .overlapping_atoms
    ! array defined. NOTE: it depends on having the natural orbitals defined, and
-   ! it may take much more memory than the version above, but it may be quicker.
+   ! it may take much more memory than version A above, but it may be quicker.
       grid1 :: MAT{REAL}, OUT
       grid0 :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
