@@ -1049,7 +1049,8 @@ contains
    end
 
    set_atom_min_distance ::: leaky, private
-   ! Make the minimum distances between atoms.
+   ! Make the minimum distances between atoms. This is required for the
+   ! Stratmann-Scuseria partition function which is supposedly more efficient.
    ENSURE(.atom_pos.created,"no atom_Z array")
       n_atom,i,j,k :: INT
       px,py,pz,dx,dy,dz,dmin,d :: REAL
@@ -1075,9 +1076,14 @@ contains
    end
 
    set_atom_grids ::: leaky, private
-   ! Make all the atom integration grids.
-   ! A slim grid makes use of atom_lowest_exponents and prunes the radial grid,
-   ! as well as pruning points which have zero or low weight factors.
+   ! Make all the atom integration grids. These grids make use of the
+   ! ".atom_lowest_exponents" to decide when the basis functions for an atom
+   ! will have small values, to decide when to prune the radial grid. Therefore
+   ! IMPORTANT: these atomic grids are designed for integrating functions in
+   ! which those atoms basis functions appear i.e. integrating matrix elements
+   ! involving *all* these atoms basis functions. (The pruning of points with low
+   ! partition weight factors is done at a later stage when the atoms in the
+   ! partition are known).
    ENSURE(.atom_Z.created,"no atom_Z array")
    ENSURE(.unique_atom.created,"no unique_atom array")
       u,p,p_max,a,np :: INT
@@ -1089,18 +1095,18 @@ contains
       .atom_points.create(.n_unique_atoms)
       .atom_weights.create(.n_unique_atoms)
       p_max = period(maxval(.atom_Z))
-      do p = 1,p_max                     ! Loop over atoms with periodic table row=p
+      do p = 1,p_max                       ! Loop over atoms with periodic table row=p
          if (all(period(.atom_Z)/=p)) cycle
-         .set_unscaled_grid(p)           ! Set unscaled reference grid for row=p
-         do u = 1,.n_unique_atoms        ! for each *unique* atom
+         .set_unscaled_grid(p)             ! Set unscaled reference grid for row=p
+         do u = 1,.n_unique_atoms          ! for each *unique* atom
             a = .unique_atom(u)
             if (period(.atom_Z(a))/=p) cycle
-            np = .no_of_points_for_atom(a)
+            np = .no_of_points_for_atom(a) ! Only the smallest no of radial points are used
             .atom_points(u).element.create(np,3)
             .atom_weights(u).element.create(np)
             pt => .atom_points(u).element
             wt => .atom_weights(u).element
-            pt = .unscaled_point(1:np,:)
+            pt = .unscaled_point(1:np,:)   ! Copy only the smaller number of points
             wt = .unscaled_weight(1:np)
             if (.scale_atomic_grids) then
                s  = .atom_zeta(.atom_Z(a))
@@ -1429,34 +1435,56 @@ contains
 !  Full grid generation routines
 !  *****************************
 
-   make_grid(pt,wt)
-   ! Make the DFT integration grid points "pt" for a given list of "atoms".
-   ! The precalculated atom grids must have been made by calling .set_grid_data
-      pt :: MAT{REAL}, OUT
-      wt :: VEC{REAL}, OUT
-   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
-   ENSURE(.atom_points.created,"no atom_Z array")
-   ENSURE(pt.dim1==wt.dim,"incompatible pt and wt arrays")
-   ENSURE(pt.dim2==3,"wrong size, pt array")
-      a,u,f,l :: INT
-      l = 0
-      do a = 1,.atom_Z.dim     
-         u = .unique_atom_for(a)
-         f = l + 1
-         l = l + .atom_weights(u).element.dim
-         pt(f:l,:) = .atom_points(u).element
-         wt(f:l)   = .atom_weights(u).element
-         .displace(pt(f:l,:),a)
-         .partition(wt(f:l),pt(f:l,:),a)
-      end
+!   make_grid(pt,wt)
+!   ! Make the DFT integration grid points "pt" for a given list of "atoms".
+!   ! The precalculated atom grids must have been made by calling .set_grid_data
+!      pt :: MAT{REAL}, OUT
+!      wt :: VEC{REAL}, OUT
+!   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+!   ENSURE(.atom_points.created,"no atom_Z array")
+!   ENSURE(pt.dim1==wt.dim,"incompatible pt and wt arrays")
+!   ENSURE(pt.dim2==3,"wrong size, pt array")
+!      a,u,f,l :: INT
+!      l = 0
+!      do a = 1,.atom_Z.dim     
+!         u = .unique_atom_for(a)
+!         f = l + 1
+!         l = l + .atom_weights(u).element.dim
+!         pt(f:l,:) = .atom_points(u).element
+!         wt(f:l)   = .atom_weights(u).element
+!         .displace(pt(f:l,:),a)
+!         .partition(wt(f:l),pt(f:l,:),a)
+!      end
+!   end
+
+   make_grid(pt,wt,compress,weight_is_0) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for a given list of "atoms".
+   ! If you don't want a compressed grid set "compress" to FALSE. Here
+   ! compression refers to removal of points whose partition weight is small.
+   ! Thus, if "atoms" is comprised of one atom only, no compression is allowed.
+   ! If you need the .weight_is_0 array (to save work when making basis function
+   ! grids) then set "weight_is_0" to TRUE. NOTE: the "atoms" array must have no
+   ! repetitions. NOTE: The precalculated atom grids must have been made by
+   ! calling .set_grid_data. NOTE: For linear scaling calculations, don't use this
+   ! routine: instead use the routine based on atom pairs.
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      compress,weight_is_0 :: BIN, optional
+      i :: INT
+      .make_grid(pt,wt,[(i,i=1,.atom_Z.dim)],compress,weight_is_0)
    end
 
    make_grid(pt,wt,atoms,compress,weight_is_0) ::: leaky
    ! Make the DFT integration grid ("pt","wt") for a given list of "atoms".
    ! The precalculated atom grids must have been made by calling .set_grid_data
-   ! If you don't want a compressed grid set "compress" to FALSE.  If you need
-   ! the .weight_is_0 array (to save work when making basis function grids) then
-   ! set "weight_is_0" to TRUE.
+   ! If you don't want a compressed grid set "compress" to FALSE. Here
+   ! compression refers to removal of points whose partition weight is small.
+   ! Thus, if "atoms" is comprised of one atom only, no compression is allowed.
+   ! If you need the .weight_is_0 array (to save work when making basis function
+   ! grids) then set "weight_is_0" to TRUE. NOTE: the "atoms" array must have no
+   ! repetitions.NOTE: The precalculated atom grids must have been made by
+   ! calling .set_grid_data. NOTE: For linear scaling calculations, don't use
+   ! this routine: instead use the routine based on atom pairs.
       pt :: MAT{REAL}*
       wt :: VEC{REAL}*
       atoms :: VEC{INT}, IN
@@ -1464,6 +1492,7 @@ contains
    ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
    ENSURE(.atom_points.created,"no atom_Z array")
    ENSURE(.weight_is_0.destroyed,"the weight_is_0 array exists!")
+   ENSURE(NOT atoms.has_repetitions,"the atoms array has repetitions!")
       n_pt,a,u,f,l,i,k :: INT
       keep,kompress :: BIN
       pt0 :: MAT{REAL}*
@@ -1485,19 +1514,9 @@ contains
             pt(f:l,:) = .atom_points(u).element
             wt(f:l)   = .atom_weights(u).element
             .displace(pt(f:l,:),atoms(a))
-            if (atoms.dim==1) cycle
+            if (atoms.dim==1) cycle        ! No partition needed for one atom ...
             .partition(wt(f:l),pt(f:l,:),a,atoms)
          end
- ! stdout.show("n_pt =",n_pt)
- ! .weight_is_0.create(n_pt)
- ! .weight_is_0 = FALSE
- ! stdout.text("w0:")
- ! stdout.put(.weight_is_0,"column")
- ! .weight_is_0.destroy
- ! stdout.text("pt:")
- ! stdout.put(pt)
- ! stdout.text("wt:")
- ! stdout.put(wt,"column")
       else                                 ! <<< Compress and partition ...
          .weight_is_0.create(n_pt)         ! leaky here
          l = 0
@@ -1507,18 +1526,10 @@ contains
             l = l + .atom_weights(u).element.dim
             pt(f:l,:) = .atom_points(u).element
             wt(f:l)   = .atom_weights(u).element
-            .displace(pt(f:l,:),atoms(a))
+            .displace(pt(f:l,:),atoms(a))  ! Must have more than one atom ...
             .partition(wt(f:l),pt(f:l,:),a,atoms,.weight_is_0(f:l))
          end
          n_pt = count(NOT .weight_is_0)    ! How many non-zero weights?
- ! stdout.show("n_pt =",n_pt)
- ! stdout.show("n_mx =",wt.dim)
- ! stdout.text("w0:")
- ! stdout.put(.weight_is_0,"column")
- ! stdout.text("pt:")
- ! stdout.put(pt)
- ! stdout.text("wt:")
- ! stdout.put(wt,"column")
          if (n_pt==wt.dim) then            ! If none we don't need it
             .weight_is_0.destroy
          else
@@ -1588,8 +1599,84 @@ contains
 !  Basis function grid generation routines
 !  ***************************************
 
+   make_bf_grids(a0,b0,pt,atoms) ::: leaky
+   ! Make the basis function grid and basis function gradient grid, "a0", "a1"
+   ! and "b0", "b1" respectively, on the set of points "pt", for a pair of
+   ! "atoms" (a,b) in the complete atom list. NOTE: remember *not* to destroy
+   ! "b0" and "b1" sometimes. NOTE: .weight_is_0 is destroyed at the end of
+   ! this routine, since I assume that this expensive routine is called only
+   ! once for a particular pair of atoms.
+      a0,b0 :: MAT{REAL}*
+      pt :: MAT{REAL}
+      atoms :: VEC{INT}, IN
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
+   ENSURE(.atom_grid0.created,"no atom_grid0 array")
+   ENSURE(atoms.dim<=2,"only valid for at most two atoms")
+   ENSURE(a0.destroyed,"a0 exists!")
+   ENSURE(b0.destroyed,"b0 exists!")
+      n_pt,a,b,ua,ub,na,nb,n,fa,fb,i,k,ma,m :: INT
+      if (atoms.dim==1) then
+         a = atoms(1)
+         ua = .unique_atom_for(a) 
+         a0.create_copy(.atom_grid0(ua).element)          ! Leaky
+         ENSURE(b0.destroyed,"b0 is not destroyed!")
+         b0 => a0 
+      else
+         a = atoms(1)
+         b = atoms(2)
+         ua = .unique_atom_for(a) 
+         ub = .unique_atom_for(b) 
+         na = .atom_grid0(ua).element.dim1
+         nb = .atom_grid0(ub).element.dim1
+         fa = .atom_grid0(ua).element.dim2
+         fb = .atom_grid0(ub).element.dim2
+         n  = na + nb
+         if (.weight_is_0.destroyed) then                 ! WARNING: be careful here
+            a0.create(n,fa)                               ! Leaky
+            b0.create(n,fb)                    
+            a0(   1:na,:)   = .atom_grid0(ua).element     ! a's basis functions on a's points
+            b0(na+1: n,:)   = .atom_grid0(ub).element     ! b's basis functions on b's points
+            .atom(a).make_bf_grid(a0(na+1: n,:),pt(na+1: n,:)) ! a's basis functions on b's point
+            .atom(b).make_bf_grid(b0(   1:na,:),pt(   1:na,:)) ! b's basis functions on a's points
+ ! stdout.show("na =",na)
+ ! stdout.show("nb =",nb)
+ ! stdout.show("n  =",n )
+ ! stdout.text("a0:")
+ ! stdout.put(a0)
+         else
+            m = count(NOT .weight_is_0)
+            ENSURE(pt.dim1==m,"wrong size for pt array")
+            a0.create(m,fa)                               ! Leaky
+            b0.create(m,fb)                    
+            k = 0
+            do i = 1,na
+               if (.weight_is_0(i)) cycle
+               k = k + 1
+               a0(k,:) = .atom_grid0(ua).element(i,:)   ! a's basis functions on a's points
+            end
+            ma = k
+            do i = 1,nb
+               if (.weight_is_0(na+i)) cycle
+               k = k + 1
+               b0(k,:) = .atom_grid0(ub).element(i,:)   ! b's basis functions on b's points
+            end
+            .atom(a).make_bf_grid(a0(ma+1: m,:),pt(ma+1: m,:)) ! a's basis functions on b's point
+            .atom(b).make_bf_grid(b0(   1:ma,:),pt(   1:ma,:)) ! b's basis functions on a's points
+ ! stdout.show("na =",na)
+ ! stdout.show("nb =",nb)
+ ! stdout.show("n  =",n )
+ ! stdout.show("ma =",ma)
+ ! stdout.show("m  =",m )
+ ! stdout.text("a0:")
+ ! stdout.put(a0)
+            .weight_is_0.destroy                          ! <<< Destroy .weight_is_0
+         end
+      end
+   end
+
    make_bf_grids(a0,a1,b0,b1,pt,atoms) ::: leaky
-   ! Make the basis function grid and basis unction gradient grid, "a0", "a1"
+   ! Make the basis function grid and basis function gradient grid, "a0", "a1"
    ! and "b0", "b1" respectively, on the set of points "pt", for a pair of
    ! "atoms" (a,b) in the complete atom list. NOTE: remember *not* to destroy
    ! "b0" and "b1" sometimes. NOTE: .weight_is_0 is destroyed at the end of
@@ -1600,17 +1687,17 @@ contains
       pt :: MAT{REAL}
       atoms :: VEC{INT}, IN
    ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom.created,"no atom list array")
    ENSURE(.atom_grid0.created,"no atom_grid0 array")
    ENSURE(.atom_grid1.created,"no atom_grid1 array")
-   ENSURE(atoms.dim==2,"only valid for two atoms")
+   ENSURE(atoms.dim<=2,"only valid for at most two atoms")
    ENSURE(a0.destroyed,"a0 exists!")
    ENSURE(a1.destroyed,"a1 exists!")
    ENSURE(b0.destroyed,"b0 exists!")
    ENSURE(b1.destroyed,"b1 exists!")
       n_pt,a,b,ua,ub,na,nb,n,fa,fb,i,k,ma,m :: INT
-      a = atoms(1)
-      b = atoms(2)
-      if (a==b) then
+      if (atoms.dim==1) then
+         a = atoms(1)
          ua = .unique_atom_for(a) 
          a0.create_copy(.atom_grid0(ua).element)          ! Leaky
          a1.create_copy(.atom_grid1(ua).element)
@@ -1619,6 +1706,8 @@ contains
          b0 => a0 
          b1 => a1
       else
+         a = atoms(1)
+         b = atoms(2)
          ua = .unique_atom_for(a) 
          ub = .unique_atom_for(b) 
          na = .atom_grid0(ua).element.dim1
@@ -2093,288 +2182,288 @@ contains
 
 !  Partition function
 
-   partition(wt,pt,a) ::: private
-   ! Partition the grid ("pt","wt") for the atom "a" whose position is in
-   ! "pos(a,:)" so that the weights work with all the other atomic positions
-   ! given in "pos" using Becke's or Delley's partition function. Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! You can choose if you want the atom sizes to be taken account in
-   ! the construction of the partiton.
-   ! NOTE : all the positions in "pos" must be distinct!!!!!!
-   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
-   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-   !             Perez-Jorda and Yang 1995, CPL 241 p.469
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-      select case (.partition_scheme)
-         case ("becke            ")
-            select case (.partition_scaling_scheme)
-               case ("none             "); .partition_B_no_adj(wt,pt,a)
-               case ("becke            "); .partition_B_B_adj(wt,pt,a)
-               case ("treutler_ahlrichs"); .partition_B_TA_adj(wt,pt,a)
-               case default; UNKNOWN(.partition_scaling_scheme)
-            end
-         case ("delley           ")
-            select case (.partition_scaling_scheme)
-               case ("none             "); .partition_D(wt,pt,a)
-               case default; UNKNOWN(.partition_scaling_scheme)
-            end
-         case ("stratmann_scuseria")
-            select case (.partition_scaling_scheme)
-               case ("none             "); .partition_SS(wt,pt,a)
-               case default; UNKNOWN(.partition_scaling_scheme)
-            end
-         case default; UNKNOWN(.partition_scheme)
-      end
-   end
-
-   partition_D(wt,pt,a) ::: private
-   ! Using a modified Delley partition function (as described by Perez-Jorda and
-   ! Yang 1995, CPL 241 p.469), partition the grid ("pt","wt") for the
-   ! atom "a" so that the weights work with all the other atomic positions given
-   ! in ".atom_pos". Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! In this version no atomic size adjustments is made.
-   ! NOTE : all the positions in "pos" must be distinct!!!!!!
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
-   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
-   ENSURE(.atom_pos.created,"no atom list")
-   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
-      n,n_pts,n_centers,i :: INT
-      dni,eni,s :: REAL
-      rni,posi :: VEC{REAL}(3)
-      partition :: MAT{REAL}*
-      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
-      n_pts = wt.dim                    ! Number of points for this atom "a"
-      partition.create(n_pts,n_centers) ! Create partition array
-      do i = 1,n_centers
-          posi = .atom_pos(i,:)
-          do n = 1,n_pts
-              rni = pt(n,:) - posi
-              dni = TWO*sqrt(dot_product(rni,rni))
-              eni = min(ONE/dni,7.0d2)  ! Limit the exponential below
-              s = exp(-dni)*(exp(eni)-ONE-eni)
-              partition(n,i) = s
-          end
-      end
-      ! Normalize the partitioning function and modify the grid weights
-      do n = 1,n_pts
-          s = partition(n,a)/sum(partition(n,:))
-          wt(n) = wt(n)*s
-      end
-      partition.destroy
-   end
-
-   partition_B_no_adj(wt,pt,a) ::: private
-   ! Using Becke's partition function, partition the grid ("pt","wt") for the
-   ! atom "a" so that the weights work with all the other atomic positions given
-   ! in ".atom_pos". Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! In this version no atomic size adjustments is made.
-   ! NOTE : all the positions in "pos" must be distinct!!!!!!
-   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
-   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
-   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
-   ENSURE(.atom_pos.created,"no atom list")
-   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
-      n,n_pts,n_centers,i,j,m :: INT
-      rij,rni,rnj :: VEC{REAL}(3)
-      dij,dni,dnj,uij,h,s :: REAL
-      posi,posj :: VEC{REAL}(3)
-      partition :: MAT{REAL}*
-      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
-      n_pts = wt.dim                    ! Number of points for this atom "a"
-      partition.create(n_pts,n_centers) ! Create partition array
-      partition = ONE
-      do i = 1,n_centers
-          posi = .atom_pos(i,:)
-          do j = 1,n_centers
-              if (i==j) cycle
-              posj = .atom_pos(j,:)
-              rij = posi-posj
-              dij = sqrt(dot_product(rij,rij))
-              do n = 1,n_pts
-                  rni = pt(n,:) - posi
-                  rnj = pt(n,:) - posj
-                  dni = sqrt(dot_product(rni,rni))
-                  dnj = sqrt(dot_product(rnj,rnj))
-                  uij = (dni - dnj)/dij
-                  h = uij
-                  do m = 1,.partition_power
-                      h = 1.5d0*h - HALF*h*h*h
-                  end
-                  s = HALF*(ONE - h)
-                  ! ===========================================
-                  partition(n,i) = partition(n,i)*s
-              end
-          end
-      end
-      ! Normalize the partitioning function and modify the grid weights
-      do n = 1,n_pts
-          s = partition(n,a)/sum(partition(n,:))
-          wt(n) = wt(n)*s
-      end
-      partition.destroy
-   end
-
-   partition_B_B_adj(wt,pt,a) ::: private
-   ! Using Becke's partition function, partition the grid ("pt","wt") for the
-   ! atom "a" so that the weights work with all the other atomic positions given
-   ! in ".atom_pos". Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! This version uses Becke's scheme for atomic size adjusments.
-   ! NOTE : all the positions in "pos" must be distinct!!!!!!
-   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
-   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
-   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
-   ENSURE(.atom_pos.created,"no atom list")
-   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
-      n,n_pts,n_centers,i,j,m,Z :: INT
-      rij,rni,rnj :: VEC{REAL}(3)
-      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
-      posi,posj :: VEC{REAL}(3)
-      partition :: MAT{REAL}*
-      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
-      n_pts = wt.dim                    ! Number of points for this atom "a"
-      partition.create(n_pts,n_centers) ! Create partition array
-      partition = ONE
-      do i = 1,n_centers
-          bsri = bragg_slater_radius(.atom_Z(i))
-          posi = .atom_pos(i,:)
-          do j = 1,n_centers
-              if (i==j) cycle
-              bsrj = bragg_slater_radius(.atom_Z(j))
-              chi = bsri/bsrj           ! Becke size adjustment
-              wij = (chi - ONE)/(chi + ONE)
-              aij = wij/(wij*wij - ONE)
-              posj = .atom_pos(j,:)
-              rij = posi-posj
-              dij = sqrt(dot_product(rij,rij))
-              do n = 1,n_pts
-                  rni = pt(n,:) - posi
-                  rnj = pt(n,:) - posj
-                  dni = sqrt(dot_product(rni,rni))
-                  dnj = sqrt(dot_product(rnj,rnj))
-                  uij = (dni - dnj)/dij
-                  vij = uij + aij*(ONE - uij*uij)
-                  h = vij
-                  do m = 1,.partition_power
-                      h = 1.5d0*h - HALF*h*h*h
-                  end
-                  s = HALF*(ONE - h)
-                  ! ===========================================
-                  partition(n,i) = partition(n,i)*s
-              end
-          end
-      end
-      ! Normalize the partitioning function and modify the grid weights
-      do n = 1,n_pts
-          s = partition(n,a)/sum(partition(n,:))
-          wt(n) = wt(n)*s
-      end
-      partition.destroy
-   end
-
-   partition_B_TA_adj(wt,pt,a) ::: private
-   ! Using Becke's partition function, partition the grid ("pt","wt") for the
-   ! atom "a" so that the weights work with all the other atomic positions given
-   ! in ".atom_pos". Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! This version uses Treutler and Ahlrichs scheme for atomic size adjusments.
-   ! NOTE : all the positions in "pos" must be distinct!!!!!!
-   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
-   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
-   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
-   ENSURE(.atom_pos.created,"no atom list")
-   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
-      n,n_pts,n_centers,i,j,m,Z :: INT
-      rij,rni,rnj :: VEC{REAL}(3)
-      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
-      posi,posj :: VEC{REAL}(3)
-      partition :: MAT{REAL}*
-      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
-      n_pts = wt.dim                    ! Number of points for this atom "a"
-      partition.create(n_pts,n_centers) ! Create partition array
-      partition = ONE
-      do i = 1,n_centers
-          bsri = bragg_slater_radius(.atom_Z(i))
-          posi = .atom_pos(i,:)
-          do j = 1,n_centers
-              if (i==j) cycle
-              bsrj = bragg_slater_radius(.atom_Z(j))
-              chi = sqrt(bsri/bsrj)     ! Treutler-Ahlrcihs size adjustment
-              wij = (chi - ONE)/(chi + ONE)
-              aij = wij/(wij*wij - ONE)
-              posj = .atom_pos(j,:)
-              rij = posi-posj
-              dij = sqrt(dot_product(rij,rij))
-              do n = 1,n_pts
-                  rni = pt(n,:) - posi
-                  rnj = pt(n,:) - posj
-                  dni = sqrt(dot_product(rni,rni))
-                  dnj = sqrt(dot_product(rnj,rnj))
-                  uij = (dni - dnj)/dij
-                  vij = uij + aij*(ONE - uij*uij)
-                  h = vij
-                  do m = 1,.partition_power
-                      h = 1.5d0*h - HALF*h*h*h
-                  end
-                  s = HALF*(ONE - h)
-                  ! ===========================================
-                  partition(n,i) = partition(n,i)*s
-              end
-          end
-      end
-      ! Normalize the partitioning function and modify the grid weights
-      do n = 1,n_pts
-          s = partition(n,a)/sum(partition(n,:))
-          wt(n) = wt(n)*s
-      end
-      partition.destroy
-   end
-
-   partition_SS(wt,pt,a) ::: private
-   ! Using Stratmann and Scuseria's partition function, partition the atomic
-   ! grid ("pt","wt") for the atom "a" in the list of "atoms" so that the
-   ! weights work with all the other atomic positions given in ".atom_pos". 
-   ! Schematically:
-   !         ("pt","wt") <-- ("pt", partition*"wt"). 
-   ! In this version no atomic size adjustments is made.
-   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
-      wt :: VEC{REAL}
-      pt :: MAT{REAL}, IN
-      a :: INT, IN
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
-   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
-   ENSURE(.atom_pos.created,"no atom list")
-   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
-      i :: INT
-      weight_is_0 :: VEC{BIN}*
-      weight_is_0.create(wt.dim)
-      .partition_SS(wt,pt,a,[(i,i=1,.atom_Z.dim)],weight_is_0)
-      weight_is_0.destroy
-   end
+!   partition(wt,pt,a) ::: private
+!   ! Partition the grid ("pt","wt") for the atom "a" whose position is in
+!   ! "pos(a,:)" so that the weights work with all the other atomic positions
+!   ! given in "pos" using Becke's or Delley's partition function. Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! You can choose if you want the atom sizes to be taken account in
+!   ! the construction of the partiton.
+!   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+!   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!   !             Perez-Jorda and Yang 1995, CPL 241 p.469
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!      select case (.partition_scheme)
+!         case ("becke            ")
+!            select case (.partition_scaling_scheme)
+!               case ("none             "); .partition_B_no_adj(wt,pt,a)
+!               case ("becke            "); .partition_B_B_adj(wt,pt,a)
+!               case ("treutler_ahlrichs"); .partition_B_TA_adj(wt,pt,a)
+!               case default; UNKNOWN(.partition_scaling_scheme)
+!            end
+!         case ("delley           ")
+!            select case (.partition_scaling_scheme)
+!               case ("none             "); .partition_D(wt,pt,a)
+!               case default; UNKNOWN(.partition_scaling_scheme)
+!            end
+!         case ("stratmann_scuseria")
+!            select case (.partition_scaling_scheme)
+!               case ("none             "); .partition_SS(wt,pt,a)
+!               case default; UNKNOWN(.partition_scaling_scheme)
+!            end
+!         case default; UNKNOWN(.partition_scheme)
+!      end
+!   end
+!
+!   partition_D(wt,pt,a) ::: private
+!   ! Using a modified Delley partition function (as described by Perez-Jorda and
+!   ! Yang 1995, CPL 241 p.469), partition the grid ("pt","wt") for the
+!   ! atom "a" so that the weights work with all the other atomic positions given
+!   ! in ".atom_pos". Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! In this version no atomic size adjustments is made.
+!   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+!   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+!   ENSURE(.atom_pos.created,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+!      n,n_pts,n_centers,i :: INT
+!      dni,eni,s :: REAL
+!      rni,posi :: VEC{REAL}(3)
+!      partition :: MAT{REAL}*
+!      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
+!      n_pts = wt.dim                    ! Number of points for this atom "a"
+!      partition.create(n_pts,n_centers) ! Create partition array
+!      do i = 1,n_centers
+!          posi = .atom_pos(i,:)
+!          do n = 1,n_pts
+!              rni = pt(n,:) - posi
+!              dni = TWO*sqrt(dot_product(rni,rni))
+!              eni = min(ONE/dni,7.0d2)  ! Limit the exponential below
+!              s = exp(-dni)*(exp(eni)-ONE-eni)
+!              partition(n,i) = s
+!          end
+!      end
+!      ! Normalize the partitioning function and modify the grid weights
+!      do n = 1,n_pts
+!          s = partition(n,a)/sum(partition(n,:))
+!          wt(n) = wt(n)*s
+!      end
+!      partition.destroy
+!   end
+!
+!   partition_B_no_adj(wt,pt,a) ::: private
+!   ! Using Becke's partition function, partition the grid ("pt","wt") for the
+!   ! atom "a" so that the weights work with all the other atomic positions given
+!   ! in ".atom_pos". Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! In this version no atomic size adjustments is made.
+!   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+!   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+!   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+!   ENSURE(.atom_pos.created,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+!      n,n_pts,n_centers,i,j,m :: INT
+!      rij,rni,rnj :: VEC{REAL}(3)
+!      dij,dni,dnj,uij,h,s :: REAL
+!      posi,posj :: VEC{REAL}(3)
+!      partition :: MAT{REAL}*
+!      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
+!      n_pts = wt.dim                    ! Number of points for this atom "a"
+!      partition.create(n_pts,n_centers) ! Create partition array
+!      partition = ONE
+!      do i = 1,n_centers
+!          posi = .atom_pos(i,:)
+!          do j = 1,n_centers
+!              if (i==j) cycle
+!              posj = .atom_pos(j,:)
+!              rij = posi-posj
+!              dij = sqrt(dot_product(rij,rij))
+!              do n = 1,n_pts
+!                  rni = pt(n,:) - posi
+!                  rnj = pt(n,:) - posj
+!                  dni = sqrt(dot_product(rni,rni))
+!                  dnj = sqrt(dot_product(rnj,rnj))
+!                  uij = (dni - dnj)/dij
+!                  h = uij
+!                  do m = 1,.partition_power
+!                      h = 1.5d0*h - HALF*h*h*h
+!                  end
+!                  s = HALF*(ONE - h)
+!                  ! ===========================================
+!                  partition(n,i) = partition(n,i)*s
+!              end
+!          end
+!      end
+!      ! Normalize the partitioning function and modify the grid weights
+!      do n = 1,n_pts
+!          s = partition(n,a)/sum(partition(n,:))
+!          wt(n) = wt(n)*s
+!      end
+!      partition.destroy
+!   end
+!
+!   partition_B_B_adj(wt,pt,a) ::: private
+!   ! Using Becke's partition function, partition the grid ("pt","wt") for the
+!   ! atom "a" so that the weights work with all the other atomic positions given
+!   ! in ".atom_pos". Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! This version uses Becke's scheme for atomic size adjusments.
+!   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+!   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+!   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+!   ENSURE(.atom_pos.created,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+!      n,n_pts,n_centers,i,j,m,Z :: INT
+!      rij,rni,rnj :: VEC{REAL}(3)
+!      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
+!      posi,posj :: VEC{REAL}(3)
+!      partition :: MAT{REAL}*
+!      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
+!      n_pts = wt.dim                    ! Number of points for this atom "a"
+!      partition.create(n_pts,n_centers) ! Create partition array
+!      partition = ONE
+!      do i = 1,n_centers
+!          bsri = bragg_slater_radius(.atom_Z(i))
+!          posi = .atom_pos(i,:)
+!          do j = 1,n_centers
+!              if (i==j) cycle
+!              bsrj = bragg_slater_radius(.atom_Z(j))
+!              chi = bsri/bsrj           ! Becke size adjustment
+!              wij = (chi - ONE)/(chi + ONE)
+!              aij = wij/(wij*wij - ONE)
+!              posj = .atom_pos(j,:)
+!              rij = posi-posj
+!              dij = sqrt(dot_product(rij,rij))
+!              do n = 1,n_pts
+!                  rni = pt(n,:) - posi
+!                  rnj = pt(n,:) - posj
+!                  dni = sqrt(dot_product(rni,rni))
+!                  dnj = sqrt(dot_product(rnj,rnj))
+!                  uij = (dni - dnj)/dij
+!                  vij = uij + aij*(ONE - uij*uij)
+!                  h = vij
+!                  do m = 1,.partition_power
+!                      h = 1.5d0*h - HALF*h*h*h
+!                  end
+!                  s = HALF*(ONE - h)
+!                  ! ===========================================
+!                  partition(n,i) = partition(n,i)*s
+!              end
+!          end
+!      end
+!      ! Normalize the partitioning function and modify the grid weights
+!      do n = 1,n_pts
+!          s = partition(n,a)/sum(partition(n,:))
+!          wt(n) = wt(n)*s
+!      end
+!      partition.destroy
+!   end
+!
+!   partition_B_TA_adj(wt,pt,a) ::: private
+!   ! Using Becke's partition function, partition the grid ("pt","wt") for the
+!   ! atom "a" so that the weights work with all the other atomic positions given
+!   ! in ".atom_pos". Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! This version uses Treutler and Ahlrichs scheme for atomic size adjusments.
+!   ! NOTE : all the positions in "pos" must be distinct!!!!!!
+!   ! References: A. D. Becke, J. Chem. Phys. 88 (1988) 2547.
+!   !             O. Treutler and R. Ahlrichs, J. Chem. Phys. 102 (1995) 346.
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+!   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+!   ENSURE(.atom_pos.created,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+!      n,n_pts,n_centers,i,j,m,Z :: INT
+!      rij,rni,rnj :: VEC{REAL}(3)
+!      dij,dni,dnj,uij,vij,bsri,bsrj,chi,wij,aij,h,s :: REAL
+!      posi,posj :: VEC{REAL}(3)
+!      partition :: MAT{REAL}*
+!      n_centers = .atom_pos.dim1        ! Number of integration (atom) centres
+!      n_pts = wt.dim                    ! Number of points for this atom "a"
+!      partition.create(n_pts,n_centers) ! Create partition array
+!      partition = ONE
+!      do i = 1,n_centers
+!          bsri = bragg_slater_radius(.atom_Z(i))
+!          posi = .atom_pos(i,:)
+!          do j = 1,n_centers
+!              if (i==j) cycle
+!              bsrj = bragg_slater_radius(.atom_Z(j))
+!              chi = sqrt(bsri/bsrj)     ! Treutler-Ahlrcihs size adjustment
+!              wij = (chi - ONE)/(chi + ONE)
+!              aij = wij/(wij*wij - ONE)
+!              posj = .atom_pos(j,:)
+!              rij = posi-posj
+!              dij = sqrt(dot_product(rij,rij))
+!              do n = 1,n_pts
+!                  rni = pt(n,:) - posi
+!                  rnj = pt(n,:) - posj
+!                  dni = sqrt(dot_product(rni,rni))
+!                  dnj = sqrt(dot_product(rnj,rnj))
+!                  uij = (dni - dnj)/dij
+!                  vij = uij + aij*(ONE - uij*uij)
+!                  h = vij
+!                  do m = 1,.partition_power
+!                      h = 1.5d0*h - HALF*h*h*h
+!                  end
+!                  s = HALF*(ONE - h)
+!                  ! ===========================================
+!                  partition(n,i) = partition(n,i)*s
+!              end
+!          end
+!      end
+!      ! Normalize the partitioning function and modify the grid weights
+!      do n = 1,n_pts
+!          s = partition(n,a)/sum(partition(n,:))
+!          wt(n) = wt(n)*s
+!      end
+!      partition.destroy
+!   end
+!
+!   partition_SS(wt,pt,a) ::: private
+!   ! Using Stratmann and Scuseria's partition function, partition the atomic
+!   ! grid ("pt","wt") for the atom "a" in the list of "atoms" so that the
+!   ! weights work with all the other atomic positions given in ".atom_pos". 
+!   ! Schematically:
+!   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+!   ! In this version no atomic size adjustments is made.
+!   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+!      wt :: VEC{REAL}
+!      pt :: MAT{REAL}, IN
+!      a :: INT, IN
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+!   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+!   ENSURE(.atom_pos.created,"no atom list")
+!   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+!      i :: INT
+!      weight_is_0 :: VEC{BIN}*
+!      weight_is_0.create(wt.dim)
+!      .partition_SS(wt,pt,a,[(i,i=1,.atom_Z.dim)],weight_is_0)
+!      weight_is_0.destroy
+!   end
 
 !  Partition function
 
@@ -2917,7 +3006,7 @@ contains
 !  Numerical integration routines
 !  ******************************
 
-   integrate_function(f,Z,pos,ans)
+   integrate_function(f,ans)
    ! Integrate the function "f" which is sharply peaked at positions "pos" in 3D
    ! space, where the peaks resemble those in the electron density of atoms with
    ! charge "Z". The integrand is returned as "ans".
@@ -2928,146 +3017,139 @@ contains
             pts :: MAT{REAL}, IN
          end
       end
-      pos :: MAT{REAL}
-      Z   :: VEC{INT}
       ans :: REAL
    ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(pos.dim1==Z.dim,"pos and Z are incompatible")
-   ENSURE(pos.dim2==3,"wrong size, pos")
       n_pt :: INT
       pt :: MAT{REAL}*
       wt,f_grid :: VEC{REAL}*
-    ! .set_atoms_and_positions(Z,pos)
       n_pt = .no_of_points
       f_grid.create(n_pt)
-      pt.create(n_pt,3); wt.create(n_pt)
-      .make_grid(pt,wt) ! <<<<<<<<<<<
+      .make_grid(pt,wt) ! <<<<<<<<<<< leaky
       ! Do the integration
       call f(f_grid,pt)
       ans = sum(f_grid*wt)
       wt.destroy; pt.destroy; f_grid.destroy
    end
 
-   make_matrix_elements_of(V,g,ans)
-   ! Integrate the matrix elements of a multiplicative operator "V"
-   ! between all components of two gaussian functions given by the
-   ! gaussian-pair "g". The result of the integration is matrix "ans".
-   ! Operator "V" is represented by a function which returns a "v_grid"
-   ! on a set of "pts".
-      self :: PTR
-      interface
-         V(v_grid,pts)
-            v_grid :: VEC{REAL}
-            pts :: MAT{REAL}
-         end
-      end
-      g :: GAUSSIAN2
-      ans :: MAT{REAL}
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
-   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
-      n_pt,n,a,b :: INT
-      pt,pos,a_grid,b_grid :: MAT{REAL}*
-      wt,v_grid :: VEC{REAL}*
-      Z :: VEC{INT}*
-      if (g.a.pos.equals(g.b.pos)) then
-         Z.create(1); Z = 1
-         pos.create(1,3)
-         pos(1,:) = g.a.pos
-      else
-         Z.create(2); Z = 1
-         pos.create(2,3)
-         pos(1,:) = g.a.pos
-         pos(2,:) = g.b.pos
-      end
-      .reduce_core_angular_grid = FALSE ! Gives better results for ME's
-      .scale_atomic_grids = TRUE        ! This is essential for Mura-Knowles
-    ! .partition_scaling_scheme = "none"
-    ! .set_atoms_and_positions(Z,pos)
-      n_pt = .no_of_points
-      v_grid.create(n_pt)
-      a_grid.create(n_pt,g.a.n_comp)
-      b_grid.create(n_pt,g.b.n_comp)
-      pt.create(n_pt,3); wt.create(n_pt)
-      .make_grid(pt,wt) ! <<<<<<<<<<<
-      ! Do the integration
-      ans = ZERO
-         call V(v_grid,pt)
-         v_grid = wt*v_grid
-         g.a.make_grid(a_grid,pt)
-         g.b.make_grid(b_grid,pt)
-         do a = 1,g.a.n_comp
-         do b = 1,g.b.n_comp
-            wt = a_grid(:,a)*b_grid(:,b)
-            ans(a,b) = ans(a,b) + sum(wt*v_grid)
-         end
-         end
-      wt.destroy; pt.destroy
-      b_grid.destroy; a_grid.destroy; v_grid.destroy
-      pos.destroy; Z.destroy
-   end
+!   make_matrix_elements_of(V,g,ans)
+!   ! Integrate the matrix elements of a multiplicative operator "V"
+!   ! between all components of two gaussian functions given by the
+!   ! gaussian-pair "g". The result of the integration is matrix "ans".
+!   ! Operator "V" is represented by a function which returns a "v_grid"
+!   ! on a set of "pts".
+!   ! NOTE: this is *not* a good way to get marix elements
+!      self :: PTR
+!      interface
+!         V(v_grid,pts)
+!            v_grid :: VEC{REAL}
+!            pts :: MAT{REAL}
+!         end
+!      end
+!      g :: GAUSSIAN2
+!      ans :: MAT{REAL}
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
+!   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
+!      n_pt,n,a,b :: INT
+!      pt,pos,a_grid,b_grid :: MAT{REAL}*
+!      wt,v_grid :: VEC{REAL}*
+!      Z :: VEC{INT}*
+!      if (g.a.pos.equals(g.b.pos)) then
+!         Z.create(1); Z = 1
+!         pos.create(1,3)
+!         pos(1,:) = g.a.pos
+!      else
+!         Z.create(2); Z = 1
+!         pos.create(2,3)
+!         pos(1,:) = g.a.pos
+!         pos(2,:) = g.b.pos
+!      end
+!      .reduce_core_angular_grid = FALSE ! Gives better results for ME's
+!      .scale_atomic_grids = TRUE        ! This is essential for Mura-Knowles
+!    ! .partition_scaling_scheme = "none"
+!    ! .set_atoms_and_positions(Z,pos)
+!      n_pt = .no_of_points
+!      v_grid.create(n_pt)
+!      a_grid.create(n_pt,g.a.n_comp)
+!      b_grid.create(n_pt,g.b.n_comp)
+!      .make_grid(pt,wt) ! <<<<<<<<<<< leaky
+!      ! Do the integration
+!      ans = ZERO
+!         call V(v_grid,pt)
+!         v_grid = wt*v_grid
+!         g.a.make_grid(a_grid,pt)
+!         g.b.make_grid(b_grid,pt)
+!         do a = 1,g.a.n_comp
+!         do b = 1,g.b.n_comp
+!            wt = a_grid(:,a)*b_grid(:,b)
+!            ans(a,b) = ans(a,b) + sum(wt*v_grid)
+!         end
+!         end
+!      wt.destroy; pt.destroy
+!      b_grid.destroy; a_grid.destroy; v_grid.destroy
+!      pos.destroy; Z.destroy
+!   end
 
-   make_matrix_elements_of(V,g,c,ans)
-   ! Integrate the matrix elements of a multiplicative operator "V"
-   ! between all components of two gaussian functions given by the
-   ! gaussian-pair "g". The result of the integration is matrix "ans".
-   ! Operator "V" is represented by a function which returns a "v_grid"
-   ! on a set of "pts".
-      self :: PTR
-      interface
-         V(v_grid,pts)
-            v_grid :: VEC{REAL}
-            pts :: MAT{REAL}
-         end
-      end
-      g :: GAUSSIAN2
-      c :: VEC{REAL}(3)
-      ans :: MAT{REAL}
-   ENSURE(.finalized,"call the set_grid_data routine")
-   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
-   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
-      n_pt,n,a,b :: INT
-      pt,pos,a_grid,b_grid :: MAT{REAL}*
-      wt,v_grid :: VEC{REAL}*
-      Z :: VEC{INT}*
-      if (g.a.pos.equals(g.b.pos)) then
-         Z.create(2); Z = 1
-         pos.create(2,3)
-         pos(1,:) = g.a.pos
-         pos(2,:) = c
-      else
-         Z.create(3); Z = 1
-         pos.create(3,3)
-         pos(1,:) = g.a.pos
-         pos(2,:) = g.b.pos
-         pos(3,:) = c
-      end
-    ! .reduce_core_angular_grid = FALSE
-    ! .scale_atomic_grids = FALSE
-    ! .partition_scaling_scheme = "none"
-    ! .set_atom_info(Z,pos)
-      n_pt = .no_of_points
-      v_grid.create(n_pt)
-      a_grid.create(n_pt,g.a.n_comp)
-      b_grid.create(n_pt,g.b.n_comp)
-      pt.create(n_pt,3); wt.create(n_pt)
-      .make_grid(pt,wt) ! <<<<<<<<<<<
-      ! Do the integration
-      ans = ZERO
-         call V(v_grid,pt)
-         v_grid = wt*v_grid
-         g.a.make_grid(a_grid,pt)
-         g.b.make_grid(b_grid,pt)
-         do a = 1,g.a.n_comp
-         do b = 1,g.b.n_comp
-            wt = a_grid(:,a)*b_grid(:,b)
-            ans(a,b) = ans(a,b) + sum(wt*v_grid)
-         end
-         end
-      wt.destroy; pt.destroy
-      b_grid.destroy; a_grid.destroy; v_grid.destroy
-      pos.destroy; Z.destroy
-   end
+!   make_matrix_elements_of(V,g,c,ans)
+!   ! Integrate the matrix elements of a multiplicative operator "V"
+!   ! between all components of two gaussian functions given by the
+!   ! gaussian-pair "g". The result of the integration is matrix "ans".
+!   ! Operator "V" is represented by a function which returns a "v_grid"
+!   ! on a set of "pts".
+!      self :: PTR
+!      interface
+!         V(v_grid,pts)
+!            v_grid :: VEC{REAL}
+!            pts :: MAT{REAL}
+!         end
+!      end
+!      g :: GAUSSIAN2
+!      c :: VEC{REAL}(3)
+!      ans :: MAT{REAL}
+!   ENSURE(.finalized,"call the set_grid_data routine")
+!   ENSURE(ans.dim1==g.a.n_comp,"wrong size, ans")
+!   ENSURE(ans.dim2==g.b.n_comp,"wrong size, ans")
+!      n_pt,n,a,b :: INT
+!      pt,pos,a_grid,b_grid :: MAT{REAL}*
+!      wt,v_grid :: VEC{REAL}*
+!      Z :: VEC{INT}*
+!      if (g.a.pos.equals(g.b.pos)) then
+!         Z.create(2); Z = 1
+!         pos.create(2,3)
+!         pos(1,:) = g.a.pos
+!         pos(2,:) = c
+!      else
+!         Z.create(3); Z = 1
+!         pos.create(3,3)
+!         pos(1,:) = g.a.pos
+!         pos(2,:) = g.b.pos
+!         pos(3,:) = c
+!      end
+!    ! .reduce_core_angular_grid = FALSE
+!    ! .scale_atomic_grids = FALSE
+!    ! .partition_scaling_scheme = "none"
+!    ! .set_atom_info(Z,pos)
+!      n_pt = .no_of_points
+!      v_grid.create(n_pt)
+!      a_grid.create(n_pt,g.a.n_comp)
+!      b_grid.create(n_pt,g.b.n_comp)
+!      .make_grid(pt,wt) ! <<<<<<<<<<<
+!      ! Do the integration
+!      ans = ZERO
+!         call V(v_grid,pt)
+!         v_grid = wt*v_grid
+!         g.a.make_grid(a_grid,pt)
+!         g.b.make_grid(b_grid,pt)
+!         do a = 1,g.a.n_comp
+!         do b = 1,g.b.n_comp
+!            wt = a_grid(:,a)*b_grid(:,b)
+!            ans(a,b) = ans(a,b) + sum(wt*v_grid)
+!         end
+!         end
+!      wt.destroy; pt.destroy
+!      b_grid.destroy; a_grid.destroy; v_grid.destroy
+!      pos.destroy; Z.destroy
+!   end
 
 !  **************
 !  Output methods
