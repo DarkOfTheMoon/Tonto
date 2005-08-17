@@ -1905,6 +1905,25 @@ contains
       a :: INT, IN
       atoms :: VEC{INT}, IN
       weight_is_zero :: VEC{BIN}, target, optional, OUT
+      if (atoms.dim==2) then; .partition_SS_pair(wt,pt,a,atoms,weight_is_zero)
+      else;                   .partition_SS_gnrl(wt,pt,a,atoms,weight_is_zero)
+      end
+   end
+
+   partition_SS_pair(wt,pt,a,atoms,weight_is_zero) ::: private
+   ! Using Stratmann and Scuseria's partition function, partition the atomic
+   ! grid ("pt","wt") for the atom "a" in the list of "atoms" so that the
+   ! weights work with all the other atomic positions given in
+   ! ".atom_pos(atoms,:)". Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! NOTE: the "pt" and "wt" are those for atom "atoms(a)" only.
+   ! NOTE: In this version no atomic size adjustments is made.
+   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_zero :: VEC{BIN}, target, optional, OUT
    ENSURE(.finalized,"call the set_grid_data routine")
    ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
    ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
@@ -1973,7 +1992,7 @@ contains
                   rnj = pt(n,:) - posj
                   dni = dot_product(rni,rni)
                   dnj = dot_product(rnj,rnj)
-                  if (dnj>r_max) then
+                  if (dnj>r_max) then   ! WARNING: only valid for basis function on aj
                      partition(n,i) = ZERO
                      weight_is_0(n) = TRUE
                      wt(n) = ZERO       ! <<< This is zero by cutoff ...
@@ -1996,6 +2015,168 @@ contains
                         partition(n,i) = partition(n,i)*s
                      end
                   end
+              end
+          end
+
+      k = 0                             ! Make the list of non-unit & non-zero weights
+      list.destroy
+      list.create(count(NOT (weight_is_1 OR weight_is_0)))
+      do n = 1,n_pts 
+          if (weight_is_1(n) OR weight_is_0(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+      weight_is_1.destroy
+
+      do i = 1,n_centers                ! Now partition those non-unit weights
+          if (i==a) cycle               ! Do atoms /= a ... for normalisation
+          ai = atoms(i)
+          posi = .atom_pos(ai,:)
+          r_min = .atom_min_distance(ai)
+          do j = 1,n_centers
+              if (i==j) cycle
+              posj = .atom_pos(atoms(j),:)
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do m = 1,list.dim         ! Loop over non-unit non-zero weight points
+                  n = list(m)          
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = sqrt(dot_product(rni,rni))
+                  dnj = sqrt(dot_product(rnj,rnj))
+                  uij = (dni - dnj)/dij
+                  if      (uij> aa) then
+                     partition(n,i) = ZERO
+                  else if (uij>-aa) then
+                     uij1 = uij/aa
+                     uij2 = uij1*uij1
+                     uij3 = uij2*uij1
+                     uij5 = uij3*uij2
+                     uij7 = uij5*uij2
+                     h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                     s = HALF*(ONE - h)
+                     partition(n,i) = partition(n,i)*s
+                  end
+              end
+          end
+      end
+      ! Normalize the partitioning function and modify the grid weights
+      do m = 1,list.dim
+          n = list(m)
+          s = partition(n,a)/sum(partition(n,:))
+          wt(n) = wt(n)*s
+          if (s<=.partition_cutoff) weight_is_0(n) = TRUE
+      end
+      partition.destroy
+      list.destroy
+      if (NOT present(weight_is_zero)) weight_is_0.destroy
+   end
+
+   partition_SS_gnrl(wt,pt,a,atoms,weight_is_zero) ::: private
+   ! Using Stratmann and Scuseria's partition function, partition the atomic
+   ! grid ("pt","wt") for the atom "a" in the list of "atoms" so that the
+   ! weights work with all the other atomic positions given in
+   ! ".atom_pos(atoms,:)". Schematically:
+   !         ("pt","wt") <-- ("pt", partition*"wt"). 
+   ! NOTE: the "pt" and "wt" are those for atom "atoms(a)" only.
+   ! NOTE: In this version no atomic size adjustments is made.
+   ! References: R.E. Stratmann, G E. Scuseria and M.E. Frisch, 1996 CPL 257 p. 213
+      wt :: VEC{REAL}
+      pt :: MAT{REAL}, IN
+      a :: INT, IN
+      atoms :: VEC{INT}, IN
+      weight_is_zero :: VEC{BIN}, target, optional, OUT
+   ENSURE(.finalized,"call the set_grid_data routine")
+   ENSURE(pt.dim2==3,"pt incorrectly dimensioned")
+   ENSURE(pt.dim1==wt.dim, "pt and wt incompatible")
+   ENSURE(.atom_pos.created,"no atom list")
+   ENSURE(a.is_in_range([1,.atom_pos.dim1]),"`a' argument out of range")
+      n_centers,n_pts,i,j,k,n,m,ai,aj :: INT
+      rij,rni,rnj :: VEC{REAL}(3)
+      r_min,r_max,dij,dni,dnj,uij,uij1,uij2,uij3,uij5,uij7,h,s, aa,c5,c21,c35 :: REAL
+      posi,posj :: VEC{REAL}(3)
+      partition :: MAT{REAL}*
+      weight_is_0,weight_is_1 :: VEC{BIN}*
+      list :: VEC{INT}*
+
+      if (present(weight_is_zero)) then; weight_is_0 => weight_is_zero
+      else;                              weight_is_0.create(wt.dim)
+      end
+
+      aa = .stratmann_scuseria_A
+      c5  = FIVE
+      c21 = SEVEN*THREE
+      c35 = SEVEN*FIVE
+      n_centers = atoms.dim             ! Number of integration (atom) centres
+      n_pts = wt.dim                    ! Number of points for this atom "a"
+
+
+      weight_is_1.create(n_pts)         ! Tells where weights are 1 or zero
+      weight_is_1 = FALSE               ! ... Do this when making atom grids!
+
+          i = a
+          ai = atoms(i)
+          posi = .atom_pos(ai,:)
+          r_min = .atom_min_distance(ai)
+          do n = 1,n_pts                ! Predetermine which weights are one
+              rni = pt(n,:) - posi
+              dni = sqrt(dot_product(rni,rni))
+              if (dni>HALF*(ONE-aa)*r_min) cycle
+              weight_is_1(n) = TRUE
+          end
+
+      k = 0                             ! Make the list of non-unit weights
+      list.create(count(NOT weight_is_1))
+      do n = 1,n_pts 
+          if (weight_is_1(n)) cycle
+          k = k + 1
+          list(k) = n
+      end
+
+      partition.create(n_pts,n_centers) 
+      partition = ONE
+      weight_is_0 = FALSE
+
+          i = a                         ! Do atom "a" partition & set weight_is_0
+          ai = atoms(i)
+          posi = .atom_pos(ai,:)
+          do j = 1,n_centers
+              if (i==j) cycle
+              aj = atoms(j)
+              posj = .atom_pos(aj,:)
+              r_max = .r_max_for_atom(aj)
+              r_max = r_max*r_max       ! Square it to save square roots
+              rij = posi-posj
+              dij = sqrt(dot_product(rij,rij))
+              do m = 1,list.dim         ! Loop over non-unit weight points
+                  n = list(m)
+                  rni = pt(n,:) - posi
+                  rnj = pt(n,:) - posj
+                  dni = dot_product(rni,rni)
+                  dnj = dot_product(rnj,rnj)
+                ! if (dnj>r_max) then   ! WARNING: only valid for basis function on aj
+                !    partition(n,i) = ZERO
+                !    weight_is_0(n) = TRUE
+                !    wt(n) = ZERO       ! <<< This is zero by cutoff ...
+                ! else
+                     dni = sqrt(dni)
+                     dnj = sqrt(dnj)
+                     uij = (dni - dnj)/dij
+                     if      (uij> aa) then
+                        partition(n,i) = ZERO
+                        weight_is_0(n) = TRUE
+                        wt(n) = ZERO    ! <<< This is rigorously zero ...
+                     else if (uij>-aa) then
+                        uij1 = uij/aa
+                        uij2 = uij1*uij1
+                        uij3 = uij2*uij1
+                        uij5 = uij3*uij2
+                        uij7 = uij5*uij2
+                        h = SIXTEENTH*(c35*uij1-c35*uij3+c21*uij5-c5*uij7)
+                        s = HALF*(ONE - h)
+                        partition(n,i) = partition(n,i)*s
+                     end
+                ! end
               end
           end
 
