@@ -11680,8 +11680,10 @@ contains
          .becke_grid.make_bf_grids(a0,a1,b0,b1,ma,mb,pt,atoms)
          rho0a.create(n_pt); rho0b.create(n_pt)             ! The density grids
          rho1a.create(n_pt,3); rho1b.create(n_pt,3)
-         .make_nabla_density_grid_u_B(rho1a,rho1b,rho0a,rho0b,pt,atoms, &
-             a1,a0,b1,b0,ma,mb,.becke_grid.rho_cutoff) ! re-use a0, b0 grids
+       ! .make_nabla_density_grid_u_B(rho1a,rho1b,rho0a,rho0b,pt,atoms, &
+       !     a1,a0,b1,b0,ma,mb,.becke_grid.rho_cutoff) ! re-use a0, b0 grids
+         .make_nabla_density_grid_u_A(rho1a,rho1b,rho0a,rho0b,pt,atoms, &
+             a1,a0,b1,b0,.becke_grid.rho_cutoff) ! re-use a0, b0 grids
          V0a = ZERO; V0b = ZERO                    
          V1a = ZERO; V1b = ZERO                    
          .add_u_XC_potentials(V0a,V0b,rho0a,rho0b,V1a,V1b,rho1a,rho1b) ! Evaluation the XC potentials
@@ -14344,6 +14346,210 @@ contains
 !      g0.destroy; g1.destroy
 !      rho1 = TWO*rho1
 !   end
+
+
+   make_nabla_density_grid_u_A(rho1a,rho1b,rho0a,rho0b,pt,atoms,aa1,aa0,bb1,bb0,cutoff)
+   ! See below.
+      rho1a,rho1b :: MAT{REAL}, OUT
+      rho0a,rho0b :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      atoms :: VEC{INT}
+      aa1,bb1 :: MAT3{REAL}
+      aa0,bb0 :: MAT{REAL}
+    ! ma,mb :: INT, IN
+      cutoff :: REAL, IN
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(rho1a.dim1==pt.dim1,"rho1a has wrong 1st dimension")
+   ENSURE(rho1b.dim1==pt.dim1,"rho1b has wrong 1st dimension")
+   ENSURE(rho1a.dim2==3,"rho1a has wrong 2nd dimension")
+   ENSURE(rho1b.dim2==3,"rho1b has wrong 2nd dimension")
+   ENSURE(rho0a.dim==pt.dim1,"rho0a has wrong 1st dimension")
+   ENSURE(rho0b.dim==pt.dim1,"rho0a has wrong 1st dimension")
+   ENSURE(pt.dim2==3,"pt has wrong 2nd dimension")
+   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+ ! ENSURE(.natural_orbitals.created("unrestricted"), "no restricted NO's")
+ ! ENSURE(.occupation_numbers.created("unrestricted"),"no occupation numbers")
+      sha,shb :: SHELL1
+      list :: VEC{INT}*
+      skipa,skipb,skipaa,skipbb :: VEC{BIN}*
+      xa,ya,za,ra2,xb,yb,zb,rb2 :: VEC{REAL}*
+      a1 :: MAT3{REAL}*
+      a0,b0,a0Pa,a0Pb,b0Pa,b0Pb,Pa,Pb :: MAT{REAL}*
+      n_pt,a_pt,b_pt,aa,a,sa,fa,la,na,bb,b,sb,fb,lb,nb, i,k,l :: INT
+      fac :: REAL
+      rho1a = ZERO; rho1b = ZERO
+      rho0a = ZERO; rho0b = ZERO
+      n_pt = pt.dim1
+      list => .overlapping_atoms_for(atoms)
+      do aa = 1,list.dim
+         a = list(aa)
+         .atom(a).make_significant_points(xa,ya,za,ra2,skipa,pt,cutoff)
+         a_pt = xa.dim
+         if (a_pt==0) cycle
+         do sa = .first_shell_for_atom(a),.last_shell_for_atom(a)
+            .get_shell(sha,sa,fa,la)
+            a1.create(a_pt,sha.n_comp,3)
+            a0.create(a_pt,sha.n_comp)
+            skipaa.create(a_pt)
+            sha.make_nabla_grid(a1,a0,skipaa,xa,ya,za,ra2,cutoff) ! Call this as little as possible
+            do bb = 1,list.dim
+               b = list(bb)
+               if (any(a==atoms) AND any(b==atoms)) cycle  ! Do with saved grids -- below
+               .atom(b).make_significant_points(xb,yb,zb,rb2,skipb,pt,skipaa,cutoff)
+               b_pt = xb.dim
+               if (b_pt==0) cycle
+               b0Pa.create(b_pt,sha.n_comp); b0Pa = ZERO
+               b0Pb.create(b_pt,sha.n_comp); b0Pb = ZERO
+               do sb = .first_shell_for_atom(b),.last_shell_for_atom(b)
+                  .get_shell(shb,sb,fb,lb)
+                  b0.create(b_pt,shb.n_comp)
+                  skipbb.create(b_pt)
+                  shb.make_grid(b0,skipbb,xb,yb,zb,rb2,cutoff) ! Call this as little as possible
+                  Pa => .density_matrix.alpha(fb:lb,fa:la)
+                  Pb => .density_matrix.beta(fb:lb,fa:la)
+                  do i = 1,b_pt 
+                     if (skipbb(i)) cycle
+                     b0Pa(i,:) = b0Pa(i,:) + matmul(b0(i,:),Pa)
+                     b0Pb(i,:) = b0Pb(i,:) + matmul(b0(i,:),Pb)
+                  end
+                  skipbb.destroy
+                  b0.destroy
+                  shb.destroy_ptr_part
+               end
+               k = 0
+               l = 0
+               do i = 1,n_pt
+                  if (skipa(i)) cycle
+                  l = l + 1
+                  if (skipb(i)) cycle
+                  k = k + 1
+                  rho1a(i,1) = rho1a(i,1) + sum(a1(l,:,1)*b0Pa(k,:))
+                  rho1a(i,2) = rho1a(i,2) + sum(a1(l,:,2)*b0Pa(k,:))
+                  rho1a(i,3) = rho1a(i,3) + sum(a1(l,:,3)*b0Pa(k,:))
+                  rho1b(i,1) = rho1b(i,1) + sum(a1(l,:,1)*b0Pb(k,:))
+                  rho1b(i,2) = rho1b(i,2) + sum(a1(l,:,2)*b0Pb(k,:))
+                  rho1b(i,3) = rho1b(i,3) + sum(a1(l,:,3)*b0Pb(k,:))
+               end
+               if (bb>aa) cycle
+               if (aa==bb) then; fac = ONE
+               else;             fac = TWO
+               end
+               k = 0
+               l = 0
+               do i = 1,n_pt
+                  if (skipa(i)) cycle
+                  l = l + 1
+                  if (skipb(i)) cycle
+                  k = k + 1
+                  rho0a(i)   = rho0a(i)   + fac*sum(a0(l,:)  *b0Pa(k,:))
+                  rho0b(i)   = rho0b(i)   + fac*sum(a0(l,:)  *b0Pb(k,:))
+               end
+               b0Pb.destroy; b0Pa.destroy
+               xb.destroy; yb.destroy; zb.destroy; rb2.destroy; skipb.destroy
+            end
+            skipaa.destroy
+            a0.destroy; a1.destroy
+            sha.destroy_ptr_part
+         end
+         xa.destroy; ya.destroy; za.destroy; ra2.destroy; skipa.destroy
+      end
+      list.destroy
+      ! Now re-use the given grid data
+      if (atoms.dim==1) then
+         b = atoms(1)
+         fb = .first_basis_fn_for_atom(b)
+         lb =  .last_basis_fn_for_atom(b)
+         nb = lb - fb + 1
+         fa = fb
+         la = lb
+         na = nb
+         b0Pa.create(n_pt,na)
+         b0Pb.create(n_pt,na)
+         Pa => .density_matrix.alpha(fb:lb,fa:la)
+         Pb => .density_matrix.beta(fb:lb,fa:la)
+         b0Pa = matmul(bb0,Pa)
+         b0Pb = matmul(bb0,Pb)
+         rho1a(:,1) = rho1a(:,1) + sum(aa1(:,:,1)*b0Pa,dim=2)
+         rho1a(:,2) = rho1a(:,2) + sum(aa1(:,:,2)*b0Pa,dim=2)
+         rho1a(:,3) = rho1a(:,3) + sum(aa1(:,:,3)*b0Pa,dim=2)
+         rho1b(:,1) = rho1b(:,1) + sum(aa1(:,:,1)*b0Pb,dim=2)
+         rho1b(:,2) = rho1b(:,2) + sum(aa1(:,:,2)*b0Pb,dim=2)
+         rho1b(:,3) = rho1b(:,3) + sum(aa1(:,:,3)*b0Pb,dim=2)
+         rho0a      = rho0a      + sum(aa0(:,:)  *b0Pa,dim=2)
+         rho0b      = rho0b      + sum(aa0(:,:)  *b0Pb,dim=2)
+         b0Pb.destroy; b0Pa.destroy
+      else
+         a = atoms(1)
+         b = atoms(2)
+         fa = .first_basis_fn_for_atom(a)
+         fb = .first_basis_fn_for_atom(b)
+         la =  .last_basis_fn_for_atom(a)
+         lb =  .last_basis_fn_for_atom(b)
+         na = la - fa + 1
+         nb = lb - fb + 1
+         b0Pa.create(n_pt,na)
+         b0Pb.create(n_pt,na)
+         Pa => .density_matrix.alpha(fb:lb,fa:la)
+         Pb => .density_matrix.beta(fb:lb,fa:la)
+         b0Pa = matmul(bb0,Pa)
+         b0Pb = matmul(bb0,Pb)
+         rho1a(:,1) = rho1a(:,1) + sum(aa1(:,:,1)*b0Pa,dim=2)
+         rho1a(:,2) = rho1a(:,2) + sum(aa1(:,:,2)*b0Pa,dim=2)
+         rho1a(:,3) = rho1a(:,3) + sum(aa1(:,:,3)*b0Pa,dim=2)
+         rho1b(:,1) = rho1b(:,1) + sum(aa1(:,:,1)*b0Pb,dim=2)
+         rho1b(:,2) = rho1b(:,2) + sum(aa1(:,:,2)*b0Pb,dim=2)
+         rho1b(:,3) = rho1b(:,3) + sum(aa1(:,:,3)*b0Pb,dim=2)
+         rho0a      = rho0a      + TWO*sum(aa0(:,:)*b0Pa,dim=2)
+         rho0b      = rho0b      + TWO*sum(aa0(:,:)*b0Pb,dim=2)
+         b0Pb.destroy; b0Pa.destroy
+         a0Pa.create(n_pt,nb)
+         a0Pb.create(n_pt,nb)
+         Pa => .density_matrix.alpha(fa:la,fb:lb)
+         Pb => .density_matrix.beta(fa:la,fb:lb)
+         a0Pa = matmul(aa0,Pa)
+         a0Pb = matmul(aa0,Pb)
+         rho1a(:,1) = rho1a(:,1) + sum(bb1(:,:,1)*a0Pa,dim=2)
+         rho1a(:,2) = rho1a(:,2) + sum(bb1(:,:,2)*a0Pa,dim=2)
+         rho1a(:,3) = rho1a(:,3) + sum(bb1(:,:,3)*a0Pa,dim=2)
+         rho1b(:,1) = rho1b(:,1) + sum(bb1(:,:,1)*a0Pb,dim=2)
+         rho1b(:,2) = rho1b(:,2) + sum(bb1(:,:,2)*a0Pb,dim=2)
+         rho1b(:,3) = rho1b(:,3) + sum(bb1(:,:,3)*a0Pb,dim=2)
+         a0Pb.destroy; a0Pa.destroy
+         a0Pa.create(n_pt,na)
+         a0Pb.create(n_pt,na)
+         Pa => .density_matrix.alpha(fa:la,fa:la)
+         Pb => .density_matrix.beta(fa:la,fa:la)
+         a0Pa = matmul(aa0,Pa)
+         a0Pb = matmul(aa0,Pb)
+         rho1a(:,1) = rho1a(:,1) + sum(aa1(:,:,1)*a0Pa,dim=2)
+         rho1a(:,2) = rho1a(:,2) + sum(aa1(:,:,2)*a0Pa,dim=2)
+         rho1a(:,3) = rho1a(:,3) + sum(aa1(:,:,3)*a0Pa,dim=2)
+         rho1b(:,1) = rho1b(:,1) + sum(aa1(:,:,1)*a0Pb,dim=2)
+         rho1b(:,2) = rho1b(:,2) + sum(aa1(:,:,2)*a0Pb,dim=2)
+         rho1b(:,3) = rho1b(:,3) + sum(aa1(:,:,3)*a0Pb,dim=2)
+         rho0a      = rho0a      + sum(aa0(:,:)  *a0Pa,dim=2)
+         rho0b      = rho0b      + sum(aa0(:,:)  *a0Pb,dim=2)
+         a0Pb.destroy; a0Pa.destroy
+         b0Pa.create(n_pt,nb)
+         b0Pb.create(n_pt,nb)
+         Pa => .density_matrix.alpha(fb:lb,fb:lb)
+         Pb => .density_matrix.beta(fb:lb,fb:lb)
+         b0Pa = matmul(bb0,Pa)
+         b0Pb = matmul(bb0,Pb)
+         rho1a(:,1) = rho1a(:,1) + sum(bb1(:,:,1)*b0Pa,dim=2)
+         rho1a(:,2) = rho1a(:,2) + sum(bb1(:,:,2)*b0Pa,dim=2)
+         rho1a(:,3) = rho1a(:,3) + sum(bb1(:,:,3)*b0Pa,dim=2)
+         rho1b(:,1) = rho1b(:,1) + sum(bb1(:,:,1)*b0Pb,dim=2)
+         rho1b(:,2) = rho1b(:,2) + sum(bb1(:,:,2)*b0Pb,dim=2)
+         rho1b(:,3) = rho1b(:,3) + sum(bb1(:,:,3)*b0Pb,dim=2)
+         rho0a      = rho0a      + sum(bb0(:,:)  *b0Pa,dim=2)
+         rho0b      = rho0b      + sum(bb0(:,:)  *b0Pb,dim=2)
+         b0Pb.destroy; b0Pa.destroy
+      end
+      rho1a = TWO*rho1a
+      rho1b = TWO*rho1b
+   end
 
    make_nabla_density_grid_u_B(rho1a,rho1b,rho0a,rho0b,pt,atoms,a1,a0,b1,b0,ma,mb,cutoff)
    ! Evaluate the alpha and beta nabla density grids "rho1a" and "rho1b" as well
