@@ -65,22 +65,36 @@ contains
 !  Initialisation operations
 !  *************************
 
-   create(string,comment_chars,quote_chars) ::: leaky
+   create ::: leaky
    ! Create a buffer and initialize it
       self :: PTR
-      string,comment_chars,quote_chars :: STR, optional
+    ! string,comment_chars,quote_chars :: STR, optional
+    ! ignore_unmatched_quotes :: BIN, optional
       nullify(self)
       allocate(self)
       ADD_MEMORY(SELF_TYPE_SIZE)
-      .set(string,comment_chars,quote_chars)
+      .nullify_ptr_part
+      .set_defaults
+    ! .set(string,comment_chars,quote_chars,ignore_unmatched_quotes)
    end
 
    destroy ::: leaky
    ! Destroy a buffer
       self :: PTR
       if (.destroyed) return
-      DELETE_MEMORY(SELF_TYPE_SIZE)
+      .destroy_ptr_part
       deallocate(self)
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts
+      nullify(.replacement_list)
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Destroy the pointer parts
+      .replacement_list.destroy
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -109,27 +123,6 @@ contains
       self = b
    end
 
-   set(string,comment_chars,quote_chars,eliminate_specials,replacement_list)
-   ! Set the buffer .string to "string", analyse it, and initialize the
-   ! counters. You can set the "comment_chars" used to define the end of a
-   ! parsable line, the allowed "quote_chars" used to defined a quoted item, and
-   ! you can define whether to "eliminate_special" unreadable characters. You
-   ! can also define a "replacement_list" which replaces certain strings before
-   ! the biffer is analysed.
-      string,comment_chars,quote_chars :: STR, IN, optional
-      eliminate_specials :: BIN, IN, optional
-      replacement_list :: MAT{STR}*, optional
-      .set_defaults
-      if (present(string))             .string = string
-      if (present(comment_chars))      .comment_chars = comment_chars
-      if (present(quote_chars))        .quote_chars   = quote_chars
-      if (present(eliminate_specials)) .eliminate_special_chars
-      if (present(replacement_list)) then
-      if (replacement_list.created)    .replace_list(replacement_list)
-      end
-      .analyse
-   end
-
    set_defaults
    ! Set default values
       .string = " "
@@ -140,11 +133,94 @@ contains
       .analysed = FALSE
       .comment_chars = BUFFER_COMMENT_CHARS
       .quote_chars   = BUFFER_QUOTE_CHARS
+      .ignore_unmatched_quotes = FALSE
+      .eliminate_specials = TRUE
+   end
+
+   set_and_analyse(string) ::: leaky
+   ! Set the buffer .string to "string", analyse it.
+      string :: STR, IN
+      .item_start = 0
+      .item_end   = 0
+      .item_index = 0
+      .n_items = 0
+      .analysed = FALSE
+      .set_string(string)
+      if (.eliminate_specials)       .eliminate_special_chars
+      if (.replacement_list.created) .replace_list(.replacement_list)
+      .analyse
+   end
+
+!   set(string,comment_chars,quote_chars,ignore_unmatched_quotes,eliminate_specials,replacement_list) ::: leaky
+!   ! Set the buffer .string to "string", analyse it, and initialize the
+!   ! counters. You can set the "comment_chars" used to define the end of a
+!   ! parsable line, the allowed "quote_chars" used to defined a quoted item, and
+!   ! you can define whether to "eliminate_special" unreadable characters. You
+!   ! can also define a "replacement_list" which replaces certain strings before
+!   ! the biffer is analysed.
+!      string,comment_chars,quote_chars :: STR, IN, optional
+!      ignore_unmatched_quotes,eliminate_specials :: BIN, IN, optional
+!      replacement_list :: MAT{STR}*, optional
+!      .set_defaults
+!      if (present(string))                  .set_string(string)
+!      if (present(comment_chars))           .set_comment_chars(comment_chars)
+!      if (present(quote_chars))             .set_quote_chars(quote_chars)
+!      if (present(ignore_unmatched_quotes)) .set_ignore_unmatched_quotes(ignore_unmatched_quotes)
+!      if (present(eliminate_specials))      .set_eliminate_specials(eliminate_specials)
+!      if (present(replacement_list)) then
+!      if (replacement_list.created)         .set_replacement_list.(replacement_list)
+!      end
+!      if (.eliminate_specials)              .eliminate_special_chars
+!      if (.replacement_list.created)        .replace_list(.replacement_list)
+!      .analyse
+!   end
+
+   set_string(string)
+   ! Set the buffer .string to "string"
+      string :: STR, IN
+      .string = string
+   end
+
+   set_comment_chars(comment_chars)
+   ! Set the "comment_chars" used to define the end of a parsable line
+      comment_chars :: STR, IN
+      .comment_chars = comment_chars
+   end
+
+   set_quote_chars(quote_chars)
+   ! Set the allowed "quote_chars" used to defined a quoted item.
+      quote_chars :: STR, IN
+      .quote_chars = quote_chars
+   end
+
+   set_ignore_unmatched_quotes(ignore_unmatched_quotes)
+   ! Set "ignore_unmatched_quotes" to prevent errors when there are unmatching
+   ! quotes.
+      ignore_unmatched_quotes :: BIN, IN
+      .ignore_unmatched_quotes = ignore_unmatched_quotes
+   end
+
+   set_eliminate_specials(eliminate_specials)
+   ! Define whether to "eliminate_special" unreadable characters.
+      eliminate_specials :: BIN, IN
+      .eliminate_specials = eliminate_specials
+   end
+
+   set_replacement_list(replacement_list) ::: leaky
+   ! Define a "replacement_list" which replaces certain strings before the
+   ! buffer is analysed.
+      replacement_list :: MAT{STR}*
+   ENSURE(replacement_list.created,"replacement_loist destroyed")
+      .replacement_list.destroy
+      .replacement_list.create_copy(replacement_list)
    end
 
    clear
    ! Clear the buffer string and reset the counters
-      .set
+      .set_defaults
+      if (.eliminate_specials)       .eliminate_special_chars
+      if (.replacement_list.created) .replace_list(.replacement_list)
+      .analyse
    end
 
    replace_list(list)
@@ -177,17 +253,17 @@ contains
 
    analyse
    ! Analyse the buffer string and process it into items
-      end,f,l :: INT
+      last,f,l :: INT
       item :: STR(len=BSTR_SIZE)
-      end = 0
+      last = 0
       .n_items = 0
       do
          item = " "
-         .string(end+1:).get_next_item(item,f,l,.comment_chars,.quote_chars)
+         .string(last+1:).get_next_item(item,f,l,.comment_chars,.quote_chars,.ignore_unmatched_quotes)
          if (item==" ") exit
-         end = end+l+1
-         .n_items = .n_items+1
-         if (end>BSTR_SIZE) exit
+         last = last + l + 1
+         .n_items = .n_items + 1
+         if (last>BSTR_SIZE) exit
       end
       .analysed = TRUE
    end
@@ -206,7 +282,7 @@ contains
       item = " "
       if (NOT .exhausted) then
          bitem = " "
-         .string(.item_end+1:).get_next_item(bitem,f,l,.comment_chars,.quote_chars)
+         .string(.item_end+1:).get_next_item(bitem,f,l,.comment_chars,.quote_chars,.ignore_unmatched_quotes)
          item        = adjustl(bitem)
          .item_start = .item_end + f
          .item_end   = .item_end + l
@@ -221,7 +297,7 @@ contains
       f,l :: INT
       bitem = " "
       if (NOT .exhausted) then
-         .string(.item_end+1:).get_next_item(bitem,f,l,.comment_chars,.quote_chars)
+         .string(.item_end+1:).get_next_item(bitem,f,l,.comment_chars,.quote_chars,.ignore_unmatched_quotes)
          .item_start = .item_end + f
          .item_end   = .item_end + l
          .item_index = .item_index + 1
