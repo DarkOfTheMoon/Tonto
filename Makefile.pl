@@ -293,10 +293,10 @@ sub do_substitutions_into_Makefile {
     s/\@SRCDIR\@/$SRCDIR/g;
     s/\@PERL\@/$PERL/g;
     s/\@MAKE\@/$MAKE/g;
+    s/\@OS\@/$OS/g;
+    s/\@FC\@/$FULLFC/g;
+    s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
-#    s/\@OS\@/$OS/g;
-#    s/\@FC\@/$FULLFC/g;
-#    s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     print OUTFILE;
   }
   close(OUTFILE);
