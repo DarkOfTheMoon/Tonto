@@ -31,6 +31,7 @@ my (%compiler_array);
   "DEC-f95-on-OSF1"        =>  DEC_f95_on_OSF1,
   "FUJITSU-f90-on-LINUX"   =>  FUJITSU_f90_on_LINUX,
   "FUJITSU-f95-on-LINUX"   =>  FUJITSU_f95_on_LINUX,
+  "GNU-g95-on-DARWIN"      =>  GNU_g95_on_DARWIN,
   "IBM-xlf-on-AIX"         =>  IBM_xlf_on_AIX,
   "IBM-xlf90-on-AIX"       =>  IBM_xlf90_on_AIX,
   "INTEL-ifc-on-LINUX"     =>  INTEL_ifc_on_LINUX,
@@ -159,6 +160,11 @@ sub FUJITSU_f90_on_LINUX {
 
 sub FUJITSU_f95_on_LINUX {
 # don't skip anything.
+}
+
+sub GNU_g95_on_DARWIN {
+  # version 2005-10-20
+  push @skip_array,(23,24,25,27,28,29,31,32,34,35,37,38,40,41,43,44,45,46);
 }
 
 sub IBM_xlf_on_AIX {
