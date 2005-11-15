@@ -104,6 +104,7 @@ contains
       if (cluster.fragment_symop.created)          .fragment_symop.create_copy(cluster.fragment_symop)
       if (cluster.fragment_symop_for_atom.created) .fragment_symop_for_atom.create_copy(cluster.fragment_symop_for_atom)
       if (cluster.is_fragment_atom.created)        .is_fragment_atom.create_copy(cluster.is_fragment_atom)
+      if (cluster.connection.created)              .connection.create_copy(cluster.connection)
    end
 
    destroy ::: leaky
@@ -130,6 +131,7 @@ contains
       nullify(.fragment_parents_for_atom)
       nullify(.fragment_child_for_atom)
       nullify(.is_fragment_atom)
+      nullify(.connection)
    end
 
    destroy_ptr_part ::: leaky
@@ -154,6 +156,7 @@ contains
       .fragment_parents_for_atom.destroy
       .fragment_child_for_atom.destroy
       .is_fragment_atom.destroy
+      .connection.destroy
    end
 
    destroy_cell_geom_ptr_part ::: leaky
@@ -339,7 +342,7 @@ contains
       .fragment_geometry.destroy
       .fragment_geometry.create(3,.n_fragment_atoms)
       .fragment_geometry = reshape(tmp,[3,.n_fragment_atoms])
-      .crystal.unitcell.change_into_fractional(.fragment_geometry)
+      .crystal.unit_cell.change_into_fractional(.fragment_geometry)
       tmp.destroy
    end
 
@@ -373,6 +376,7 @@ contains
       .find_fragment_atoms
       .make_fragment_parents_for_atom 
       .make_fragment_child_for_atom 
+      .make_connection_table(.connection)
       .info_made = TRUE
    end
 
@@ -425,8 +429,8 @@ contains
      tol :: REAL
      n_cell_atoms = .crystal.unit_cell_geometry.dim2
      n_fragment_atoms = .crystal.fragment_cell_geometry.dim2
-     tol = TOL(2)/maxval(.crystal.unitcell.length)
-     tol = TOL(1)/maxval(.crystal.unitcell.length)
+     tol = TOL(2)/maxval(.crystal.unit_cell.length)
+     tol = TOL(1)/maxval(.crystal.unit_cell.length)
      ! The fragment is shifted by "offset" to the origin
      if (any(.fragment_offset/=0)) then
      .fragment_geometry = .fragment_geometry &
@@ -499,9 +503,9 @@ contains
      cell,first,last,i,h,h1,k,k1,l,l1,cell_atom,n_big_cluster :: INT
      ! The maximum cell distances to search for cluster atoms
      max_dist = .maximum_cell_axis_distance
-     cell_a = .crystal.unitcell.length(1)
-     cell_b = .crystal.unitcell.length(2)
-     cell_c = .crystal.unitcell.length(3)
+     cell_a = .crystal.unit_cell.length(1)
+     cell_b = .crystal.unit_cell.length(2)
+     cell_c = .crystal.unit_cell.length(3)
      if (.generation_method=="unit_cell" AND NOT .start_with_fragment AND NOT .defragment) then
         h_max = 0
         k_max = 0
@@ -635,7 +639,7 @@ contains
      ! Store the xyz positions to save time
      n_big_atoms = big_cluster.dim2
      big_cluster_xyz.create(3,n_big_atoms)
-     big_cluster_xyz = matmul(.crystal.unitcell.direct_matrix,big_cluster)
+     big_cluster_xyz = matmul(.crystal.unit_cell.direct_matrix,big_cluster)
      n_out_atoms = count(NOT atom_added)
      out_atom.create(n_out_atoms)
      out_atom = pack([(i,i=1,n_big_atoms)],mask=(NOT atom_added))
@@ -646,7 +650,7 @@ contains
        if (in_atom > .n_atoms) exit ! No more in_atoms were added
        u = .unit_cell_atom_for_atom(in_atom)
        a = .crystal.asym_atom_for_unit_cell_atom(u)
-       in_pos = matmul(.crystal.unitcell.direct_matrix,.geometry(:,in_atom))
+       in_pos = matmul(.crystal.unit_cell.direct_matrix,.geometry(:,in_atom))
        atom_pair(1).atomic_number = .asymmetric_cell_atom(a).atomic_number
        atom_pair(1).pos = in_pos
        ! Which are connected to in_atom? Loop over atoms (j) *outside* the inner
@@ -686,49 +690,121 @@ contains
 
    make_connection_table(table) ::: leaky
    ! Make the connection "table" for the crystal unit cell geometry.
-     table :: VEC{VEC_{INT}}*
+   ! NOTE: atoms for which there are no connection are not created.
+     table :: VEC{VEC_{VEC_{INT}}}*
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no unit_cell in the crystal")
    ENSURE(.asymmetric_cell_atom.created,"no asymmetric_cell_atom info")
-     geometry,geometry_xyz :: MAT{REAL}*
+     new :: VEC{VEC_{INT}}*
+     geom0,geom1 :: MAT{REAL}*
      atom_pair :: VEC{ATOM}(2)
-     atom_added :: VEC{BIN}*
-     pos_i,pos_j :: VEC{REAL}(3)
-     n_atoms,i,j,parent_i,parent_j,last_i :: INT
+     pos_i,pos_j,offset :: VEC{REAL}(3)
+     n_atoms,i,j,parent_i,parent_j, h,k,l :: INT
      nearby :: BIN
-     geometry => .crystal.unit_cell_geometry
-     n_atoms = geometry.dim2
-     table.create(n_atoms) ! worst case is no atoms are connected
-     geometry_xyz.create(3,n_atoms)
-     geometry_xyz = matmul(.crystal.unitcell.direct_matrix,geometry)
-     atom_added.create(n_atoms)
-     atom_added = FALSE
-     do i = 1,n_atoms
-        if (atom_added(i)) cycle
-        pos_i = geometry_xyz(:,i)
-        parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
-        atom_pair(1).atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
-        atom_pair(1).pos = pos_i
-        do j = 2,n_atoms
-           pos_j = geometry_xyz(:,j)
-           nearby = abs(pos_j(1)-pos_i(1))<SIX &
-                AND abs(pos_j(2)-pos_i(2))<SIX &
-                AND abs(pos_j(3)-pos_i(3))<SIX 
-           if (NOT nearby) cycle
-           parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
-           atom_pair(2).atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
-           atom_pair(2).pos = pos_j
-           if (atom_pair.bonded(1,2)) then
-              atom_added(j) = TRUE 
-              table(i).element.append(j)
-              last_i = i
+     new.create(1)
+     new(1).element.create(4)
+     n_atoms = .crystal.unit_cell_geometry.dim2
+     table.create(n_atoms)
+     geom0.create(3,n_atoms) ! Get cartesian geometry
+     geom0 = matmul(.crystal.unit_cell.direct_matrix,.crystal.unit_cell_geometry)
+     ! Make connections in unit cells
+        do i = 1,n_atoms      ! (0,0,0) unit cell atoms
+           pos_i = geom0(:,i)
+           parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
+           atom_pair(1).atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+           atom_pair(1).pos = pos_i
+           do j = i+1,n_atoms   ! (0,0,0) unit cell atoms 
+              pos_j = geom0(:,j)
+              nearby = abs(pos_j(1)-pos_i(1))<SIX &
+                   AND abs(pos_j(2)-pos_i(2))<SIX &
+                   AND abs(pos_j(3)-pos_i(3))<SIX 
+              if (NOT nearby) cycle   ! Gross test for closeness
+              parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
+              atom_pair(2).atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+              atom_pair(2).pos = pos_j
+              if (atom_pair.bonded(1,2)) then
+                 new(1)[:] = [h,k,l,j]
+                 table(i).element.append(new)
+                 new(1)[4] = i
+                 table(j).element.append(new)
+            ! stdout.text("connected: "//i.to_str.trim//" and "//j.to_str.trim)
+            ! stdout.show("par_i =",parent_i)
+            ! stdout.show("z_i   =",atom_pair(1).atomic_number)
+            ! stdout.show("par_j =",parent_j)
+            ! stdout.show("z_j   =",atom_pair(2).atomic_number)
+            ! stdout.show("pos_j =",pos_i)
+            ! stdout.show("pos_i =",pos_i)
+            ! stdout.show("pos_j =",pos_i)
+            ! offset = pos_i - pos_j
+            ! stdout.show("dist  =",offset.norm)
+              end
+           end
+        end
+     ! Make connections to neighbouring cells
+     geom1.create(3,n_atoms) 
+     do h = -1,1 
+     do k = -1,1
+     do l = -1,1
+        if (h==0 AND k==0 AND l==0) cycle
+        offset = matmul(.crystal.unit_cell.direct_matrix,[h,k,l])
+        geom1 = geom0 + spread(offset,2,n_atoms)
+        do i = 1,n_atoms      ! (0,0,0) unit cell atoms
+           pos_i = geom0(:,i)
+           parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
+           atom_pair(1).atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+           atom_pair(1).pos = pos_i
+           do j = 1,n_atoms   ! (h,k,l) unit cell atoms 
+              pos_j = geom1(:,j)
+              nearby = abs(pos_j(1)-pos_i(1))<SIX &
+                   AND abs(pos_j(2)-pos_i(2))<SIX &
+                   AND abs(pos_j(3)-pos_i(3))<SIX 
+              if (NOT nearby) cycle   ! Gross test for closeness
+              parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
+              atom_pair(2).atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+              atom_pair(2).pos = pos_j
+              if (atom_pair.bonded(1,2)) then
+                 new(1)[:] = [h,k,l,j]
+                 table(i).element.append(new)
+              end
            end
         end
      end
-     geometry_xyz.destroy
-     atom_added.destroy
-     table.shrink(last_i)
+     end
+     end
+     geom1.destroy
+     geom0.destroy
+     new.destroy_ptr_part
    end
+
+   make_occupation_list(list) ::: leaky
+   ! Codify which atoms in the crystal are fragment atoms i.e. make the
+   ! occupation "list". If the i-th atom in the cell (h1,h2,h3) is occupied
+   ! then the number h3' + 10^2*h2' + 10^4*h1' + 10^6*i appears in the array
+   ! "list", where hn' = h1 + 50. This means that the
+     list :: VEC{VEC_{INT}}*
+     i,u :: INT
+     list.create(.n_atoms,4)
+     do i = 1,.n_atoms
+        u = .crystal.unit_cell_atom_for_frag_atom(i)
+        list(i)[1] = .crystal.unit_cell_atom_for_frag_atom(i)
+     end
+   end
+
+!   do_defrag 
+!   ! Defragment the generated cluster from the .connection table.
+!   ENSURE(.connection.created,"no connection table")
+!     i,c :: INT
+!     ! Need to codify which atoms in the crystal are fragment atoms.
+!     ! This is called the occupation list
+!     i = 1
+!     do 
+!        if (i>.n_atoms) exit ! no more connections found
+!        do c = 1,.connection(i).element.dim
+!           if
+!        
+!        end
+!     end
+!   end
 
    shrink_info_arrays ::: private, leaky
    ! Shrink the informational arrays to save space.
@@ -813,8 +889,8 @@ contains
      a,f,q,p,n,n_col :: INT
      disordered,added :: BIN
      tol,occ :: REAL
-     tol = TOL(2)/maxval(.crystal.unitcell.length)
-     tol = TOL(1)/maxval(.crystal.unitcell.length)
+     tol = TOL(2)/maxval(.crystal.unit_cell.length)
+     tol = TOL(1)/maxval(.crystal.unit_cell.length)
      if (.geometry(:,1:.n_atoms).has_column(pos,eps=tol)) return
      ! Check asymmetric cell atom for unit cell atom "u" is OK and warn if disordered
      a = .crystal.asym_atom_for_unit_cell_atom(u) 
@@ -849,32 +925,16 @@ contains
      n_col = .geometry.dim2
      if ((.n_atoms+1)>n_col) then 
         .geometry.expand_columns(2*n_col)
-      ! .symop_for_atom.expand(2*n_col)
         .unit_cell_atom_for_atom.expand(2*n_col)
-        if (.do_fragment_symop) then
-         ! .fragment_parent_for_atom.expand(2*n_col)
-         ! .cell_index_for_atom.expand(2*n_col)
-        end
-      ! .parent_for_atom.expand(2*n_col)
-      ! .minimum_distance_to_atom.expand(2*n_col)
-      ! .closest_fragment_atom_to_atom.expand(2*n_col)
      end
      ! Finally, add the new position and info, to the info arrays
      n = .n_atoms + 1
      .geometry(:,n) = pos
-     ! .symop_for_atom(n) = q
      .unit_cell_atom_for_atom(n) = u
      .shift_for_atom(n) = q
-     ! .parent_for_atom(n) = a ! asymmetric cell atom
      if (.do_fragment_symop) then
         .fragment_symop_for_atom(n) = p
-        ! .fragment_parent_for_atom(n) = .crystal.frag_atom_for_unit_cell_atom(u) 
-        ! .cell_index_for_atom(n) = c
      end
-   ! These may take up too much time ...
-   ! dist = .minimum_distance_to(pos,closest)
-   ! .minimum_distance_to_atom(n) = dist
-   ! .closest_fragment_atom_to_atom(n) = closest
      .n_atoms = n
    end
 
@@ -963,8 +1023,8 @@ contains
      pos :: VEC{REAL}(3)
      res :: BIN
      tol :: REAL
-     tol = TOL(4)/maxval(.crystal.unitcell.length)
-     tol = TOL(1)/maxval(.crystal.unitcell.length)
+     tol = TOL(4)/maxval(.crystal.unit_cell.length)
+     tol = TOL(1)/maxval(.crystal.unit_cell.length)
      res = all(pos(:)>=-tol AND pos(:)<ONE-tol)
    end
 
@@ -989,8 +1049,8 @@ contains
      i,j :: INT
      found :: BIN
      tol :: REAL
-     tol = TOL(2)/maxval(.crystal.unitcell.length)
-     tol = TOL(1)/maxval(.crystal.unitcell.length)
+     tol = TOL(2)/maxval(.crystal.unit_cell.length)
+     tol = TOL(1)/maxval(.crystal.unit_cell.length)
      .is_fragment_atom.create(.n_atoms)
      .is_fragment_atom = FALSE
      do j = 1,.n_fragment_atoms ! loop over fragment atoms
@@ -1101,7 +1161,7 @@ contains
      diff.create(3,.n_fragment_atoms)
      norms.create(.n_fragment_atoms)
      diff = .fragment_geometry - spread(pos,2,.n_fragment_atoms)
-     .crystal.unitcell.change_from_fractional(diff)  ! Put in cartesians.
+     .crystal.unit_cell.change_from_fractional(diff)  ! Put in cartesians.
      diff.get_column_norms(norms)
      res = minval(norms)
      if (present(closest_atom)) closest_atom = minval(minloc(norms))
@@ -1128,7 +1188,7 @@ contains
    ENSURE(.fragment_geometry.created,"no fragment geometry")
    ENSURE(.crystal.created,"no crystal data")
      res.create(3,.n_atoms)
-     .crystal.unitcell.change_from_fractional(.geometry)
+     .crystal.unit_cell.change_from_fractional(.geometry)
    end
 
    cluster_width result(res)
@@ -1431,10 +1491,12 @@ contains
          .put_fragment_cluster_table
        ! .put_fragment_parents_for_atom
        ! .put_fragment_child_for_atom
+         .put_connection_table
       else
          .put_fragment_geometry
          .put_cluster_table
          .put_fragment_cluster_table
+         .put_connection_table
       end
    end
 
@@ -1642,6 +1704,37 @@ contains
       stdout.dash(int_fields=1,width=4*.n_fragment_symop)
    end
 
+   put_connection_table
+   ! Put the .connection table
+   ENSURE(.info_made,"call make_info first")
+      a,i,b,h,k,l :: INT
+      if (.connection.destroyed) return
+      stdout.flush
+      stdout.text("Unit cell atom connection table:")
+      stdout.flush
+      stdout.dash(int_fields=5)
+      stdout.put("Atom 1",int_width=TRUE)
+      stdout.put("Atom 2",int_width=TRUE)
+      stdout.put("h",int_width=TRUE)
+      stdout.put("k",int_width=TRUE)
+      stdout.put("l",int_width=TRUE)
+      stdout.flush
+      stdout.dash(int_fields=5)
+      do a = 1,.connection.dim
+         stdout.put(a)
+         do i = 1,.connection(a).element.dim
+            if (i>1) &
+            stdout.tab(int_fields=1)
+            stdout.put(.connection(a).element(i).element(4))
+            stdout.put(.connection(a).element(i).element(1))
+            stdout.put(.connection(a).element(i).element(2))
+            stdout.put(.connection(a).element(i).element(3))
+            stdout.flush
+         end
+      end
+      stdout.dash(int_fields=5)
+   end
+
    put_tonto_input
    ! Outputs the tonto input file for the cluster, given additionally the list
    ! of atoms which was used to generate the fragment_geometry in crystal.
@@ -1706,7 +1799,7 @@ contains
       seitz :: MAT3{REAL}*
       seitz => .crystal.transposed_xyz_seitz_matrices    ! transposed !
       geometry.create_copy(.geometry)
-      .crystal.unitcell.change_from_fractional(geometry)
+      .crystal.unit_cell.change_from_fractional(geometry)
     ! geometry = ANGSTROM_PER_BOHR*geometry
       stdout.flush
       stdout.text("begin atoms " // label.trim)
@@ -1801,7 +1894,7 @@ contains
       n,u,a :: INT
       geometry :: MAT{REAL}*
       geometry.create_copy(.geometry)
-      .crystal.unitcell.change_from_fractional(geometry)
+      .crystal.unit_cell.change_from_fractional(geometry)
       geometry = ANGSTROM_PER_BOHR*geometry
       stdout.flush
       stdout.text("=== SPARTAN DATA ===")
