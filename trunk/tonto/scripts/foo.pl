@@ -1635,7 +1635,7 @@ sub find_new_scoping_unit {
         $newscopeunit = 'select';
     } elsif ($_[0] =~ m'forall'o && $_[0] =~ m'^ *forall *[(]'o && $_[0] !~ m'^ *forall *[(].*[)] *.*='o) { # forall
         $newscopeunit = 'forall';
-    } elsif ($_[0] =~ m'where'o && $_[0] =~ m'^ *where *[(]'o) { # where
+    } elsif ($_[0] =~ m'where'o && $_[0] =~ m'^ *where *[(][^;]*[)] *(?=(?: *$)|(?: *[!;]))'o) { # where
         $newscopeunit = 'where';
     } elsif ($_[0] =~ m'type'o && $_[0] =~ m'^ *type *[a-zA-Z]'o) { # type
         $newscopeunit = 'type';
@@ -1674,7 +1674,7 @@ sub find_new_scoping_unit {
         $newscopeunit = 'select';
     } elsif ($_[0] =~ m'forall'o && $_[0] =~ m'^ *forall *[(]'o && $_[0] !~ m'^ *forall *[(].*[)] *.*='o) { # forall
         $newscopeunit = 'forall';
-    } elsif ($_[0] =~ m'where'o && $_[0] =~ m'^ *where *[(]'o) { # where
+    } elsif ($_[0] =~ m'where'o && $_[0] =~ m'^ *where *[(][^;]*[)] *(?=(?: *$)|(?: *[!;]))'o) { # where
         $newscopeunit = 'where';
     }
   } elsif ($scopeunit eq 'forall' || $scopeunit eq 'where') {
