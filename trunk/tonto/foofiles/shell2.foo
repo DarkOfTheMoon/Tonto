@@ -41,6 +41,14 @@ module SHELL2
 
    implicit none
 
+   ! These are indexing arrays used for the horizontal recursion relation.
+   ! They are set using the set_hrr_indexing_arrays routine.
+
+   l_max_hrr :: INT, private = -1
+   first_nonzero :: VEC{INT}*, private  DEFAULT_NULL
+   index_m1 :: VEC{INT}*, private  DEFAULT_NULL
+   index_p1 :: MAT{INT}*, private  DEFAULT_NULL
+
 contains
 
    create ::: leaky
@@ -58,6 +66,15 @@ contains
      shell_a,shell_b :: SHELL1, IN
      .create
      .copy(shell_a,shell_b)
+   end
+
+   create(shell_a,shell_b,pos_a,pos_b) ::: leaky
+   ! Create a copy of a shell1 objects with positions
+     self :: PTR
+     shell_a,shell_b :: SHELL1, IN
+     pos_a,pos_b :: VEC{REAL}(3), IN
+     .create
+     .copy(shell_a,shell_b,pos_a,pos_b)
    end
 
    create(shell_a,shell_b,pos_a,pos_b) ::: leaky
@@ -145,6 +162,15 @@ contains
 
    copy(shell_a,shell_b,pos_a,pos_b) ::: leaky
    ! Copy the shell2 using shell objects and positions
+     shell_a,shell_b :: SHELL1, IN
+     pos_a,pos_b :: VEC{REAL}, IN
+     .a.copy(shell_a,pos_a)
+     .b.copy(shell_b,pos_b)
+     .precalculate
+   end
+
+   copy(shell_a,shell_b,pos_a,pos_b) ::: leaky
+   ! Copy the shell2 using shell objects and positions
      shell_a,shell_b :: SHELL, IN
      pos_a,pos_b :: VEC{REAL}, IN
      .a.copy(shell_a,pos_a)
@@ -169,9 +195,10 @@ contains
      .precalculate
    end
 
-   copy(shellpr,pos_a,pos_b) ::: leaky
-   ! Copy the parts of the shell2 from shell1 objects
-     shellpr :: SHELLPAIR, IN
+   set_and_precompute_from(shellpr,pos_a,pos_b) ::: leaky
+   ! Copy the parts of the shell2 from shell1pair.
+   ! The positions are overrided.
+     shellpr :: SHELL1PAIR, IN
      pos_a,pos_b :: VEC{REAL}, IN
      AB,At,P,b_pos_b :: VEC{REAL}(3)
      r2ab,a,b,b_r2ab,inv :: REAL
@@ -211,7 +238,7 @@ contains
           .center_diff(:,i) = P - At
         end
       end
-     .kappa_max = maxval(.cc_prefactor/.exponent_inv**(3/2))
+      .kappa_max = maxval(.cc_prefactor/.exponent_inv**(THREE/TWO))
    end
  
    precalculate ::: leaky
@@ -231,9 +258,9 @@ contains
      .cc_prefactor.create(.n_gaussian_pairs)
      .pair_center.create(3,.n_gaussian_pairs)
      .center_diff.create(3,.n_gaussian_pairs)
-     .normalising_factors.create(.a.l.n_comp*.b.l.n_comp)
-     anorm.create(.a.l.n_comp)
-     bnorm.create(.b.l.n_comp)
+     .normalising_factors.create(.a.n_comp*.b.n_comp)
+     anorm.create(.a.n_comp)
+     bnorm.create(.b.n_comp)
      AB = .a.pos-.b.pos
      ! Want position of shell1 with higher angular momentum.
      if (.a.l > .b.l) then; At = .a.pos
@@ -262,12 +289,12 @@ contains
          .center_diff(:,i) = P - At
        end
      end
-     .kappa_max = maxval(.cc_prefactor/.exponent_inv**(3/2))
+     .kappa_max = maxval(.cc_prefactor/.exponent_inv**(THREE/TWO))
      anorm.normalising_factors(.a.l)
      bnorm.normalising_factors(.b.l)
      i = 0
-     do bg=1,.b.l.n_comp
-       do ag=1,.a.l.n_comp
+     do bg=1,.b.n_comp
+       do ag=1,.a.n_comp
          i = i + 1
          .normalising_factors(i) = anorm(ag)*bnorm(bg)
        end
@@ -2163,15 +2190,15 @@ contains
       lc_min,lc_max,ld_min,ld_max :: INT
    ENSURE(S.dim1==.a.n_comp,"wrong size for S")
    ENSURE(S.dim2==.b.n_comp,"wrong size for S")
-   ENSURE(S.dim3==(lc_max.n_comp_sum-(lc_min-1).n_comp_sum),"wrong size for S")
-   ENSURE(S.dim4==(ld_max.n_comp_sum-(ld_min-1).n_comp_sum),"wrong size for S")
+   ENSURE(S.dim3==(n_comp_up_to(lc_max)-n_comp_up_to(lc_min-1)),"wrong size for S")
+   ENSURE(S.dim4==(n_comp_up_to(ld_max)-n_comp_up_to(ld_min-1)),"wrong size for S")
       SS :: MAT4{REAL}*
       G :: GAUSSIAN2
       cacb :: REAL
       a,b,nc,nd :: INT
       S = ZERO
-      nc = lc_max.n_comp_sum - (lc_min-1).n_comp_sum
-      nd = ld_max.n_comp_sum - (ld_min-1).n_comp_sum
+      nc = n_comp_up_to(lc_max) - n_comp_up_to(lc_min-1)
+      nd = n_comp_up_to(ld_max) - n_comp_up_to(ld_min-1)
       SS.create(.a.n_comp,.b.n_comp,nc,nd)
       G.set(.a.l,.a.pos,ZERO,.b.l,.b.pos,ZERO)
       do a = 1,.a.n_cc
@@ -2706,22 +2733,12 @@ contains
 !  Roland Lindh's style integrals
 !  ******************************
 
-   s_overlap(zeta,zz,r2) result (res) ::: elemental, private
-   ! Calculate the overlap of two s functions.
-     self :: IN
-     zeta,zz,r2 :: REAL, IN
-     res :: REAL
-     PI_zinv :: REAL
-     PI_zinv = PI/zeta
-     res=PI_zinv*sqrt(PI_zinv) * exp(-zz*r2)
-   end
-
    make_overlap(ab)
    ! Calculate the overlap matrix for the two shells
      ab :: MAT{REAL}
      es :: VEC{REAL}*
      n :: INT
-     n = (.a.l+.b.l).n_comp_sum - (.l_max-1).n_comp_sum
+     n = n_comp_up_to(.a.l+.b.l) - n_comp_up_to(.l_max-1)
      es.create(n)
      .make_overlap_es(es)
      .transfer(es,ab)
@@ -2738,8 +2755,8 @@ contains
      a,b,templb,tempub,i :: INT
      r2ab,ea,eb :: REAL
 
-     tempub = .l_sum.n_comp_sum
-     templb = (.l_max-1).n_comp_sum + 1
+     tempub = n_comp_up_to(.l_sum)
+     templb = n_comp_up_to(.l_max-1) + 1
      temp.create(tempub)
 
      AB = .a.pos - .b.pos
@@ -2769,15 +2786,16 @@ contains
      a_momenta :: VEC{INT}(3)
      index :: MAT3{INT}*
      momenta :: MAT{INT}*
-     half_zinv,zinv,zeta,zz,PEi :: REAL
+     half_zinv,zinv,zeta,zz,PI_zinv,PEi :: REAL
      j,z,lz,a1,a2,tmp :: INT
 
      zeta = .exponent_sum(i)
      zinv = .exponent_inv(i)
-     zz=ea*eb/zeta
+     zz = ea*eb/zeta
 
-     es=ZERO
-     es(1)=.s_overlap(zeta,zz,r2ab)
+     PI_zinv = PI/zeta
+     es = ZERO
+     es(1) = PI_zinv*sqrt(PI_zinv) * exp(-zz*r2ab)          ! s||s
 
      if (.l_sum > 0) then
        half_zinv = HALF*zinv
@@ -2787,12 +2805,12 @@ contains
        es(4) = PE(3) * es(1)
 
        if (.l_sum > 1) then
-         momenta.create(3, .l_sum.n_comp_sum)
+         momenta.create(3,n_comp_up_to(.l_sum))
          tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
          index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
          index.make_index_of_components(momenta)
 
-         do j=5, .l_sum.n_comp_sum                          ! d||s to .l_sum||s
+         do j = 5,n_comp_up_to(.l_sum)                       ! d||s to .l_sum||s
            a_momenta = momenta(:,j)
            z = a_momenta.index_of_first_nonzero_value
            lz = a_momenta(z)
@@ -2812,6 +2830,16 @@ contains
        end
      end
    end
+
+!   s_overlap(zeta,zz,r2) result (res) ::: elemental, private
+!   ! Calculate the overlap of two s functions.
+!     self :: IN
+!     zeta,zz,r2 :: REAL, IN
+!     res :: REAL
+!     PI_zinv :: REAL
+!     PI_zinv = PI/zeta
+!     res=PI_zinv*sqrt(PI_zinv) * exp(-zz*r2)
+!   end
 
    get_kei(kei,overlap)
    ! Calculate the kinetic energy and overlap (optional) integrals.
@@ -2835,8 +2863,8 @@ contains
      P,PA,PB,ara,brb,AB :: VEC{REAL}(3)
      a,b,alb,aub,blb,bub :: INT
      ca,ea,eb,zeta,zinv2,r2ab :: REAL
-     alb = (.a.l-1).n_comp_sum + 1; aub = alb + .a.n_comp -1
-     blb = (.b.l-1).n_comp_sum + 1; bub = blb + .b.n_comp -1
+     alb = n_comp_up_to(.a.l-1) + 1; aub = alb + .a.n_comp -1
+     blb = n_comp_up_to(.b.l-1) + 1; bub = blb + .b.n_comp -1
      temp_kei.create(aub,bub)
      temp_overlap.create(aub,bub)
      kei=ZERO
@@ -2882,18 +2910,19 @@ contains
      j,z,lza,lzb,a,a1,a2,b,b1,laub :: INT
      la,lb,la1_n_comp_sum,lb1_n_comp_sum,la_n_comp_sum,lb_n_comp_sum :: INT
      na,b_n_comp_sum,tmp :: INT
-     PAi,PBi,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_ea_na :: REAL
+     PAi,PBi,PI_zinv,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_ea_na :: REAL
 
      zz       = ea * eb / zeta
      zz2      = 2 * zz
      zz_ea    = zz / ea
      zz_eb    = zz / eb
-     b_n_comp_sum = .b.l.n_comp_sum
+     b_n_comp_sum = n_comp_up_to(.b.l)
 
-     overlap(1,1) = .s_overlap(zeta,zz,r2ab)
+     PI_zinv = PI/zeta
+     overlap(1,1) = PI_zinv*sqrt(PI_zinv) * exp(-zz*r2ab)  ! s||s
      kei(1,1)     = zz * (3.0-zz2 * r2ab) * overlap(1,1)
 
-     momenta.create(3, .a.l.n_comp_sum)
+     momenta.create(3,n_comp_up_to(.a.l))
      tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.a.l)
      index.create(0,.a.l, 0,.a.l, 0,.a.l)
      index.make_index_of_components(momenta)
@@ -2925,7 +2954,7 @@ contains
        end
      end
 
-     do j = b_n_comp_sum + 1, (.a.l-.b.l).n_comp_sum   ! lb||s to la-lb||s
+     do j = b_n_comp_sum + 1, n_comp_up_to(.a.l-.b.l)   ! lb||s to la-lb||s
        a_momenta    = momenta(:,j)
        z            = a_momenta.index_of_first_nonzero_value
        lza          = a_momenta(z)
@@ -2948,12 +2977,12 @@ contains
 
      laub = .a.l - .b.l
      do lb = 1, .b.l
-       lb1_n_comp_sum = (lb-1).n_comp_sum + 1
-       lb_n_comp_sum  = lb.n_comp_sum
+       lb1_n_comp_sum = n_comp_up_to(lb-1) + 1
+       lb_n_comp_sum  = n_comp_up_to(lb)
        laub           = laub + 1
        do la = 1, laub
-         la1_n_comp_sum = (la-1).n_comp_sum + 1
-         la_n_comp_sum  = la.n_comp_sum
+         la1_n_comp_sum = n_comp_up_to(la-1) + 1
+         la_n_comp_sum  = n_comp_up_to(la)
          do a = la1_n_comp_sum, la_n_comp_sum
            a_momenta    = momenta(:,a)
            z            = a_momenta.index_of_first_nonzero_value
@@ -3022,24 +3051,25 @@ contains
      j,z,lza,lzb,a,a1,b,b1,b2,lbub,la,lb :: INT
      la1_n_comp_sum,lb1_n_comp_sum,la_n_comp_sum,lb_n_comp_sum :: INT
      nb,a_n_comp_sum,tmp :: INT
-     PAi,PBi,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_eb_nb :: REAL
+     PAi,PBi,PI_zinv,zz,zz2,zinv2_na,zinv2_nb,zz_ea,zz_eb,zz_eb_nb :: REAL
 
      zz      = ea * eb / zeta
      zz2     = 2 * zz
      zz_ea    = zz / ea
      zz_eb    = zz / eb
-     a_n_comp_sum  = .a.l.n_comp_sum
+     a_n_comp_sum  = n_comp_up_to(.a.l)
 
-     overlap(1,1) = .s_overlap(zeta,zz,r2ab)
+     PI_zinv = PI/zeta
+     overlap(1,1) = PI_zinv*sqrt(PI_zinv) * exp(-zz*r2ab) ! s||s
      kei(1,1)     = zz * (3.0-zz2 * r2ab) * overlap(1,1)
 
-     momenta.create(3, .b.l.n_comp_sum)
+     momenta.create(3, n_comp_up_to(.b.l))
      tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.b.l)
      index.create(0,.b.l, 0,.b.l, 0,.b.l)
      index.make_index_of_components(momenta)
 
-     do j=2, a_n_comp_sum                               ! p||s to la||s
-       b_momenta    = momenta(:,j)                      ! s||p to s||la
+     do j = 2, a_n_comp_sum                               ! p||s to la||s
+       b_momenta    = momenta(:,j)                        ! s||p to s||la
        z            = b_momenta.index_of_first_nonzero_value
        lzb          = b_momenta(z)
        b_momenta(z) = b_momenta(z)-1
@@ -3065,7 +3095,7 @@ contains
        end
      end
 
-     do j= a_n_comp_sum + 1, (.b.l-.a.l).n_comp_sum      ! s||lb to s||lb-la
+     do j= a_n_comp_sum + 1, n_comp_up_to(.b.l-.a.l)      ! s||lb to s||lb-la
        b_momenta    = momenta(:,j)                       ! s||p to s||la
        z            = b_momenta.index_of_first_nonzero_value
        lzb          = b_momenta(z)
@@ -3088,12 +3118,12 @@ contains
 
      lbub = .b.l - .a.l
      do la = 1, .a.l
-       la1_n_comp_sum = (la-1).n_comp_sum + 1
-       la_n_comp_sum  = la.n_comp_sum
+       la1_n_comp_sum = n_comp_up_to(la-1) + 1
+       la_n_comp_sum  = n_comp_up_to(la)
        lbub           = lbub + 1
        do lb = 1, lbub
-         lb1_n_comp_sum = (lb-1).n_comp_sum+1
-         lb_n_comp_sum  = lb.n_comp_sum
+         lb1_n_comp_sum = n_comp_up_to(lb-1)+1
+         lb_n_comp_sum  = n_comp_up_to(lb)
          do b = lb1_n_comp_sum, lb_n_comp_sum
            b_momenta    = momenta(:,b)
            z            = b_momenta.index_of_first_nonzero_value
@@ -3173,7 +3203,7 @@ contains
        .make_nuc_dp(ab,mass_c,pos_c)
        .normalise(ab)
      else
-       n = (.l_sum).n_comp_sum - (.l_max-1).n_comp_sum
+       n = n_comp_up_to(.l_sum) - n_comp_up_to(.l_max-1)
        es.create(n)
        .make_nuc_es(es,mass_c,pos_c)
        .transfer(es,ab)
@@ -3192,23 +3222,21 @@ contains
      pos_c :: VEC{REAL}(3), IN
      Ixa,Iya,Iza :: MAT{REAL}*
      Ix,Iy,Iz :: VEC{REAL}*
-     rysa :: RYS*
+     rys :: RYS*
      rzt,ce,e1_ce,rho_zinv,half_zinv,Ix2,Iy2,Iz2,wt :: REAL
      QPx,QPy,QPz,PAx,PAy,PAz,zeta,zinv,rho,xx,eta_c,two_pi :: REAL
      Ixe,Iye,Ize,Ixe1,Iye1,Ize1,Ixep1,Iyep1,Izep1 :: REAL
      ag,bg,e,ep1,eub,nroots,i,j,n,n_sum :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
      eub  = size(es)
      nroots=(.l_sum+2)/2
      n_sum = nroots * .a.n_cc * .b.n_cc
-     rysa.create(nroots)
+     rys.create(nroots)
      Ixa.create(n_sum,.l_sum+1)
      Iya.create(n_sum,.l_sum+1)
      Iza.create(n_sum,.l_sum+1)
@@ -3229,8 +3257,8 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         rysa.w = rysa.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
+         rys.get_weights(xx)
+         rys.w = rys.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
          half_zinv = HALF * zinv
          rho_zinv = rho * zinv
 
@@ -3239,12 +3267,12 @@ contains
            Ix => Ixa(j,:)
            Iy => Iya(j,:)
            Iz => Iza(j,:)
-           wt = rysa.w(n)
+           wt = rys.w(n)
            Ix(1) = ONE
            Iy(1) = ONE
            Iz(1) = wt
                     if (.l_sum>0) then
-              rzt   = rysa.r(n)*rho_zinv
+              rzt   = rys.r(n)*rho_zinv
               Ix2 = PAx+rzt*QPx
               Iy2 = PAy+rzt*QPy
               Iz2 = PAz+rzt*QPz
@@ -3282,7 +3310,7 @@ contains
      Iza.destroy
      Iya.destroy
      Ixa.destroy
-     rysa.destroy
+     rys.destroy
    end
 
    combine_nuc_2d_ints(es,Ix,Iy,Iz,eub) ::: private
@@ -3310,7 +3338,7 @@ contains
      dp :: MAT{REAL}, OUT
      mass_c :: REAL, IN
      pos_c :: VEC{REAL}(3), IN
-     rysa :: RYS*
+     rys :: RYS*
      rzt,ce,rho_zinv,half_zinv,wt :: REAL
      QPx,QPy,QPz,PAx,PAy,PAz,zeta,zinv,rho,xx,eta_c,two_pi :: REAL
      Ix2,Iy2,Iz2,Ix3,Iy3,Iz3,two_ce,ABx,ABy,ABz :: REAL
@@ -3318,14 +3346,12 @@ contains
      fxxy_s,fxxz_s,fxyy_s,fyyz_s,fxzz_s,fyzz_s,fxyz_s :: REAL
      ag,bg,i,j,n :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
-     rysa.create(2)
+     rys.create(2)
 
      two_pi=TWO*PI
      i = 0
@@ -3349,15 +3375,15 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         rysa.w = rysa.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
+         rys.get_weights(xx)
+         rys.w = rys.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
          half_zinv = HALF * zinv
          rho_zinv = rho * zinv
 
          do n = 1, 2
            j = j + 1
-           wt = rysa.w(n)
-           rzt   = rysa.r(n)*rho_zinv
+           wt = rys.w(n)
+           rzt   = rys.r(n)*rho_zinv
            ce    = (ONE-rzt)*half_zinv
            Ix2 = PAx+rzt*QPx
            Iy2 = PAy+rzt*QPy
@@ -3433,7 +3459,7 @@ contains
        dp(3,6)      = fyzz_s + ABz * dyz_s
      end
 
-     rysa.destroy
+     rys.destroy
    end
 
    make_nuc_ds(ds,mass_c,pos_c) ::: private
@@ -3444,20 +3470,18 @@ contains
      ds :: MAT{REAL}, OUT
      mass_c :: REAL, IN
      pos_c :: VEC{REAL}(3), IN
-     rysa :: RYS*
+     rys :: RYS*
      rzt,ce,rho_zinv,half_zinv,Ix2,Iy2,Iz2,wt,Iz2_wt :: REAL
      QPx,QPy,QPz,PAx,PAy,PAz,zeta,zinv,rho,xx,eta_c,two_pi :: REAL
      dxx_s,dyy_s,dzz_s,dxy_s,dxz_s,dyz_s :: REAL
      ag,bg,i,n :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
-     rysa.create(2)
+     rys.create(2)
      two_pi=TWO*PI
      dxx_s = ZERO;    dyy_s = ZERO;    dzz_s = ZERO
      dxy_s = ZERO;    dxz_s = ZERO;    dyz_s = ZERO
@@ -3475,13 +3499,13 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         rysa.w = rysa.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
+         rys.get_weights(xx)
+         rys.w = rys.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
          half_zinv = HALF * zinv
          rho_zinv = rho * zinv
          do n = 1,2
-           wt = rysa.w(n)
-           rzt   = rysa.r(n)*rho_zinv
+           wt = rys.w(n)
+           rzt   = rys.r(n)*rho_zinv
            Ix2 = PAx+rzt*QPx
            Iy2 = PAy+rzt*QPy
            Iz2 = PAz+rzt*QPz
@@ -3496,7 +3520,7 @@ contains
          end
        end
      end
-     rysa.destroy
+     rys.destroy
      if (.a.l==2) then
        ds(1,1) = dxx_s
        ds(2,1) = dyy_s
@@ -3522,20 +3546,18 @@ contains
      pp :: MAT{REAL}, OUT
      mass_c :: REAL, IN
      pos_c :: VEC{REAL}(3), IN
-     rysa :: RYS*
+     rys :: RYS*
      rzt,ce,rho_zinv,half_zinv,Ix2,Iy2,Iz2,wt,Iy2_wt,Iz2_wt :: REAL
      QPx,QPy,QPz,PAx,PAy,PAz,zeta,zinv,rho,xx,eta_c,two_pi :: REAL
      BAx,BAy,BAz,px_s,py_s,pz_s,dxx_s,dyy_s,dzz_s,dxy_s,dxz_s,dyz_s :: REAL
      ag,bg,i,n :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
-     rysa.create(2)
+     rys.create(2)
 
      two_pi=TWO*PI
      i = 0
@@ -3555,14 +3577,14 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         rysa.w = rysa.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
+         rys.get_weights(xx)
+         rys.w = rys.w * (two_pi * .cc_prefactor(i) * sqrt(rho))
          half_zinv = HALF * zinv
          rho_zinv = rho * zinv
 
          do n = 1,2
-           wt = rysa.w(n)
-           rzt = rysa.r(n)*rho_zinv
+           wt = rys.w(n)
+           rzt = rys.r(n)*rho_zinv
            Ix2 = PAx+rzt*QPx
            Iy2 = PAy+rzt*QPy
            Iz2 = PAz+rzt*QPz
@@ -3581,7 +3603,7 @@ contains
          end
        end
      end
-     rysa.destroy
+     rys.destroy
 
      BAx = .b.pos(1) - .a.pos(1)
      BAy = .b.pos(2) - .a.pos(2)
@@ -3605,19 +3627,17 @@ contains
      ps :: MAT{REAL}, OUT
      mass_c :: REAL, IN
      pos_c :: VEC{REAL}(3), IN
-     rysa :: RYS*
+     rys :: RYS*
      rzt,wt :: REAL
      QPx,QPy,QPz,PAx,PAy,PAz,zeta,rho,xx,eta_c,two_pi,ps_x,ps_y,ps_z :: REAL
      ag,bg,i :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
-     rysa.create(1)
+     rys.create(1)
 
      two_pi=TWO*PI
      i = 0
@@ -3634,9 +3654,9 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         wt = rysa.w(1) * (two_pi * .cc_prefactor(i) * sqrt(rho))
-         rzt   = rysa.r(1) * rho * .exponent_inv(i)
+         rys.get_weights(xx)
+         wt = rys.w(1) * (two_pi * .cc_prefactor(i) * sqrt(rho))
+         rzt   = rys.r(1) * rho * .exponent_inv(i)
          ps_x = ps_x + (PAx+rzt*QPx) * wt
          ps_y = ps_y + (PAy+rzt*QPy) * wt
          ps_z = ps_z + (PAz+rzt*QPz) * wt
@@ -3651,7 +3671,7 @@ contains
        ps(1,2) = ps_y
        ps(1,3) = ps_z
      end
-     rysa.destroy
+     rys.destroy
    end
 
    make_nuc_ss(es,mass_c,pos_c) ::: private
@@ -3662,18 +3682,16 @@ contains
      es :: REAL, OUT
      mass_c :: REAL, IN
      pos_c :: VEC{REAL}(3), IN
-     rysa :: RYS*
+     rys :: RYS*
      QPx,QPy,QPz,zeta,rho,xx,eta_c,two_pi :: REAL
      ag,bg,i :: INT
 
-     if (mass_c < TOL(15)) then
-       eta_c=1.0d30  ! Very big.
-     else
-       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
+     if (mass_c < TOL(15)) then; eta_c=1.0d30  ! Very big.
+     else;                       eta_c=3880000000d0*(mass_c**(-TWOTHIRDS))
      end
      eta_c = 1.0d60 ! uncomment this to get rid of relativistic correction.
 
-     rysa.create(1)
+     rys.create(1)
      two_pi=TWO*PI
      es = ZERO
      i = 0
@@ -3686,11 +3704,11 @@ contains
          QPy   = pos_c(2) - .pair_center(2,i)
          QPz   = pos_c(3) - .pair_center(3,i)
          xx    = rho * (QPx*QPx + QPy*QPy + QPz*QPz)
-         rysa.get_weights(xx)
-         es    = es + (two_pi * .cc_prefactor(i) * sqrt(rho)) * rysa.w(1)
+         rys.get_weights(xx)
+         es    = es + (two_pi * .cc_prefactor(i) * sqrt(rho)) * rys.w(1)
        end
      end
-     rysa.destroy
+     rys.destroy
    end
 
    transfer(es,ab)
@@ -3698,236 +3716,737 @@ contains
      self :: IN
      es :: VEC{REAL}, IN
      ab :: MAT{REAL}, OUT
-     if (.a.l > .b.l) then
-       .transfer_l_a_highest(es,ab)
-     else
-       .transfer_l_b_highest(es,ab)
+     if (.a.l > .b.l) then; .transfer_l_a_highest(es,ab)
+     else;                  .transfer_l_b_highest(es,ab)
      end
    end
 
    transfer_l_a_highest(es,ab) ::: private
-   ! Applies the transfer equation to (e|s) to give (a|b)
-   ! where a has the higher angular momentum.
+   ! Applies the transfer equation to (e|s) to give (a|b) where shell a has the higher
+   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
      self :: IN
      es :: VEC{REAL}, IN
      ab :: MAT{REAL}, OUT
-     ABvec :: VEC{REAL}(3)
-     momenta :: MAT{INT}*
-     index :: MAT3{INT}*
-     a_momenta,b_momenta :: VEC{INT}(3)
+   ENSURE(.a.l>=.b.l,"shell a must have higher momentum than b")
+   ENSURE(es.dim ==(n_comp_up_to(.l_sum)-n_comp_up_to(.l_max-1)),"wrong size, es")
+   ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
+   ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
+   ENSURE(first_nonzero.created,"no indexing arrays")
      int_new,int_old :: MAT{REAL}*
-     a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum :: INT
-     a1,b1,z,eadd,tmp :: INT
-     ABi :: REAL
-
+     R :: VEC{REAL}(3)
+     Rt,Rx,Ry,Rz,es_a :: REAL
+     a,b,a1,b1,l,na,fa,nb,fb,pb,t :: INT
      select case (.b.l)
-       case (0)
-         ab(:,1)=es
-
-       case (1)
-         ABvec = .a.pos - .b.pos
-         eadd  = (.a.l-1).n_comp_sum
-         aub   = (.l_sum-1).n_comp_sum - eadd
-
-         momenta.create(3, .l_sum.n_comp_sum)
-         tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
-         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
-         index.make_index_of_components(momenta)
-
-         do b=1,3
-           z   = momenta(:,b+1).index_of_first_nonzero_value
-           ABi = ABvec(z)
-           do a=1,aub
-             a_momenta    = momenta(:, a + eadd)
-             a_momenta(z) = a_momenta(z) + 1
-             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
-             ab(a,b)      = es(a1) + ABi * es(a)
+        case (0)                               ! (a|s) case
+           ab(:,1) = es
+        case (1)                               
+           R  = .a.pos - .b.pos
+           if (.a.l==1) then                   ! (p|p) case
+              Rx = R(1)
+              Ry = R(2)
+              Rz = R(3)
+              es_a = es(1)
+              ab(1,1) = es(4) + Rx*es_a
+              ab(1,2) = es(7) + Ry*es_a
+              ab(1,3) = es(8) + Rz*es_a
+              es_a = es(2)
+              ab(2,1) = es(7) + Rx*es_a
+              ab(2,2) = es(5) + Ry*es_a
+              ab(2,3) = es(9) + Rz*es_a
+              es_a = es(3)
+              ab(3,1) = es(8) + Rx*es_a
+              ab(3,2) = es(9) + Ry*es_a
+              ab(3,3) = es(6) + Rz*es_a
+           else                                ! (a|p) case
+              na = .a.n_comp
+              fa = n_comp_up_to(.a.l-1)        ! Offset into the index array
+              do b = 1,3                       ! p shell on b
+                 t = first_nonzero(b+1)        ! The transfer component
+                 Rt = R(t)
+                 do a = 1,na                   ! Put es straight to ab
+                    a1 = index_p1(a+fa,t) - fa 
+                    ab(a,b) = es(a1) + Rt * es(a)
+                 end
+              end
            end
-         end
-         index.destroy
-         momenta.destroy
-
-       case default
-         ABvec = .a.pos - .b.pos
-         eadd  = (.l_max-1).n_comp_sum
-         aub   = (.l_sum-1).n_comp_sum - eadd
-
-         momenta.create(3, .l_sum.n_comp_sum)
-         tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
-         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
-         index.make_index_of_components(momenta)
-
-         int_new.create(aub,3)
-         do b=1,3
-           z   = momenta(:,b+1).index_of_first_nonzero_value
-           ABi = ABvec(z)
-           do a=1,aub
-             a_momenta    = momenta(:, a + eadd)
-             a_momenta(z) = a_momenta(z) + 1
-             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
-             int_new(a,b) = es(a1) + ABi * es(a)
+        case default                           ! general (a|b) case
+           R  = .a.pos - .b.pos
+           fa = n_comp_up_to(.l_max-1)         ! Offset into the index array
+           na = n_comp_up_to(.l_sum-1) - fa    ! The momentum for es goes down one
+           int_new.create(na,3)
+           do b = 1,3                          ! Start with a p shell on b
+              t = first_nonzero(b+1)           ! Transfer component
+              Rt = R(t)
+              do a = 1,na                 
+                 a1 = index_p1(a+fa,t) - fa
+                 int_new(a,b) = es(a1) + Rt * es(a)
+              end
            end
-         end
-
-         do lb=2, .b.l-1
-           lb1_n_comp_sum = (lb-1).n_comp_sum
-           lb2_n_comp_sum = (lb-2).n_comp_sum
-           bub            = lb.n_comp_sum - lb1_n_comp_sum
-           aub            = (.l_sum-lb).n_comp_sum - eadd
-           int_old        => int_new
-           nullify(int_new)
-           int_new.create(aub,bub)
-           do b=1,bub
-             b_momenta    = momenta(:, b + lb1_n_comp_sum)
-             z            = b_momenta.index_of_first_nonzero_value
-             b_momenta(z) = b_momenta(z) - 1
-             b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
-             ABi          = ABvec(z)
-             do a=1,aub
-               a_momenta    = momenta(:, a + eadd)
-               a_momenta(z) = a_momenta(z) + 1
-               a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
-               int_new(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
-             end
+           do l = 2,.b.l-1
+              na = n_comp_up_to(.l_sum-l) - fa ! No. of a's in int_new goes down
+              nb = n_comp(l)                   ! Make only the needed b's
+              fb = n_comp_up_to(l-1)           ! Offset into index arrays
+              pb = n_comp_up_to(l-2)           ! Previous offset for b, in int_old
+              int_old => int_new
+              int_new.create(na,nb)
+              do b = 1,nb
+                 b1 = index_m1(b+fb) - pb      ! b1 relative to int_old
+                 t = first_nonzero(b+fb)       ! Transfer component
+                 Rt = R(t)
+                 do a = 1,na
+                    a1 = index_p1(a+fa,t) - fa
+                    int_new(a,b) = int_old(a1,b1) + Rt * int_old(a,b1)
+                 end
+              end
+              int_old.destroy
            end
-           int_old.destroy
-         end
-
-         lb1_n_comp_sum = (.b.l-1).n_comp_sum
-         lb2_n_comp_sum = (.b.l-2).n_comp_sum
-         bub            = .b.l.n_comp_sum - lb1_n_comp_sum
-         aub            = (.l_sum-.b.l).n_comp_sum - eadd
-         int_old        => int_new
-         do b=1,bub
-           b_momenta    = momenta(:, b + lb1_n_comp_sum)
-           z            = b_momenta.index_of_first_nonzero_value
-           b_momenta(z) = b_momenta(z) - 1
-           b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
-           ABi          = ABvec(z)
-           do a=1,aub
-             a_momenta    = momenta(:, a + eadd)
-             a_momenta(z) = a_momenta(z) + 1
-             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
-             ab(a,b)      = int_old(a1,b1) + ABi * int_old(a,b1)
-           end
-         end
-         int_old.destroy
-         index.destroy
-         momenta.destroy
-     end
+              na = .a.n_comp                   ! Final transfer into (a|b)
+              nb = .b.n_comp
+              fb = n_comp_up_to(.b.l-1)
+              pb = n_comp_up_to(.b.l-2)
+              int_old => int_new
+              do b = 1,nb
+                 b1 = index_m1(b+fb) - pb
+                 t = first_nonzero(b+fb)
+                 Rt = R(t)
+                 do a = 1,na
+                    a1 = index_p1(a+fa,t) - fa
+                    ab(a,b) = int_old(a1,b1) + Rt * int_old(a,b1)
+                 end
+               end
+               int_old.destroy
+        end ! case statement
    end
 
    transfer_l_b_highest(es,ab) ::: private
-   ! Applies the transfer equation to (e|s) to give (a|b)
-   ! where b has the higher angular momentum.
+   ! Applies the transfer equation to (e|s) to give (a|b) where shell b has the higher
+   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
      self :: IN
      es :: VEC{REAL}, IN
      ab :: MAT{REAL}, OUT
-     BAvec :: VEC{REAL}(3)
+   ENSURE(.b.l>=.a.l,"shell b must have higher momentum than a")
+   ENSURE(es.dim ==(n_comp_up_to(.l_sum)-n_comp_up_to(.l_max-1)),"wrong size, es")
+   ENSURE(ab.dim1==.a.n_comp,"wrong 1st dimension, ab")
+   ENSURE(ab.dim2==.b.n_comp,"wrong 2nd dimension, ab")
+   ENSURE(first_nonzero.created,"no indexing arrays")
      int_new,int_old :: MAT{REAL}*
-     momenta :: MAT{INT}*
-     index :: MAT3{INT}*
-     a_momenta,b_momenta :: VEC{INT}(3)
-     a,b,la,aub,bub,la1_n_comp_sum,la2_n_comp_sum :: INT
-     a1,b1,z,eadd,tmp :: INT
-     BAi :: REAL
-
+     R :: VEC{REAL}(3)
+     Rt,Rx,Ry,Rz,es_b :: REAL
+     a,b,a1,b1,l,na,fa,pa,nb,fb,t :: INT
      select case (.a.l)
-       case (0)
-         ab(1,:)=es
-
-       case (1)
-         BAvec = .b.pos - .a.pos
-         eadd  = (.b.l-1).n_comp_sum
-         bub   = (.l_sum-1).n_comp_sum - eadd
-
-         momenta.create(3, .l_sum.n_comp_sum)
-         tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
-         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
-         index.make_index_of_components(momenta)
-
-         do a=1,3
-           z   = momenta(:,a+1).index_of_first_nonzero_value
-           BAi = BAvec(z)
-           do b=1, bub
-             b_momenta    = momenta(:, b + eadd)
-             b_momenta(z) = b_momenta(z) + 1
-             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
-             ab(a,b)      = es(b1) + BAi * es(b)
+        case (0)                               ! (s|b) case
+           ab(1,:) = es
+        case (1)                              
+           R  = .b.pos - .a.pos
+           if (.b.l==1) then                   ! (p|p) case
+              Rx = R(1)
+              Ry = R(2)
+              Rz = R(3)
+              es_b = es(1)
+              ab(1,1) = es(4) + Rx*es_b
+              ab(2,1) = es(7) + Ry*es_b
+              ab(3,1) = es(8) + Rz*es_b
+              es_b = es(2)
+              ab(1,2) = es(7) + Rx*es_b
+              ab(2,2) = es(5) + Ry*es_b
+              ab(3,2) = es(9) + Rz*es_b
+              es_b = es(3)
+              ab(1,3) = es(8) + Rx*es_b
+              ab(2,3) = es(9) + Ry*es_b
+              ab(3,3) = es(6) + Rz*es_b
+           else                                ! (p|b) case
+              nb = .b.n_comp
+              fb = n_comp_up_to(.b.l-1)        ! Offset into the index array
+              do a = 1,3                       ! p shell on a
+                 t = first_nonzero(a+1)        ! The transfer component
+                 Rt = R(t)
+                 do b = 1,nb                   ! Put es straight to ab
+                    b1 = index_p1(b+fb,t) - fb 
+                    ab(a,b) = es(b1) + Rt * es(b)
+                 end
+              end
            end
-         end
-         index.destroy
-         momenta.destroy
-
        case default
-         BAvec = .b.pos - .a.pos
-         eadd  = (.b.l-1).n_comp_sum
-         bub   = (.l_sum-1).n_comp_sum - eadd
-
-         momenta.create(3, .l_sum.n_comp_sum)
-         tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
-         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
-         index.make_index_of_components(momenta)
-
-         int_new.create(3,bub)
-         do a = 1, 3
-           z   = momenta(:,a+1).index_of_first_nonzero_value
-           BAi = BAvec(z)
-           do b = 1, bub
-             b_momenta    = momenta(:, b + eadd)
-             b_momenta(z) = b_momenta(z) + 1
-             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
-             int_new(a,b) = es(b1) + BAi * es(b)
+           R  = .b.pos - .a.pos
+           fb = n_comp_up_to(.l_max-1)         ! Offset into the index array
+           nb = n_comp_up_to(.l_sum-1) - fb    ! The momentum for es goes down one
+           int_new.create(3,nb)
+           do a = 1,3                          ! Start with p shell on a
+              t = first_nonzero(a+1)           ! Transfer component
+              Rt = R(t)
+              do b = 1,nb                 
+                 b1 = index_p1(b+fb,t) - fb
+                 int_new(a,b) = es(b1) + Rt * es(b)
+              end
            end
-         end
-
-         do la=2, .a.l - 1
-           la1_n_comp_sum = (la-1).n_comp_sum
-           la2_n_comp_sum = (la-2).n_comp_sum
-           aub            = la.n_comp_sum - la1_n_comp_sum
-           bub            = (.l_sum-la).n_comp_sum - eadd
-           int_old=>int_new
-           nullify(int_new)
-           int_new.create(aub,bub)
-           do a=1,aub
-             a_momenta    = momenta(:,a + la1_n_comp_sum)
-             z            = a_momenta.index_of_first_nonzero_value
-             a_momenta(z) = a_momenta(z) - 1
-             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
-             BAi          = BAvec(z)
-             do b=1,bub
-               b_momenta    = momenta(:,b + eadd)
-               b_momenta(z) = b_momenta(z) + 1
-               b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
-               int_new(a,b) = int_old(a1,b1) + BAi * int_old(a1,b)
-             end
+           do l = 2,.a.l-1
+              nb = n_comp_up_to(.l_sum-l) - fb ! No. of b's in int_new goes down
+              na = n_comp(l)                   ! Make only the needed a's
+              fa = n_comp_up_to(l-1)           ! Offset into index arrays
+              pa = n_comp_up_to(l-2)           ! Previous offset for b, in int_old
+              int_old => int_new
+              int_new.create(na,nb)
+              do a = 1,na
+                 a1 = index_m1(a+fa) - pa      ! b1 relative to int_old
+                 t = first_nonzero(a+fa)       ! Transfer component
+                 Rt = R(t)
+                 do b = 1,nb
+                    b1 = index_p1(b+fb,t) - fb
+                    int_new(a,b) = int_old(a1,b1) + Rt * int_old(a1,b)
+                 end
+              end
+              int_old.destroy
            end
-           int_old.destroy
-         end
-
-         la1_n_comp_sum = (.a.l-1).n_comp_sum
-         la2_n_comp_sum = (.a.l-2).n_comp_sum
-         aub            = .a.l.n_comp_sum - la1_n_comp_sum
-         bub            = (.l_sum-.a.l).n_comp_sum - eadd
-         int_old=>int_new
-         do a=1,aub
-           a_momenta    = momenta(:,a + la1_n_comp_sum)
-           z            = a_momenta.index_of_first_nonzero_value
-           a_momenta(z) = a_momenta(z) - 1
-           a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
-           BAi          = BAvec(z)
-           do b=1,bub
-             b_momenta    = momenta(:,b + eadd)
-             b_momenta(z) = b_momenta(z) + 1
-             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
-             ab(a,b)      = int_old(a1,b1) + BAi * int_old(a1,b)
-           end
-         end
-         int_old.destroy
-         index.destroy
-         momenta.destroy
-     end
+              na = .a.n_comp                   ! Final transfer into (a|b)
+              nb = .b.n_comp
+              fa = n_comp_up_to(.a.l-1)
+              pa = n_comp_up_to(.a.l-2)
+              int_old => int_new
+              do a = 1,na
+                 a1 = index_m1(a+fa) - pa
+                 t = first_nonzero(a+fa)
+                 Rt = R(t)
+                 do b = 1,nb
+                    b1 = index_p1(b+fb,t) - fb
+                    ab(a,b) = int_old(a1,b1) + Rt * int_old(a1,b)
+                 end
+              end
+              int_old.destroy
+        end ! case statement
    end
+
+!   transfer_l_a_highest(es,ab) ::: private
+!   ! Applies the transfer equation to (e|s) to give (a|b)
+!   ! where a has the higher angular momentum.
+!     self :: IN
+!     es :: VEC{REAL}, IN
+!     ab :: MAT{REAL}, OUT
+!     ABvec :: VEC{REAL}(3)
+!     first_nonzero :: VEC{INT}*
+!     momenta :: MAT{INT}*
+!     index :: MAT3{INT}*
+!     a_momenta,b_momenta :: VEC{INT}(3)
+!     int_new,int_old :: MAT{REAL}*
+!     a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum :: INT
+!     a1,b1,z,eadd,tmp :: INT
+!     ABi :: REAL
+!
+!     select case (.b.l)
+!       case (0)
+!         ab(:,1)=es
+!
+!       case (1)
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.a.l-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3, n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!       ! index.make_index_of_components(momenta)
+!
+!         do b=1,3
+!           z   = momenta(:,b+1).index_of_first_nonzero_value
+!           ABi = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             ab(a,b)      = es(a1) + ABi * es(a)
+!           end
+!         end
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!
+!       case default
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.l_max-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!       ! index.make_index_of_components(momenta)
+!
+!         int_new.create(aub,3)
+!         do b=1,3
+!           z   = momenta(:,b+1).index_of_first_nonzero_value
+!           ABi = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             int_new(a,b) = es(a1) + ABi * es(a)
+!           end
+!         end
+!
+!         do lb=2, .b.l-1
+!           lb1_n_comp_sum = n_comp_up_to(lb-1)
+!           lb2_n_comp_sum = n_comp_up_to(lb-2)
+!           bub            = n_comp_up_to(lb) - lb1_n_comp_sum
+!           aub            = n_comp_up_to(.l_sum-lb) - eadd
+!           int_old        => int_new
+!           nullify(int_new)
+!           int_new.create(aub,bub)
+!           do b=1,bub
+!             b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!             z            = b_momenta.index_of_first_nonzero_value
+!             b_momenta(z) = b_momenta(z) - 1
+!             b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!             ABi          = ABvec(z)
+!             do a=1,aub
+!               a_momenta    = momenta(:, a + eadd)
+!               a_momenta(z) = a_momenta(z) + 1
+!               a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!               int_new(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
+!             end
+!           end
+!           int_old.destroy
+!         end
+!
+!         lb1_n_comp_sum = n_comp_up_to(.b.l-1)
+!         lb2_n_comp_sum = n_comp_up_to(.b.l-2)
+!         bub            = n_comp_up_to(.b.l) - lb1_n_comp_sum
+!         aub            = n_comp_up_to(.l_sum-.b.l) - eadd
+!         int_old        => int_new
+!         do b=1,bub
+!           b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!           z            = b_momenta.index_of_first_nonzero_value
+!           b_momenta(z) = b_momenta(z) - 1
+!           b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!           ABi          = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!             ab(a,b)      = int_old(a1,b1) + ABi * int_old(a,b1)
+!           end
+!         end
+!         int_old.destroy
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!     end
+!   end
+
+!   transfer_l_a_highest(es,ab) ::: private
+!   ! Applies the transfer equation to (e|s) to give (a|b)
+!   ! where a has the higher angular momentum.
+!     self :: IN
+!     es :: VEC{REAL}, IN
+!     ab :: MAT{REAL}, OUT
+!     ABvec :: VEC{REAL}(3)
+!     first_nonzero,index_m1 :: VEC{INT}*
+!     index_p1 :: MAT{INT}*
+!     momenta :: MAT{INT}*
+!     index :: MAT3{INT}*
+!     a_momenta,b_momenta :: VEC{INT}(3)
+!     int_new,int_old :: MAT{REAL}*
+!     a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum :: INT
+!     a1,b1,z,eadd,tmp :: INT
+!     ABi :: REAL
+!
+!     select case (.b.l)
+!       case (0)
+!         ab(:,1)=es
+!
+!       case (1)
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.a.l-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3, n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!         index_m1.create(n_comp_up_to(.l_sum))
+!         index_p1.create(n_comp_up_to(.l_sum),3)
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!
+!       ! SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero,index_p1,index_m1)
+!         SHELL2:make_hrr_indices(.l_sum,first_nonzero,index_m1,index_p1)
+!       ! index.make_index_of_components(momenta)
+!
+!         do b=1,3
+!         ! z   = momenta(:,b+1).index_of_first_nonzero_value
+!           z = first_nonzero(b+1)
+!           ABi = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!           ! a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             a1 = index_p1(a+eadd,z) - eadd
+!             ab(a,b) = es(a1) + ABi * es(a)
+!           end
+!         end
+!         index_p1.destroy
+!         index_m1.destroy
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!
+!       case default
+!        print *, "here"
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.l_max-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!         index_m1.create(n_comp_up_to(.l_sum))
+!         index_p1.create(n_comp_up_to(.l_sum),3)
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!
+!       ! SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero,index_p1,index_m1)
+!       ! SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!         SHELL2:make_hrr_indices(.l_sum,first_nonzero,index_m1,index_p1)
+!       ! index.make_index_of_components(momenta)
+!
+!         int_new.create(aub,3)
+!         do b=1,3
+!         ! z = momenta(:,b+1).index_of_first_nonzero_value
+!           z = first_nonzero(b+1)
+!           ABi = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             a1 = index_p1(a+eadd,z) - eadd
+!             int_new(a,b) = es(a1) + ABi * es(a)
+!           end
+!         end
+!
+!         do lb=2, .b.l-1
+!           lb1_n_comp_sum = n_comp_up_to(lb-1)
+!           lb2_n_comp_sum = n_comp_up_to(lb-2)
+!           bub            = n_comp_up_to(lb) - lb1_n_comp_sum
+!           aub            = n_comp_up_to(.l_sum-lb) - eadd
+!           int_old        => int_new
+!           nullify(int_new)
+!           int_new.create(aub,bub)
+!           do b=1,bub
+!             b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!             z            = b_momenta.index_of_first_nonzero_value
+!             z = first_nonzero(b+lb1_n_comp_sum)
+!             b_momenta(z) = b_momenta(z) - 1
+!             b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!             b1 = index_m1(b+lb1_n_comp_sum) - lb2_n_comp_sum
+!             ABi          = ABvec(z)
+!             do a=1,aub
+!               a_momenta    = momenta(:, a + eadd)
+!               a_momenta(z) = a_momenta(z) + 1
+!               a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!               a1 = index_p1(a+eadd,z) - eadd
+!               int_new(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
+!             end
+!           end
+!           int_old.destroy
+!         end
+!
+!         lb1_n_comp_sum = n_comp_up_to(.b.l-1)
+!         lb2_n_comp_sum = n_comp_up_to(.b.l-2)
+!         bub            = n_comp_up_to(.b.l) - lb1_n_comp_sum
+!         aub            = n_comp_up_to(.l_sum-.b.l) - eadd
+!         int_old        => int_new
+!         do b=1,bub
+!           b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!           z            = b_momenta.index_of_first_nonzero_value
+!           z = first_nonzero(b+lb1_n_comp_sum)
+!           b_momenta(z) = b_momenta(z) - 1
+!           b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!           b1 = index_m1(b+lb1_n_comp_sum) - lb2_n_comp_sum
+!           ABi          = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!             a1 = index_p1(a+eadd,z) - eadd
+!             ab(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
+!           end
+!         end
+!         int_old.destroy
+!         index_p1.destroy
+!         index_m1.destroy
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!     end
+!   end
+
+!   transfer_l_b_highest(es,ab) ::: private
+!   ! Applies the transfer equation to (e|s) to give (a|b)
+!   ! where b has the higher angular momentum.
+!     self :: IN
+!     es :: VEC{REAL}, IN
+!     ab :: MAT{REAL}, OUT
+!     BAvec :: VEC{REAL}(3)
+!     int_new,int_old :: MAT{REAL}*
+!     first_nonzero,index_p1,index_m1 :: VEC{INT}*
+!     momenta :: MAT{INT}*
+!     index :: MAT3{INT}*
+!     a_momenta,b_momenta :: VEC{INT}(3)
+!     a,b,la,aub,bub,la1_n_comp_sum,la2_n_comp_sum :: INT
+!     a1,b1,z,eadd,tmp :: INT
+!     BAi :: REAL
+!
+!     select case (.a.l)
+!       case (0)
+!         ab(1,:)=es
+!
+!       case (1)
+!         BAvec = .b.pos - .a.pos
+!         eadd  = n_comp_up_to(.b.l-1)
+!         bub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!       ! index_p1.create(n_comp_up_to(.l_sum))
+!       ! index_m1.create(n_comp_up_to(.l_sum))
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!       ! SHELL2:make_hrr_indices(.l_sum,first_nonzero,index_p1,index_m1)
+!       ! index.make_index_of_components(momenta)
+!
+!         do a=1,3
+!           z   = momenta(:,a+1).index_of_first_nonzero_value
+!       !   z = first_nonzero(a+1)
+!           BAi = BAvec(z)
+!           do b=1, bub
+!             b_momenta    = momenta(:, b + eadd)
+!             b_momenta(z) = b_momenta(z) + 1
+!             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+!       !     b1 = index_p1(b+eadd) - eadd
+!             ab(a,b) = es(b1) + BAi * es(b)
+!           end
+!         end
+!       ! index_m1.destroy
+!       ! index_p1.destroy
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!
+!       case default
+!         BAvec = .b.pos - .a.pos
+!         eadd  = n_comp_up_to(.b.l-1)
+!         bub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!       ! index_p1.create(n_comp_up_to(.l_sum))
+!       ! index_m1.create(n_comp_up_to(.l_sum))
+!       ! tmp=0;    tmp.make_gaussian_xyz_powers(momenta,.l_sum)
+!       ! SHELL2:make_gaussian_xyz_powrs(.l_sum,momenta)
+!       ! SHELL2:make_index_from_powers(index,momenta)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!       ! SHELL2:make_hrr_indices(.l_sum,first_nonzero,index_p1,index_m1)
+!       ! index.make_index_of_components(momenta)
+!
+!         int_new.create(3,bub)
+!         do a = 1,3
+!           z   = momenta(:,a+1).index_of_first_nonzero_value
+!       !   z = first_nonzero(a+1)
+!           BAi = BAvec(z)
+!           do b = 1, bub
+!             b_momenta    = momenta(:, b + eadd)
+!             b_momenta(z) = b_momenta(z) + 1
+!             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+!       !     b1 = index_p1(b+eadd) - eadd
+!             int_new(a,b) = es(b1) + BAi * es(b)
+!           end
+!         end
+!
+!         do la=2, .a.l - 1
+!           la1_n_comp_sum = n_comp_up_to(la-1)
+!           la2_n_comp_sum = n_comp_up_to(la-2)
+!           aub            = n_comp_up_to(la) - la1_n_comp_sum
+!           bub            = n_comp_up_to(.l_sum-la) - eadd
+!           int_old=>int_new
+!           nullify(int_new)
+!           int_new.create(aub,bub)
+!           do a = 1,aub
+!             a_momenta    = momenta(:,a + la1_n_comp_sum)
+!             z            = a_momenta.index_of_first_nonzero_value
+!       !     z = first_nonzero(a+1)
+!             a_momenta(z) = a_momenta(z) - 1
+!             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
+!       !     a1 = index_m1(a+la1_n_comp_sum) - la2_n_comp_sum
+!             BAi          = BAvec(z)
+!             do b = 1,bub
+!               b_momenta    = momenta(:,b + eadd)
+!               b_momenta(z) = b_momenta(z) + 1
+!               b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+!       !       b1 = index_p1(b+eadd) - eadd
+!               int_new(a,b) = int_old(a1,b1) + BAi * int_old(a1,b)
+!             end
+!           end
+!           int_old.destroy
+!         end
+!
+!         la1_n_comp_sum = n_comp_up_to(.a.l-1)
+!         la2_n_comp_sum = n_comp_up_to(.a.l-2)
+!         aub            = n_comp_up_to(.a.l) - la1_n_comp_sum
+!         bub            = n_comp_up_to(.l_sum-.a.l) - eadd
+!         int_old=>int_new
+!         do a = 1,aub
+!           a_momenta    = momenta(:,a + la1_n_comp_sum)
+!           z            = a_momenta.index_of_first_nonzero_value
+!       !   z = first_nonzero(a+la1_n_comp_sum)
+!           a_momenta(z) = a_momenta(z) - 1
+!           a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - la2_n_comp_sum
+!       !   a1 = index_m1(a+la1_n_comp_sum) - la2_n_comp_sum
+!           BAi          = BAvec(z)
+!           do b=1,bub
+!             b_momenta    = momenta(:,b + eadd)
+!             b_momenta(z) = b_momenta(z) + 1
+!             b1 = index(b_momenta(1), b_momenta(2), b_momenta(3)) - eadd
+!       !     b1 = index_p1(b+eadd) - eadd
+!             ab(a,b) = int_old(a1,b1) + BAi * int_old(a1,b)
+!           end
+!         end
+!         int_old.destroy
+!       ! index_m1.destroy
+!       ! index_p1.destroy
+!         first_nonzero.destroy
+!         index.destroy
+!         momenta.destroy
+!     end
+!   end
+
+!   transfer_l_a_highest(es,ab) ::: private
+!   ! Applies the transfer equation to (e|s) to give (a|b)
+!   ! where a has the higher angular momentum.
+!     self :: IN
+!     es :: VEC{REAL}, IN
+!     ab :: MAT{REAL}, OUT
+!     ABvec :: VEC{REAL}(3)
+!     first_nonzero :: VEC{INT}*
+!     momenta :: MAT{INT}*
+!     index :: MAT3{INT}*
+!     a_momenta,b_momenta :: VEC{INT}(3)
+!     int_new,int_old :: MAT{REAL}*
+!     a,b,lb,aub,bub,lb1_n_comp_sum,lb2_n_comp_sum :: INT
+!     a1,b1,z,eadd,tmp :: INT
+!     ABi :: REAL
+!
+!     select case (.b.l)
+!       case (0)
+!         ab(:,1)=es
+!
+!       case (1)
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.a.l-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero) 
+!
+!         do b = 1,3
+!!          z = first_nonzero(b)
+!           z   = momenta(:,b+1).index_of_first_nonzero_value
+!           ABi = ABvec(z)
+!           do a = 1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             ab(a,b)      = es(a1) + ABi * es(a)
+!           end
+!         end
+!         index.destroy
+!         first_nonzero.destroy
+!         momenta.destroy
+!
+!       case default
+!         ABvec = .a.pos - .b.pos
+!         eadd  = n_comp_up_to(.l_max-1)
+!         aub   = n_comp_up_to(.l_sum-1) - eadd
+!
+!         momenta.create(3,n_comp_up_to(.l_sum))
+!         first_nonzero.create(n_comp_up_to(.l_sum))
+!         index.create(0,.l_sum, 0,.l_sum, 0,.l_sum)
+!         SHELL2:make_gaussian_xyz_powers(.l_sum,momenta,index,first_nonzero)
+!
+!         int_new.create(aub,3)
+!         do b=1,3
+!!          z   = first_nonzero(b)
+!           z   = momenta(:,b+1).index_of_first_nonzero_value
+!           ABi = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1), a_momenta(2), a_momenta(3)) - eadd
+!             int_new(a,b) = es(a1) + ABi * es(a)
+!           end
+!         end
+!
+!         do lb=2, .b.l-1
+!           lb1_n_comp_sum = n_comp_up_to(lb-1)
+!           lb2_n_comp_sum = n_comp_up_to(lb-2)
+!           bub            = n_comp_up_to(lb) - lb1_n_comp_sum
+!           aub            = n_comp_up_to(.l_sum-lb) - eadd
+!           int_old        => int_new
+!           nullify(int_new)
+!           int_new.create(aub,bub)
+!           do b=1,bub
+!             b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!!            z   = first_nonzero(b)
+!             z            = b_momenta.index_of_first_nonzero_value
+!             b_momenta(z) = b_momenta(z) - 1
+!             b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!             ABi          = ABvec(z)
+!             do a=1,aub
+!               a_momenta    = momenta(:, a + eadd)
+!               a_momenta(z) = a_momenta(z) + 1
+!               a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!               int_new(a,b) = int_old(a1,b1) + ABi * int_old(a,b1)
+!             end
+!           end
+!           int_old.destroy
+!         end
+!
+!         lb1_n_comp_sum = n_comp_up_to(.b.l-1)
+!         lb2_n_comp_sum = n_comp_up_to(.b.l-2)
+!         bub            = n_comp_up_to(.b.l) - lb1_n_comp_sum
+!         aub            = n_comp_up_to(.l_sum-.b.l) - eadd
+!         int_old        => int_new
+!         do b=1,bub
+!           b_momenta    = momenta(:, b + lb1_n_comp_sum)
+!!          z   = first_nonzero(b)
+!           z            = b_momenta.index_of_first_nonzero_value
+!           b_momenta(z) = b_momenta(z) - 1
+!           b1 = index(b_momenta(1),b_momenta(2),b_momenta(3)) - lb2_n_comp_sum
+!           ABi          = ABvec(z)
+!           do a=1,aub
+!             a_momenta    = momenta(:, a + eadd)
+!             a_momenta(z) = a_momenta(z) + 1
+!             a1 = index(a_momenta(1),a_momenta(2),a_momenta(3)) - eadd
+!             ab(a,b)      = int_old(a1,b1) + ABi * int_old(a,b1)
+!           end
+!         end
+!         int_old.destroy
+!         index.destroy
+!         first_nonzero.destroy
+!         momenta.destroy
+!     end
+!   end
 
 !   transfer_l_a_highest(es,ab) ::: private
 !   ! Applies the transfer equation to the basic integrals (e|s), where e are all
@@ -4045,7 +4564,356 @@ contains
 !     end
 !   end
 
- ! Normalization routines and functions
+!  ******************
+!  Indexing functions
+!  ******************
+
+   n_comp(l) result(res) ::: selfless, private, always_pure
+   ! No. of cartesian components in a gaussian shell of momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)/2
+   end
+
+   n_comp_up_to(l) result(res) ::: selfless, private, always_pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)*(l+3)/6
+   end
+
+!   make_gaussian_xyz_powrs(l_max,powers) ::: selfless, private, pure
+!   ! Returns "powers", the powers of the cartesian components of all gaussian
+!   ! function with angular momenta between "0" and "l_max". Size of "powers" is
+!   ! [3, n_comp_up_to(l_max) - n_comp_up_to(0-1)].
+!     powers :: MAT{INT}, OUT
+!     l_max :: INT, IN
+!   ENSURE(powers.dim1==3,"wrong 1st dimension, powers")
+!   ENSURE(powers.dim2==(n_comp_up_to(l_max)-n_comp_up_to(0-1)),"wrong 2nd dimension, powers")
+!     l,i,a,b,c :: INT
+!     i = 1
+!     do l = 0,l_max
+!       do a = l,floor((l+2)*THIRD),-1
+!         do b = min(l-a,a),floor((l-a+1)*HALF),-1
+!           c = l - a - b
+!           if (a==b AND b==c) then
+!             powers(1:3,i)   = [a,a,a]
+!             i = i+1
+!           else if (a>b AND b==c) then
+!             powers(1:3,i  ) = [a,b,b]
+!             powers(1:3,i+1) = [b,a,b]
+!             powers(1:3,i+2) = [b,b,a]
+!             i = i+3
+!           else if (a==b AND b>c) then
+!             powers(1:3,i  ) = [a,a,c]
+!             powers(1:3,i+1) = [a,c,a]
+!             powers(1:3,i+2) = [c,a,a]
+!             i = i+3
+!           else
+!             powers(1:3,i  ) = [a,b,c]
+!             powers(1:3,i+1) = [a,c,b]
+!             powers(1:3,i+2) = [b,a,c]
+!             powers(1:3,i+3) = [c,a,b]
+!             powers(1:3,i+4) = [b,c,a]
+!             powers(1:3,i+5) = [c,b,a]
+!             i = i+6
+!           end
+!         end
+!       end
+!     end
+!   end
+
+!   make_index_from_powers(index_of,powers) ::: selfless, private, pure
+!   ! Returns the lexical index of a gassian function corresponding to the
+!   ! powers.  Each dimension of self is powers.dim2.
+!     index_of :: MAT3{INT}, OUT
+!     powers :: MAT{INT}, IN
+!     i,a,b,c :: INT
+!     do i = 1,powers.dim2
+!        a = powers(1,i)
+!        b = powers(2,i)
+!        c = powers(3,i)
+!        index_of(a+1,b+1,c+1) = i
+!     end
+!   end
+
+!   make_gaussian_xyz_powers(l_max,power,index_of,first_nonzero,index_p1,index_m1) ::: selfless, private, pure
+!   ! Make the cartesian angular momentum powers "power(:,i)" for the gaussian
+!   ! with lexical index "i", beginning with the gaussians in the shell with
+!   ! angular momentum "0" and going up to angular momentum "l_max".
+!   ! "index_of(a,b,c)" is the reverse of array "power" ... it gives the lexical
+!   ! index for the gaussian with cartesian angular momenta "a-1", "b-1" and
+!   ! "c-1". Note that one must be subtracted because in general the "index_of"
+!   ! array will be declared to have a lower bound of 0, whereas in this routine
+!   ! it has a lower bound of 1.  "first_nonzero(i)" is the index of the first
+!   ! non-zero component in "power(:,i)", used to determine which index is to be
+!   ! used in the HRR recursion relations. Note the size of power is:
+!   ! [3,n_comp_up_to(l_max) - n_comp_up_to(minl-1)].
+!     l_max :: INT, IN
+!     power :: MAT{INT}, OUT
+!     index_of :: MAT3{INT}, OUT
+!     first_nonzero :: VEC{INT}, OUT
+!     index_p1,index_m1 :: VEC{INT}, optional, OUT
+!   ENSURE(power.dim1==3,"wrong 1st dimension, power")
+!   ENSURE(power.dim2==(n_comp_up_to(l_max)-n_comp_up_to(l_min-1)),"wrong 2nd dimension, power")
+!   ENSURE(index_of.dim1==(l_max+1),"wrong 1st dimension, index_of")
+!   ENSURE(index_of.dim2==(l_max+1),"wrong 2nd dimension, index_of")
+!   ENSURE(index_of.dim3==(l_max+1),"wrong 3rd dimension, index_of")
+!   ENSURE(first_nonzero.dim==(n_comp_up_to(l_max)-n_comp_up_to(l_min-1)),"wrong dimension, first_nonzero")
+!     l,i,a,b,c,a1,b1,c1, f :: INT
+!     n,p,m :: VEC{INT}(3)
+!     i = 1
+!     do l = 0,l_max
+!       do a = l,floor((l+2)*THIRD),-1
+!         do b = min(l-a,a),floor((l-a+1)*HALF),-1
+!           c = l - a - b
+!           if (a==b AND b==c) then
+!             a1 = a + 1
+!             power(1:3,i)       = [a,a,a]
+!             index_of(a1,a1,a1) = i
+!             first_nonzero(i)   = 1
+!             i = i + 1
+!           else if (a>b AND b==c) then
+!             a1 = a + 1
+!             b1 = b + 1
+!             power(1:3,i  )     = [a,b,b]
+!             power(1:3,i+1)     = [b,a,b]
+!             power(1:3,i+2)     = [b,b,a]
+!             index_of(a1,b1,b1) = i
+!             index_of(b1,a1,b1) = i+1
+!             index_of(b1,b1,a1) = i+2
+!             first_nonzero(i  ) = 1
+!             first_nonzero(i+1) = 2
+!             first_nonzero(i+2) = 3
+!             if (b>0) then
+!               first_nonzero(i+1) = 1
+!               first_nonzero(i+2) = 1
+!             end
+!             i = i + 3
+!           else if (a==b AND b>c) then
+!             a1 = a + 1
+!             c1 = c + 1
+!             power(1:3,i  )     = [a,a,c]
+!             power(1:3,i+1)     = [a,c,a]
+!             power(1:3,i+2)     = [c,a,a]
+!             index_of(a1,a1,c1) = i
+!             index_of(a1,c1,a1) = i+1
+!             index_of(c1,a1,a1) = i+2
+!             first_nonzero(i)   = 1
+!             first_nonzero(i+1) = 1
+!             first_nonzero(i+2) = 2
+!             if (c>0) then
+!               first_nonzero(i+2) = 1
+!             end
+!             i = i + 3
+!           else
+!             a1 = a + 1
+!             b1 = b + 1
+!             c1 = c + 1
+!             power(1:3,i  )     = [a,b,c]
+!             power(1:3,i+1)     = [a,c,b]
+!             power(1:3,i+2)     = [b,a,c]
+!             power(1:3,i+3)     = [c,a,b]
+!             power(1:3,i+4)     = [b,c,a]
+!             power(1:3,i+5)     = [c,b,a]
+!             index_of(a1,b1,c1) = i
+!             index_of(a1,c1,b1) = i+1
+!             index_of(b1,a1,c1) = i+2
+!             index_of(c1,a1,b1) = i+3
+!             index_of(b1,c1,a1) = i+4
+!             index_of(c1,b1,a1) = i+5
+!             if (a>0) then
+!               first_nonzero(i  ) = 1
+!               first_nonzero(i+1) = 1
+!               first_nonzero(i+2) = 2
+!               first_nonzero(i+3) = 2
+!               first_nonzero(i+4) = 3
+!               first_nonzero(i+5) = 3
+!             else
+!               first_nonzero(i  ) = 3
+!               first_nonzero(i+1) = 3
+!               first_nonzero(i+2) = 3
+!               first_nonzero(i+3) = 3
+!               ! i+4,i+5 must have b or c nonzero.
+!             end
+!             if (b>0) then
+!               first_nonzero(i+2) = 1
+!               first_nonzero(i+4) = 1
+!               first_nonzero(i+5) = 2
+!             end
+!             if (c>0) then
+!               first_nonzero(i+3) = 1
+!               first_nonzero(i+5) = 1
+!             end
+!             i = i + 6
+!           end
+!         end
+!       end
+!     end
+!     if (NOT present(index_p1)) return
+!     if (NOT present(index_m1)) return
+!     do i = 1,power.dim2
+!        n = power(:,i)
+!        f = first_nonzero(i)
+!        p = n+1 ! add one for lb=1 on index
+!        m = n+1
+!        p(f) = p(f) + 1
+!        m(f) = m(f) - 1
+!        index_p1(i) = index_of(p(1),p(2),p(3))
+!        index_m1(i) = index_of(m(1),m(2),m(3))
+!     end
+!   end
+
+   make_hrr_indices(l_max,first_nonzero,index_m1,index_p1) ::: selfless, private
+   ! Return "first_nonzero(i)", the cartesian index (between 1 and 3) of the
+   ! first non-zero power for tha gaussian with lexical index "i".  Also return
+   ! "index_m1(i)" and "index_p1(i)", the lexical indices of the gaussians with the
+   ! first nonzero component decremented by one, and incrementred by one,
+   ! respectively. In the latter case we must store all possible increments.
+   ! These are used to determine which gaussian are to be used in the HRR
+   ! recursion relations.  
+     l_max :: INT, IN
+     first_nonzero,index_m1 :: VEC{INT}, OUT
+     index_p1 :: MAT{INT}, OUT
+   ENSURE(first_nonzero.dim==(n_comp_up_to(l_max)),"wrong dimension, first_nonzero")
+   ENSURE(index_m1.dim==first_nonzero.dim,"wrong dimension, index_m1")
+   ENSURE(index_p1.dim1==first_nonzero.dim,"wrong 1st dimension, index_p1")
+   ENSURE(index_p1.dim2==3,"wrong 2nd dimension, index_p1")
+     power :: MAT{INT}*
+     index_of :: MAT3{INT}*
+     l,i,a,b,c,a1,b1,c1, f :: INT
+     n,p,m :: VEC{INT}(3)
+     power.create(3,n_comp_up_to(l_max))
+     index_of.create(l_max+1,l_max+1,l_max+1)
+     i = 1                    ! First make the power, index_of and first_nonzero arrays ...
+     do l = 0,l_max
+       do a = l,floor((l+2)*THIRD),-1
+         do b = min(l-a,a),floor((l-a+1)*HALF),-1
+           c = l - a - b
+           if (a==b AND b==c) then
+             a1 = a + 1
+             power(1:3,i)       = [a,a,a]
+             index_of(a1,a1,a1) = i
+             first_nonzero(i)   = 1
+             i = i + 1
+           else if (a>b AND b==c) then
+             a1 = a + 1
+             b1 = b + 1
+             power(1:3,i  )     = [a,b,b]
+             power(1:3,i+1)     = [b,a,b]
+             power(1:3,i+2)     = [b,b,a]
+             index_of(a1,b1,b1) = i
+             index_of(b1,a1,b1) = i+1
+             index_of(b1,b1,a1) = i+2
+             first_nonzero(i  ) = 1
+             first_nonzero(i+1) = 2
+             first_nonzero(i+2) = 3
+             if (b>0) then
+               first_nonzero(i+1) = 1
+               first_nonzero(i+2) = 1
+             end
+             i = i + 3
+           else if (a==b AND b>c) then
+             a1 = a + 1
+             c1 = c + 1
+             power(1:3,i  )     = [a,a,c]
+             power(1:3,i+1)     = [a,c,a]
+             power(1:3,i+2)     = [c,a,a]
+             index_of(a1,a1,c1) = i
+             index_of(a1,c1,a1) = i+1
+             index_of(c1,a1,a1) = i+2
+             first_nonzero(i)   = 1
+             first_nonzero(i+1) = 1
+             first_nonzero(i+2) = 2
+             if (c>0) then
+               first_nonzero(i+2) = 1
+             end
+             i = i + 3
+           else
+             a1 = a + 1
+             b1 = b + 1
+             c1 = c + 1
+             power(1:3,i  )     = [a,b,c]
+             power(1:3,i+1)     = [a,c,b]
+             power(1:3,i+2)     = [b,a,c]
+             power(1:3,i+3)     = [c,a,b]
+             power(1:3,i+4)     = [b,c,a]
+             power(1:3,i+5)     = [c,b,a]
+             index_of(a1,b1,c1) = i
+             index_of(a1,c1,b1) = i+1
+             index_of(b1,a1,c1) = i+2
+             index_of(c1,a1,b1) = i+3
+             index_of(b1,c1,a1) = i+4
+             index_of(c1,b1,a1) = i+5
+             if (a>0) then
+               first_nonzero(i  ) = 1
+               first_nonzero(i+1) = 1
+               first_nonzero(i+2) = 2
+               first_nonzero(i+3) = 2
+               first_nonzero(i+4) = 3
+               first_nonzero(i+5) = 3
+             else
+               first_nonzero(i  ) = 3
+               first_nonzero(i+1) = 3
+               first_nonzero(i+2) = 3
+               first_nonzero(i+3) = 3
+               ! i+4,i+5 must have b or c nonzero.
+             end
+             if (b>0) then
+               first_nonzero(i+2) = 1
+               first_nonzero(i+4) = 1
+               first_nonzero(i+5) = 2
+             end
+             if (c>0) then
+               first_nonzero(i+3) = 1
+               first_nonzero(i+5) = 1
+             end
+             i = i + 6
+           end
+         end
+       end
+     end
+     do i = 1,power.dim2     ! Now make the index_p1, index_m1 arrays
+        n = power(:,i)
+        f = first_nonzero(i)
+        p = n + 1            ! add one, since lb=1 on index which should 0
+        m = n + 1
+        m(f) = m(f) - 1
+        index_m1(i) = index_of(m(1),m(2),m(3))
+        do f = 1,3
+           p(f) = p(f) + 1
+           index_p1(i,f) = index_of(p(1),p(2),p(3))
+           p(f) = p(f) - 1
+        end
+     end
+     index_of.destroy
+     power.destroy
+   end
+
+   set_hrr_indexing_arrays(l_max) ::: leaky
+   ! Set the arrays required to do the horizontal recursion relations to the
+   ! (e|s) type integrals to give the (a|b) type integrals. "l_max" is tha
+   ! maximum angular momentum basis function used in the basis set.
+     self :: IN
+     l_max :: INT, IN
+   ENSURE(l_max>=0,"l_max must be positive")
+     l2 :: INT
+     if (l_max<=l_max_hrr) return
+     l_max_hrr = l_max
+     l2 = 2*l_max         ! Indices go up to 2*l_max
+     index_p1.destroy
+     index_m1.destroy
+     first_nonzero.destroy
+     first_nonzero.create(n_comp_up_to(l2))
+     index_m1.create(n_comp_up_to(l2))
+     index_p1.create(n_comp_up_to(l2),3)
+     call make_hrr_indices(l2,first_nonzero,index_m1,index_p1)
+   end
+
+! ************************************
+! Normalization routines and functions
+! ************************************
 
    normalise(ab)
    ! Multiply the matrix by the orbital normalisation coefficients
