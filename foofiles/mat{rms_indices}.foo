@@ -1,0 +1,319 @@
+!-------------------------------------------------------------------------------
+!
+! MAT{RMS_INDICES}
+!
+! This object is used to store precalculated information pertaining to the
+! reduced multiplication scheme (RMS) used in electron repulsion integral 
+! evaluation. It also has information for the transfer relation.
+!
+! Copyright (C) Dylan Jayatilaka, 2000
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+! $Id$
+!-------------------------------------------------------------------------------
+
+module MAT{RMS_INDICES}
+
+   implicit none
+
+   l_max_saved :: INT, private = -1
+
+   ! List of cartesian powers for gaussian functions in a certain angular
+   ! momentum range
+   nx :: VEC{INT}*, public  DEFAULT_NULL
+   ny :: VEC{INT}*, public  DEFAULT_NULL
+   nz :: VEC{INT}*, public  DEFAULT_NULL
+
+   ! These are indexing arrays used for the horizontal recursion relation.
+   ! They are set using the set_hrr_indexing_arrays routine.
+
+   first_nonzero :: VEC{INT}*, public  DEFAULT_NULL
+   index_m1 :: VEC{INT}*, public  DEFAULT_NULL
+   index_p1 :: MAT{INT}*, public  DEFAULT_NULL
+
+   ! List of arrays used for the RMS scheme
+   rms_indices :: MAT{RMS_INDICES}*, public  DEFAULT_NULL
+
+contains
+
+! *****************
+! Memory allocation
+! *****************
+
+   create(dim1,dim2) ::: get_from(MAT{OBJECT}), leaky
+   ! Create space for object. This version does not set defaults.
+   end
+
+   create(lb1,ub1,lb2,ub2) ::: get_from(MAT{OBJECT}), leaky
+   ! Create a matrix with the given dimensions
+   ! This version does not set defaults.
+   end
+
+   destroy ::: get_from(MAT{OBJECT}), leaky
+   ! Destroy the object
+   end
+
+   created result(res) ::: get_from(MAT{OBJECT}), inlined_by_foo
+   ! Returns true if self has been created
+   end
+
+   destroyed result(res) ::: get_from(MAT{OBJECT}), inlined_by_foo
+   ! Returns true if self has *not* been created
+   end
+
+   nullify_ptr_part ::: get_from(MAT{OBJECT})
+   ! Nullify the pointer parts of self
+   end
+
+   destroy_ptr_part ::: get_from(MAT{OBJECT}), leaky
+   ! Destroy the pointer parts of self
+   end
+
+!   create_copy(matrix) ::: get_from(MAT{OBJECT}), leaky
+!   ! Create a copy of matrix
+!   end
+
+!   copy(matrix) ::: get_from(MAT{OBJECT}), leaky
+!   ! Copy the "matrix".
+!   end
+
+! ****************************
+! Size-of and shape operations 
+! ****************************
+
+   size result (res) ::: get_from(MAT{OBJECT}), inlined_by_foo
+   ! Return the size of the array
+   end
+
+   dim1 result (res) ::: get_from(MAT{OBJECT}), inlined_by_foo
+   ! Return the size of the 1st dimension
+   end
+
+   dim2 result (res) ::: get_from(MAT{OBJECT}), inlined_by_foo
+   ! Return the size of the 2nd dimension
+   end
+
+! ***********
+! Set indices
+! ***********
+
+   set_indices(l_max) ::: leaky
+   ! Set the gaussian power indices, hrr indices, and the rms indices. 
+     self :: PTR
+     l_max :: INT, IN
+     l2,n :: INT
+     if (l_max<=l_max_saved) return
+     l_max_saved = l_max
+     l2 = 2*l_max
+     n = n_comp_up_to(l2)
+     index_p1.destroy; index_m1.destroy
+     first_nonzero.destroy
+     nz.destroy; ny.destroy; nx.destroy
+     nx.create(n); ny.create(n); nz.create(n)
+     first_nonzero.create(n)
+     index_m1.create(n)
+     index_p1.create(n,3)
+     call set_gaussian_indices(l2,nx,ny,nz,first_nonzero,index_m1,index_p1)
+     rms_indices.destroy
+     rms_indices.create(0,l_max,0,l_max)
+     call set_rms_indices(rms_indices,l_max,nx,ny,nz)
+   end
+
+   set_gaussian_indices(l_max,nx,ny,nz,first_nonzero,index_m1,index_p1) ::: selfless, private
+   ! Make the xyz powers "nx", "ny", "nz" for a cartesian gaussian with angular
+   ! momentum up to "l_max". (Actually adds one to each power to avoid 0 as
+   ! lower bound). Return "first_nonzero(i)", the cartesian index (between 1 and
+   ! 3) of the first non-zero power for the gaussian with lexical index "i".
+   ! Also return "index_m1(i)" and "index_p1(i)", the lexical indices of the
+   ! gaussians with the first nonzero component decremented by one, and
+   ! incrementred by one, respectively. In the latter case we must store all
+   ! possible increments.  These are used to determine which gaussian are to be
+   ! used in the HRR recursion relations.  
+     l_max :: INT, IN
+     nx,ny,nz :: VEC{INT}, OUT
+     first_nonzero,index_m1 :: VEC{INT}, OUT
+     index_p1 :: MAT{INT}, OUT
+   ENSURE(nx.dim==n_comp_up_to(l_max),"wrong size, nx")
+   ENSURE(ny.dim==nx.dim,"wrong size, ny")
+   ENSURE(nz.dim==nx.dim,"wrong size, nz")
+   ENSURE(first_nonzero.dim==nx.dim,"wrong dimension, first_nonzero")
+   ENSURE(index_m1.dim==nx.dim,"wrong dimension, index_m1")
+   ENSURE(index_p1.dim1==nx.dim,"wrong 1st dimension, index_p1")
+   ENSURE(index_p1.dim2==3,"wrong 2nd dimension, index_p1")
+     a,b,c,i,j,a1,b1,c1,f,n :: INT
+     p,m :: VEC{INT}(3)
+     index_of :: MAT3{INT}*
+     index_of.create(l_max+1,l_max+1,l_max+1)
+     i = 1
+     do j = 0,l_max
+       do a = j,floor((j+2)*THIRD),-1
+          do b = min(j-a,a),floor((j-a+1)*HALF),-1
+            c = j - a - b
+            if (a==b AND b==c) then
+              a1=a+1
+              nx(i  ) = a1; ny(i  ) = a1; nz(i  ) = a1
+              index_of(a1,a1,a1) = i
+              first_nonzero(i)   = 1
+              i =i+1
+            else if (a>b AND b==c) then
+              a1=a+1
+              b1=b+1
+              nx(i  ) = a1; ny(i  ) = b1; nz(i  ) = b1
+              nx(i+1) = b1; ny(i+1) = a1; nz(i+1) = b1
+              nx(i+2) = b1; ny(i+2) = b1; nz(i+2) = a1
+              index_of(a1,b1,b1) = i
+              index_of(b1,a1,b1) = i+1
+              index_of(b1,b1,a1) = i+2
+              first_nonzero(i  ) = 1
+              first_nonzero(i+1) = 2
+              first_nonzero(i+2) = 3
+              if (b>0) then
+                first_nonzero(i+1) = 1
+                first_nonzero(i+2) = 1
+              end
+              i =i+3
+            else if (a==b AND b>c) then
+              a1=a+1
+              c1=c+1
+              nx(i  ) = a1; ny(i  ) = a1; nz(i  ) = c1
+              nx(i+1) = a1; ny(i+1) = c1; nz(i+1) = a1
+              nx(i+2) = c1; ny(i+2) = a1; nz(i+2) = a1
+              index_of(a1,a1,c1) = i
+              index_of(a1,c1,a1) = i+1
+              index_of(c1,a1,a1) = i+2
+              first_nonzero(i)   = 1
+              first_nonzero(i+1) = 1
+              first_nonzero(i+2) = 2
+              if (c>0) then
+                first_nonzero(i+2) = 1
+              end
+              i =i+3
+            else
+              a1=a+1
+              b1=b+1
+              c1=c+1
+              nx(i  ) = a1; ny(i  ) = b1; nz(i  ) = c1
+              nx(i+1) = a1; ny(i+1) = c1; nz(i+1) = b1
+              nx(i+2) = b1; ny(i+2) = a1; nz(i+2) = c1
+              nx(i+3) = c1; ny(i+3) = a1; nz(i+3) = b1
+              nx(i+4) = b1; ny(i+4) = c1; nz(i+4) = a1
+              nx(i+5) = c1; ny(i+5) = b1; nz(i+5) = a1
+              index_of(a1,b1,c1) = i
+              index_of(a1,c1,b1) = i+1
+              index_of(b1,a1,c1) = i+2
+              index_of(c1,a1,b1) = i+3
+              index_of(b1,c1,a1) = i+4
+              index_of(c1,b1,a1) = i+5
+              if (a>0) then
+                first_nonzero(i  ) = 1
+                first_nonzero(i+1) = 1
+                first_nonzero(i+2) = 2
+                first_nonzero(i+3) = 2
+                first_nonzero(i+4) = 3
+                first_nonzero(i+5) = 3
+              else
+                first_nonzero(i  ) = 3
+                first_nonzero(i+1) = 3
+                first_nonzero(i+2) = 3
+                first_nonzero(i+3) = 3
+                ! i+4,i+5 must have b or c nonzero.
+              end
+              if (b>0) then
+                first_nonzero(i+2) = 1
+                first_nonzero(i+4) = 1
+                first_nonzero(i+5) = 2
+              end
+              if (c>0) then
+                first_nonzero(i+3) = 1
+                first_nonzero(i+5) = 1
+              end
+              i =i+6
+            end
+         end
+       end
+     end
+     do i = 1,nx.dim         ! Now make the index_p1, index_m1 arrays
+        p = [nx(i),ny(i),nz(i)]
+        m = p                ! add one, since lb=1 on index which should 0
+        f = first_nonzero(i)
+        m(f) = m(f) - 1
+        index_m1(i) = index_of(m(1),m(2),m(3))
+        do f = 1,3
+           p(f) = p(f) + 1
+           index_p1(i,f) = index_of(p(1),p(2),p(3))
+           p(f) = p(f) - 1
+        end
+     end
+     index_of.destroy
+!    n = nx.dim
+!    xy0.create(n)
+!    xz0.create(n)
+!    yz0.create(n)
+!    x0.create(n)
+!    y0.create(n)
+!    z0.create(n)
+!    n0.create(n)
+!    ixy = 0
+!    ixz = 0
+!    iyz = 0
+!    ix  = 0
+!    iy  = 0
+!    iz  = 0
+!    ii  = 0
+!    do i = 1,nx.dim
+!       if      (nx(i)==1 AND ny(i)==1) then; ixy = ixy + 1; xy0(ixy) = i
+!       else if (nx(i)==1 AND nz(i)==1) then; ixz = ixz + 1; xz0(ixz) = i
+!       else if (ny(i)==1 AND nz(i)==1) then; iyz = iyz + 1; yz0(iyz) = i
+!       else if (nx(i)==1) then;              ix  = ix  + 1;  x0(ix)  = i
+!       else if (ny(i)==1) then;              iy  = iy  + 1;  y0(iy)  = i
+!       else if (nz(i)==1) then;              iz  = iz  + 1;  z0(iz)  = i
+!       else;                                 ii  = ii  + 1;  n0(ii)  = i
+!       end
+!    end
+   end
+
+   set_rms_indices(l_max,nx,ny,nz) ::: leaky, private
+   ! Set the rms indices. 
+     self :: PTR
+     l_max :: INT, IN
+     nx,ny,nz :: VEC{INT}, IN
+   ENSURE(lbound(self,1)==0,"lower bound 1 wrong")
+   ENSURE(lbound(self,2)==0,"lower bound 2 wrong")
+   ENSURE(ubound(self,1)==l_max,"upper bound 1 wrong")
+   ENSURE(ubound(self,2)==l_max,"upper bound 2 wrong")
+   ENSURE(nx.dim==n_comp_up_to(2*l_max),"wrong size, nx")
+   ENSURE(ny.dim==nx.dim,"wrong size, ny")
+   ENSURE(nz.dim==nx.dim,"wrong size, nz")
+     lmax,lmin,f,l :: INT
+     do lmax = 0,l_max   ! Maximum l for one shell
+     do lmin = 0,lmax    ! l for the other shell
+        f = n_comp_up_to(lmax-1)+1
+        l = n_comp_up_to(lmin+lmax)
+        self(lmax,lmin).set_indices(lmax,lmin+lmax,nx(f:l),ny(f:l),nz(f:l))
+     end
+     end
+   end
+
+   n_comp_up_to(l) result(res) ::: selfless, private, always_pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)*(l+3)/6
+   end
+
+end
