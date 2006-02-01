@@ -4045,6 +4045,9 @@ contains
         case ("put_pointgroup                "); .put_pointgroup
         case ("put_qq_plot                   "); .crystal.put_qq_plot
         case ("put_sylvain_csizmadia_tensors "); .MAIN:put_sylvain_csizmadia_tensors
+        case ("put_sos_dipole_polarisability "); .MAIN:put_sos_dipole_polarisability
+        case ("put_dipole_polarisability     "); .MAIN:put_dipole_polarisability
+        case ("put_mikes_polarisability      "); .MAIN:put_mikes_polarisability
         case ("put_time_taken                "); .put_time_taken(timer)
         case ("put_total_time                "); .put_total_time
         case ("put_vrml                      "); .put_vrml
@@ -4665,5 +4668,327 @@ contains
 !     S.destroy
 !     eri_archive.write(v)
 !   end
+
+   put_sos_dipole_polarisability
+   ! Calculate the dipole polarisability using the sum-over-states (SOS) formula.
+   ENSURE(.molecular_orbitals.created,"no MO's")
+   ENSURE(.molecular_orbitals.restricted.created,"no restricted MO's")
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.scfdata.scf_kind=="rhf","SOS polarisability only for RHF case")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+      D  :: MAT3{REAL}*
+      MO :: MAT{REAL}*
+      e  :: VEC{REAL}*
+      alpha :: MAT{REAL}(3,3)
+      l,m,a,i,n_occ :: INT
+      val :: REAL
+
+      MO => .molecular_orbitals.restricted
+      e  => .orbital_energies.restricted
+      n_occ = .n_a   ! The number of occupied orbitals
+     
+      ! Get the dipole moment matrices in the AO basis.
+      D.create(.n_bf,.n_bf,3)
+      .get_dipole_matrices(D(:,:,1),D(:,:,2),D(:,:,3))
+      
+      ! Change dipole matrices from AO -> MO basis
+      D(:,:,1).change_basis_using(MO)
+      D(:,:,2).change_basis_using(MO)
+      D(:,:,3).change_basis_using(MO)
+      
+      ! Do the calculation
+      alpha = ZERO
+      do l = 1,3
+      do m = 1,l
+         val = ZERO
+         do a = n_occ+1,.n_bf
+         do i = 1,n_occ
+            val = val + (D(a,i,l)*D(a,i,m))/(e(a)-e(i))
+         end
+         end
+         alpha(l,m) = val 
+      end
+      end
+      alpha = TWO*alpha
+      alpha.symmetric_reflect
+
+      stdout.flush
+      stdout.text("Sum-over-states dipole polarisability:")
+      stdout.flush
+      stdout.put(alpha) 
+   end
+
+   put_dipole_polarisability 
+   ! Calculate the polarisability using Coupled Perturbed Hartree-Fock theory.
+   ENSURE(.molecular_orbitals.created,"no MO's")
+   ENSURE(.molecular_orbitals.restricted.created,"no restricted MO's")
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.scfdata.scf_kind=="rhf","SOS polarisability only for RHF case")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+      D_mo,D_ao,U  :: MAT3{REAL}*
+      MO :: MAT{REAL}*
+      alpha :: MAT{REAL}(3,3)
+      n_occ,n_vir,l,m,a,i :: INT
+      val :: REAL
+   
+      MO => .molecular_orbitals.restricted
+      n_occ = .n_a 
+      n_vir = .n_bf - n_occ
+
+      ! Get the dipole moment matrices in the AO basis.
+      D_mo.create(n_vir,n_occ,3)
+      D_ao.create(.n_bf,.n_bf,3)
+      .get_dipole_matrices(D_ao(:,:,1),D_ao(:,:,2),D_ao(:,:,3))
+      
+      ! Change dipole matrices from AO -> MO basis
+      D_ao(:,:,1).change_basis_to(D_mo(:,:,1),MO(:,n_occ+1:),MO(:,:n_occ))
+      D_ao(:,:,2).change_basis_to(D_mo(:,:,2),MO(:,n_occ+1:),MO(:,:n_occ))
+      D_ao(:,:,3).change_basis_to(D_mo(:,:,3),MO(:,n_occ+1:),MO(:,:n_occ))
+      D_ao.destroy
+
+      ! Solve the CPHF equations
+      D_mo = -D_mo
+      U.create(n_vir,n_occ,3)
+      .MAIN:solve_CPHF_equations(U,D_mo) 
+   
+      ! Finally calculate polarisability using U and D
+      alpha = 0
+      do l = 1,3
+      do m = 1,l
+         val = ZERO
+         do a = 1,n_vir
+         do i = 1,n_occ
+            val = val + D_mo(a,i,l)*U(a,i,m)
+         end
+         end
+         alpha(l,m) = val
+      end
+      end
+      alpha = TWO*alpha
+      alpha.symmetric_reflect
+   
+      stdout.flush
+      stdout.text("Dipole polarisability:")
+      stdout.flush
+      stdout.put(alpha) 
+   
+      U.destroy
+      D_mo.destroy
+   end
+
+   solve_CPHF_equations(U,rhs) 
+   ! Solve the coupled-perturbed Hartree-Fock (CPHF) equations. The result is
+   ! the derivative MO coefficients "U" (virtual-occupied block) and "rhs" is the
+   ! right hand side of the CPHF equations (virtual-occupied block). The
+   ! convergence tolerance and the number of iterations are controlled via the
+   ! scfdata block, since this is a self consistent procedure.
+      U,rhs :: MAT3{REAL}*
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
+   ENSURE(rhs.dim1==(.n_bf-.n_a),"wrong size, rhs, dimension 1")
+   ENSURE(rhs.dim2==.n_a,"wrong size, rhs dimension 2")
+   ENSURE(U.dim3==rhs.dim3,"incompatible sizes, U and rhs")
+      e  :: VEC{REAL}*
+      U_old :: MAT3{REAL}*
+      MO,U_ao,AU,J,K,W :: MAT{REAL}*
+      alpha :: MAT{REAL}(3,3)
+      n_occ,n_vir,n,a,i,iteration :: INT
+      test :: REAL
+      converged :: BIN
+   
+      MO => .molecular_orbitals.restricted
+      e  => .orbital_energies.restricted
+      n_occ = .n_a 
+      n_vir = .n_bf - n_occ
+   
+      ! Calculate initial approximation for U
+      do n = 1,U.dim3
+         do a = 1,n_vir
+         do i = 1,n_occ
+            U(a,i,n) =  rhs(a,i,n)/(e(n_occ+a) - e(i))
+         end
+         end
+      end
+
+      ! Allocate space for temporaries
+      U_old.create(n_vir,n_occ,U.dim3)
+      U_ao.create(.n_bf,.n_bf)
+      AU => U_ao
+
+      ! Begin iterative procedure
+      iteration = 0
+
+      do
+         iteration = iteration + 1
+         DIE_IF(iteration>.scfdata.max_iterations,"too many iterations") 
+
+         U_old = U
+
+         ! Update U
+         do n = 1,U.dim3
+            U(:,:,n).back_transform_to(U_ao,MO(:,n_occ+1:),MO(:,:n_occ))
+            U_ao.symmetrize              ! U -> AO basis
+            J.create(.n_bf,.n_bf)
+            K.create(.n_bf,.n_bf)
+            .make_r_JK_direct(J,K,U_ao)  ! A times U
+            AU = FOUR*J - TWO*K
+            K.destroy
+            J.destroy
+            W.create(n_vir,n_occ)        ! AU -> MO basis
+            AU.change_basis_to(W,MO(:,n_occ+1:),MO(:,:n_occ))
+            do a = 1,n_vir               ! Update
+            do i = 1,n_occ
+               U(a,i,n) = (ONE/(e(n_occ+a) - e(i))) * (rhs(a,i,n) - W(a,i))
+            end
+            end
+            W.destroy
+         end
+
+         ! Converged ?
+         test = maxval(abs(U-U_old))
+         stdout.show("Iteration "//iteration.to_str.trim//", test = ",test)
+         converged = test<.scfdata.convergence
+         if (converged) exit
+      end
+   
+      W.destroy
+      AU.destroy
+      U_ao.destroy
+      U_old.destroy
+   end
+
+   put_mikes_polarisability 
+   ! Calculate the polarisability using Dylans "complicated" method
+
+   ENSURE(.molecular_orbitals.restricted.created,"no MO's")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+
+   D :: MAT3{REAL}*
+   e :: VEC{REAL}*
+   alpha :: MAT{REAL}(3,3)
+   U_old :: MAT3{REAL}*
+   U_new,J,K :: MAT3{REAL}*
+   AU :: MAT3{REAL}*
+   Ubar :: MAT3{REAL}*
+   MO :: MAT{REAL}*
+   X,Y,Z,p,q,l,m,n_occ,i,cyc :: INT
+   tol,test :: REAL
+
+   MO => .molecular_orbitals.restricted
+   X = 1; Y = 2; Z = 3 ! Used to index into the U array
+   tol = 1.0e-5 ! The convergence tolerance for the iterative procedure
+
+   alpha = 0
+
+   n_occ = .n_e/2      ! Determine the number of occupied orbitals
+
+   stdout.flush
+   stdout.text("Mike's More Complicated Polarisability:")
+   stdout.flush
+stdout.text(".n_bf is : ")
+stdout.put(.n_bf)
+stdout.flush
+   D.create(.n_bf,.n_bf,3) ! 3=x,y,z
+   .get_dipole_matrices(D(:,:,1),D(:,:,2),D(:,:,3))
+   D(:,:,X).change_basis_using(.molecular_orbitals.restricted)
+   D(:,:,Y).change_basis_using(.molecular_orbitals.restricted)
+   D(:,:,Z).change_basis_using(.molecular_orbitals.restricted)
+
+   e => .orbital_energies.restricted
+
+   U_old.create(.n_bf,.n_bf,3) ! 3=x,y,z
+   U_new.create(.n_bf,.n_bf,3) ! 3=x,y,z 
+   AU.create(.n_bf,.n_bf,3) ! 3=x,y,z
+   Ubar.create(.n_bf,.n_bf,3) ! 3=x,y,z
+   J.create(.n_bf,.n_bf,3) ! 3=x,y,z
+   K.create(.n_bf,.n_bf,3) ! 3=x,y,z
+
+   Ubar = 0 ! Initialise Ubar
+
+   ! Calculate initial approximation for U
+   do p=1,.n_bf
+      do q=1,.n_bf
+         if (p==q) then
+         U_old(p,q,X) = ZERO
+         U_old(p,q,Y) = ZERO
+         U_old(p,q,Z) = ZERO
+         else
+         U_old(p,q,X) =  - D(p,q,X)/(e(p) - e(q))
+         U_old(p,q,Y) =  - D(p,q,Y)/(e(p) - e(q))
+         U_old(p,q,Z) =  - D(p,q,Z)/(e(p) - e(q))
+         end
+      end
+    end
+
+   cyc = 0
+   ! Use an interative procedure to determine U 
+   do
+      cyc = cyc + 1
+      U_old(n_occ+1:,1:n_occ,1).back_transform_to(Ubar(:,:,1),MO(:,n_occ+1:),MO(:,1:n_occ))
+      U_old(n_occ+1:,1:n_occ,2).back_transform_to(Ubar(:,:,2),MO(:,n_occ+1:),MO(:,1:n_occ))
+      U_old(n_occ+1:,1:n_occ,3).back_transform_to(Ubar(:,:,3),MO(:,n_occ+1:),MO(:,1:n_occ))
+    ! .MAIN:make_mikes_A_times_U(AU,Ubar)
+      Ubar(:,:,X).symmetrize
+      Ubar(:,:,Y).symmetrize
+      Ubar(:,:,Z).symmetrize
+      .make_r_JK_direct(J(:,:,1),K(:,:,1),Ubar(:,:,1))
+      .make_r_JK_direct(J(:,:,2),K(:,:,2),Ubar(:,:,2))
+      .make_r_JK_direct(J(:,:,3),K(:,:,3),Ubar(:,:,3))
+      AU = FOUR*J - TWO*K
+      AU(:,:,1).change_basis_using(MO)
+      AU(:,:,2).change_basis_using(MO)
+      AU(:,:,3).change_basis_using(MO)
+      do p=1,.n_bf
+         do q=1,.n_bf
+            if (p==q) then
+            U_new(p,q,X) = ZERO
+            U_new(p,q,Y) = ZERO
+            U_new(p,q,Z) = ZERO
+            else
+            U_new(p,q,X) = (-1/(e(p) - e(q))) * (D(p,q,X) + AU(p,q,X))
+            U_new(p,q,Y) = (-1/(e(p) - e(q))) * (D(p,q,Y) + AU(p,q,Y))
+            U_new(p,q,Z) = (-1/(e(p) - e(q))) * (D(p,q,Z) + AU(p,q,Z))
+            end
+         end
+      end
+      test = maxval(abs(U_new(n_occ+1:,1:n_occ,:)-U_old(n_occ+1:,1:n_occ,:)))
+      stdout.show("cycle "//cyc.to_str.trim//", test = ",test)
+      if ( test < tol) exit
+
+
+      U_old = U_new 
+    end
+
+   ! Finally Calculate polarisability using U and D
+   do l=1,3
+      do m=1,l ! Calculate only the lower triangle
+         do p=n_occ+1,.n_bf
+            do i=1,n_occ
+               alpha(l,m) = alpha(l,m) + D(p,i,l)*U_new(p,i,m)
+            end
+         end
+      end
+    end
+   alpha = alpha*2 ! Apply factor
+
+   stdout.flush
+   stdout.text("First polarisability:")
+   stdout.flush
+   stdout.put(alpha)
+
+   ! Do some tidying up
+   D.destroy
+   K.destroy
+   J.destroy
+   U_old.destroy
+   U_new.destroy
+   Ubar.destroy
+   end
 
 end
