@@ -24,6 +24,8 @@
 
 module MOLECULE
 
+   use MAT_RMS_INDICES
+
    implicit none
 
 #  undef  ENSURE
@@ -1387,7 +1389,6 @@ contains
    ! sh4 :: SHELL1QUARTET
      rms_indices :: MAT{RMS_INDICES}*
      rms2_indices :: MAT4{RMS2_INDICES}*
-     l_max :: INT
      .atom_for_shell.destroy
      .atom_for_shell       => .atom.atom_for_shell
      .atom_shell_for_shell.destroy
@@ -1406,9 +1407,9 @@ contains
      .make_shellpair_vector
     ! sh2.set_gaussian_indexing_arrays(.basis.maximum_basis_set_l_value)
     ! sh4.set_gaussian_indexing_arrays(.basis.maximum_basis_set_l_value)
-      l_max = .basis.maximum_basis_set_l_value
-      rms_indices.set_indices(l_max)
-    ! rms2_indices.set_indices(l_max)
+      .basis_l_max = .basis.maximum_basis_set_l_value
+      rms_indices.set_indices(.basis_l_max)
+    ! rms2_indices.set_indices(.basis_l_max)
    end
 
    make_shellpair_vector ::: leaky
@@ -1824,7 +1825,7 @@ contains
    make_group_density_matrix ::: leaky
    ! Make the promolecule density matrix from *symmetrically orthonormalised*
    ! group (monomer) molecular orbitals. Do not confuse this with the progroup
-   ! density matrix, made with .make_progroup_de nsity_matrix. The symmetrically
+   ! density matrix, made with .make_progroup_density_matrix. The symmetrically
    ! orthonormalised molecular orbitals are made and are ordered by group.  This
    ! will destroy any existing restricted density matrix and MOs.
    ENSURE(.molecular_orbitals.created,"no MO's")
@@ -2320,7 +2321,6 @@ contains
      q,fa,la,fb,lb, atom_a,atom_b :: INT
      sh :: SHELL2
      do q=1,.n_shell_pairs
-     ! .get_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
        .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
        if (.in_same_atom_group(atom_a,atom_b)) sh.make_overlap(S(fa:la,fb:lb))
        sh.destroy_ptr_part
@@ -10081,6 +10081,37 @@ contains
      end
    end
 
+   schwarz_test(skip_J,skip_K,cutoff,ab,cd,a,b,c,d,P_max,I_max)
+   ! Return "skip_J" and "skip_K", logical variables are TRUE if the maximum
+   ! contribution to the J and K matrices (based on the schwarz inequality test)
+   ! from a shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd"
+   ! is smaller than a preset "cutoff". "P_max(ab)" is the maximum density
+   ! matrix elements for each shell pair "ab", and "I_max(ab)" is maximum value
+   ! of the square root of the integral (ab|ab) for the shell pair with index "ab".
+     skip_J,skip_K :: BIN, OUT
+     cutoff :: REAL, IN
+     ab,cd, a,b,c,d :: INT, IN
+     P_max,I_max :: VEC{REAL}, IN
+     Jmax,Kmax :: REAL
+     ac,ad,bc,bd,k,l,m,n :: INT
+     k = max(b,c); l = min(b,c)
+     m = max(b,d); n = min(b,d)
+     ac = (a-1)*a/2 + c          ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+     ad = ac - c + d
+     bc = (k-1)*k/2 + l
+     bd = (m-1)*m/2 + n
+     Jmax = max(P_max(ab),P_max(cd))
+     Kmax = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+     skip_J = FALSE
+     if      (Jmax < TOL(20)) then;                    skip_J = TRUE
+     else if (Jmax*I_max(ab)*I_max(cd) < cutoff) then; skip_J = TRUE
+     end
+     skip_K = FALSE
+     if      (Kmax < TOL(20)) then;                    skip_K = TRUE
+     else if (Kmax*I_max(ab)*I_max(cd) < cutoff) then; skip_K = TRUE
+     end
+   end
+
    make_max_density_elements(P_max,P)
    ! Make "P_max", the maximum of the (a,b) density elements of "P" over each
    ! shell pair, for use in the schwarz test.
@@ -10120,7 +10151,7 @@ contains
        .set_precomp_shell_quartet_ab(sh4q,sa,sb)  ! Set (ab|ab) shell
        .set_precomp_shell_quartet_cd(sh4q,sa,sb)
        Iabab.create(na,nb,na,nb)
-       sh4q.get_ERI(Iabab)
+       sh4q.make_ERI(Iabab)
        sh4q.destroy_ptr_part
        Imax = ZERO
        do a=1,na
@@ -10166,18 +10197,198 @@ contains
      end
    end
 
+   reverse_transfer(P,PP) ::: leaky
+   ! Apply the reverse horizontal recursion relation (i.e. the reverse transfer
+   ! relation) to matrix "P" to produce the shell pair vector "PP" which has to
+   ! be multipled by the source integrals to give the contracted term (usually
+   ! the J-matrix)
+      P :: MAT{REAL}
+      PP :: VEC{VEC_{REAL}}*
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+      R :: VEC{REAL}(3)
+      R1,R2,R3,T1,T2,T3,fx,fy,fz,P_ab :: REAL
+      Rx,Ry,Rz,ab :: VEC{REAL}*
+      ax,ay,az,bx,by,bz,binx,biny,binz :: VEC{INT}*
+      q,fa,la,fb,lb,atom_a,atom_b,aa,bb,af,al,bf,bl :: INT
+      i,a,b,x,y,z,xa,ya,za,xb,yb,zb,xx,yy,zz :: INT
+      new_atom_pair,a_gt_b,a_lt_b :: BIN
+      sh :: SHELL2
+      PP.create(.n_shell_pairs)                                     ! leaky
+      Rx.create(.basis_l_max)
+      Ry.create(.basis_l_max)
+      Rz.create(.basis_l_max)
+      a_gt_b = TRUE
+      a_lt_b = TRUE
+      aa = 0
+      bb = 0
+      do q = 1,.n_shell_pairs
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+       ! stdout.text("P_ab:")
+       ! stdout.put(P(fa:la,fb:lb))
+       ! stdout.show("n_gaussian = ",sh.n_gaussian)
+         PP(q).element.create(sh.n_gaussian)                        ! leaky
+         ab => PP(q).element
+         if      (sh.l_sum==0) then
+            ab(1) = P(fa,fb)
+         else if (sh.a.l==0) then
+            fb = fb - 1
+            do b = 1,sh.b.n_comp
+               ab(b) = P(fa,fb+b)
+            end
+         else if (sh.b.l==0) then
+            fa = fa - 1
+            do a = 1,sh.a.n_comp
+               ab(a) = P(fa+a,fb)
+            end
+         else
+            ab = ZERO
+            fa = fa - 1
+            fb = fb - 1
+            af = n_comp_up_to(sh.a.l-1) + 1; al = af + sh.a.n_comp
+            bf = n_comp_up_to(sh.b.l-1) + 1; bl = bf + sh.b.n_comp
+            ax => nx(af:al); ay => ny(af:al); az => nz(af:al)
+            bx => nx(bf:bl); by => ny(bf:bl); bz => nz(bf:bl)
+            af = af - 1
+            bf = bf - 1
+            new_atom_pair = atom_a/=aa OR atom_b/=bb
+            aa = atom_a; bb = atom_b
+            if (sh.a.l > sh.b.l) then
+               if (new_atom_pair OR a_lt_b) then
+       ! stdout.text("new atoms")
+       ! stdout.show("atom_a =",atom_a)
+       ! stdout.show("atom_b =",atom_b)
+                  a_gt_b = TRUE; a_lt_b = FALSE
+                  R = sh.a.pos - sh.b.pos
+                  R1 = R(1);   R2 = R(2);   R3 = R(3)
+                  T1 = R1;     T2 = R2;     T3 = R3
+                  Rx(1) = ONE; Ry(1) = ONE; Rz(1) = ONE
+                  do i = 2,sh.l_max+1
+                     Rx(i) = T1; T1 = R1*T1
+                     Ry(i) = T2; T2 = R2*T2
+                     Rz(i) = T3; T3 = R3*T3
+                  end
+               end
+               do b = 1,sh.b.n_comp
+                  xb = bx(b); yb = by(b); zb = bz(b)
+                  binx => binomial(xb)%element
+                  biny => binomial(yb)%element
+                  binz => binomial(zb)%element
+       !        stdout.show("xb = ",xb)
+       !        stdout.show("yb = ",yb)
+       !        stdout.show("zb = ",zb)
+       !        stdout.show("binbx = ",binx)
+       !        stdout.show("binby = ",biny)
+       !        stdout.show("binbz = ",binz)
+                  do a = 1,sh.a.n_comp
+                     P_ab = P(fa+a,fb+b)
+       !        stdout.show("b    = ",b)
+       !        stdout.show("a    = ",a)
+       !        stdout.show("P_ab = ",P_ab)
+                     xa = ax(a); ya = ay(a); za = az(a)
+                     do x = 1,xb 
+                        xx = xa + x - 1
+                        fx = binx(x)*Rx(xb-x+1)*P_ab
+                        do y = 1,yb 
+                           yy = ya + y - 1
+                           fy = biny(y)*Ry(yb-y+1)
+                           do z = 1,zb 
+                              zz = za + z - 1
+                              fz = binz(z)*Rz(zb-z+1)
+                              i = index_of(xx,yy,zz) - af
+       !                    stdout.show("i = ",i)
+                              ab(i) = ab(i) + fx*fy*fz
+                           end
+                        end
+                     end
+                  end
+               end
+            else
+               if (new_atom_pair OR a_gt_b) then
+       ! stdout.text("new atoms")
+       ! stdout.show("atom_a =",atom_a)
+       ! stdout.show("atom_b =",atom_b)
+                  a_gt_b = FALSE; a_lt_b = TRUE
+                  R = sh.b.pos - sh.a.pos
+                  R1 = R(1);   R2 = R(2);   R3 = R(3)
+                  T1 = R1;     T2 = R2;     T3 = R3
+                  Rx(1) = ONE; Ry(1) = ONE; Rz(1) = ONE
+                  do i = 2,sh.l_max+1
+                     Rx(i) = T1; T1 = R1*T1
+                     Ry(i) = T2; T2 = R2*T2
+                     Rz(i) = T3; T3 = R2*T3
+                  end
+               end
+               do a = 1,sh.a.n_comp
+                  xa = ax(a); ya = ay(a); za = az(a)
+                  binx => binomial(xa)%element
+                  biny => binomial(ya)%element
+                  binz => binomial(za)%element
+       !        stdout.show("xa = ",xa)
+       !        stdout.show("ya = ",ya)
+       !        stdout.show("za = ",za)
+       !        stdout.show("binx = ",binx)
+       !        stdout.show("biny = ",biny)
+       !        stdout.show("binz = ",binz)
+                  do b = 1,sh.b.n_comp
+                     P_ab = P(fa+a,fb+b)
+       !        stdout.show("a    = ",b)
+       !        stdout.show("b    = ",a)
+       !        stdout.show("P_ab = ",P_ab)
+                     xb = bx(b); yb = by(b); zb = bz(b)
+                     do x = 1,xa 
+                        xx = xb + x - 1
+                        fx = binx(x)*Rx(xa-x+1)*P_ab
+                        do y = 1,ya 
+                           yy = yb + y - 1
+                           fy = biny(y)*Ry(ya-y+1)
+                           do z = 1,za 
+                              zz = zb + z - 1
+                              fz = binz(z)*Rz(za-z+1)
+                              i = index_of(xx,yy,zz) - bf
+       !                    stdout.show("i = ",i)
+                              ab(i) = ab(i) + fx*fy*fz
+                           end
+                        end
+                     end
+                  end
+               end
+            end
+         end
+       ! stdout.text("ab:")
+       ! stdout.put(ab,"column")
+       ! sh.destroy_ptr_part
+      end
+      Rz.destroy
+      Ry.destroy
+      Rx.destroy
+   end
+
+   n_comp_up_to(l) result(res) ::: selfless, private, always_pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)*(l+3)/6
+   end
+
    make_r_JK_direct(J,K,P)
    ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from a
    ! symmetric density matrix "P" directly.
      J,K,P :: MAT{REAL}
    ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
+     PP :: VEC{VEC_{REAL}}*
      max_P :: VEC{REAL}*
-     !sh4 :: SHELL4
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
      factor,cutoff,P_max,IP_max :: REAL
-     skip :: BIN
+     skip,skip_J,skip_K :: BIN
+ ! n_j,n_k,n_jk :: INT
+ ! n_j = 0 
+ ! n_k = 0 
+ ! n_jk = 0 
+     .reverse_transfer(P,PP)
      J = ZERO
      K = ZERO
      cutoff = .scfdata.eri_cutoff
@@ -10190,16 +10401,19 @@ contains
        if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
-       !.set_shell_quartet_ab(sh4,aa,bb)
        do cd = 1,ab
          if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
                                         ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
          skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+     !   .schwarz_test(skip_J,skip_K,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+     !   skip = skip_J AND skip_K
+     ! if (skip_J) n_j  = n_j + 1
+     ! if (skip_k) n_k  = n_k + 1
+     ! if (skip)   n_jk = n_jk + 1
          if (skip) cycle
 
          .set_precomp_shell_quartet_cd(sh4q,cc,dd)
-         !.set_shell_quartet_cd(sh4,cc,dd)
          if (aa==bb) then                   ! Evaluate the integrals'
            factor = HALF                    ! coincidence factors
          else
@@ -10208,11 +10422,10 @@ contains
          if (cc==dd) factor = HALF * factor
          if (aa==cc AND bb==dd) factor = HALF * factor
          sh4q.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+     !   sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+     !   sh4q.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
          sh4q.destroy_cd
-         !sh4.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-         !sh4.destroy_cd
        end
-       !sh4.destroy_ab
        sh4q.destroy_ab
      end
      max_P.destroy
@@ -10226,6 +10439,10 @@ contains
         J.symmetric_reflect
         K.symmetric_reflect
      end
+     PP.destroy
+ ! stdout.show("n_j  =", n_j)
+ ! stdout.show("n_k  =", n_k)
+ ! stdout.show("n_jk =", n_jk)
    end
 
    make_r_JK_direct2(J,K,P)
@@ -10296,7 +10513,6 @@ contains
      J,P :: MAT{REAL}
    ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
      max_P :: VEC{REAL}*
-     !sh4 :: SHELL4
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
@@ -10313,7 +10529,6 @@ contains
        if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
-       !.set_shell_quartet_ab(sh4,aa,bb)
        do cd = 1,ab
          if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
@@ -10322,7 +10537,6 @@ contains
          if (skip) cycle
 
          .set_precomp_shell_quartet_cd(sh4q,cc,dd)
-         !.set_shell_quartet_cd(sh4,cc,dd)
          if (aa==bb) then                   ! Evaluate the integrals'
            factor = HALF                    ! coincidence factors
          else
@@ -10332,10 +10546,7 @@ contains
          if (aa==cc AND bb==dd) factor = HALF * factor
          sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
          sh4q.destroy_cd
-         !sh4.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-         !sh4.destroy_cd
        end
-       !sh4.destroy_ab
        sh4q.destroy_ab
      end
      max_P.destroy
@@ -10406,7 +10617,6 @@ contains
    ! directly.
      K,P :: MAT{REAL}
      max_P :: VEC{REAL}*
-     !sh4 :: SHELL4
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
@@ -10420,19 +10630,16 @@ contains
      P_max = maxval(max_P)
      IP_max = maxval(.max_I) * P_max
      parallel do ab = 1,.n_shell_pairs
-       if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
-       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
+       if (.max_I(ab)*IP_max < cutoff)  cycle 
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
-       !.set_shell_quartet_ab(sh4,aa,bb)
        do cd = 1,ab
-         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
-         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
-                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) 
          skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
 
          .set_precomp_shell_quartet_cd(sh4q,cc,dd)
-         !.set_shell_quartet_cd(sh4,cc,dd)
          if (aa==bb) then                   ! Evaluate the integrals'
            factor = HALF                    ! coincidence factors
          else
@@ -10442,10 +10649,7 @@ contains
          if (aa==cc AND bb==dd) factor = HALF * factor
          sh4q.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
          sh4q.destroy_cd
-         !sh4.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-         !sh4.destroy_cd
        end
-       !sh4.destroy_ab
        sh4q.destroy_ab
      end
      max_P.destroy
@@ -10612,7 +10816,7 @@ contains
    ! atom_group.
      J,K,P :: MAT{REAL}
      max_P :: VEC{REAL}*
-     sh4 :: SHELL4
+     sh4 :: SHELL1QUARTET
      ab,cd, aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
      atom_a,atom_b,atom_c,atom_d :: INT
@@ -10627,26 +10831,24 @@ contains
      P_max = maxval(max_P)
      IP_max = maxval(.max_I) * P_max
      do ab = 1, .n_shell_pairs
-       if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
-       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb,atom_a,atom_b)    ! a & b shell indices.
-       .set_shell_quartet_ab(sh4,aa,bb)
-       do cd = 1,ab
-         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
-         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d)  ! c & d shell indices.
-         if (NOT .in_same_atom_group(atom_a,atom_b,atom_c,atom_d)) cycle
-                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
-         if (skip) cycle
-                                              ! calculate ab|cd
-         .set_shell_quartet_cd(sh4,cc,dd)
-         factor = ONE                         ! Evaluate the integrals'
-         if (aa==bb) factor = HALF          ! coincidence factors
-         if (cc==dd) factor = HALF * factor
-         if (aa==cc AND bb==dd) factor = HALF * factor
-         sh4.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.destroy_cd
-       end
-       sh4.destroy_ab
+        if (.max_I(ab)*IP_max < cutoff)  cycle  
+        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb,atom_a,atom_b)
+        .set_precomp_shell_quartet_ab(sh4,aa,bb)
+        do cd = 1,ab
+           if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle
+           .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d)
+           if (NOT .in_same_atom_group(atom_a,atom_b,atom_c,atom_d)) cycle
+           skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+           if (skip) cycle
+           .set_precomp_shell_quartet_cd(sh4,cc,dd)
+           factor = ONE                         ! Evaluate the integrals'
+           if (aa==bb) factor = HALF            ! coincidence factors
+           if (cc==dd) factor = HALF * factor
+           if (aa==cc AND bb==dd) factor = HALF * factor
+           sh4.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+           sh4.destroy_cd
+        end
+        sh4.destroy_ab
      end
      max_P.destroy
      .weight_diagonal_blocks(J,TWO)
@@ -10656,16 +10858,66 @@ contains
      J = TWO*J
    end
 
+!   make_r_group_JK(J,K,P)
+!   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from the
+!   ! density matrix "P" only for basis functions which occur in the same
+!   ! atom_group.
+!     J,K,P :: MAT{REAL}
+!     max_P :: VEC{REAL}*
+!     sh4 :: SHELL4
+!     ab,cd, aa,bb,cc,dd :: INT
+!     fa,fb,fc,fd,la,lb,lc,ld :: INT
+!     atom_a,atom_b,atom_c,atom_d :: INT
+!     factor,cutoff,P_max,IP_max :: REAL
+!     skip :: BIN
+!     J = ZERO
+!     K = ZERO
+!     cutoff = .scfdata.eri_cutoff
+!     if (.max_I.destroyed) .initialise_max_I
+!     max_P.create(.n_shell_pairs)
+!     .make_max_density_elements(max_P,P)
+!     P_max = maxval(max_P)
+!     IP_max = maxval(.max_I) * P_max
+!     do ab = 1, .n_shell_pairs
+!       if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
+!       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb,atom_a,atom_b)    ! a & b shell indices.
+!       .set_shell_quartet_ab(sh4,aa,bb)
+!       do cd = 1,ab
+!         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
+!         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d)  ! c & d shell indices.
+!         if (NOT .in_same_atom_group(atom_a,atom_b,atom_c,atom_d)) cycle
+!                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+!         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+!         if (skip) cycle
+!                                              ! calculate ab|cd
+!         .set_shell_quartet_cd(sh4,cc,dd)
+!         factor = ONE                         ! Evaluate the integrals'
+!         if (aa==bb) factor = HALF          ! coincidence factors
+!         if (cc==dd) factor = HALF * factor
+!         if (aa==cc AND bb==dd) factor = HALF * factor
+!         sh4.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+!         sh4.destroy_cd
+!       end
+!       sh4.destroy_ab
+!     end
+!     max_P.destroy
+!     .weight_diagonal_blocks(J,TWO)
+!     .blockwise_symmetric_fold(K)
+!     J.symmetric_reflect
+!     K.symmetric_reflect
+!     J = TWO*J
+!   end
+
    make_r_JK_nosym(J,K,P)
    ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from the
    ! density matrix "P" which has no permutational symmetry.
      J,K,P :: MAT{REAL}
-     I :: MAT4{REAL}*
+     I :: VEC{REAL}*
      max_P :: VEC{REAL}*
-     sh4 :: SHELL4
-     ab,cd,i_a,i_b,i_c,i_d :: INT
-     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
-     I_abcd,factor,cutoff :: REAL
+     sh4 :: SHELL1QUARTET
+     ab,cd,aa,bb,cc,dd :: INT
+     a,b,c,d,abcd,fa,fb,fc,fd,la,lb,lc,ld :: INT
+     factor,cutoff,P_max,IP_max,I_abcd :: REAL
      skip :: BIN
      J = ZERO
      K = ZERO
@@ -10673,62 +10925,133 @@ contains
      if (.max_I.destroyed) .initialise_max_I
      max_P.create(.n_shell_pairs)
      .make_max_density_elements(max_P,P)
-     do ab = 1, .n_shell_pairs
-       .get_shell_pair_indices(ab,i_a,i_b)    ! a & b shell indices.
-       fa = .first_basis_fn_for_shell(i_a)
-       fb = .first_basis_fn_for_shell(i_b)
-       la = .last_basis_fn_for_shell(i_a)
-       lb = .last_basis_fn_for_shell(i_b)
-       .set_shell_quartet_ab(sh4,i_a,i_b)
-       do cd = 1,ab
-         .get_shell_pair_indices(cd,i_c,i_d)  ! c & d shell indices.
-         fc = .first_basis_fn_for_shell(i_c)
-         fd = .first_basis_fn_for_shell(i_d)
-         lc = .last_basis_fn_for_shell(i_c)
-         ld = .last_basis_fn_for_shell(i_d)
-                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,i_a,i_b,i_c,i_d,max_P,.max_I)
-         if (skip) cycle
-                                              ! calculate ab|cd
-         .set_shell_quartet_cd(sh4,i_c,i_d)
-         factor = ONE                         ! Evaluate the integrals'
-         if (i_a==i_b) factor = HALF          ! coincidence factors
-         if (i_c==i_d) factor = HALF * factor
-         if (i_a==i_c AND i_b==i_d) factor = HALF * factor
-         I.create(fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.get_ERI(I)
+     P_max = maxval(max_P)
+     IP_max = maxval(.max_I) * P_max
+     do ab = 1,.n_shell_pairs
+        if (.max_I(ab)*IP_max < cutoff)  cycle  
+        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) 
+        .set_precomp_shell_quartet_ab(sh4,aa,bb)
+        do cd = 1,ab
+           if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
+           .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)
+           skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+           if (skip) cycle
+           .set_precomp_shell_quartet_cd(sh4,cc,dd)
+           if (aa==bb) then; factor = HALF      ! coincidence factors
+           else;             factor = ONE
+           end
+           if (cc==dd) factor = HALF * factor
+           if (aa==cc AND bb==dd) factor = HALF * factor
+           I.create(sh4.ab_n_comp_pairs*sh4.cd_n_comp_pairs)
+           sh4.make_ERI(I)
+           abcd = 0
            do d = fd,ld
            do c = fc,lc
            do b = fb,lb
            do a = fa,la
-            I_abcd = factor * I(a,b,c,d)
-            J(a,b) = J(a,b) + I_abcd*P(d,c) ! These are symmetric
-            J(a,b) = J(a,b) + I_abcd*P(c,d)
-            J(b,a) = J(b,a) + I_abcd*P(d,c)
-            J(b,a) = J(b,a) + I_abcd*P(c,d)
-            J(c,d) = J(c,d) + I_abcd*P(b,a)
-            J(c,d) = J(c,d) + I_abcd*P(a,b)
-            J(d,c) = J(d,c) + I_abcd*P(b,a)
-            J(d,c) = J(d,c) + I_abcd*P(a,b)
-            K(a,d) = K(a,d) + I_abcd*P(b,c) ! These are asymmetric
-            K(a,c) = K(a,c) + I_abcd*P(b,d)
-            K(b,c) = K(b,c) + I_abcd*P(a,d)
-            K(b,d) = K(b,d) + I_abcd*P(a,c)
-            K(d,a) = K(d,a) + I_abcd*P(c,b)
-            K(c,a) = K(c,a) + I_abcd*P(d,b)
-            K(c,b) = K(c,b) + I_abcd*P(d,a)
-            K(d,b) = K(d,b) + I_abcd*P(c,a)
+              abcd = abcd + 1
+              I_abcd = factor * I(abcd)
+              J(a,b) = J(a,b) + I_abcd*P(d,c) ! These are symmetric
+              J(a,b) = J(a,b) + I_abcd*P(c,d)
+              J(b,a) = J(b,a) + I_abcd*P(d,c)
+              J(b,a) = J(b,a) + I_abcd*P(c,d)
+              J(c,d) = J(c,d) + I_abcd*P(b,a)
+              J(c,d) = J(c,d) + I_abcd*P(a,b)
+              J(d,c) = J(d,c) + I_abcd*P(b,a)
+              J(d,c) = J(d,c) + I_abcd*P(a,b)
+              K(a,d) = K(a,d) + I_abcd*P(b,c) ! These are asymmetric
+              K(a,c) = K(a,c) + I_abcd*P(b,d)
+              K(b,c) = K(b,c) + I_abcd*P(a,d)
+              K(b,d) = K(b,d) + I_abcd*P(a,c)
+              K(d,a) = K(d,a) + I_abcd*P(c,b)
+              K(c,a) = K(c,a) + I_abcd*P(d,b)
+              K(c,b) = K(c,b) + I_abcd*P(d,a)
+              K(d,b) = K(d,b) + I_abcd*P(c,a)
            end
            end
            end
            end
-         I.destroy
-         sh4.destroy_cd
-       end
-       sh4.destroy_ab
+           I.destroy
+           sh4.destroy_cd
+        end
+        sh4.destroy_ab
      end
      max_P.destroy
    end
+
+!   make_r_JK_nosym(J,K,P)
+!   ! Make the real coulomb matrix "J" and exchange matrix "K" matrix from the
+!   ! density matrix "P" which has no permutational symmetry.
+!     J,K,P :: MAT{REAL}
+!     I :: MAT4{REAL}*
+!     max_P :: VEC{REAL}*
+!     sh4 :: SHELL4
+!     ab,cd,i_a,i_b,i_c,i_d :: INT
+!     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
+!     I_abcd,factor,cutoff :: REAL
+!     skip :: BIN
+!     J = ZERO
+!     K = ZERO
+!     cutoff = SCFDATA_ERI_LIMIT
+!     if (.max_I.destroyed) .initialise_max_I
+!     max_P.create(.n_shell_pairs)
+!     .make_max_density_elements(max_P,P)
+!     do ab = 1, .n_shell_pairs
+!       .get_shell_pair_indices(ab,i_a,i_b)    ! a & b shell indices.
+!       fa = .first_basis_fn_for_shell(i_a)
+!       fb = .first_basis_fn_for_shell(i_b)
+!       la = .last_basis_fn_for_shell(i_a)
+!       lb = .last_basis_fn_for_shell(i_b)
+!       .set_shell_quartet_ab(sh4,i_a,i_b)
+!       do cd = 1,ab
+!         .get_shell_pair_indices(cd,i_c,i_d)  ! c & d shell indices.
+!         fc = .first_basis_fn_for_shell(i_c)
+!         fd = .first_basis_fn_for_shell(i_d)
+!         lc = .last_basis_fn_for_shell(i_c)
+!         ld = .last_basis_fn_for_shell(i_d)
+!                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+!         skip = .schwarz_inequality_test(cutoff,ab,cd,i_a,i_b,i_c,i_d,max_P,.max_I)
+!         if (skip) cycle
+!                                              ! calculate ab|cd
+!         .set_shell_quartet_cd(sh4,i_c,i_d)
+!         factor = ONE                         ! Evaluate the integrals'
+!         if (i_a==i_b) factor = HALF          ! coincidence factors
+!         if (i_c==i_d) factor = HALF * factor
+!         if (i_a==i_c AND i_b==i_d) factor = HALF * factor
+!         I.create(fa,la,fb,lb,fc,lc,fd,ld)
+!         sh4.get_ERI(I)
+!           do d = fd,ld
+!           do c = fc,lc
+!           do b = fb,lb
+!           do a = fa,la
+!            I_abcd = factor * I(a,b,c,d)
+!            J(a,b) = J(a,b) + I_abcd*P(d,c) ! These are symmetric
+!            J(a,b) = J(a,b) + I_abcd*P(c,d)
+!            J(b,a) = J(b,a) + I_abcd*P(d,c)
+!            J(b,a) = J(b,a) + I_abcd*P(c,d)
+!            J(c,d) = J(c,d) + I_abcd*P(b,a)
+!            J(c,d) = J(c,d) + I_abcd*P(a,b)
+!            J(d,c) = J(d,c) + I_abcd*P(b,a)
+!            J(d,c) = J(d,c) + I_abcd*P(a,b)
+!            K(a,d) = K(a,d) + I_abcd*P(b,c) ! These are asymmetric
+!            K(a,c) = K(a,c) + I_abcd*P(b,d)
+!            K(b,c) = K(b,c) + I_abcd*P(a,d)
+!            K(b,d) = K(b,d) + I_abcd*P(a,c)
+!            K(d,a) = K(d,a) + I_abcd*P(c,b)
+!            K(c,a) = K(c,a) + I_abcd*P(d,b)
+!            K(c,b) = K(c,b) + I_abcd*P(d,a)
+!            K(d,b) = K(d,b) + I_abcd*P(c,a)
+!           end
+!           end
+!           end
+!           end
+!         I.destroy
+!         sh4.destroy_cd
+!       end
+!       sh4.destroy_ab
+!     end
+!     max_P.destroy
+!   end
 
    make_u_JK_direct(J,K,P)
    ! Make the unrestricted coulomb matrices "J" and exchange matrices "K" matrix
@@ -10738,11 +11061,11 @@ contains
    ENSURE(K.created("unrestricted"),"unrestricted K not created")
    ENSURE(P.created("unrestricted"),"unrestricted P not created")
      PP :: MAT{REAL}*
-     I :: MAT4{REAL}*
+     I :: VEC{REAL}*
      max_P :: VEC{REAL}*
-     sh4 :: SHELL4
+     sh4 :: SHELL1QUARTET
      ab,cd, aa,bb,cc,dd :: INT
-     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
+     a,b,c,d,abcd,fa,fb,fc,fd,la,lb,lc,ld :: INT
      I_abcd,factor,cutoff :: REAL
      P_alpha_db,P_alpha_cb,P_beta_db,P_beta_cb,P_alpha_dc,P_beta_dc :: REAL
      J_alpha_cd,J_beta_cd,K_alpha_bc,K_alpha_bd,K_beta_bc,K_beta_bd :: REAL
@@ -10758,20 +11081,21 @@ contains
      if (.max_I.destroyed) .initialise_max_I
      do ab = 1, .n_shell_pairs
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)   ! a & b shell indices.
-       .set_shell_quartet_ab(sh4,aa,bb)
+       .set_precomp_shell_quartet_ab(sh4,aa,bb)
        do cd = 1,ab
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) ! c & d shell indices.
                                               ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
          skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
                                               ! calculate ab|cd
-         .set_shell_quartet_cd(sh4,cc,dd)
+         .set_precomp_shell_quartet_cd(sh4,cc,dd)
          factor = ONE                         ! Evaluate the integrals'
          if (aa==bb) factor = HALF            ! coincidence factors
          if (cc==dd) factor = HALF * factor
          if (aa==cc AND bb==dd) factor = HALF * factor
-         I.create(fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.get_ERI(I)
+         I.create(sh4.ab_n_comp_pairs*sh4.cd_n_comp_pairs)
+         sh4.make_ERI(I)
+         abcd = 0
          do d = fd,ld
            do c = fc,lc
              P_alpha_dc = P.alpha(d,c)
@@ -10788,7 +11112,8 @@ contains
                K_alpha_bd = ZERO
                K_beta_bd  = ZERO
                do a = fa,la
-                 I_abcd  = factor * I(a,b,c,d)
+                 abcd = abcd + 1
+                 I_abcd  = factor * I(abcd)
                  J.alpha(a,b) = J.alpha(a,b) + I_abcd*P_alpha_dc
                  J.beta(a,b)  = J.beta(a,b)  + I_abcd*P_beta_dc
                  J_alpha_cd   = J_alpha_cd   + I_abcd*P.alpha(b,a)
@@ -10829,95 +11154,95 @@ contains
      J.beta  = TWO*J.beta
    end
 
-   make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
-   ! Make the real coulomb matrices "J" and exchange matrices "Ka" and "Kb"
-   ! matrix from a symmetric density matrices "P", "Pa", and "Pb" directly.
-     J,Ka,Kb,P,Pa,Pb :: MAT{REAL},target
-     I :: MAT4{REAL}*
-     max_P :: VEC{REAL}*
-     sh4 :: SHELL4
-!     sh4q :: SHELL1QUARTET
-     ab,cd, aa,bb,cc,dd :: INT
-     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
-     I_abcd,factor,Pa_db,Pa_cb,Pb_db,Pb_cb,cutoff :: REAL
-     P_dc,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd :: REAL
-     skip :: BIN
-     J  = ZERO
-     Ka = ZERO
-     Kb = ZERO
-     cutoff = .scfdata.eri_cutoff
-     max_P.create(.n_shell_pairs)
-     .make_max_density_elements(max_P,P)
-     if (.max_I.destroyed) .initialise_max_I
-     do ab = 1, .n_shell_pairs
-       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)   ! a & b shell indices.
-!       .set_precomp_shell_quartet_ab(sh4q,aa,bb)
-       .set_shell_quartet_ab(sh4,aa,bb)
-       do cd = 1,ab
-         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) ! c & d shell indices.
-                                              ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
-         if (skip) cycle
-                                              ! calculate ab|cd
-         .set_shell_quartet_cd(sh4,cc,dd)
-!         .set_precomp_shell_quartet_cd(sh4q,cc,dd)
-         factor = ONE                         ! Evaluate the integrals'
-         if (aa==bb) factor = HALF            ! coincidence factors
-         if (cc==dd) factor = HALF * factor
-         if (aa==cc AND bb==dd) factor = HALF * factor
-         I.create(fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.get_ERI(I)
-!         sh4q.get_ERI(I)
-         do d = fd,ld
-           do c = fc,lc
-             P_dc = P(d,c)
-             Jcd = ZERO
-             do b = fb,lb
-               Pa_db = Pa(d,b)
-               Pb_db = Pb(d,b)
-               Pa_cb = Pa(c,b)
-               Pb_cb = Pb(c,b)
-               Ka_bc = ZERO
-               Kb_bc = ZERO
-               Ka_bd = ZERO
-               Kb_bd = ZERO
-               do a = fa,la
-                 I_abcd  = factor  * I(a,b,c,d)
-                 J(a,b)  = J(a,b)  + I_abcd*P_dc
-                 Jcd     = Jcd     + I_abcd*P(b,a)
-                 Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
-                 Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
-                 Ka_bc   = Ka_bc   + I_abcd*Pa(d,a)
-                 Ka_bd   = Ka_bd   + I_abcd*Pa(c,a)
-                 Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
-                 Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
-                 Kb_bc   = Kb_bc   + I_abcd*Pb(d,a)
-                 Kb_bd   = Kb_bd   + I_abcd*Pb(c,a)
-               end
-               Ka(b,c) = Ka(b,c) + Ka_bc
-               Ka(b,d) = Ka(b,d) + Ka_bd
-               Kb(b,c) = Kb(b,c) + Kb_bc
-               Kb(b,d) = Kb(b,d) + Kb_bd
-             end
-             J(c,d) = J(c,d) + Jcd
-           end
-         end
-         I.destroy
-         sh4.destroy_cd
-!         sh4q.destroy_cd
-       end
-       sh4.destroy_ab
-!       sh4q.destroy_ab
-     end
-     max_P.destroy
-     .weight_diagonal_blocks(J,TWO)
-     .blockwise_symmetric_fold(Ka)
-     .blockwise_symmetric_fold(Kb)
-     J.symmetric_reflect
-     Ka.symmetric_reflect
-     Kb.symmetric_reflect
-     J = TWO*J
-   end
+!   make_u_JK_direct(J,Ka,Kb,P,Pa,Pb)
+!   ! Make the real coulomb matrices "J" and exchange matrices "Ka" and "Kb"
+!   ! matrix from a symmetric density matrices "P", "Pa", and "Pb" directly.
+!     J,Ka,Kb,P,Pa,Pb :: MAT{REAL},target
+!     I :: MAT4{REAL}*
+!     max_P :: VEC{REAL}*
+!     sh4 :: SHELL4
+!!     sh4q :: SHELL1QUARTET
+!     ab,cd, aa,bb,cc,dd :: INT
+!     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
+!     I_abcd,factor,Pa_db,Pa_cb,Pb_db,Pb_cb,cutoff :: REAL
+!     P_dc,Jcd,Ka_bc,Ka_bd,Kb_bc,Kb_bd :: REAL
+!     skip :: BIN
+!     J  = ZERO
+!     Ka = ZERO
+!     Kb = ZERO
+!     cutoff = .scfdata.eri_cutoff
+!     max_P.create(.n_shell_pairs)
+!     .make_max_density_elements(max_P,P)
+!     if (.max_I.destroyed) .initialise_max_I
+!     do ab = 1, .n_shell_pairs
+!       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)   ! a & b shell indices.
+!!       .set_precomp_shell_quartet_ab(sh4q,aa,bb)
+!       .set_shell_quartet_ab(sh4,aa,bb)
+!       do cd = 1,ab
+!         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) ! c & d shell indices.
+!                                              ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+!         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+!         if (skip) cycle
+!                                              ! calculate ab|cd
+!         .set_shell_quartet_cd(sh4,cc,dd)
+!!         .set_precomp_shell_quartet_cd(sh4q,cc,dd)
+!         factor = ONE                         ! Evaluate the integrals'
+!         if (aa==bb) factor = HALF            ! coincidence factors
+!         if (cc==dd) factor = HALF * factor
+!         if (aa==cc AND bb==dd) factor = HALF * factor
+!         I.create(fa,la,fb,lb,fc,lc,fd,ld)
+!         sh4.get_ERI(I)
+!!         sh4q.get_ERI(I)
+!         do d = fd,ld
+!           do c = fc,lc
+!             P_dc = P(d,c)
+!             Jcd = ZERO
+!             do b = fb,lb
+!               Pa_db = Pa(d,b)
+!               Pb_db = Pb(d,b)
+!               Pa_cb = Pa(c,b)
+!               Pb_cb = Pb(c,b)
+!               Ka_bc = ZERO
+!               Kb_bc = ZERO
+!               Ka_bd = ZERO
+!               Kb_bd = ZERO
+!               do a = fa,la
+!                 I_abcd  = factor  * I(a,b,c,d)
+!                 J(a,b)  = J(a,b)  + I_abcd*P_dc
+!                 Jcd     = Jcd     + I_abcd*P(b,a)
+!                 Ka(a,c) = Ka(a,c) + I_abcd*Pa_db
+!                 Ka(a,d) = Ka(a,d) + I_abcd*Pa_cb
+!                 Ka_bc   = Ka_bc   + I_abcd*Pa(d,a)
+!                 Ka_bd   = Ka_bd   + I_abcd*Pa(c,a)
+!                 Kb(a,c) = Kb(a,c) + I_abcd*Pb_db
+!                 Kb(a,d) = Kb(a,d) + I_abcd*Pb_cb
+!                 Kb_bc   = Kb_bc   + I_abcd*Pb(d,a)
+!                 Kb_bd   = Kb_bd   + I_abcd*Pb(c,a)
+!               end
+!               Ka(b,c) = Ka(b,c) + Ka_bc
+!               Ka(b,d) = Ka(b,d) + Ka_bd
+!               Kb(b,c) = Kb(b,c) + Kb_bc
+!               Kb(b,d) = Kb(b,d) + Kb_bd
+!             end
+!             J(c,d) = J(c,d) + Jcd
+!           end
+!         end
+!         I.destroy
+!         sh4.destroy_cd
+!!         sh4q.destroy_cd
+!       end
+!       sh4.destroy_ab
+!!       sh4q.destroy_ab
+!     end
+!     max_P.destroy
+!     .weight_diagonal_blocks(J,TWO)
+!     .blockwise_symmetric_fold(Ka)
+!     .blockwise_symmetric_fold(Kb)
+!     J.symmetric_reflect
+!     Ka.symmetric_reflect
+!     Kb.symmetric_reflect
+!     J = TWO*J
+!   end
 
    make_u_JK_disk(J,Ka,Kb,P,Pa,Pb)
    ! Make the real coulomb matrices "J" and exchange matrices "Ka" and "Kb"
@@ -10988,12 +11313,12 @@ contains
    ! directly from the integrals.
      J,P :: MAT{REAL}
      Ka,Kb,Kba,Pa,Pb,Pba :: MAT{CPX}
-      I :: MAT4{REAL}*
+     I :: VEC{REAL}*
      abs_P :: MAT{REAL}*
      max_P :: VEC{REAL}*
-     sh4 :: SHELL4
+     sh4 :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
-     a,b,c,d,fa,fb,fc,fd,la,lb,lc,ld :: INT
+     a,b,c,d,abcd,fa,fb,fc,fd,la,lb,lc,ld :: INT
      I_abcd,factor,cutoff :: REAL
      skip :: BIN
      J   = ZERO
@@ -11008,26 +11333,26 @@ contains
      if (.max_I.destroyed) .initialise_max_I
      do ab = 1,.n_shell_pairs
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)
-       .set_shell_quartet_ab(sh4,aa,bb)
+       .set_precomp_shell_quartet_ab(sh4,aa,bb)
        do cd = 1,ab
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)
-                                              ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
          skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
-                                              ! calculate ab|cd
-         .set_shell_quartet_cd(sh4,cc,dd)
-         I.create(fa,la,fb,lb,fc,lc,fd,ld)
-         sh4.get_ERI(I)
+         .set_precomp_shell_quartet_cd(sh4,cc,dd)
+         I.create(sh4.ab_n_comp_pairs*sh4.cd_n_comp_pairs)
+         sh4.make_ERI(I)
          factor = ONE                             ! Evaluate the integrals
          if (aa==bb) factor = HALF                ! Coincidence factors
          if (cc==dd) factor = HALF * factor
          if (aa==cc AND bb==dd) factor = HALF * factor
          I = factor * I
+         abcd = 0
          do d = fd,ld
          do c = fc,lc
          do b = fb,lb
          do a = fa,la
-            I_abcd = I(a,b,c,d)
+            abcd = abcd + 1
+            I_abcd = I(abcd)
             J(a,b)   = J(a,b)   + I_abcd*P(d,c)   ! These are symmetric
             J(c,d)   = J(c,d)   + I_abcd*P(b,a)
             Ka(a,d)  = Ka(a,d)  + I_abcd*Pa(b,c)  ! These are symmetric
@@ -19756,7 +20081,7 @@ contains
    ENSURE(.atom.created, "no atoms to fit")
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.data.thermal_smearing_model=="stewart","thermal smearing model must be stewart, so far")
-   ENSURE(.crystal.data.optimise_extinction==FALSE,"cannot optimise extinction while refining thermal parameters")
+   ENSURE(NOT .crystal.data.optimise_extinction,"cannot optimise extinction while refining thermal parameters")
      dim :: INT
      chi2_min :: REAL
      U :: VEC{REAL}*
