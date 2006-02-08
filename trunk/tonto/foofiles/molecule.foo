@@ -10060,6 +10060,33 @@ contains
      end
    end
 
+   schwarz_test(skip_J,cutoff,ab,cd,a,b,c,d,P_max,I_max)
+   ! Return "skip_J" which is set TRUE if the maximum contribution to the J
+   ! matrix (based on the schwarz inequality test) from a shell of ERI integrals
+   ! (ab|cd) with shell pair indices "ab" and "cd" is smaller than a preset
+   ! "cutoff". "P_max(ab)" is the maximum density matrix elements for each shell
+   ! pair "ab", and "I_max(ab)" is maximum value of the square root of the
+   ! integral (ab|ab) for the shell pair with index "ab".
+     skip_J :: BIN, OUT
+     cutoff :: REAL, IN
+     ab,cd, a,b,c,d :: INT, IN
+     P_max,I_max :: VEC{REAL}, IN
+     Jmax,Kmax :: REAL
+     ac,ad,bc,bd,k,l,m,n :: INT
+     k = max(b,c); l = min(b,c)
+     m = max(b,d); n = min(b,d)
+     ac = (a-1)*a/2 + c          ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+     ad = ac - c + d
+     bc = (k-1)*k/2 + l
+     bd = (m-1)*m/2 + n
+     Jmax = max(P_max(ab),P_max(cd))
+     Kmax = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+     skip_J = FALSE
+     if      (Jmax < TOL(20)) then;                    skip_J = TRUE
+     else if (Jmax*I_max(ab)*I_max(cd) < cutoff) then; skip_J = TRUE
+     end
+   end
+
    schwarz_test(skip_J,skip_K,cutoff,ab,cd,a,b,c,d,P_max,I_max)
    ! Return "skip_J" and "skip_K", logical variables are TRUE if the maximum
    ! contribution to the J and K matrices (based on the schwarz inequality test)
@@ -10179,8 +10206,8 @@ contains
    reverse_transfer(P,PP) ::: leaky
    ! Apply the reverse horizontal recursion relation (i.e. the reverse transfer
    ! relation) to matrix "P" to produce the shell pair vector "PP" which has to
-   ! be multipled by the source integrals to give the contracted term (usually
-   ! the J-matrix)
+   ! be multipled by the (es|fs) source integrals to give the J-matrix.
+   ! Normalisation factors for the integrals are included.
       P :: MAT{REAL}
       PP :: VEC{VEC_{REAL}}*
    ENSURE(.basis_info_made,"no basis info")
@@ -10189,54 +10216,94 @@ contains
       R1,R2,R3,T1,T2,T3,fx,fy,fz,P_ab :: REAL
       Rx,Ry,Rz,ab :: VEC{REAL}*
       ax,ay,az,bx,by,bz,binx,biny,binz :: VEC{INT}*
-      q,fa,la,fb,lb,atom_a,atom_b,aa,bb,af,al,bf,bl :: INT
-      i,a,b,x,y,z,xa,ya,za,xb,yb,zb,xx,yy,zz :: INT
-      new_atom_pair,a_gt_b,a_lt_b :: BIN
+      q,fa,la,fb,lb,atom_a,atom_b,aa,bb,af,al,bf,bl,f :: INT
+      i,k,a,b,x,y,z,xa,ya,za,xb,yb,zb,xx,yy,zz :: INT
+      new_atom_pair,same_atoms,a_gt_b,a_lt_b :: BIN
       sh :: SHELL2
       Rx.create(.basis_l_max+1)
       Ry.create(.basis_l_max+1)
       Rz.create(.basis_l_max+1)
-      PP.create(.n_shell_pairs)                                     ! leaky
+      PP.create(.n_shell_pairs)                                ! leaky
       a_gt_b = TRUE
       a_lt_b = TRUE
       aa = 0
       bb = 0
       do q = 1,.n_shell_pairs
          .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
-       ! stdout.text("P_ab:")
-       ! stdout.put(P(fa:la,fb:lb))
-       ! stdout.show("n_gaussian = ",sh.n_gaussian)
-         PP(q).element.create(sh.n_gaussian)                        ! leaky
+         PP(q).element.create(sh.n_gaussian)                   ! leaky
          ab => PP(q).element
-         if      (sh.l_sum==0) then
+         if      (sh.l_sum==0) then                            ! SS case
             ab(1) = P(fa,fb)
-         else if (sh.a.l==0) then
+         else if (sh.a.l==0) then                              ! XS case
             fb = fb - 1
-            do b = 1,sh.b.n_comp
-               ab(b) = P(fa,fb+b)
+            if (sh.l_max<2) then                               ! No normalisers
+               do b = 1,sh.b.n_comp
+                  ab(b) = P(fa,fb+b)
+               end
+            else                                               ! Include normalisers
+               do b = 1,sh.b.n_comp
+                  ab(b) = P(fa,fb+b)*sh.normalising_factors(b)
+               end
             end
-         else if (sh.b.l==0) then
+         else if (sh.b.l==0) then                              ! SX case
             fa = fa - 1
-            do a = 1,sh.a.n_comp
-               ab(a) = P(fa+a,fb)
+            if (sh.l_max<2) then                               ! No normalisers
+               do a = 1,sh.a.n_comp
+                  ab(a) = P(fa+a,fb)
+               end
+            else                                               ! Include normalisers
+               do a = 1,sh.a.n_comp
+                  ab(a) = P(fa+a,fb)*sh.normalising_factors(a)
+               end
             end
-         else
+         else                                                  ! General case
             ab = ZERO
-            fa = fa - 1
-            fb = fb - 1
             af = n_comp_up_to(sh.a.l-1) + 1; al = af + sh.a.n_comp
             bf = n_comp_up_to(sh.b.l-1) + 1; bl = bf + sh.b.n_comp
             ax => nx(af:al); ay => ny(af:al); az => nz(af:al)
             bx => nx(bf:bl); by => ny(bf:bl); bz => nz(bf:bl)
             af = af - 1
             bf = bf - 1
+            fa = fa - 1
+            fb = fb - 1
             new_atom_pair = atom_a/=aa OR atom_b/=bb
+            same_atoms = atom_a==atom_b
             aa = atom_a; bb = atom_b
-            if (sh.a.l > sh.b.l) then
+            if (same_atoms) then                               ! No transfer
+               if (sh.a.l > sh.b.l) then; f = af
+               else;                      f = bf
+               end
+               if (sh.l_max<2) then                            ! No normalising factors
+                  do b = 1,sh.b.n_comp
+                     xb = bx(b); yb = by(b); zb = bz(b)
+                     do a = 1,sh.a.n_comp
+                        P_ab = P(fa+a,fb+b)
+                        xa = ax(a); ya = ay(a); za = az(a)
+                        xx = xa + xb - 1
+                        yy = ya + yb - 1
+                        zz = za + zb - 1
+                        i = index_of(xx,yy,zz) - f
+                        ab(i) = ab(i) + P_ab
+                     end
+                  end
+               else                                            ! Include normalisers
+                  k = 0
+                  do b = 1,sh.b.n_comp
+                     xb = bx(b); yb = by(b); zb = bz(b)
+                     do a = 1,sh.a.n_comp
+                        k = k + 1
+                        P_ab = P(fa+a,fb+b)*sh.normalising_factors(k)
+                        xa = ax(a); ya = ay(a); za = az(a)
+                        xx = xa + xb - 1
+                        yy = ya + yb - 1
+                        zz = za + zb - 1
+                        i = index_of(xx,yy,zz) - f
+                        ab(i) = ab(i) + P_ab
+                     end
+                  end
+               end
+            else if (sh.a.l > sh.b.l) then                     ! Transfer to a
                if (new_atom_pair OR a_lt_b) then
-       ! stdout.text("new atoms")
-       ! stdout.show("atom_a =",atom_a)
-       ! stdout.show("atom_b =",atom_b)
                   a_gt_b = TRUE; a_lt_b = FALSE
                   R = sh.a.pos - sh.b.pos
                   R1 = R(1);   R2 = R(2);   R3 = R(3)
@@ -10248,45 +10315,61 @@ contains
                      Rz(i) = T3; T3 = R3*T3
                   end
                end
-               do b = 1,sh.b.n_comp
-                  xb = bx(b); yb = by(b); zb = bz(b)
-                  binx => binomial(xb)%element
-                  biny => binomial(yb)%element
-                  binz => binomial(zb)%element
-       !        stdout.show("xb = ",xb)
-       !        stdout.show("yb = ",yb)
-       !        stdout.show("zb = ",zb)
-       !        stdout.show("binbx = ",binx)
-       !        stdout.show("binby = ",biny)
-       !        stdout.show("binbz = ",binz)
-                  do a = 1,sh.a.n_comp
-                     P_ab = P(fa+a,fb+b)
-       !        stdout.show("b    = ",b)
-       !        stdout.show("a    = ",a)
-       !        stdout.show("P_ab = ",P_ab)
-                     xa = ax(a); ya = ay(a); za = az(a)
-                     do x = 1,xb 
-                        xx = xa + x - 1
-                        fx = binx(x)*Rx(xb-x+1)*P_ab
-                        do y = 1,yb 
-                           yy = ya + y - 1
-                           fy = biny(y)*Ry(yb-y+1)
-                           do z = 1,zb 
-                              zz = za + z - 1
-                              fz = binz(z)*Rz(zb-z+1)
-                              i = index_of(xx,yy,zz) - af
-       !                    stdout.show("i = ",i)
-                              ab(i) = ab(i) + fx*fy*fz
+               if (sh.l_max<2) then                            ! No normalisers
+                  do b = 1,sh.b.n_comp
+                     xb = bx(b); yb = by(b); zb = bz(b)
+                     binx => binomial(xb)%element
+                     biny => binomial(yb)%element
+                     binz => binomial(zb)%element
+                     do a = 1,sh.a.n_comp
+                        P_ab = P(fa+a,fb+b)
+                        xa = ax(a); ya = ay(a); za = az(a)
+                        do x = 1,xb 
+                           xx = xa + x - 1
+                           fx = binx(x)*Rx(xb-x+1)*P_ab
+                           do y = 1,yb 
+                              yy = ya + y - 1
+                              fy = biny(y)*Ry(yb-y+1)
+                              do z = 1,zb 
+                                 zz = za + z - 1
+                                 fz = binz(z)*Rz(zb-z+1)
+                                 i = index_of(xx,yy,zz) - af
+                                 ab(i) = ab(i) + fx*fy*fz
+                              end
+                           end
+                        end
+                     end
+                  end
+               else                                            ! Include normalisers
+                  k = 0
+                  do b = 1,sh.b.n_comp
+                     xb = bx(b); yb = by(b); zb = bz(b)
+                     binx => binomial(xb)%element
+                     biny => binomial(yb)%element
+                     binz => binomial(zb)%element
+                     do a = 1,sh.a.n_comp
+                        k = k + 1
+                        P_ab = P(fa+a,fb+b)*sh.normalising_factors(k)
+                        xa = ax(a); ya = ay(a); za = az(a)
+                        do x = 1,xb 
+                           xx = xa + x - 1
+                           fx = binx(x)*Rx(xb-x+1)*P_ab
+                           do y = 1,yb 
+                              yy = ya + y - 1
+                              fy = biny(y)*Ry(yb-y+1)
+                              do z = 1,zb 
+                                 zz = za + z - 1
+                                 fz = binz(z)*Rz(zb-z+1)
+                                 i = index_of(xx,yy,zz) - af
+                                 ab(i) = ab(i) + fx*fy*fz
+                              end
                            end
                         end
                      end
                   end
                end
-            else
+            else                                              ! Transfer to b
                if (new_atom_pair OR a_gt_b) then
-       ! stdout.text("new atoms")
-       ! stdout.show("atom_a =",atom_a)
-       ! stdout.show("atom_b =",atom_b)
                   a_gt_b = FALSE; a_lt_b = TRUE
                   R = sh.b.pos - sh.a.pos
                   R1 = R(1);   R2 = R(2);   R3 = R(3)
@@ -10295,52 +10378,115 @@ contains
                   do i = 2,sh.l_max+1
                      Rx(i) = T1; T1 = R1*T1
                      Ry(i) = T2; T2 = R2*T2
-                     Rz(i) = T3; T3 = R2*T3
+                     Rz(i) = T3; T3 = R3*T3
                   end
                end
-               do a = 1,sh.a.n_comp
-                  xa = ax(a); ya = ay(a); za = az(a)
-                  binx => binomial(xa)%element
-                  biny => binomial(ya)%element
-                  binz => binomial(za)%element
-       !        stdout.show("xa = ",xa)
-       !        stdout.show("ya = ",ya)
-       !        stdout.show("za = ",za)
-       !        stdout.show("binx = ",binx)
-       !        stdout.show("biny = ",biny)
-       !        stdout.show("binz = ",binz)
+               if (sh.l_max<2) then                           ! No normalisers
+                  do a = 1,sh.a.n_comp
+                     xa = ax(a); ya = ay(a); za = az(a)
+                     binx => binomial(xa)%element
+                     biny => binomial(ya)%element
+                     binz => binomial(za)%element
+                     do b = 1,sh.b.n_comp
+                        P_ab = P(fa+a,fb+b)
+                        xb = bx(b); yb = by(b); zb = bz(b)
+                        do x = 1,xa 
+                           xx = xb + x - 1
+                           fx = binx(x)*Rx(xa-x+1)*P_ab
+                           do y = 1,ya 
+                              yy = yb + y - 1
+                              fy = biny(y)*Ry(ya-y+1)
+                              do z = 1,za 
+                                 zz = zb + z - 1
+                                 fz = binz(z)*Rz(za-z+1)
+                                 i = index_of(xx,yy,zz) - bf
+                                 ab(i) = ab(i) + fx*fy*fz
+                              end
+                           end
+                        end
+                     end
+                  end
+               else                                           ! Include normalisers
+                  k = 0
                   do b = 1,sh.b.n_comp
-                     P_ab = P(fa+a,fb+b)
-       !        stdout.show("a    = ",b)
-       !        stdout.show("b    = ",a)
-       !        stdout.show("P_ab = ",P_ab)
                      xb = bx(b); yb = by(b); zb = bz(b)
-                     do x = 1,xa 
-                        xx = xb + x - 1
-                        fx = binx(x)*Rx(xa-x+1)*P_ab
-                        do y = 1,ya 
-                           yy = yb + y - 1
-                           fy = biny(y)*Ry(ya-y+1)
-                           do z = 1,za 
-                              zz = zb + z - 1
-                              fz = binz(z)*Rz(za-z+1)
-                              i = index_of(xx,yy,zz) - bf
-       !                    stdout.show("i = ",i)
-                              ab(i) = ab(i) + fx*fy*fz
+                     do a = 1,sh.a.n_comp
+                        xa = ax(a); ya = ay(a); za = az(a)
+                        binx => binomial(xa)%element
+                        biny => binomial(ya)%element
+                        binz => binomial(za)%element
+                        k = k + 1
+                        P_ab = P(fa+a,fb+b)*sh.normalising_factors(k)
+                        do x = 1,xa 
+                           xx = xb + x - 1
+                           fx = binx(x)*Rx(xa-x+1)*P_ab
+                           do y = 1,ya 
+                              yy = yb + y - 1
+                              fy = biny(y)*Ry(ya-y+1)
+                              do z = 1,za 
+                                 zz = zb + z - 1
+                                 fz = binz(z)*Rz(za-z+1)
+                                 i = index_of(xx,yy,zz) - bf
+                                 ab(i) = ab(i) + fx*fy*fz
+                              end
                            end
                         end
                      end
                   end
                end
-            end
-         end
-       ! stdout.text("ab:")
-       ! stdout.put(ab,"column")
+            end  ! Trasfer to b
+         end     ! general case
          sh.destroy_ptr_part
-      end
+      end        ! loop over shell pairs
       Rz.destroy
       Ry.destroy
       Rx.destroy
+   end
+
+   forward_transfer(JJ,J) ::: leaky
+   ! Apply the horizontal recursion relation (i.e. the transfer
+   ! relation) to shellpair vector "JJ" to produce the matrix "J".
+   ! This is a post-processing operation to shift momentum from\
+   ! center a -> b.
+      JJ :: VEC{VEC_{REAL}}
+      J :: MAT{REAL}
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+   ENSURE(JJ.dim==.n_shell_pairs,"wrong size, JJ")
+   ENSURE(J.dim1==.n_bf,"wrong size, J")
+   ENSURE(J.is_square,"wrong shape, J")
+      q,fa,la,fb,lb :: INT
+      ab :: VEC{REAL}*
+      W  :: MAT{REAL}*
+      sh :: SHELL2
+      do q = 1,.n_shell_pairs
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+         ab => JJ(q).element
+         W.create(sh.a.n_comp,sh.b.n_comp)
+         sh.transfer(ab,W)
+         sh.normalise(W)
+         J(fa:la,fb:lb) = W
+         W.destroy
+         sh.destroy_ptr_part
+      end 
+   end
+
+   create_transfer(JJ) ::: leaky
+   ! Create space for the transfer vector "JJ". It is a shellpair vector of
+   ! flattened es-type componenets from which ab components can be formed by the
+   ! transfer relation.
+      JJ :: VEC{VEC_{REAL}}*
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+      q,fa,la,fb,lb :: INT
+      sh :: SHELL2
+      JJ.create(.n_shell_pairs)                        ! leaky
+      do q = 1,.n_shell_pairs
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+         JJ(q).element.create(sh.n_gaussian)           ! leaky
+         JJ(q).element = ZERO
+         sh.destroy_ptr_part
+      end 
    end
 
    n_comp_up_to(l) result(res) ::: selfless, private, always_pure
@@ -10356,8 +10502,8 @@ contains
    ! symmetric density matrix "P" directly.
      J,K,P :: MAT{REAL}
    ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
- !   PP :: VEC{VEC_{REAL}}*
-     max_P :: VEC{REAL}*
+     PP,JJ :: VEC{VEC_{REAL}}*
+     max_P,Jab,Jcd,Pab,Pcd :: VEC{REAL}*
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
@@ -10367,7 +10513,8 @@ contains
  ! n_j = 0 
  ! n_k = 0 
  ! n_jk = 0 
- !   .reverse_transfer(P,PP)
+     .reverse_transfer(P,PP)
+     .create_transfer(JJ)
      J = ZERO
      K = ZERO
      cutoff = .scfdata.eri_cutoff
@@ -10380,18 +10527,22 @@ contains
        if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
+       Jab => JJ(ab).element
+       Pab => PP(ab).element
        do cd = 1,ab
          if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
                                         ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
-     !   .schwarz_test(skip_J,skip_K,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
-     !   skip = skip_J AND skip_K
+     !   skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         .schwarz_test(skip_J,skip_K,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         skip = skip_J AND skip_K
      ! if (skip_J) n_j  = n_j + 1
      ! if (skip_k) n_k  = n_k + 1
      ! if (skip)   n_jk = n_jk + 1
          if (skip) cycle
          .set_precomp_shell_quartet_cd(sh4q,cc,dd)
+         Jcd => JJ(cd).element
+         Pcd => PP(cd).element
          if (aa==bb) then                   ! Evaluate the integrals'
            factor = HALF                    ! coincidence factors
          else
@@ -10400,13 +10551,23 @@ contains
          if (cc==dd) factor = HALF * factor
          if (aa==cc AND bb==dd) factor = HALF * factor
          sh4q.make_r_JK(J,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-     !   sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
-     !   sh4q.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         ! The two lines below do not work except when skip_K is set TRUE 
+         ! and the K term is evaluated by a different routine.
+!        skip_K = FALSE
+!        sh4q.make_r_JK_engine(skip_J,skip_K,Jab,Jcd,Pab,Pcd,K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         ! The line below works (of course)
+!        sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         ! The line below works
+!        sh4q.make_r_J(J,Pab,Pcd,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         ! The line below works
+!        sh4q.make_r_J_engine(Jab,Jcd,Pab,Pcd,factor)
+!        sh4q.make_r_K(K,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
          sh4q.destroy_cd
        end
        sh4q.destroy_ab
      end
      max_P.destroy
+     .forward_transfer(JJ,J)
      .weight_diagonal_blocks(J,TWO)
      .blockwise_symmetric_fold(K)
      J = TWO*J
@@ -10417,7 +10578,8 @@ contains
         J.symmetric_reflect
         K.symmetric_reflect
      end
- !   PP.destroy
+     JJ.destroy
+     PP.destroy
  ! stdout.show("n_j  =", n_j)
  ! stdout.show("n_k  =", n_k)
  ! stdout.show("n_jk =", n_jk)
@@ -10487,15 +10649,18 @@ contains
 
    make_r_J_direct(J,P)
    ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
-   ! directly.
+   ! directly. This uses the J matrix engine, but it can be easily disabled.
      J,P :: MAT{REAL}
    ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
-     max_P :: VEC{REAL}*
+     PP,JJ :: VEC{VEC_{REAL}}*
+     max_P,Jab,Jcd,Pab,Pcd :: VEC{REAL}*
      sh4q :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd :: INT
      fa,fb,fc,fd,la,lb,lc,ld :: INT
      factor,cutoff,P_max,IP_max :: REAL
      skip :: BIN
+     .reverse_transfer(P,PP)
+     .create_transfer(JJ)
      J = ZERO
      cutoff = .scfdata.eri_cutoff
      if (.max_I.destroyed) .initialise_max_I
@@ -10504,30 +10669,33 @@ contains
      P_max = maxval(max_P)
      IP_max = maxval(.max_I) * P_max
      parallel do ab = 1,.n_shell_pairs
-       if (.max_I(ab)*IP_max < cutoff)  cycle   ! Rough version of Schwarz test, but quick.
-       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb) ! a & b shell indices.
+       if (.max_I(ab)*IP_max < cutoff)  cycle 
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb)
        .set_precomp_shell_quartet_ab(sh4q,aa,bb)
+       Jab => JJ(ab).element
+       Pab => PP(ab).element
        do cd = 1,ab
-         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle ! Rough version of Schwarz test, but quick.
-         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld)  ! c & d shell indices.
-                                        ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld) 
+      !  skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         .schwarz_test(skip,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
-
          .set_precomp_shell_quartet_cd(sh4q,cc,dd)
-         if (aa==bb) then                   ! Evaluate the integrals'
-           factor = HALF                    ! coincidence factors
-         else
-           factor = ONE
+         Jcd => JJ(cd).element
+         Pcd => PP(cd).element
+         if (aa==bb) then; factor = HALF 
+         else;             factor = ONE
          end
          if (cc==dd) factor = HALF * factor
          if (aa==cc AND bb==dd) factor = HALF * factor
-         sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
+         sh4q.make_r_J_engine(Jab,Jcd,Pab,Pcd,factor)
+!        sh4q.make_r_J(J,P,factor,fa,la,fb,lb,fc,lc,fd,ld)
          sh4q.destroy_cd
        end
        sh4q.destroy_ab
      end
      max_P.destroy
+     .forward_transfer(JJ,J)
      .weight_diagonal_blocks(J,TWO)
      J = TWO*J
      if (DO_IN_PARALLEL) then
@@ -10535,6 +10703,8 @@ contains
      else
         J.symmetric_reflect
      end
+     JJ.destroy
+     PP.destroy
    end
 
 !   make_r_J_direct(J,P)
