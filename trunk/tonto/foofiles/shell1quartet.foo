@@ -35,8 +35,6 @@ module SHELL1QUARTET
 
    implicit none
 
-   list :: VEC{STR}*, private DEFAULT_NULL
-
    ! List of cartesian powers for gaussian functions in a certain angular
    ! momentum range
 !  nx, ny, nz :: VEC{INT}*, private  DEFAULT_NULL
@@ -53,17 +51,17 @@ module SHELL1QUARTET
    ! The minimum number of contractions of the ab shellpair for which to
    ! precalculate the cd shellpair data.
 
-   n_cc_cutoff :: INT = 0
+!  n_cc_cutoff :: INT = 0
 
    ! The minimum value of l angular momentum for a shellpair to perform the
    ! reduced multiplication scheme.
 
-   ERI_rms_min_l :: INT = 4
+!  ERI_rms_min_l :: INT = 4
 
    ! When a factor controlling the size of a primitive pair integral is smaller
    ! than this cutoff, its contribution to the ERI is ignored.
 
-   pair_cutoff :: REAL, private = TOL(24)
+   pair_cutoff :: REAL, private = SHELL1QUARTET_ERI_PAIR_CUTOFF
 
 contains
 
@@ -373,6 +371,226 @@ contains
 !       end
 !     end
 !   end
+
+!   set_ncc_cutoff(n) 
+!   ! Set the n_cc_cutoff where we use the precalculated primitive pair arrays
+!   ! in the inner loops, as opposed to recalculating the primitive pair info.
+!   ! The cutoff is based on "n", the contraction depth of the shell.
+!      n :: INT, IN
+!      ENSURE(n>=0,"cutoff must be non-negative")
+!      n_cc_cutoff = n
+!   end
+
+   set_pair_cutoff(cutoff)
+   ! Set the "cutoff" for the exponential prefactor for the product of two
+   ! gaussian primitives, below which that primitive pair is isgnored in the
+   ! calculation of the ERI's.
+     cutoff :: REAL, IN
+   ENSURE(cutoff>ZERO,"cutoff must be pisitive")
+     pair_cutoff = cutoff
+   end
+
+   set_ab_new(shellpr,pos_a,pos_b,same_center,skip) ::: leaky
+   ! Set the a and b parts from "shellpr" but override the positions.
+   ! NOTE: this does not create many pointer parts
+     shellpr :: SHELL1PAIR, IN, target
+     pos_a,pos_b :: VEC{REAL}, IN
+     same_center,skip :: BIN, IN
+     exponent_sum,exponent_inv :: VEC{REAL}*
+     AB,At,P,PAt,b_pos_b :: VEC{REAL}(3)
+     a,b,r2ab,b_r2ab,ab_inv,prefac :: REAL
+     i,j,bg,ag :: INT
+     .a = shellpr.a
+     .b = shellpr.b
+     .a.pos = pos_a
+     .b.pos = pos_b
+     .ab_same_center = same_center
+     .ab_l_max = shellpr.l_max
+     .ab_n_gaussian_pairs = shellpr.n_gaussian_pairs
+     .ab_n_comp_pairs = shellpr.n_comp_pairs
+     .ab_l_min = shellpr.l_min
+     .ab_l_sum = shellpr.l_sum
+     .ab_first_gaussian = shellpr.first_gaussian
+     .ab_last_gaussian  = shellpr.last_gaussian
+     .n_ab = shellpr.n_gaussian
+
+     .ab_normalising_factors   => shellpr.normalising_factors
+
+   ! .ab_form_3dints_yz_rms_indices => shellpr.form_3dints_yz_rms_indices
+
+     ! Want position of shell1 with higher angular momentum.
+     if (.a.l > .b.l) then; At = pos_a
+     else;                  At = pos_b
+     end
+     AB = pos_a-pos_b
+     r2ab = dot_product(AB,AB)
+     .r2ab = r2ab
+
+     .ab_cc_prefactor.create(.ab_n_gaussian_pairs)
+     .ab_pair_center.create(3,.ab_n_gaussian_pairs)
+     .ab_center_diff.create(3,.ab_n_gaussian_pairs)
+
+     if (NOT skip) then
+        .ab_nullify = TRUE
+        .ab_exponent_sum => shellpr.exponent_sum
+        .ab_exponent_inv => shellpr.exponent_inv
+        i = 0
+        do bg = 1,.b.n_cc
+           b = .b.ex(bg)
+           b_pos_b = b*pos_b
+           b_r2ab = b*r2ab
+           do ag = 1,.a.n_cc
+              i = i + 1
+              a = .a.ex(ag)
+              ab_inv = .ab_exponent_inv(i)
+              prefac = shellpr.cc_prefactor(i)*exp(-a*b_r2ab*ab_inv)
+              .ab_cc_prefactor(i) = prefac
+              P = (b_pos_b + a*pos_a) * ab_inv
+              PAt = P - At
+              .ab_pair_center(1,i) = P(1)
+              .ab_pair_center(2,i) = P(2)
+              .ab_pair_center(3,i) = P(3)
+              .ab_center_diff(1,i) = PAt(1)
+              .ab_center_diff(2,i) = PAt(2)
+              .ab_center_diff(3,i) = PAt(3)
+           end
+        end
+     else
+        .ab_nullify = FALSE
+        .ab_exponent_sum.create(.ab_n_gaussian_pairs)
+        .ab_exponent_inv.create(.ab_n_gaussian_pairs)
+        exponent_sum => shellpr.exponent_sum
+        exponent_inv => shellpr.exponent_inv
+        i = 0
+        j = 0
+        do bg = 1,.b.n_cc
+           b = .b.ex(bg)
+           b_pos_b = b*pos_b
+           b_r2ab = b*r2ab
+           do ag = 1,.a.n_cc
+              i = i + 1
+              a = .a.ex(ag)
+              ab_inv = exponent_inv(i)
+              prefac = exp(-a*b_r2ab*ab_inv)
+              if (prefac<pair_cutoff) cycle
+              j = j + 1
+              .ab_exponent_sum(j) = exponent_sum(i)
+              .ab_exponent_inv(j) = ab_inv
+              .ab_cc_prefactor(j) = prefac*shellpr.cc_prefactor(i)
+              P = (b_pos_b + a*pos_a) * ab_inv
+              PAt = P - At
+              .ab_pair_center(1,j) = P(1)
+              .ab_pair_center(2,j) = P(2)
+              .ab_pair_center(3,j) = P(3)
+              .ab_center_diff(1,j) = PAt(1)
+              .ab_center_diff(2,j) = PAt(2)
+              .ab_center_diff(3,j) = PAt(3)
+           end
+        end
+        .ab_n_gaussian_pairs = j
+     end
+   end
+
+   set_cd_new(shellpr,pos_c,pos_d,same_center,skip) ::: leaky
+   ! Set the c and d parts from "shellpr" but override the positions.
+   ! NOTE: this does not create many pointer parts
+     shellpr :: SHELL1PAIR, IN, target
+     pos_c,pos_d :: VEC{REAL}, IN
+     same_center,skip :: BIN, IN
+     exponent_sum,exponent_inv :: VEC{REAL}*
+     CD,Ct,Q,QCt,d_pos_d :: VEC{REAL}(3)
+     c,d,r2cd,d_r2cd,cd_inv,prefac :: REAL
+     i,j,dg,cg :: INT
+     .c = shellpr.a
+     .d = shellpr.b
+     .c.pos = pos_c
+     .d.pos = pos_d
+     .cd_same_center = same_center
+     .cd_l_max = shellpr.l_max
+     .cd_n_gaussian_pairs = shellpr.n_gaussian_pairs
+     .cd_n_comp_pairs = shellpr.n_comp_pairs
+     .cd_l_min = shellpr.l_min
+     .cd_l_sum = shellpr.l_sum
+     .cd_first_gaussian = shellpr.first_gaussian
+     .cd_last_gaussian  = shellpr.last_gaussian
+     .n_cd = shellpr.n_gaussian
+
+     .cd_normalising_factors   => shellpr.normalising_factors
+
+   ! .cd_form_3dints_yz_rms_indices => shellpr.form_3dints_yz_rms_indices
+
+     ! Want position of shell1 with higher angular momentum.
+     if (.c.l > .d.l) then; Ct = pos_c
+     else;                  Ct = pos_d
+     end
+     CD = pos_c-pos_d
+     r2cd = dot_product(CD,CD)
+     .r2cd = r2cd
+
+     .cd_cc_prefactor.create(.cd_n_gaussian_pairs)
+     .cd_pair_center.create(3,.cd_n_gaussian_pairs)
+     .cd_center_diff.create(3,.cd_n_gaussian_pairs)
+
+     if (NOT skip) then
+        .cd_nullify = TRUE
+        .cd_exponent_sum => shellpr.exponent_sum
+        .cd_exponent_inv => shellpr.exponent_inv
+        i = 0
+        do dg = 1,.d.n_cc
+           d = .d.ex(dg)
+           d_pos_d = d*pos_d
+           d_r2cd = d*r2cd
+           do cg = 1,.c.n_cc
+              i = i + 1
+              c = .c.ex(cg)
+              cd_inv  = .cd_exponent_inv(i)
+              prefac = shellpr.cc_prefactor(i)*exp(-c*d_r2cd*cd_inv)
+              .cd_cc_prefactor(i) = prefac
+              Q = (d_pos_d + c*pos_c) * cd_inv
+              QCt = Q - Ct
+              .cd_pair_center(1,i) = Q(1)
+              .cd_pair_center(2,i) = Q(2)
+              .cd_pair_center(3,i) = Q(3)
+              .cd_center_diff(1,i) = QCt(1)
+              .cd_center_diff(2,i) = QCt(2)
+              .cd_center_diff(3,i) = QCt(3)
+           end
+        end
+     else
+        .cd_nullify = FALSE
+        .cd_exponent_sum.create(.cd_n_gaussian_pairs)
+        .cd_exponent_inv.create(.cd_n_gaussian_pairs)
+        exponent_sum => shellpr.exponent_sum
+        exponent_inv => shellpr.exponent_inv
+        i = 0
+        j = 0
+        do dg = 1,.d.n_cc
+           d = .d.ex(dg)
+           d_pos_d = d*pos_d
+           d_r2cd = d*r2cd
+           do cg = 1,.c.n_cc
+              i = i + 1
+              c = .c.ex(cg)
+              cd_inv  = exponent_inv(i)
+              prefac = exp(-c*d_r2cd*cd_inv)
+              if (prefac<pair_cutoff) cycle
+              j = j + 1
+              .cd_exponent_sum(j) = exponent_sum(i)
+              .cd_exponent_inv(j) = cd_inv
+              .cd_cc_prefactor(j) = prefac*shellpr.cc_prefactor(i)
+              Q = (d_pos_d + c*pos_c) * cd_inv
+              QCt = Q - Ct
+              .cd_pair_center(1,j) = Q(1)
+              .cd_pair_center(2,j) = Q(2)
+              .cd_pair_center(3,j) = Q(3)
+              .cd_center_diff(1,j) = QCt(1)
+              .cd_center_diff(2,j) = QCt(2)
+              .cd_center_diff(3,j) = QCt(3)
+           end
+        end
+        .cd_n_gaussian_pairs = j
+     end
+   end
 
    set_ab_from(shellpr,pos_a,pos_b,same_center) ::: leaky
    ! Set the a and b parts from "shellpr" but override the positions.
@@ -9026,8 +9244,7 @@ contains
 
    transfer_l_c_same(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where c and d have
-   ! the same center and c has high momentum. NOTE: .set_hrr_indexing_arrays
-   ! must be called beforehand.
+   ! the same center and c has high momentum. 
      self :: IN
      esfs :: MAT{REAL}(.n_ab,.n_cd), IN
      escd :: MAT3{REAL}(.n_ab,.c.n_comp,.d.n_comp), OUT
@@ -9136,8 +9353,7 @@ contains
 
    transfer_l_d_same(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where c and d have
-   ! the same center and d has high momentum. NOTE: .set_hrr_indexing_arrays
-   ! must be called beforehand.
+   ! the same center and d has high momentum. 
      self :: IN
      esfs :: MAT{REAL}(.n_ab,.n_cd), IN
      escd :: MAT3{REAL}(.n_ab,.c.n_comp,.d.n_comp), OUT
@@ -9247,7 +9463,7 @@ contains
 
    transfer_l_c_high(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where shell c has the higher
-   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! angular momentum. 
      self :: IN
      esfs :: MAT{REAL}(.n_ab,.n_cd), IN
      escd :: MAT3{REAL}(.n_ab,.c.n_comp,.d.n_comp), OUT
@@ -9369,7 +9585,7 @@ contains
 
    transfer_l_d_high(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where shell d has the higher
-   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! angular momentum. 
      self :: IN
      esfs :: MAT{REAL}(.n_ab,.n_cd), IN
      escd :: MAT3{REAL}(.n_ab,.c.n_comp,.d.n_comp), OUT
@@ -9603,8 +9819,7 @@ contains
 
    transfer_l_d_same_s(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where c and d have
-   ! the same center and d has high momentum. NOTE: .set_hrr_indexing_arrays
-   ! must be called beforehand.
+   ! the same center and d has high momentum. 
      self :: IN
      esfs :: VEC{REAL}(.n_cd), IN
      escd :: MAT{REAL}(.c.n_comp,.d.n_comp), OUT
@@ -9699,7 +9914,7 @@ contains
 
    transfer_l_c_high_s(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where shell c has the higher
-   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! angular momentum. 
      self :: IN
      esfs :: VEC{REAL}(.n_cd), IN
      escd :: MAT{REAL}(.c.n_comp,.d.n_comp), OUT
@@ -9806,7 +10021,7 @@ contains
 
    transfer_l_d_high_s(esfs,escd) ::: private
    ! Applies the transfer equation to (es|fs) to give (es|cd) where shell d has the higher
-   ! angular momentum. NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! angular momentum. 
      self :: IN
      esfs :: VEC{REAL}(.n_cd), IN
      escd :: MAT{REAL}(.c.n_comp,.d.n_comp), OUT
@@ -10353,7 +10568,6 @@ contains
    ! Applies the transfer equation to (es|cd) to give (ab|cd) where a and b have
    ! the same center and where shell a has the higher angular momentum. NOTE:
    ! this routine treats the cd indices an compressed together, with size "ncd".
-   ! NOTE: .set_hrr_indexing_arrays must be called beforehand.
      self :: IN
      escd :: MAT{REAL}(.n_ab,*), IN
      abcd :: MAT3{REAL}(.a.n_comp,.b.n_comp,*), OUT
@@ -10460,7 +10674,6 @@ contains
    ! Applies the transfer equation to (es|cd) to give (ab|cd) where a and b have
    ! the same center and where shell b has the higher angular momentum. NOTE:
    ! this routine treats the cd indices an compressed together, with size "ncd".
-   ! NOTE: .set_hrr_indexing_arrays must be called beforehand.
      self :: IN
      escd :: MAT{REAL}(.n_ab,*), IN
      abcd :: MAT3{REAL}(.a.n_comp,.b.n_comp,*), OUT
@@ -10566,7 +10779,7 @@ contains
    transfer_l_a_high(escd,abcd) ::: private
    ! Applies the transfer equation to (es|cd) to give (ab|cd) where shell a has the higher
    ! angular momentum. NOTE: this routine treats the cd indices an compressed
-   ! together, with size "ncd". NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! together, with size "ncd". 
      self :: IN
      escd :: MAT{REAL}(.n_ab,*), IN
      abcd :: MAT3{REAL}(.a.n_comp,.b.n_comp,*), OUT
@@ -10685,7 +10898,7 @@ contains
    transfer_l_b_high(escd,abcd) ::: private
    ! Applies the transfer equation to (es|cd) to give (ab|cd) where shell b has the higher
    ! angular momentum. NOTE: this routine treats the cd indices an compressed
-   ! together, with size "ncd". NOTE: .set_hrr_indexing_arrays must be called beforehand.
+   ! together, with size "ncd".
      self :: IN
      escd :: MAT{REAL}(.n_ab,*), IN
      abcd :: MAT3{REAL}(.a.n_comp,.b.n_comp,*), OUT
@@ -11640,15 +11853,6 @@ contains
    n_comp_up_to(l) result(res) ::: get_from(SHELL2), selfless, private, always_pure
    ! No. of gaussian cartesian component functions up to and including the shell
    ! with momentum "l".
-   end
-
-   set_ncc_cutoff(n) 
-   ! Set the n_cc_cutoff where we use the precalculated primitive pair arrays
-   ! in the inner loops, as opposed to recalculating the primitive pair info.
-   ! The cutoff is based on "n", the contraction depth of the shell.
-      n :: INT, IN
-      ENSURE(n>=0,"cutoff must be non-negative")
-      n_cc_cutoff = n
    end
 
  !******************************************************************************
