@@ -2911,10 +2911,11 @@ sub analyse_new_end_scope {
             &start_foofile(*GETFILE,$getfile); # and get the procedure interfaces.
                                       # Remove spaces which don't affect the interface
           my @inherit = split('\n',$inherit_string);
-          $inherit[0] =~ s/\s*$//o;
-          $inherit[0] =~ s/\s*:::.*//o;
+
+        # $inherit[0] =~ s/\s*$//o;
+        # $inherit[0] =~ s/\s*:::.*//o;
           if ($routine{$name}{parent_routine}) {
-             $inherit[0] =~ s/\w+/$routine{$name}{parent_routine}/;
+             $inherit[0] =~ s/$routine{$name}{short_name}/$routine{$name}{parent_routine}/;
           }
           my $i = 0;
           my $found = 0;
@@ -5393,6 +5394,7 @@ sub analyse_rout_name {
       $attr =~ s/(get_from.*)[)]\s*$/$1/;         # remove last bracket
 #print "attr   =$attr";
       my @tmp = split(/\s*,?\s+/,$attr);
+#print "tmp    =@tmp";
       foreach (@tmp) {
         /^leaky/            && do { $routine{$name}{leaky}=1;            next}; # has a memeory leak
         /^private/          && do { $routine{$name}{private}=1;          next}; # generic interface made private
@@ -5411,7 +5413,7 @@ sub analyse_rout_name {
         /^get_from/         && do { /[(]\s*([^ ]*)/; # remove first brackets
                                     $routine{$name}{inherited}=1;               # inherited routine
                                     my $parent_module=$1;                       # where inherited from
-                                    if ($parent_module=~/([^ ]*):([^ ]*)/) {
+                                    if ($parent_module=~/([^ ]*):([^ ,]*)/) {
                                        $routine{$name}{parent_module} =$1;      # where inherited from
                                        $routine{$name}{parent_routine}=$2;      # new routine name
                                     } else {
