@@ -4562,8 +4562,8 @@ sub module_colon_to_fortran {
      }
   }
 
-  if ($X =~ /([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # Routine call, anywhere not a function
-     my $pre = $PREMATCH;
+  if ($X =~ /(?<!.)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # Routine call, anywhere not a function
+     my $pre = $PREMATCH;                          # and not following a dot
      my $rout_type = $1; 
      my $rout = $2; 
      my $post = $POSTMATCH;
