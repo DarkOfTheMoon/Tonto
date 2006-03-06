@@ -2318,7 +2318,7 @@ sub fortran_dump_use {
          # This is the mangled fortran module name of the called routine
          $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
          $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
-         $fort_fun = $called_routines{$mod}{$rout}{function_call};
+         $fort_fun = $called_routines{$mod}{$rout}{non_generic_call};
          if ($mod eq "TEXTFILE" && $first==0 && $mod ne $module_full_name) {
             print USEFILE "   use TEXTFILE_MODULE, only: stdin";
             print USEFILE "   use TEXTFILE_MODULE, only: stdout";
@@ -4515,6 +4515,11 @@ sub fortran_do_new_routine_scope {
 
 ################################################################################
 # Convert an explicit module call into Fortran.
+# They look like MODULE:routine(...) or MODULE::routine(...)
+# The former are translated to generic calls.
+# The latter are translated to specific calls.
+# For the latter, it is up to the programmer to ensure that the calls are to 
+# public routines.
 # Takes a string as its only argument, and returns the Fortran version.
 sub module_colon_to_fortran {
 
@@ -4528,6 +4533,67 @@ sub module_colon_to_fortran {
       $X =~ m'^(?:\s*|[#])include\s+[\"\'](?:[^\"\']+)[\"\']'o) {
     return $X;
   }
+
+ # NON-GENERIC routine calls
+
+  while ($X =~ /([(,=*+-]\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/g) { # A function call
+     my $pre = $PREMATCH.$1;
+     next if ($pre =~ /"$/); # skip quoted calls
+     my $last = $pre; $last = chop($last);
+     if ($last eq '.') { next };
+#print "X = $X";
+#print "pre = $pre";
+#print "last = $last";
+     my $rout_type = $2; 
+     my $rout = $3; 
+     my $post = $POSTMATCH;
+     my %info = &analyse_type_name($rout_type);
+     &analyse_type_name($rout_type);
+#print "X = $X";
+#print "rout = $rout";
+#print "rout_type = $rout_type";
+     $rout_type = $info{type_name}; # reset to generic type
+     if (! defined $tonto_type_info{$rout_type}) {
+       &report_error("type \"$rout_type\" in explicit module call was not declared in \"$typesfile\".");
+     }
+     $rout_type = $info{full_type_name}; # called routines labelled by full type name
+     my $fortran_type_name = $info{fortran_type_name};
+     my $fortran_mod_name  = $info{fortran_mod_name};
+     $called_routines{$rout_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
+     $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
+     $called_routines{$rout_type}{$rout}{non_generic_call} = 1;
+     if ($do_generic) { $X = $pre.$rout.$post; } 
+     else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
+     if ($do_routine_calls && $pass==2) {
+          print RCFILE "   $rout_type:$rout";
+     }
+  }
+
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/) { # Routine call, anywhere not a function
+     my $pre = $PREMATCH.$1;                            # and starting from a new line
+     my $rout_type = $2; 
+     my $rout = $3; 
+     my $post = $POSTMATCH;
+     my %info = &analyse_type_name($rout_type);
+     &analyse_type_name($rout_type);
+     $rout_type = $info{type_name}; # reset to generic type
+     if (! defined $tonto_type_info{$rout_type}) {
+       &report_error("type \"$rout_type\" in explicit module call was not declared in \"$typesfile\".");
+     }
+     $rout_type = $info{full_type_name}; # called routines labelled by full type name
+     my $fortran_type_name = $info{fortran_type_name};
+     my $fortran_mod_name  = $info{fortran_mod_name};
+     $called_routines{$rout_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
+     $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
+     $called_routines{$rout_type}{$rout}{non_generic_call} = 1;
+     if ($do_generic) { $X = $pre."call ".$rout.$post; } 
+     else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
+     if ($do_routine_calls && $pass==2) {
+          print RCFILE "   $rout_type:$rout";
+     }
+  }
+
+ # GENERIC routine calls
 
   while ($X =~ /([(,=*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
      my $pre = $PREMATCH.$1;
@@ -4554,18 +4620,17 @@ sub module_colon_to_fortran {
      my $fortran_mod_name  = $info{fortran_mod_name};
      $called_routines{$rout_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
      $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
-     $called_routines{$rout_type}{$rout}{function_call} = 1;
-     if ($do_generic) { $X = $pre.$rout.$post; } 
+     if ($do_generic) { $X = $pre.$rout."_".$post; } 
      else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
           print RCFILE "   $rout_type:$rout";
      }
   }
 
-  if ($X =~ /^\s*([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # Routine call, anywhere not a function
-     my $pre = $PREMATCH;                        # and not following a dot
-     my $rout_type = $1; 
-     my $rout = $2; 
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # Routine call, anywhere not a function
+     my $pre = $PREMATCH.$1;                            # and starting from a new line
+     my $rout_type = $2; 
+     my $rout = $3; 
      my $post = $POSTMATCH;
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
