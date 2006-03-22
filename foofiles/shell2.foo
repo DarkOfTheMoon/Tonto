@@ -56,6 +56,8 @@ module SHELL2
 !  index_m1 :: VEC{INT}*, private  DEFAULT_NULL
 !  index_p1 :: MAT{INT}*, private  DEFAULT_NULL
 
+   pair_cutoff :: REAL, private = SHELL2_PAIR_CUTOFF
+
 contains
 
    create ::: leaky
@@ -124,14 +126,17 @@ contains
          .exponent_sum.destroy
          .exponent_inv.destroy
          .normalising_factors.destroy
+         .cc_prefactor.destroy
       else
          .a.nullify_ptr_part
          .b.nullify_ptr_part
          nullify(.exponent_sum)
          nullify(.exponent_inv)
          nullify(.normalising_factors)
+         if (.same_center) then; nullify(.cc_prefactor)
+         else;                   .cc_prefactor.destroy
+         end
       end
-      .cc_prefactor.destroy
       .pair_center.destroy
       .center_diff.destroy
    end
@@ -208,15 +213,27 @@ contains
      .precalculate
    end
 
-   set_and_precompute_from(shellpr,pos_a,pos_b,same_center) ::: leaky
+   set_pair_cutoff(cutoff)
+   ! Set the "cutoff" for the exponential prefactor for the product of two
+   ! gaussian primitives, below which that primitive pair is isgnored in the
+   ! calculation of the ERI's.
+     cutoff :: REAL, IN
+   ENSURE(cutoff>ZERO,"cutoff must be pisitive")
+     pair_cutoff = cutoff
+   end
+
+   set_and_precompute_from(shellpr,pos_a,pos_b,same_center,skip) ::: leaky
    ! Set the a and b parts from "shellpr" but override the positions.
+   ! "same_center" should be set TRUE if pos_a==pos_b.
+   ! "skip" can be set TRUE if NOT same_center; it skips gaussian product
+   ! pairs which are too small to worry about.
    ! NOTE: this does not create many pointer parts
      shellpr :: SHELL1PAIR, IN
      pos_a,pos_b :: VEC{REAL}, IN
-     same_center :: BIN, IN
+     same_center,skip :: BIN, IN
      AB,At,P,b_pos_b :: VEC{REAL}(3)
-     a,b,r2ab,b_r2ab,ab_inv :: REAL
-     i,bg,ag :: INT
+     a,b,r2ab,b_r2ab,ab_inv,prefac :: REAL
+     i,j,bg,ag :: INT
      .a = shellpr.a
      .b = shellpr.b
      .a.pos = pos_a
@@ -229,34 +246,76 @@ contains
      .first_gaussian = shellpr.first_gaussian
      .last_gaussian  = shellpr.last_gaussian
      .n_gaussian = shellpr.n_gaussian
-     .destroy_all = FALSE
+     .destroy_all = FALSE ! <--------
      .exponent_sum => shellpr.exponent_sum
      .exponent_inv => shellpr.exponent_inv
      .normalising_factors => shellpr.normalising_factors
-      AB = pos_a-pos_b
-      ! Want position of shell1 with higher angular momentum.
-      if (.a.l > .b.l) then; At = pos_a
-      else;                  At = pos_b
-      end
-     .cc_prefactor.create(.n_gaussian_pairs)
      .pair_center.create(3,.n_gaussian_pairs)
      .center_diff.create(3,.n_gaussian_pairs)
-      r2ab = dot_product(AB,AB)
-      i = 0
-      do bg = 1,.b.n_cc
-        b = .b.ex(bg)
-        b_pos_b = b*pos_b
-        b_r2ab = b*r2ab
-        do ag = 1,.a.n_cc
-          i = i + 1
-          a = .a.ex(ag)
-          ab_inv = .exponent_inv(i)
-          .cc_prefactor(i)  = shellpr.cc_prefactor(i)*exp(-a*b_r2ab*ab_inv)
-          P = (b_pos_b + a*pos_a) * ab_inv
-          .pair_center(:,i) = P
-          .center_diff(:,i) = P - At
+     if (NOT skip) then
+        if (same_center) then
+           .cc_prefactor => shellpr.cc_prefactor
+           i = 0
+           do bg = 1,.b.n_cc
+             do ag = 1,.a.n_cc
+               i = i + 1
+             ! .cc_prefactor(i)  = shellpr.cc_prefactor(i)
+               .pair_center(:,i) = pos_a
+               .center_diff(:,i) = ZERO
+             end
+           end
+        else
+           .cc_prefactor.create(.n_gaussian_pairs)
+           AB = pos_a-pos_b
+           ! Want position of shell1 with higher angular momentum.
+           if (.a.l > .b.l) then; At = pos_a
+           else;                  At = pos_b
+           end
+           r2ab = dot_product(AB,AB)
+           i = 0
+           do bg = 1,.b.n_cc
+             b = .b.ex(bg)
+             b_pos_b = b*pos_b
+             b_r2ab = b*r2ab
+             do ag = 1,.a.n_cc
+               i = i + 1
+               a = .a.ex(ag)
+               ab_inv = .exponent_inv(i)
+               .cc_prefactor(i)  = shellpr.cc_prefactor(i)*exp(-a*b_r2ab*ab_inv)
+               P = (b_pos_b + a*pos_a) * ab_inv
+               .pair_center(:,i) = P
+               .center_diff(:,i) = P - At
+             end
+           end
         end
-      end
+     else
+        .cc_prefactor.create(.n_gaussian_pairs)
+        AB = pos_a-pos_b
+        ! Want position of shell1 with higher angular momentum.
+        if (.a.l > .b.l) then; At = pos_a
+        else;                  At = pos_b
+        end
+        r2ab = dot_product(AB,AB)
+        i = 0
+        j = 0
+        do bg = 1,.b.n_cc
+          b = .b.ex(bg)
+          b_pos_b = b*pos_b
+          b_r2ab = b*r2ab
+          do ag = 1,.a.n_cc
+            i = i + 1
+            a = .a.ex(ag)
+            ab_inv = .exponent_inv(i)
+            prefac = exp(-a*b_r2ab*ab_inv)
+            if (prefac<pair_cutoff) cycle
+            j = j + 1
+            .cc_prefactor(i)  = prefac*shellpr.cc_prefactor(i)
+            P = (b_pos_b + a*pos_a) * ab_inv
+            .pair_center(:,j) = P
+            .center_diff(:,j) = P - At
+          end
+        end
+     end
     ! .kappa_max = maxval(.cc_prefactor/.exponent_inv**(THREE/TWO))
    end
  
