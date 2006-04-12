@@ -1,11 +1,15 @@
 #!/usr/bin/perl
 #*******************************************************************************
-# This script runs all the tests in a test directory.
+#
+# This script runs all the tests in a test directory. The tests are contained
+# in their own directory, and any bad tests are copied back there for later
+# comparison. -- dylan
 #
 # All command line arguments are compulsory - run the script without them to get
 # the usage message.
 #
 # (c) Daniel Grimwood, University of Western Australia, 2004.
+# (c) Dylan Jayatilaka, 2006
 #
 # $Id$
 # 
@@ -15,81 +19,127 @@ use strict;
 use English;
 use File::Copy ('copy');
 
+# my $testdir = "../tests";
+# my $program = "../INTEL-ifc-on-LINUX/run_molecule.exe";
+# my $cmp     = "perl -w ./compare_output.pl";
 my $testdir = "";
 my $program = "";
-my $cmp = "";
+my $cmp     = "";
 
 &analyse_arguments(@ARGV);
 
-# read the list of test jobs
+# Open the test suite directory
+
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
-my @testdescriptionfiles = grep { /^test/ && -f "$testdir/$_"} readdir(TESTDIR);
-#foreach my $x (@inputfiles) { $x = $testdir . "/" . $x; }
+
+# Get the job directories (i.e. those with IO descriptor files)
+
+my $dir = "";
+my $job = "";
+my @jobs = ();
+
+foreach $job (readdir(TESTDIR)) {
+   $dir = "$testdir/$job";
+   next if ($job eq "..");
+   if (-d $dir) {
+      if (-f "$dir/stdin" && -f "$dir/stdout") { push(@jobs,$job) };
+   }
+}
 closedir(TESTDIR);
+
+# foreach $job (@jobs) {
+#    print "$job\n";
+# }
+
+# exit;
+
+# Counters for the test suite
 
 my $failed = 0;
 my $agreed = 0;
 my $disagreed = 0;
-my $ntests = $#testdescriptionfiles+1;
+my $njobs = $#jobs+1;
 
-if ($ntests>0) {
+if ($njobs>0) {
+  print "\n";
   print "Using the program \"$program\".\n";
   print "Running tests in directory \"$testdir\":\n\n"
 }
 
-#main loop over tests
-foreach my $testdescription (@testdescriptionfiles) {
+# Main loop over tests
 
-  # Read the input and output files from the test description file.
-  open(TEST,"< $testdir/$testdescription");
-  my %inputs = ();
-  my %outputs = ();
-  while (<TEST>) {
-    if (m/input:\s+(.+)\s+(.+)/) { $inputs{$1} = $2; }
-    if (m/output:\s+(.+)\s+(.+)/) { $outputs{$1} = $2; }
+foreach my $job (@jobs) {
+
+# print "running \"$job\" ... ";
+
+  # Set stdin and stdout 
+
+  my $input = "";
+  my @input = ( "stdin" );
+  my $output = "";
+  my @output = ( "stdout" );
+
+  # Read extra input and output files from IO file.
+
+  if (open(TEST,"< $testdir/$job/IO")) {
+     while (<TEST>) {
+       if (m/input\s*:\s+(.+)/)  { push (@input,$1); }
+       if (m/output\s*:\s+(.+)/) { push (@output,$1); }
+     }
   }
 
-  # Copy the input files to the test directory.
-  foreach my $input (keys(%inputs)) {
-    copy("$testdir/$input",$inputs{$input});
+  # Copy the input files to the current directory.
+
+  foreach $input (@input) {
+    copy("$testdir/$job/$input",$input);
   }
 
-  print "running \"$testdescription\" ... ";
+  # Run the program.
 
-  # run the program.
+  my $status = "";
   if (system($program) != 0) {
     $failed++;
-    print "failed\n";
+    $status = "program failed";
   } else {
     my $ok = 1;
-    foreach my $output (keys(%outputs)) {
-      my $out1 = "$testdir/$output";
-      my $out2 = $outputs{$output};
-      copy("$out1","$out2");
-      $ok = ($ok && ! system("$cmp $out1 $out2"));
+    foreach my $output (@output) {
+      $ok = ($ok && ! system("$cmp $testdir/$job/$output $output"));
+      copy($output,"$testdir/$job/$output".".bad");
     }
     if ($ok) {
-      $agreed++;
-      print "agreed\n";
+      $agreed++; $status = "passed";
     } else {
-      $disagreed++;
-      print "disagreed\n";
+      $disagreed++; $status = "FAILED";
     }
+
   }
+
+format STDOUT_TOP =
+Test name                               Status
+----------------------------------------------------------
+.
+format STDOUT =
+@<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< @<<<<<<<<<<<<<<<<<
+$job,                                   $status
+.
+write;
 
   # Delete the test files.  These are the input and output files read in from
   # the test description file.  Any other files created by the test job should
   # be deleted by the test job.
-  unlink values(%inputs);
-  unlink values(%outputs);
+
+  foreach $input (@input) { unlink $input; }
+  foreach $output (@output) { unlink $output; }
+
 }
 
-# print the summary
-print "\n\nSummary:\n";
-print "There are $ntests tests;\n";
-if ($agreed>0) {print "  $agreed gave correct results.\n";}
+# Print the summary
+
+print "\nSummary:\n";
+print "There are $njobs tests;\n";
+if ($agreed>0)    {print "  $agreed gave correct results.\n";}
 if ($disagreed>0) {print "  $disagreed gave incorrect results.\n";}
-if ($failed>0) {print "  $failed failed to run correctly.\n";}
+if ($failed>0)    {print "  $failed failed to run correctly.\n";}
 
 
 sub analyse_arguments {
