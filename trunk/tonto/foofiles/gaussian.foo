@@ -28,44 +28,12 @@ module GAUSSIAN
 
 contains
 
-   create ::: leaky
-   ! Create a gaussian object
-      self :: PTR
-      nullify(self)
-      allocate(self)
-      ADD_MEMORY(SELF_TYPE_SIZE)
+   create ::: get_from(OBJECT), leaky
+   ! Create an object. This version does not nullify point parts.
    end
 
-   create(l,pos,ex) ::: leaky
-   ! Create a gaussian object
-      self :: PTR
-       l :: INT
-      pos :: VEC{REAL}(3)
-      ex :: REAL
-      nullify(self)
-      allocate(self)
-      ADD_MEMORY(SELF_TYPE_SIZE)
-      .set(l,pos,ex)
-   end
-
-   create(l,Rx,Ry,Rz,ex) ::: leaky
-   ! Create a gaussian object
-      self :: PTR
-       l :: INT
-      Rx,Ry,Rz :: REAL
-      ex :: REAL
-      nullify(self)
-      allocate(self)
-      ADD_MEMORY(SELF_TYPE_SIZE)
-      .set(l,Rx,Ry,Rz,ex)
-   end
-
-   destroy ::: leaky
-   ! Destroy a shell object
-      self :: PTR
-      if (.destroyed) return
-      DELETE_MEMORY(SELF_TYPE_SIZE)
-      deallocate(self)
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object. This version does not destroy pointer parts.
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -94,27 +62,39 @@ contains
       self = G
    end
 
-   set(l,pos,ex)
-   ! Set a gaussian object
-       l :: INT
+   set_defaults
+   ! Set defaults
+      .l = 0
+      .ex = ZERO
+      .pos = ZERO
+      .first_gaussian = 0
+      .last_gaussian = 0
+   end
+
+   set(G)
+   ! Set the gaussian to "G"
+      G :: GAUSSIAN
+      .set_l(G.l)
+      .set_ex(G.ex)
+      .set_pos(G.pos)
+   end
+
+   set_pos(pos)
+   ! Set the position
       pos :: VEC{REAL}(3)
-      ex :: REAL
-      .l = l
       .pos = pos
-      .ex = ex
    end
 
-   set(l,Rx,Ry,Rz,ex)
-   ! Create a gaussian object
-       l :: INT
-      Rx,Ry,Rz :: REAL
-      ex :: REAL
+   set_l(l)
+   ! Set the l value
+      l :: INT
       .l = l
-      .pos = (/Rx,Ry,Rz/)
-      .ex = ex
+      .n_comp = GAUSSIAN::n_comp(.l)
+      .first_gaussian = GAUSSIAN::n_comp_up_to(l-1) + 1
+      .last_gaussian = .first_gaussian + .n_comp - 1
    end
 
-   set(ex)
+   set_ex(ex)
    ! Set a gaussian object
       ex :: REAL
       .ex = ex
@@ -123,7 +103,7 @@ contains
    l_chr result(res)
    ! Return a character representation for the angular mtm
       res :: STR(1)
-       l :: INT
+      l :: INT
       l = .l
       select case (l)
          case (0); res="s"
@@ -143,9 +123,10 @@ contains
 
    put
    ! Put the gaussian information to file "stdout"
-      stdout.show("L quantum number = ",.l,real_width=TRUE)
-      stdout.show("Position         = ",.pos)
-      stdout.show("Exponent         = ",.ex)
+      stdout.show("l        = ",.l,real_width=TRUE)
+      stdout.show("l symbol = ",.l_chr)
+      stdout.show("pos      = ",.pos)
+      stdout.show("exponent = ",.ex)
    end
 
 !  *************
@@ -199,7 +180,7 @@ contains
       word :: STR
       stdin.read(word)
       ENSURE(word.is_int,"expecting an integer for L")
-      .l = word.to_int
+      .set_l(word.to_int)
    end
 
    read_l_chr
@@ -221,7 +202,7 @@ contains
             DIE_IF(l_c<"g","unknown angular momentum character: "//l_c)
             l = 4 + iachar(l_c)-iachar("g")
       end
-      .l = l
+      .set_l(l)
    end
 
    read_ex
@@ -234,44 +215,23 @@ contains
       stdin.read(.pos)
    end
 
-!*****************
-!  Inquiry methods
-!*****************
+! *********************
+! Miscellaneous methods
+! *********************
 
-   l result(res) ::: pure
-   ! Return the angular momentum l
-      self :: IN
-      res :: INT
-      res = .l
+   n_comp(l) result(res) ::: selfless, private, always_pure
+   ! No. of cartesian components in a gaussian shell of momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)/2
    end
 
-   n_comp result(res) ::: pure
-   ! Return the number of components in the gaussian shell.
-      self :: IN
-      res :: INT
-      res = (.l+1)*(.l+2)/2
-   end
-
-   pos result(res) ::: pure
-   ! Return the position of the shell
-      self :: IN
-      res :: VEC{REAL}(3)
-      res = .pos
-   end
-
-   pos(comp) result(res) ::: pure
-   ! Return the position of the shell
-      self :: IN
-      comp :: INT, IN
-      res :: REAL
-      res = .pos(comp)
-   end
-
-   ex result(res) ::: pure
-   ! Return the exponent vector pointer
-      self :: IN
-      res :: REAL
-      res = .ex
+   n_comp_up_to(l) result(res) ::: selfless, private, always_pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+     l :: INT, IN
+     res :: INT
+     res = (l+1)*(l+2)*(l+3)/6
    end
 
    make_grid(g,pt)
@@ -292,8 +252,9 @@ contains
       g :: MAT{REAL}
    ENSURE(g.dim2==.n_comp,"incorrectly dimensioned")
       nx,ny,nz :: VEC{INT}*
-      n_pt,n,b,j :: INT
+      n_pt,n,b,j, f,l :: INT
       rr,xx,yy,zz,posx,posy,posz,g0,gbn :: REAL
+      gd :: GAUSSIAN_DATA*
       n_pt = size(x)
       posx = .pos(1); posy = .pos(2); posz = .pos(3)
       select case (.l)
@@ -325,8 +286,11 @@ contains
              g(n,6) = yy*zz*g0
           end
         case default
-          nx.create(.n_comp); ny.create(.n_comp); nz.create(.n_comp)
-          .l.make_gaussian_xyz_powers(nx,ny,nz)
+          gd.set_indices(.l)     ! Make sure indices are there
+          f = .first_gaussian; l = .last_gaussian
+          nx => GAUSSIAN_DATA::px(f:l)
+          ny => GAUSSIAN_DATA::py(f:l)
+          nz => GAUSSIAN_DATA::pz(f:l)
           do n = 1,n_pt
              xx=x(n) - posx; yy=y(n) - posy; zz=z(n) - posz
              rr = xx*xx + yy*yy + zz*zz    ! Do exponential part of the gaussian
@@ -345,7 +309,6 @@ contains
                 g(n,b) = gbn
              end
           end
-          nz.destroy; ny.destroy; nx.destroy
      end
    end
 
