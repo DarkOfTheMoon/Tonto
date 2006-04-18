@@ -209,6 +209,8 @@ my @rout_name_stack;
 my $current_type_name;       # The type of the last variable declared
 my $module_type_name;        # The type of the last module type declaration
 
+my $name_readonly;           # set to 1 only if the component name after the dot is readonly
+
 #
 my $html_synopsis_found = 0;
 my $html_GNU_found = 0;
@@ -1039,8 +1041,10 @@ sub analyse_variable_declaration {
                  &report_error("type of \"$var\" was not declared in \"$typesfile\".");
                }
                # Correct any attributes not in the type.
-               if ($post =~ /\bprivate\b/ ) { $info{type_is_private} = 1; } 
-               else                         { $info{type_is_private} = 0; }
+               if ($post =~ /\bprivate\b/ )  { $info{type_is_private} = 1; } 
+               else                          { $info{type_is_private} = 0; }
+               if ($post =~ /\breadonly\b/ ) { $info{type_is_readonly} = 1; } 
+               else                          { $info{type_is_readonly} = 0; }
                if ($post =~ /\bPTR\b/ || 
                    $post =~ /\bpointer\b/ ) { $info{type_ptr_part} = '*'}
 #if ($post =~ /private/ ) { 
@@ -4140,8 +4144,9 @@ sub fortran_do_type_scope {
       &fortran_add_default_initialisation;
       &fortran_change_variable_declarations;
       &fortran_change_square_brackets;
-      # Remove private attributes in type declarations
+      # Remove private, readonly attributes in type declarations
       $fortran_out =~ s/,\s*private\s*//;
+      $fortran_out =~ s/,\s*readonly\s*//;
    }
 
    $fortran_out .= $comment; 
@@ -4536,7 +4541,7 @@ sub module_colon_to_fortran {
 
  # NON-GENERIC routine calls
 
-  while ($X =~ /([(,=*+-]\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/g) { # A function call
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/g) { # A function call
      my $pre = $PREMATCH.$1;
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
@@ -4595,7 +4600,7 @@ sub module_colon_to_fortran {
 
  # GENERIC routine calls
 
-  while ($X =~ /([(,=*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
      my $pre = $PREMATCH.$1;
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
@@ -4711,6 +4716,12 @@ sub dots_to_fortran {
       else                              {$call = '';}
 
       if (&has_field($arg, $rout)) {              # $rout is a type field component
+         if ($name_readonly && $post =~ '^ *=[^=]') {
+            my $argg = $arg;
+            $argg =~ s/self%/./;
+            $argg =~ s/%/./g;
+            &report_error("can't set readonly component \"$rout\" in variable \"$argg\"");
+         }
          # $i does not change if we change the dot to a %.
          $X = join('',$pre,$arg,'%',$rout,$post);
 
@@ -4961,6 +4972,7 @@ sub has_field {
     # Change fortran back to foo, if applicable.
     $arg =~ s/%/./g;
     $dotvar = "${arg}.${name}";
+    $name_readonly = 0;
 
     my ($is_array_var,$is_declared_var,$arg_type,$arg_element_type,$arg_type_head_name);
 
@@ -4989,6 +5001,8 @@ sub has_field {
               &report_error("type \"$name_type\" has not been defined in \"$typesfile\".");
             }
             %{$local_var_info{$dotvar}} = %{$tonto_type_info{$name_type}};
+            # Global variable below
+            $name_readonly = $tonto_type{$arg_element_type}{$name}{type_is_readonly};
         }
         return ($has_name_as_field);
     }
@@ -5005,8 +5019,10 @@ sub has_field {
         my $name_private;
         if ($arg_type eq $module_name) { 
            $name_private = 0;  # no private names in module of same type name
+           $name_readonly = 0;
         } else {
            $name_private = $tonto_type{$arg_type}{$name}{type_is_private};
+           $name_readonly = $tonto_type{$arg_type}{$name}{type_is_readonly};
         }
         if (defined $name_type && ! $name_private) { # Does $arg have $name as a field?
             $has_name_as_field = 1;
