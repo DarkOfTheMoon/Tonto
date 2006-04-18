@@ -34,34 +34,28 @@ contains
 !  Allocation methods
 !  ******************
 
-   create ::: leaky
-   ! Create a shell object
-      self :: PTR
-      allocate(self)
-      ADD_MEMORY(SELF_TYPE_SIZE)
-      .nullify_ptr_part
-      .set_defaults
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
    end
 
-   destroy ::: leaky
-   ! Destroy a shell object
-      self :: PTR
-      if (.destroyed) return
-      .destroy_ptr_part
-      DELETE_MEMORY(SELF_TYPE_SIZE)
-      deallocate(self)
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
    end
 
    nullify_ptr_part
    ! Nullify the pointer part of a shell object
       nullify(.ex)
       nullify(.cc)
+      nullify(.cc_s)
+      nullify(.cc_p)
    end
 
    destroy_ptr_part ::: leaky
    ! Destroy pointer part of a shell object
       .ex.destroy
       .cc.destroy
+      .cc_s.destroy
+      .cc_p.destroy
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -76,12 +70,8 @@ contains
       res :: BIN
    end
 
-   create_copy(shell) ::: leaky
-   ! Create a copy of "shell".
-      self :: PTR
-      shell :: SHELL
-      .create
-      .copy(shell)
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
    end
 
    copy(shell) ::: leaky
@@ -89,26 +79,43 @@ contains
    ! destroyed, as you like, before using this.
       shell :: SHELL, IN
       self = shell
-      .ex.create_copy(shell.ex)
-      .cc.create_copy(shell.cc)
+      if (shell.ex.created) .ex.create_copy(shell.ex)
+      if (shell.cc.created) .cc.create_copy(shell.cc)
+      if (shell.cc_s.created) .cc_s.create_copy(shell.cc_s)
+      if (shell.cc_p.created) .cc_p.create_copy(shell.cc_p)
    end
 
-   set(shell)
-   ! Set a shell object
-      shell :: SHELL
-      self = shell
+   set(object) ::: get_from(OBJECT)
+   ! Set the object. Pointer parts are assigned not copied.
    end
 
    set_defaults
-   ! Set a default shell
+   ! Set defaults
       .l = 0
+      .l_chr = " "
+      .is_spherical = SHELL_IS_SPHERICAL
       .n_cc = 0
       .n_comp = 0
+      .n_sph = 0
+      .first_gaussian = 0
+      .last_gaussian = 0
+   end
+
+   set_l(l)
+   ! Set the l value
+      l :: INT
+      .l = l
+      .l_chr = l_chr(.l)
+      .first_gaussian = n_comp_up_to(l-1) + 1
+      .last_gaussian  = n_comp_up_to(l)
    end
 
    set_n_comp
-   ! Set the number of components
-      .n_comp = (.l+1)*(.l+2)/2
+   ! Set the number of components. "L" shells are a special case.
+      if (.l_chr=="L") then; .n_comp = 4
+      else;                  .n_comp = n_comp(.l)
+      end
+      .n_sph = 2*.l + 1
    end
 
 !   update ::: private
@@ -147,9 +154,9 @@ contains
        case ("junk,ex,cc= "); .read_junk_ex_cc
        case ("l=          "); .read_l
        case ("l_chr=      "); .read_l_chr
-       case ("l_int=      "); .read_l_int
        case ("n_cc=       "); .read_n_cc
        case ("put         "); .put
+       case ("spherical=  "); .read_spherical
        case ("units=      "); .read_units
        ! These are only for making custom tables for the list type
        case ("flush       "); stdout.flush
@@ -181,34 +188,42 @@ contains
       end
    end
 
-   read_l_int ::: private
-   ! Read in the l integer
+   read_l_int
+   ! Read in the l integer. No way to get "L" shells in this input mode.
       word :: STR
       stdin.read(word)
       ENSURE(word.is_int,"expecting an integer for L")
-      .l = word.to_int
+      .set_l(word.to_int)
       .set_n_comp
    end
 
-   read_l_chr ::: private
+   read_l_chr
    ! Read in the l symbol
       word :: STR
       l_c :: STR(1)
       l :: INT
       stdin.read(word)
       ENSURE(len_trim(word)==1,"unknown L symbol")
-      l_c = word(1:1)
-      l_c.to_lower_case
-      select case (l_c)
+      .l_chr = word(1:1)
+      if (.l_chr/="L") .l_chr.to_lower_case
+      select case (.l_chr)
          case ("s");   l = 0
          case ("p");   l = 1
+         case ("L");   l = 1 ! This is the maximum l in the shell
          case ("d");   l = 2
          case ("f");   l = 3
          case ("g");   l = 4
-         case default; l = 4 + iachar(l_c)-iachar("g")
+         case ("h");   l = 5
+         case ("i");   l = 6
+         case default; l = 6 + iachar(l_c)-iachar("i")
       end
-      .l = l
+      .set_l(l)
       .set_n_comp
+   end
+
+   read_spherical
+   ! Read in if this is a spherical shell
+      stdin.read(.is_spherical)
    end
 
    read_n_cc
@@ -229,8 +244,14 @@ contains
    ! Read in the contraction coefficients
    ENSURE(.n_cc>0,"n_cc must be entered first")
    ENSURE(.cc.destroyed,"cc already entered")
-      .cc.create(.n_cc)
-      stdin.read(.cc)
+      if (.l_chr/="L") then
+         .cc.create(.n_cc)
+         stdin.read(.cc)
+      else 
+         .cc_s.create(.n_cc)     ! Read l-shell as alternating 
+         .cc_p.create(.n_cc)     ! columns
+         stdin.read(.cc_s,.cc_p)
+      end
    end
 
    read_ex_cc ::: leaky
@@ -238,9 +259,16 @@ contains
    ENSURE(.n_cc>0,"n_cc must be entered first")
    ENSURE(.ex.destroyed,"ex already entered")
    ENSURE(.cc.destroyed,"ex already entered")
-      .ex.create(.n_cc)
-      .cc.create(.n_cc)
-      stdin.read(.ex,.cc)
+      if (.l_chr/="L") then
+         .ex.create(.n_cc)
+         .cc.create(.n_cc)
+         stdin.read(.ex,.cc)
+      else
+         .ex.create(.n_cc)
+         .cc_s.create(.n_cc)
+         .cc_p.create(.n_cc)
+         stdin.read(.ex,.cc_s,.cc_p)
+      end
    end
 
    read_junk_ex_cc ::: leaky
@@ -249,12 +277,24 @@ contains
    ENSURE(.ex.destroyed,"ex already entered")
    ENSURE(.cc.destroyed,"ex already entered")
       i :: INT
-      .ex.create(.n_cc)
-      .cc.create(.n_cc)
-      do i = 1,.n_cc
-         stdin.skip_next_item
-         stdin.read(.ex(i))
-         stdin.read(.cc(i))
+      if (.l_chr/="L") then
+         .ex.create(.n_cc)
+         .cc.create(.n_cc)
+         do i = 1,.n_cc
+            stdin.skip_next_item
+            stdin.read(.ex(i))
+            stdin.read(.cc(i))
+         end
+      else
+         .ex.create(.n_cc)
+         .cc_s.create(.n_cc)
+         .cc_p.create(.n_cc)
+         do i = 1,.n_cc
+            stdin.skip_next_item
+            stdin.read(.ex(i))
+            stdin.read(.cc_s(i))
+            stdin.read(.cc_p(i))
+         end
       end
    end
 
@@ -305,7 +345,7 @@ contains
          select case (word)
            case ("flush       "); stdout.flush; exit
            case ("put_l       "); stdout.put("l",int_width=TRUE)
-           case ("put_l_chr   "); stdout.put("l",int_width=TRUE)
+           case ("put_l_chr   "); stdout.put("l symbol",int_width=TRUE)
            case ("put_l_int   "); stdout.put("l",int_width=TRUE)
            case ("put_n_cc    "); stdout.put("n_cc",int_width=TRUE)
            case ("put_n_prim  "); stdout.put("n_prim",int_width=TRUE)
@@ -348,23 +388,24 @@ contains
      res = int_dash * stdout.int_width + real_dash * stdout.real_width
    end
 
-!  *************
-!  Input methods
-!  *************
+!  *********************
+!  Miscellaneous methods
+!  *********************
 
-   same_as(sh) result(same)
-   ! Return TRUE if the shell "self" is the same as "sh".
-      sh :: SHELL
-      same :: BIN
-      same = .l==sh.l AND .n_comp==sh.n_comp &
-         AND .ex.same_as(sh.ex) AND .cc.same_as(sh.cc)
+   n_comp(l) result(res) ::: get_from(GAUSSIAN_DATA), selfless, private, always_pure
+   ! No. of cartesian components in a gaussian shell of momentum "l".
    end
 
-   l_chr result(res)
-   ! Return a character representation for the angular mtm
+   n_comp_up_to(l) result(res) ::: get_from(GAUSSIAN_DATA), selfless, private, always_pure
+   ! No. of gaussian cartesian component functions up to and including the shell
+   ! with momentum "l".
+   end
+
+   l_chr(l) result(res) ::: selfless, private
+   ! Return a character representation for angular mtm "l"
+   ! Of course, "L" shells are never returned: they have mixed mtm.
       res :: STR(1)
       l :: INT
-      l = .l
       select case (l)
          case (0); res="s"
          case (1); res="p"
@@ -377,23 +418,91 @@ contains
       end select
    end
 
-   make_contraction_matrix(ccm)
-   ! Return the contraction coefficient matrix. Size of ccm is (.n_prim,.n_comp).
-      ccm :: MAT{REAL}
-      b,p,i :: INT
-      f :: REAL
-      fac :: VEC{REAL}*
-      fac.create( .n_comp )
-      fac.normalising_factors( .l )
-      do b = 1,.n_comp       ! do over basis components
-         p = b               ! primitive p
-         f = fac(b)
-         do i = 1,.n_cc      ! do over contractions
-            ccm(p,b) = f*.cc(i)
-            p = p + .n_comp
-         end
+   same_as(sh) result(same)
+   ! Return TRUE if the shell "self" is the same as "sh".
+      sh :: SHELL
+      same :: BIN
+      same = .l_chr==sh.l_chr &
+         AND (.is_spherical EQV sh.is_spherical) &
+         AND (.ex.created   EQV sh.ex.created) &
+         AND (.cc.created   EQV sh.cc.created) &
+         AND (.cc_s.created EQV sh.cc_s.created) &
+         AND (.cc_p.created EQV sh.cc_p.created) 
+      if (NOT same) return
+      if (.ex.created AND sh.ex.created) same = .ex.same_as(sh.ex) 
+      if (NOT same) return
+      if (.l_chr/="L") then
+         if (.cc.created   AND sh.cc.created)   same = .cc.same_as(sh.cc) 
+      else
+         if (.cc_s.created AND sh.cc_s.created) same = .cc_s.same_as(sh.cc_s) 
+         if (NOT same) return
+         if (.cc_p.created AND sh.cc_p.created) same = .cc_p.same_as(sh.cc_p) 
       end
-      fac.destroy
+   end
+
+   make_contraction_matrix(ccm,ccp)
+   ! Return the contraction coefficient matrix "ccm". It is with respect to
+   ! uniform normalisation i.e. all components are normalised to the first
+   ! component, x^l. If this is an "L" shell, "ccp" may also be returned, the
+   ! contraction matrix for the "p" shell. size "ccm" is normally (.n_prim,.n_comp).
+      ccm :: MAT{REAL}, OUT
+      ccp :: MAT{REAL}, OUT, optional
+   ENSURE(.n_cc>0,"no contraction coefficients")
+      gd  :: GAUSSIAN_DATA*
+      b,p,i,f,l :: INT
+      fb :: REAL
+      fac :: VEC{REAL}*
+      if (.l<2) then
+         if (.l_chr/="L") then
+            ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
+            ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
+            ENSURE(.cc.created,"no contraction coefficients")
+            do b = 1,.n_comp       ! do over basis components
+               p = b               ! primitive p
+               do i = 1,.n_cc      ! do over contractions
+                  ccm(p,b) = .cc(i)
+                  p = p + .n_comp
+               end
+            end
+         else
+            ENSURE(present(ccp),"no ccp matrix")
+            ENSURE(ccm.dim1==.n_cc,"wrong 1st dimension, ccm")
+            ENSURE(ccm.dim2==1,"wrong 2nd dimension, ccm")
+            ENSURE(ccp.dim1==3*.n_cc,"wrong 1st dimension, ccp")
+            ENSURE(ccp.dim2==3,"wrong 2nd dimension, ccp")
+            ENSURE(.cc_s.created,"no s contraction coefficients")
+            ENSURE(.cc_p.created,"no p contraction coefficients")
+            do b = 1,1             ! do over basis components
+               p = b               ! primitive p
+               do i = 1,.n_cc      ! do over contractions
+                  ccm(p,b) = .cc_s(i)
+                  p = p + 1
+               end
+            end
+            do b = 1,3             ! do over basis components
+               p = b               ! primitive p
+               do i = 1,.n_cc      ! do over contractions
+                  ccp(p,b) = .cc_p(i)
+                  p = p + 3
+               end
+            end
+         end
+      else
+            ENSURE(ccm.dim1==.n_prim,"wrong 1st dimension, ccm")
+            ENSURE(ccm.dim2==.n_comp,"wrong 2nd dimension, ccm")
+            ENSURE(.cc.created,"no contraction coefficients")
+            gd.set_indices(.l)     ! Make sure indices are there
+            f = .first_gaussian; l = .last_gaussian
+            fac => GAUSSIAN_DATA::normalising_factors(f:l)
+            do b = 1,.n_comp       ! do over basis components
+               p = b               ! primitive p
+               fb = fac(b)
+               do i = 1,.n_cc      ! do over contractions
+                  ccm(p,b) = fb*.cc(i)
+                  p = p + .n_comp
+               end
+            end
+      end
    end
 
    norm result (res) ::: pure
@@ -422,7 +531,9 @@ contains
    ! each primitive and put it in the contraction coefficient. The normalisation
    ! factor removed is the one appropriate for the cartesian component x^l.
    ! NOTE: It is up to you to correct this factor with appropriate double
-   ! factorial square roots for other components.
+   ! factorial square roots for other components. The factor should be: 
+   !   fac = 1/sqrt(df(nx)*df(ny)*df(nz))
+   ! where nx,ny,nz are the cartesian powers of the basis component
        .cc(:) = .cc(:) * (FOUR*.ex(:))**(HALF*.l+HALF+QUARTER) &
                 * (ONE/(.norm*sqrt(.l.double_factorial)))
    end
@@ -449,20 +560,52 @@ contains
 
    put
    ! Put the shell information to "stdout"
-       i :: INT
+      i :: INT
       stdout.flush
-      stdout.show("L quantum number = ",.l)
-      stdout.dash(int_fields=1,real_fields=2)
-      stdout.put("N", int_width=TRUE)
-      stdout.put("Exponents")
-      stdout.put("Contraction")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=2)
-      do i = 1,.n_cc
-         stdout.put(i)
-         stdout.put( .ex(i))
-         stdout.put( .cc(i))
+      stdout.show("Shell type     = ",.l_chr)
+      stdout.show("l              = ",.l)
+      stdout.show("is_spherical   = ",.is_spherical)
+      stdout.show("n_comp         = ",.n_comp)
+      stdout.show("n_sph          = ",.n_sph)
+      stdout.show("first_gaussian = ",.first_gaussian)
+      stdout.show("last_gaussian  = ",.last_gaussian)
+      if (.n_cc<=0) return
+      if (.l_chr/="L") then
+         ENSURE(.ex.created,"no exponents")
+         ENSURE(.cc.created,"no contractions")
          stdout.flush
+         stdout.dash(int_fields=1,real_fields=2)
+         stdout.put("#", int_width=TRUE)
+         stdout.put("Exponents")
+         stdout.put("Contraction")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=2)
+         do i = 1,.n_cc
+            stdout.put(i)
+            stdout.put(.ex(i))
+            stdout.put(.cc(i))
+            stdout.flush
+         end
+         stdout.dash(int_fields=1,real_fields=2)
+      else
+         ENSURE(.ex.created,"no exponents")
+         ENSURE(.cc_s.created,"no s contractions")
+         ENSURE(.cc_p.created,"no p contractions")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=3)
+         stdout.put("#", int_width=TRUE)
+         stdout.put("Exponents")
+         stdout.put("Contraction")
+         stdout.flush
+         stdout.dash(int_fields=1,real_fields=3)
+         do i = 1,.n_cc
+            stdout.put(i)
+            stdout.put(.ex(i))
+            stdout.put(.cc_s(i))
+            stdout.put(.cc_p(i))
+            stdout.flush
+         end
+         stdout.dash(int_fields=1,real_fields=3)
       end
    end
 
