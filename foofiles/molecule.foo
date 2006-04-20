@@ -2257,6 +2257,8 @@ contains
    ! Set "S" to the overlap matrix.
    ! If the archive file exists, read it; otherwise make it.
       S :: MAT{REAL}
+      U :: MAT{REAL}*
+      col :: INT
       archive :: ARCHIVE
       archive.set(.name,"overlap_matrix")
       if (.scfdata.destroyed) then
@@ -2270,6 +2272,11 @@ contains
          end
          if (NOT .scfdata.using_direct_scf) archive.write(S)
       end
+      U.create(.n_bf,.n_bf); U.to_unit_matrix
+      if (U.is_linearly_dependent(S,tol=TOL(6),col=col)) then
+         DIE("column "//trim(col.to_str)//" is linearly dependent")
+      end
+      U.destroy
    end
 
    make_overlap_matrix(S)
@@ -6508,6 +6515,7 @@ contains
       use_ks :: BIN, optional
    ENSURE(n<=.n_atom,"atom number n too big")
       mol.nullify_ptr_part
+      mol.name = .atom(n).chemical_symbol
       mol.atom.create(1)
       mol.atom = .atom(n)   ! WARNING: dont destroy ptr parts of mol.atom !
       mol.atom(1).group = 0 ! does not belong to a group
@@ -8944,6 +8952,7 @@ contains
      mol :: MOLECULE*
      first,last :: VEC{INT}*
      atom_kind :: VEC{VEC_{INT}}*
+     archive :: ARCHIVE
      .density_matrix.destroy
      .density_matrix.create(.n_bf,"restricted")
      .density_matrix.restricted = ZERO
@@ -8954,19 +8963,24 @@ contains
        l = atom_kind(k).element(1)
        .make_molecule_from_atom(l,mol)
        if (mol.no_of_electrons >= 1) then
-         mol.scfdata.output = FALSE
-       ! mol.scfdata.output = TRUE
-       ! mol.scfdata.using_fock_diis = TRUE
-       ! mol.scfdata.diis.set_genre("ediis")
-         mol.scfdata.using_fock_diis = TRUE
-       ! mol.scfdata.using_MO_diis = FALSE
-         mol.scfdata.using_rough_convergence = FALSE
-         mol.scfdata.using_direct_scf = TRUE
-         if (.scfdata.created) then
-         mol.scfdata.convergence = .scfdata.convergence
-         mol.scfdata.diis.convergence_tolerance = .scfdata.diis.convergence_tolerance
+         archive.set(mol.name)
+         if (archive.exists) then
+            archive.read(.density_matrix,genre=.scfdata.spinorbital_kind)
+         else
+            mol.scfdata.output = FALSE
+          ! mol.scfdata.output = TRUE
+          ! mol.scfdata.using_fock_diis = TRUE
+          ! mol.scfdata.diis.set_genre("ediis")
+            mol.scfdata.using_fock_diis = TRUE
+          ! mol.scfdata.using_MO_diis = FALSE
+            mol.scfdata.using_rough_convergence = FALSE
+            mol.scfdata.using_direct_scf = TRUE
+            if (.scfdata.created) then
+            mol.scfdata.convergence = .scfdata.convergence
+            mol.scfdata.diis.convergence_tolerance = .scfdata.diis.convergence_tolerance
+            end
+            mol.scf                             ! <<<<<<< SCF <<<<<<
          end
-         mol.scf                             ! <<<<<<< SCF <<<<<<
          mol.make_ao_density_matrix
          mol.pointgroup.create("oh")
          mol.symmetrise(mol.density_matrix)
@@ -17102,11 +17116,14 @@ contains
         case("deformation_dft_xc_potential        "); .make_def_dft_xc_pot_grid
         case("deformation_electric_potential      "); .make_def_e_pot_grid
         case("deformation_g_kinetic_energy        "); .make_def_G_kinetic_grid
+        case("deformation_g_kirzhnits             "); .make_def_G_Kirzhnits_grid
         case("deformation_h_dft_energy            "); .make_def_H_dft_energy_grid
         case("deformation_h_from_virial           "); .make_def_H_from_virial_grid
+        case("deformation_h_from_kirzhnits        "); .make_def_H_from_Kirzhnits_grid
         case("deformation_k_kinetic_energy        "); .make_def_K_kinetic_grid
         case("deformation_laplacian               "); .make_def_laplacian_grid
         case("deformation_v_from_virial           "); .make_def_V_from_virial_grid
+        case("deformation_v_from_kirzhnits        "); .make_def_V_from_Kirzhnits_grid
         case("deformation_reduced_g_kinetic_energy"); .make_def_rG_kinetic_grid
         case("deformation_reduced_h_from_virial   "); .make_def_rH_from_virial_grid
         case("deformation_reduced_k_kinetic_energy"); .make_def_rK_kinetic_grid
@@ -17119,9 +17136,11 @@ contains
         case("elf                                 "); .make_ELF_grid
         case("fermi_mobility                      "); .make_fermi_mobility_grid
         case("g_kinetic_energy                    "); .make_G_kinetic_energy_grid
+        case("g_kirzhnits                         "); .make_G_Kirzhnits_grid
         case("grad_rho_on_rho                     "); .make_grad_rho_on_rho_grid
         case("h_dft_energy                        "); .make_H_dft_energy_grid
         case("h_from_virial                       "); .make_H_from_virial_grid
+        case("h_from_kirzhnits                    "); .make_H_from_Kirzhnits_grid
         case("j                                   "); .make_j_grid
         case("jd                                  "); .make_jd_grid
         case("jp                                  "); .make_jp_grid
@@ -17143,6 +17162,7 @@ contains
         case("true_fermi_mobility                 "); .make_true_fermi_mobility_grid
         case("tsirelson_elf                       "); .make_Tsirelson_ELF_grid
         case("v_from_virial                       "); .make_V_from_virial_grid
+        case("v_from_kirzhnits                    "); .make_V_from_Kirzhnits_grid
         case default;                UNKNOWN(.grid.plot_kind)
      end
    end
@@ -17712,6 +17732,63 @@ contains
      NO.destroy
    end
 
+
+   make_G_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_G_Kirzhnits_grid, LABEL=>"G_Kirzhnits_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_G_Kirzhnits_grid(G_grid,pt)
+   ! Work out the G-type Kirzhnits kinetic density (using nabla phi.nabla phi) on "pt"
+   ! using ".natural orbitals" and  the ".occupation_numbers" vector.
+      G_grid :: VEC{REAL}
+      pt :: MAT{REAL}
+   ENSURE(.natural_orbitals.created, "no natural orbitals")
+   ENSURE(.natural_orbitals.any_created, "no natural orbitals")
+      if (.natural_orbitals.number_kind=="real") then
+        .make_G_Kirzhnits_grid_r(G_grid,pt)
+      else
+        DIE("code not written yet")
+      end
+   end
+
+   make_G_Kirzhnits_grid_r(G_grid,pt)
+   ! Make the G-type Kirzhnits kinetic energy density "G_grid" for the supplied points
+   ! "pt" from restricted real natural orbitals
+     G_grid :: VEC{REAL}
+     pt :: MAT{REAL}
+   ENSURE(pt.dim2==3, "wrong dimension for pt array")
+   ENSURE(.natural_orbitals.created("restricted"), "no restricted NO's")
+   ENSURE(.occupation_numbers.restricted.created, "no occupation #'s")
+     NO :: VEC{REAL}*
+     G,L :: MAT{REAL}*
+     lambda,k2,fac,occ :: REAL
+     n_occ,n,n_pt :: INT
+     n_pt = pt.dim1
+     lambda = FOUR/72.0d0
+     k2 = HALF*ONE/SIX
+     fac = 0.3d0*(THREE*PI*PI)**(TWOTHIRDS)
+     G_grid = ZERO
+     NO.create(n_pt)
+     G.create(n_pt,3)
+     L.create(n_pt,3)
+     n_occ = .no_of_occupied_NOs
+     do n = 1,n_occ
+       .make_laplacian_orbital_grid_r(L,G,NO,.natural_orbitals.restricted(:,n), pt)
+       occ = .occupation_numbers.restricted(n)
+       G_grid(:) = G_grid(:) &
+          + occ * ( fac*(NO*NO)**(FIVE/THREE) &
+                  + lambda * (G(:,1)*G(:,1) + G(:,2)*G(:,2) + G(:,3)*G(:,3)) &
+                  + k2 * ( NO*(L(:,1)+L(:,2)+L(:,3)) &
+                        + (G(:,1)*G(:,1) + G(:,2)*G(:,2) + G(:,3)*G(:,3))) )
+     end
+     G_grid(:) = HALF*G_grid(:)
+     L.destroy
+     G.destroy
+     NO.destroy
+   end
+
+
    make_def_G_kinetic_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_def_G_kinetic_grid, LABEL=>"deformation_G_kinetic_grid")
    ! Work out the property density on ".grid" using ".natural orbitals" and the
    ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
@@ -17724,6 +17801,22 @@ contains
    end
 
    make_pro_G_kinetic_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_G_kinetic_energy_grid)
+   ! Work out the promolecule "density_grid" from the supplied points "pt".  
+   end
+
+
+   make_def_G_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_def_G_Kirzhnits_grid, LABEL=>"deformation_G_Kirzhnits_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_def_G_Kirzhnits_grid(grid,pt) ::: get_from(MOLECULE:deformation_grid, MAKE_GRID=>.make_G_Kirzhnits_grid, MAKE_PRO_GRID=>.make_pro_G_Kirzhnits_grid)
+   ! Make a Gnuplot ascii file containing the deformation density grid.
+     grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+   end
+
+   make_pro_G_Kirzhnits_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_G_Kirzhnits_grid)
    ! Work out the promolecule "density_grid" from the supplied points "pt".  
    end
 
@@ -17830,6 +17923,40 @@ contains
    end
 
 
+   make_H_from_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_H_from_Kirzhnits_grid, LABEL=>"H_from_Kirzhnits_energy_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_H_from_Kirzhnits_grid(H_grid,pt)
+   ! Work out the energy density using the Kirzhnits relationsip 2G + V = (1/4) L,
+   ! or H = G + V = (1/4)L - G
+      H_grid :: VEC{REAL}
+      pt :: MAT{REAL}
+      G_grid :: VEC{REAL}*
+      G_grid.create(.grid.n_pt)
+      .make_G_Kirzhnits_grid(G_grid,pt)
+      .make_laplacian_grid(H_grid,pt)
+      H_grid = QUARTER*H_grid - G_grid
+      G_grid.destroy
+   end
+
+   make_def_H_from_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_def_H_from_Kirzhnits_grid, LABEL=>"deformation_H_from_Kirzhnits_energy_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_def_H_from_Kirzhnits_grid(grid,pt) ::: get_from(MOLECULE:deformation_grid, MAKE_GRID=>.make_H_from_Kirzhnits_grid, MAKE_PRO_GRID=>.make_pro_H_from_Kirzhnits_grid)
+   ! Make a Gnuplot ascii file containing the deformation density grid.
+     grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+   end
+
+   make_pro_H_from_Kirzhnits_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_H_from_Kirzhnits_grid)
+   ! Work out the promolecule "density_grid" from the supplied points "pt".  
+   end
+
+
    make_rH_from_virial_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_rH_from_virial_grid, LABEL=>"reduced_H_from_virial_energy_grid")
    ! Work out the property density on ".grid" using ".natural orbitals" and the
    ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
@@ -17896,6 +18023,39 @@ contains
    end
 
    make_pro_V_from_virial_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_V_from_virial_grid)
+   ! Work out the promolecule "density_grid" from the supplied points "pt".  
+   end
+
+
+   make_V_from_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_V_from_Kirzhnits_grid, LABEL=>"V_from_Kirzhnits_energy_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_V_from_Kirzhnits_grid(V,pt)
+   ! Work out the energy density from usiang the Kirzhnits theorem: V = (1/4) L - 2G
+      V :: VEC{REAL}
+      pt :: MAT{REAL}
+      G :: VEC{REAL}*
+      G.create(.grid.n_pt)
+      .make_G_Kirzhnits_grid(G,pt)
+      .make_laplacian_grid(V,pt)
+      V = QUARTER*V - TWO*G
+      G.destroy
+   end
+
+   make_def_V_from_Kirzhnits_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_def_V_from_Kirzhnits_grid, LABEL=>"deformation_V_from_Kirzhnits_energy_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_def_V_from_Kirzhnits_grid(grid,pt) ::: get_from(MOLECULE:deformation_grid, MAKE_GRID=>.make_V_from_Kirzhnits_grid, MAKE_PRO_GRID=>.make_pro_V_from_Kirzhnits_grid)
+   ! Make a Gnuplot ascii file containing the deformation density grid.
+     grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+   end
+
+   make_pro_V_from_Kirzhnits_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_V_from_Kirzhnits_grid)
    ! Work out the promolecule "density_grid" from the supplied points "pt".  
    end
 
