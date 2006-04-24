@@ -43,8 +43,7 @@ my %vendors = (                                # This contains a list of string
 'PGI'        => 'Portland',
 'INTEL'      => 'Intel',
 'ABSOFT'     => 'Absoft',
-'GNU'        => 'G95',
-'GNU'        => 'gfortran',
+'GNU'        => '(g95|gfortran)',
 );
 
 ################################################################################
