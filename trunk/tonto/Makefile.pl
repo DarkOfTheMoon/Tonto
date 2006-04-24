@@ -44,6 +44,7 @@ my %vendors = (                                # This contains a list of string
 'INTEL'      => 'Intel',
 'ABSOFT'     => 'Absoft',
 'GNU'        => 'G95',
+'GNU'        => 'gfortran',
 );
 
 ################################################################################
@@ -110,7 +111,7 @@ if (defined $FC && $FC ne '') {
   }
 } else {
   ($FC,$FULLFC) = &check_for_programs('mpif90','lf95','frtvpp','ifort','ifc',
-             'frt','xlf90','pgf90','f95','f90','g95','g90');
+             'frt','xlf90','pgf90','f95','f90','g95','g90','gfortran');
 }
 &print_result($FULLFC);
 
