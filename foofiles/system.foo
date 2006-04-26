@@ -103,7 +103,7 @@ module SYSTEM
 #define START_TIMER(X)
 #define STOP_TIMER
 
-   tonto :: SYSTEM, target, public, save
+   tonto :: SYSTEM*, public
 
 contains
 
@@ -111,22 +111,20 @@ contains
 !  Creation routines
 !  *****************
 
-   create(memory_limit) ::: leaky
-   !  Create a memory manager object with soft limit given in "limit"
+   create ::: leaky
+   ! Create the system object
       self :: PTR
-      memory_limit :: INT, optional
       allocate(self)
-      .nullify_ptr_part
-      .set_defaults(memory_limit)
-      tonto.add_memory(SELF_TYPE_SIZE) ! increment internal memory manager
+      .initialise
    end
 
    destroy ::: leaky
    !  Destroy the memory manager object
       self :: PTR
       if (.destroyed) return
+      .finalise
+      .destroy_ptr_part
       deallocate(self)
-      tonto.delete_memory(SELF_TYPE_SIZE)
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -147,11 +145,31 @@ contains
       nullify(.io_file)
       nullify(.call_stack)
       nullify(.memory_used_stack)
+      nullify(.memory_address_stack)
+      nullify(.memory_amount_stack)
+      nullify(.memory_call_stack)
+      nullify(.leaky_call_stack)
       nullify(.time_call_stack)
       nullify(.time_strt_stack)
       nullify(.time_for_routine)
       nullify(.name_for_routine)
       nullify(.n_calls_for_routine)
+   end
+
+   destroy_ptr_part
+   ! Nullify the pointer parts of self
+      self :: INOUT
+      nullify(.io_file)
+      if (.call_stack.created)            deallocate(.call_stack)
+      if (.memory_used_stack.created)     deallocate(.memory_used_stack)
+      if (.memory_address_stack.created)  deallocate(.memory_address_stack)
+      if (.memory_amount_stack.created)   deallocate(.memory_amount_stack)
+      if (.memory_call_stack.created)     deallocate(.memory_call_stack)
+      if (.time_call_stack.created)       deallocate(.time_call_stack)
+      if (.time_strt_stack.created)       deallocate(.time_strt_stack)
+      if (.time_for_routine.created)      deallocate(.time_for_routine)
+      if (.name_for_routine.created)      deallocate(.name_for_routine)
+      if (.n_calls_for_routine.created)   deallocate(.n_calls_for_routine)
    end
 
    set_defaults(memory_limit)
@@ -170,6 +188,9 @@ contains
       .memory_leak_detected = FALSE
       .memory_leak_level = 0
       .memory_units = SYSTEM_MEMORY_UNITS
+      .n_addresses = 0
+      .max_addresses = 0
+      .examine_leak = " "
       .stack_level = 0
       .max_stack_level = 0
       .stack_show_level = -1
@@ -180,13 +201,13 @@ contains
       .time_limit = ZERO
       .show_cumulative_time = FALSE ! Note: there are usually roundoff errors in this case
       if (present(memory_limit)) .memory_limit = memory_limit
+      .parallel_initialise
    end
 
    initialise
    !  Initialise the system object and set defaults
       .nullify_ptr_part
       .set_defaults
-      .parallel_initialise
    end
 
    finalise
@@ -417,6 +438,98 @@ contains
       .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) - used
    end
 
+! More advanced memory tracking
+
+   add_location(address,used) ::: pure
+   !  Add memory usage data to the memory manager
+      self :: INOUT
+      address :: INT, IN
+      used :: INT, IN
+      dim,n :: INT
+      .memory_used = .memory_used + used
+      .max_memory_used = max(.memory_used,.max_memory_used)
+      .memory_blocks_used = .memory_blocks_used + 1
+#ifdef TRACK_MEMORY_LOCATIONS
+      .n_addresses = .n_addresses + 1
+      dim = .n_addresses - .max_addresses
+      if (dim>0) then
+         .expand_int(.memory_address_stack,dim)
+         .expand_int(.memory_amount_stack,dim)
+         .expand_str(.memory_call_stack,dim)
+      end
+      .max_addresses = max(.n_addresses,.max_addresses)
+      n = .n_addresses
+      .memory_address_stack(n) = address                  ! Address of block
+      .memory_amount_stack(n) = used
+      .memory_call_stack(n) = .call_stack(.stack_level-1) ! Calling routine
+      if (.examine_leak/=" ") then
+      if (.call_stack(.stack_level-1)==.examine_leak) then
+          allocate(.leaky_call_stack(.stack_level-1))
+          .leaky_call_stack = .call_stack(1:.stack_level-1)
+          .examine_leak = " "
+      end
+      end
+#endif
+      .max_memory_blocks_used = max(.memory_blocks_used,.max_memory_blocks_used)
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) + used
+   end
+
+   delete_location(address,used) ::: pure
+   !  Delete memory usage data to the memory manager
+      self :: INOUT
+      address :: INT, IN
+      used :: INT, IN
+      n,i,j :: INT
+      .memory_used = .memory_used - used
+#ifdef TRACK_MEMORY_LOCATIONS
+      j = 0
+      do i = .n_addresses,1,-1
+         if (address/=.memory_address_stack(i)) cycle
+         j = i
+         exit
+      end
+      if (j==0) then
+     !    write(.error_output_unit,"(a)") "can't find memory address"
+      else ! remove the address
+          .n_addresses = .n_addresses - 1
+          n = .n_addresses
+          .memory_address_stack(j:n) = .memory_address_stack(j+1:n+1)
+          .memory_amount_stack(j:n) = .memory_amount_stack(j+1:n+1)
+          .memory_call_stack(j:n)  = .memory_call_stack(j+1:n+1)
+      end
+#endif
+      .memory_blocks_used = .memory_blocks_used - 1
+      .memory_used_stack(1:.stack_level) = .memory_used_stack(1:.stack_level) - used
+   end
+
+   report_undeleted_memory(out) ::: private
+   ! Report undeleted memory allocation info i.e. a profile. If present, use the
+   ! unit number for file "out", otherwise use "tonto.error_output_unit".  
+     out :: TEXTFILE, optional
+     unit,i :: INT
+     if (.n_addresses == 0) return
+     if (NOT .IO_is_allowed) return
+     ! Process arguments ...
+     unit = tonto.error_output_unit
+     if (present(out)) unit = out.unit
+       write(unit,*)
+       write(unit,'(a)') "Undeleted memory calls:"
+       write(unit,*)
+       write(unit,'("Routine",36x,"    Amount")')
+     do i = 1,.n_addresses
+       write(unit,'(a43,i10)') adjustl(.memory_call_stack(i)),.memory_amount_stack(i)
+     end
+     if (.leaky_call_stack.created) then
+       write(unit,*)
+       write(unit,'(a)') "Requested leaky call stack:"
+       write(unit,*)
+     do i = 1,size(.leaky_call_stack)
+       write(unit,'(i4,". ",a43)') i,adjustl(.leaky_call_stack(i))
+     end
+     end
+     .flush_buffer
+   end
+
 !  ************************************************************************
 !  Call stack management, per-call level memory reporting and leak checking
 !  ************************************************************************
@@ -427,7 +540,7 @@ contains
       self :: INOUT
       routine_name :: STR, optional
       .stack_level = .stack_level + 1
-      .expand_all_stacks
+      .expand_call_stacks
       .memory_used_stack(.stack_level) = 0
       if (present(routine_name)) then
         .call_stack(.stack_level) = routine_name
@@ -635,7 +748,7 @@ contains
       .show_call_stack = FALSE
    end
 
-   expand_all_stacks ::: private
+   expand_call_stacks ::: private
    ! Expand both stacks to a length at least equal to ".stack_level".
       dim :: INT
       dim = .stack_level - .max_stack_level
@@ -666,6 +779,9 @@ contains
        .report_stack_info(out)
      end
      .report_timing_info 
+#ifdef TRACK_MEMORY_LOCATIONS
+     .report_undeleted_memory
+#endif
      .flush_buffer
    end
 
@@ -879,7 +995,7 @@ contains
      total_time,total :: REAL
      unit,i,j,n_routine :: INT
      if (.n_timed_routines == 0) return
-     if (.IO_is_allowed) return
+     if (NOT .IO_is_allowed) return
      ! Process arguments ...
      unit = tonto.error_output_unit
      if (present(out)) unit = out.unit
