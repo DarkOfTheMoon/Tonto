@@ -4173,10 +4173,10 @@ sub fortran_add_include_files {
                "!  define SELF_TYPE_SIZE ${tonto_type_info{$module_name}{tonto_size}}";
          } else {
             $fortran_out .= "\n" .
-               "#  define ELEMENT_TYPE_SIZE ${tonto_type_info{$module_name}{tonto_element_size}}\n" .
-               "#  define ARG1_TYPE_SIZE ${tonto_type_info{$module_name}{tonto_element_size}}";
-               "!  define ELEMENT_TYPE_SIZE ${tonto_type_info{$module_name}{tonto_element_size}}\n" .
-               "!  define ARG1_TYPE_SIZE ${tonto_type_info{$module_name}{tonto_element_size}}";
+               "#  define ELEMENT_TYPE_SIZE (${tonto_type_info{$module_name}{tonto_element_size}})\n" .
+               "#  define ARG1_TYPE_SIZE (${tonto_type_info{$module_name}{tonto_element_size}})";
+               "!  define ELEMENT_TYPE_SIZE (${tonto_type_info{$module_name}{tonto_element_size}})\n" .
+               "!  define ARG1_TYPE_SIZE (${tonto_type_info{$module_name}{tonto_element_size}})";
          }
       }
    }
