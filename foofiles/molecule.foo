@@ -93,6 +93,8 @@ contains
       nullify(.density_matrix)
       nullify(.natural_orbitals)
       nullify(.occupation_numbers)
+      nullify(.overlap_matrix)
+      nullify(.core_matrix)
       nullify(.fock_matrix)
       nullify(.constraint_matrix)
       nullify(.old_molecular_orbitals)
@@ -151,6 +153,8 @@ contains
       .density_matrix.destroy
       .natural_orbitals.destroy
       .occupation_numbers.destroy
+      .overlap_matrix.destroy
+      .core_matrix.destroy
       .fock_matrix.destroy
       .constraint_matrix.destroy
       .old_molecular_orbitals.destroy
@@ -182,6 +186,8 @@ contains
       .density_matrix.destroy
       .natural_orbitals.destroy
       .occupation_numbers.destroy
+      .overlap_matrix.destroy
+      .core_matrix.destroy
       .fock_matrix.destroy
       .old_molecular_orbitals.destroy
       .old_density_matrix.destroy
@@ -301,6 +307,10 @@ contains
          .natural_orbitals.create_copy(mol.natural_orbitals)
       if (mol.occupation_numbers.created) &
          .occupation_numbers.create_copy(mol.occupation_numbers)
+      if (mol.overlap_matrix.created) &
+         .overlap_matrix.create_copy(mol.overlap_matrix)
+      if (mol.core_matrix.created) &
+         .core_matrix.create_copy(mol.core_matrix)
       if (mol.fock_matrix.created) &
          .fock_matrix.create_copy(mol.fock_matrix)
       if (mol.old_molecular_orbitals.created) &
@@ -1450,9 +1460,10 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.molecular_orbitals.created, "no molecular orbitals")
    ENSURE(.molecular_orbitals.any_created, "no molecular orbitals")
-     damping,embedded,crystal,do_archive,do_delta_archive :: BIN
+     T :: REAL
+     damping,embedded,crystal,do_archive,do_delta_archive,use_pFON :: BIN
      D_old,P_old :: OPMATRIX*
-     MO,D,MOa,MOb,Da,Db :: MAT{REAL}*
+     MO,MOS,D,MOa,MOb,Da,Db,F,Fa,Fb :: MAT{REAL}*
      CMO,CD,CMOa,CMOb,CDa,CDb :: MAT{CPX}*
      scf_method,genre :: STR
      archive :: ARCHIVE
@@ -1490,6 +1501,9 @@ contains
      if      (present(damp)) then;    damping = damping AND damp
      else if (.scfdata.created) then; damping = damping AND .scfdata.apply_damping
      end
+     ! Determine if pFON should be used
+     use_pFON = FALSE
+     if (.scfdata.created AND .fock_matrix.created(genre)) use_pFON = .scfdata.apply_pFON
      ! Create the density matrix
      if (.density_matrix.destroyed) .density_matrix.create(.n_bf)
      .density_matrix.destroy(genre)
@@ -1507,9 +1521,18 @@ contains
        case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
          ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
          ENSURE(.mult==1,"this is not a singlet state")
-         MO => .molecular_orbitals.restricted(:,1:.n_a)
-         D  => .density_matrix.restricted
-         D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+         if (use_pFON) then
+            D  => .density_matrix.restricted
+            MO => .molecular_orbitals.restricted
+            F  => .fock_matrix.restricted
+            T = .scfdata.temperature_for_pFON
+            .make_finite_T_density_matrix(D,MO,F,T,.n_a)
+            D = TWO*D
+         else
+            MO => .molecular_orbitals.restricted(:,1:.n_a)
+            D  => .density_matrix.restricted
+            D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+         end
        case ("progroup")
          ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
          ENSURE(.mult==1,"this is not a singlet state")
@@ -1544,12 +1567,24 @@ contains
        case ("uhf","uks","xray_uhf","xray_uks", &
              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
          ENSURE(.molecular_orbitals.created("unrestricted"),"no MO's")
-         MOa => .molecular_orbitals.alpha(:,1:.n_a)
-         MOb => .molecular_orbitals.beta(:,1:.n_b)
-         Da => .density_matrix.alpha
-         Db => .density_matrix.beta
-         Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-         Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         if (use_pFON) then
+            MOa => .molecular_orbitals.alpha
+            MOb => .molecular_orbitals.beta
+            Da => .density_matrix.alpha
+            Db => .density_matrix.beta
+            Fa => .fock_matrix.alpha
+            Fb => .fock_matrix.beta
+            T = .scfdata.temperature_for_pFON
+            .make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
+            .make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
+         else
+            MOa => .molecular_orbitals.alpha(:,1:.n_a)
+            MOb => .molecular_orbitals.beta(:,1:.n_b)
+            Da => .density_matrix.alpha
+            Db => .density_matrix.beta
+            Da.to_product_of(MOa,MOa,transpose_b=TRUE)
+            Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         end
        case ("ghf")
          ENSURE(.molecular_orbitals.created("general"),"no MO's")
          ENSURE(.mult==1,"this is not a singlet state")
@@ -1589,6 +1624,92 @@ contains
         .archive(D_old,"delta_density_matrix")
      end
      D_old.destroy
+   end
+
+   make_finite_T_density_matrix(D,MO,F,T,n_e) ::: leaky
+   ! Make the finite temperature density matrix "D" from molecular orbitals "MO"
+   ! according to the pFON method with temperature "T" and number of electrons
+   ! "n_e" *for a given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
+   ! There must exist a current fock_matrix "F" made from "D" which is used to
+   ! get the eigenvalues for the Fermi-Dirac distribution.
+     D,MO :: MAT{REAL}
+     F :: MAT{REAL}*
+     T :: REAL
+     n_e :: INT
+   ENSURE(F.created,"no molecular orbitals")
+   ENSURE(F.is_square,"F must be square")
+   ENSURE(F.is_same_shape_as(MO),"incompatible F and MO")
+   ENSURE(n_e<MO.dim2,"fewer MO's than electrons")
+   ENSURE(T>=ZERO,"T must be positive")
+     W :: MAT{REAL}*
+     occ :: VEC{REAL}*
+     ind :: VEC{INT}*
+     e_i,beta,e_homo,e_lumo,e_fermi,homo_lumo_gap :: REAL
+     n_orb,i,j,n_frac :: INT
+     n_orb  = F.dim1
+     occ.create(n_orb)     ! Make the occupation numbers
+     ind.create(n_orb)
+     W.create(n_orb,n_orb)
+     W.to_product_of(F,MO)
+     do i = 1,n_orb        ! These are energies
+        occ(i) = dot_product(MO(:,i),W(:,i))
+     end
+     occ.quick_sort(ind)   ! "ind" has the energies sorted
+ ! stdout.text("F:")
+ ! stdout.put(F)
+ ! stdout.text("MO:")
+ ! stdout.put(MO)
+ ! stdout.text("ind:")
+ ! stdout.put(ind,"column")
+ ! stdout.text("unsorted eig:")
+ ! stdout.put(occ,"column")
+ ! stdout.text("eig:")
+ ! stdout.put(occ(ind),"column")
+     W.destroy
+     beta = KELVIN_PER_HARTREE/T
+     e_homo = occ(ind(n_e))
+     e_lumo = occ(ind(n_e+1))
+     e_fermi = HALF*(e_homo + e_lumo)
+     homo_lumo_gap = e_lumo - e_homo
+ ! stdout.show("n_e    = ",n_e)
+ ! stdout.show("e_homo = ",e_homo)
+ ! stdout.show("e_lumo = ",e_lumo)
+   stdout.show("e_fermi= ",e_fermi)
+   stdout.show("gap    = ",homo_lumo_gap)
+   stdout.show("T      = ",T)
+ ! print *,"beta   = ",beta
+     do j = 1,n_orb        ! These are the occupation numbers
+        i = ind(j)
+   print *,"eig          = ",occ(i)
+   print *,"delta        = ",(occ(i)-e_fermi)
+   print *,"beta delta   = ",beta*(occ(i)-e_fermi)
+        occ(i) = ONE/(ONE+exp(beta*(occ(i)-e_fermi)))
+     end                   ! The number of fractional orbitals
+ ! stdout.text("occ:")
+ ! stdout.put(occ(ind),"column")
+     if      (homo_lumo_gap>0.135d0) then; n_frac = 5
+     else if (homo_lumo_gap<0.090d0) then; n_frac = 3
+     else;                                 n_frac = 4
+     end
+     do j = 1,n_orb        ! Reset the fractional occupancies
+        i = ind(j)
+        if      (j<=n_e-n_frac) then; occ(i) = ONE
+        else if (j >n_e+n_frac) then; occ(i) = ZERO
+        end
+     end
+ ! stdout.show("n_frac = ",n_frac)
+ ! stdout.text("occ reset:")
+ ! stdout.put(occ(ind),"column")
+     occ = n_e*occ/sum(occ)
+ ! stdout.text("occ renormalised:")
+ ! stdout.put(occ(ind),"column")
+     D = ZERO
+     do j = 1,n_e+n_frac   ! Form the temperature broadended density
+        i = ind(j)
+        D.plus_scaled_product_of(MO(:,i:i),MO(:,i:i),fac=occ(i),transpose_b=TRUE)
+     end
+     ind.destroy
+     occ.destroy
    end
 
    make_ao_density_matrix ::: leaky
@@ -6636,40 +6757,19 @@ contains
    initialise_scfdata
    ! Initialise the scf data, including iteration counters
    ENSURE(.scfdata.created,"no scfdata")
-     dft_energy_correction :: REAL
-     if (.scfdata.is_DFT_calculation) then
-       dft_energy_correction = .scfdata.dft_energy_correction ! save this
-       .scfdata.reset(nuclear_energy=.nuclear_energy, &
-                      energy=.scf_energy+dft_energy_correction, &
-                      kinetic_energy=.kinetic_energy, &
-                      dft_energy_correction=dft_energy_correction, &
-                      crystal=.crystal)
-     else
-       .scfdata.reset(nuclear_energy=.nuclear_energy, &
-                      energy=.scf_energy, &
-                      kinetic_energy=.kinetic_energy, &
-                      dft_energy_correction=ZERO, &
-                      crystal=.crystal)
-     end
+     .scfdata.reset                         ! Reset everything (except DFT parts)
+     .scfdata.nuclear_energy = .nuclear_energy
+     .scfdata.kinetic_energy = .kinetic_energy
+     .scfdata.set_energy(.scf_energy,.crystal)
    end
 
    update_scfdata
    ! Update the scf iteration count, scf energy and property data. The energy
    ! differences are used to test for convergence in the SCF procedure.
    ENSURE(.scfdata.created,"no scfdata")
-     dft_energy_correction :: REAL
-     if (.scfdata.is_DFT_calculation) then
-       dft_energy_correction = .scfdata.dft_energy_correction ! save this
-       .scfdata.update(energy=.scf_energy+dft_energy_correction, &
-                       kinetic_energy=.kinetic_energy, &
-                       dft_energy_correction=dft_energy_correction, &
-                       crystal=.crystal)
-     else
-       .scfdata.update(energy=.scf_energy, &
-                       kinetic_energy=.kinetic_energy, &
-                       dft_energy_correction=ZERO, &
-                       crystal=.crystal)
-     end
+     .scfdata.update_iteration
+     .scfdata.kinetic_energy = .kinetic_energy
+     .scfdata.update_energy(.scf_energy,.crystal)
    end
 
    initialise_scfdata_error
@@ -8023,7 +8123,7 @@ contains
 
      U.create(.n_bf,.n_bf)
      G.solve_eigenproblem(MO_energies,U)
-     U.make_diagonally_dominant
+   ! U.make_diagonally_dominant
      ! MO.to_product_of(X,U)
      G.to_product_of(MO,U)
      MO = G
@@ -8145,7 +8245,7 @@ contains
      stdout.show("The SCF energy is ", .scf_energy)
      stdout.show("The kinetic energy is ", .kinetic_energy)
      if (.scfdata.is_DFT_calculation) &
-     stdout.show("The Kohn-Sham DFT energy is ", .scf_energy+.scfdata.dft_energy_correction)
+     stdout.show("The Kohn-Sham DFT XC energy is ", .scfdata.dft_energy_correction)
    end
 
    kinetic_energy result (res)
@@ -8228,53 +8328,53 @@ contains
 
    scf_electronic_energy(P,F,core) result (res)
    ! Evaluates the SCF electronic energy as a trace of density "P" with
-   ! fock matrix "F". If "core" is present and FALSE, the core contribution
-   ! is not added.
+   ! fock matrix "F". If "core" is present and FALSE, the core contribution is
+   ! not added.  NOTE: this includes the DFT electronic energies, and it assumes
+   ! that these energy contributions were calculated at the time of the
+   ! formation of "F" from "P", and that they were stored in .scfdata.
      P,F :: OPMATRIX
      core :: BIN, optional
      res :: REAL
+   ENSURE(.scfdata.created,"no scfdata")
      add_core :: BIN
-     scf_kind :: STR
      Fr :: MAT{REAL}*
      Fc :: MAT{CPX}*
-     scf_kind = .scfdata.scf_kind
      add_core = TRUE
      if (present(core)) add_core = core
-     select case (scf_kind)
-        case ("rhf","rks","xray_rhf","xray_rks", &
-              "embedded_rhf","crystal_rhf","noninteracting-group-rhf")
+     select case (.scfdata.scf_kind)
+        case ("rhf","xray_rhf","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
            Fr.create(.n_bf,.n_bf)
            Fr = F.restricted
            if (add_core) .add_core_hamiltonian(Fr)
            res = HALF * P.restricted.trace_product_with(Fr)
            Fr.destroy
-!        case ("xray_rks","rks")
-!           Fr.create(.n_bf,.n_bf)
-!           Fr = F.restricted
-!           if (add_core) .add_core_hamiltonian(Fr)
-!           res = HALF * P.restricted.trace_product_with(Fr)
-!           res = res + .ex_corr_energy_term
-!           Fr.destroy
-        case ("uhf","uks","xray_uhf","xray_uks","rohf", &
-              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+        case ("rks","xray_rks")
+           Fr.create(.n_bf,.n_bf)
+           Fr = F.restricted
+           if (add_core) .add_core_hamiltonian(Fr)
+           res = HALF * P.restricted.trace_product_with(Fr) &
+               + .scfdata.dft_energy_correction
+           Fr.destroy
+        case ("uhf","xray_uhf","rohf","pnd_uhf","xray_pnd_uhf")
            Fr.create(.n_bf,.n_bf);
-           Fr = F.alpha
+           Fr = F.alpha 
            if (add_core) .add_core_hamiltonian(Fr)
            res = HALF * P.alpha.trace_product_with(Fr)
-           Fr = F.beta
+           Fr = F.beta 
            if (add_core) .add_core_hamiltonian(Fr)
-           res = HALF * P.beta.trace_product_with(Fr) + res
+           res = res + HALF * P.beta.trace_product_with(Fr)
            Fr.destroy
-!        case ("uks","xray_uks")
-!           Fr.create(.n_bf,.n_bf);
-!           Fr = F.alpha
-!           if (add_core) .add_core_hamiltonian(Fr)
-!           res = HALF * P.alpha.trace_product_with(Fr)
-!           Fr = F.beta
-!           if (add_core) .add_core_hamiltonian(Fr)
-!           res = HALF * P.beta.trace_product_with(Fr) + res
-!           Fr.destroy
-!           res = res + .u_KS_energy_correction(P)
+        case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
+           Fr.create(.n_bf,.n_bf);
+           Fr = F.alpha 
+           if (add_core) .add_core_hamiltonian(Fr)
+           res = HALF * P.alpha.trace_product_with(Fr) &
+               + .scfdata.dft_alpha_energy_correction
+           Fr = F.beta 
+           if (add_core) .add_core_hamiltonian(Fr)
+           res = res + HALF * P.beta.trace_product_with(Fr) &
+                     + .scfdata.dft_beta_energy_correction
+           Fr.destroy
         case ("gchf")
            Fc.create(2*.n_bf,2*.n_bf);
            Fc = F.general_complex
@@ -8282,7 +8382,7 @@ contains
            res = HALF * P.general_complex.trace_product_with(Fc)
            Fc.destroy
         case default
-           DIE("unknown scf kind, "//trim(scf_kind))
+           DIE("unknown scf kind, "//trim(.scfdata.scf_kind))
      end
    end
 
@@ -8341,7 +8441,7 @@ contains
    scf_electronic_energies result (res) ::: leaky
    ! Evaluates the SCF electronic energies as a trace of density "P" with
    ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
-   ! energies.
+   ! energies. NOTE: this includes the DFT energy contributions.
      res :: VEC{REAL}*
      res => .scf_electronic_energies(.density_matrix,.fock_matrix)
    end
@@ -8349,23 +8449,28 @@ contains
    scf_electronic_energies(P,F) result (res) ::: leaky
    ! Evaluates the SCF electronic energies as a trace of density "P" with
    ! fock matrix "F". In the case of UHF the energies are the E^alpha and E^beta
-   ! energies.
+   ! energies. NOTE: this includes the DFT electronic energies, and it assumes
+   ! that these energy contributions were calculated at the time of the
+   ! formation of "F" from "P", and that they were stored in .scfdata.
      P,F :: OPMATRIX
      res :: VEC{REAL}*
-     scf_kind :: STR
+   ENSURE(.scfdata.created,"no scfdata")
      Fr :: MAT{REAL}*
-     Fc :: MAT{CPX}*
-     scf_kind = .scfdata.scf_kind
-     select case (scf_kind)
-        case ("rhf","rks","xray_rhf","xray_rks", &
-              "embedded_rhf","crystal_rhf","noninteracting-group-rhf")
+     select case (.scfdata.scf_kind)
+        case ("rhf","xray_rhf","embedded_rhf","crystal_rhf","noninteracting-group-rhf")
            res.create(1)
            Fr.create(.n_bf,.n_bf)
            Fr = F.restricted; .add_core_hamiltonian(Fr)
            res(1) = HALF * P.restricted.trace_product_with(Fr)
            Fr.destroy
-        case ("uhf","uks","xray_uhf","xray_uks","rohf", &
-              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+        case ("rks","xray_rks")
+           res.create(1)
+           Fr.create(.n_bf,.n_bf)
+           Fr = F.restricted; .add_core_hamiltonian(Fr)
+           res(1) = HALF * P.restricted.trace_product_with(Fr) &
+                  + .scfdata.dft_energy_correction
+           Fr.destroy
+        case ("uhf","xray_uhf","rohf","pnd_uhf","xray_pnd_uhf")
            res.create(2)
            Fr.create(.n_bf,.n_bf);
            Fr = F.alpha; .add_core_hamiltonian(Fr)
@@ -8373,8 +8478,18 @@ contains
            Fr = F.beta; .add_core_hamiltonian(Fr)
            res(2) = HALF * P.beta.trace_product_with(Fr)
            Fr.destroy
+        case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
+           res.create(2)
+           Fr.create(.n_bf,.n_bf);
+           Fr = F.alpha; .add_core_hamiltonian(Fr)
+           res(1) = HALF * P.alpha.trace_product_with(Fr) &
+                  + .scfdata.dft_alpha_energy_correction
+           Fr = F.beta; .add_core_hamiltonian(Fr)
+           res(2) = HALF * P.beta.trace_product_with(Fr) &
+                  + .scfdata.dft_beta_energy_correction
+           Fr.destroy
         case default
-           DIE("unknown or unimplemented scf kind, "//trim(scf_kind))
+           DIE("unknown or unimplemented scf kind, "//trim(.scfdata.scf_kind))
      end
    end
 
@@ -9351,6 +9466,9 @@ contains
 
    accelerate_fock_matrix
    ! Accelerate the convergence of the fock matrix, currently only using DIIS.
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.fock_matrix.created,"no fock matrix")
+   ENSURE(.density_matrix.created,"no density matrix")
      scf_kind :: STR
      S :: MAT{REAL}*
      J,C :: OPMATRIX*
@@ -9476,8 +9594,8 @@ contains
      else;                      archive.set(.name,"fock_matrix",genre)   
      end
      do_delta_build = .scfdata.do_delta_build AND delta_archive.exists AND archive.exists
-     if (do_delta_build) then
-        dF.create(.n_bf)
+     if (do_delta_build) then         ! DO NOT do exchange correlation part
+        dF.create(.n_bf)              ! It does not work with delta build
         dP.create(.n_bf)
         delta_archive.read(dP)
         .make_fock_matrix(dP,dF,core=FALSE,r12=r12,xc=FALSE)
@@ -9488,7 +9606,7 @@ contains
      else
         .make_fock_matrix(.density_matrix,.fock_matrix,core,r12,xc=FALSE)
      end
-     if (DFT_calculation) then
+     if (DFT_calculation) then        ! Now explicitly do the XC part if needed
         if (.scfdata.using_delta_build) archive.write(.fock_matrix) ! Archive for delta build
         .add_XC_matrix(.fock_matrix)
      end
@@ -9506,6 +9624,9 @@ contains
      direct :: BIN
      direct = .scfdata.using_direct_scf
      if (NOT direct) .get_ERI_integrals
+     .scfdata.dft_energy_correction       = ZERO ! Set these to zero since
+     .scfdata.dft_alpha_energy_correction = ZERO ! they may be calculated
+     .scfdata.dft_beta_energy_correction  = ZERO
      select case (.scfdata.scf_kind)
         case ("rhf","xray_rhf","embedded_rhf")
            .make_r_fock(P,F,direct,core,r12)
@@ -12231,7 +12352,7 @@ contains
       if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(K,E)
       else;                                    .add_LDA_XC_matrix(K,E)
       end
-      .scfdata.set(dft_energy_correction=E)
+      .scfdata.dft_energy_correction = E
    end
 
    add_LDA_XC_matrix(K,E)
@@ -12504,19 +12625,20 @@ contains
    add_XC_matrix(Ka,Kb)
    ! Calculate the exchange correlation matrix numerically.
       Ka,Kb :: MAT{REAL}
-      E :: REAL
-      if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(Ka,Kb,E)
-      else;                                    .add_LDA_XC_matrix(Ka,Kb,E)
+      E,Ea,Eb :: REAL
+      if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(Ka,Kb,E,Ea,Eb)
+      else;                                    .add_LDA_XC_matrix(Ka,Kb,E,Ea,Eb)
       end
-    !                                          .add_LDA_XC_matrix(Ka,Kb,E)
-      .scfdata.set(dft_energy_correction=E)
+      .scfdata.dft_energy_correction = E
+      .scfdata.dft_alpha_energy_correction = Ea
+      .scfdata.dft_beta_energy_correction = Eb
    end
 
-   add_LDA_XC_matrix(Ka,Kb,E)
+   add_LDA_XC_matrix(Ka,Kb,E,Ea,Eb)
    ! Add the exchange and correlation matrices to K. This routine supports
    ! local functional only, either exchange or correlation.
       Ka,Kb :: MAT{REAL}, target
-      E :: REAL
+      E,Ea,Eb :: REAL
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
@@ -12533,7 +12655,9 @@ contains
       Va.create(.n_bf,.n_bf)                    ! Use temporary V for parallelisation
       Vb.create(.n_bf,.n_bf)
       nullify(a0); nullify(b0)
-      E = ZERO
+    ! E = ZERO
+      Ea = ZERO
+      Eb = ZERO
       do q = 1,.no_of_atom_pairs
          if (NOT .overlapping_atoms(q)) cycle
          .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
@@ -12579,7 +12703,7 @@ contains
             ab0 = a0(:,a)*b0(:,b)
             Va_ab = sum(V0a*ab0) 
             Vb_ab = sum(V0b*ab0) 
-            E_ab  = sum(E0 *ab0)
+            E_ab  = fac*sum(E0 *ab0)
             aa = fa + a
             bb = fb + b
             Va(aa,bb) = Va_ab                     
@@ -12588,7 +12712,9 @@ contains
           ! W(aa,bb)  = sum(E0*ab0)  ! Make the DFT energy correction matrix
             Da_ab = .density_matrix.alpha(aa,bb)
             Db_ab = .density_matrix.beta(aa,bb)
-            E = E + fac*E_ab*(Da_ab+Db_ab)
+          ! E = E + fac*E_ab*(Da_ab+Db_ab)
+            Ea = Ea + E_ab*Da_ab
+            Eb = Eb + E_ab*Db_ab
   ! stdout.show("Va =",Va_ab)
   ! stdout.show("Vb =",Vb_ab)
   ! stdout.show("e  =",sum(E0*ab0))
@@ -12613,23 +12739,18 @@ contains
       Vb.symmetric_reflect
       Ka = Ka + Va
       Kb = Kb + Vb
-      E = E - HALF*.density_matrix.alpha.trace_of_product_with(Va) &
-            - HALF* .density_matrix.beta.trace_of_product_with(Vb)
-    ! Ka.symmetric_reflect
-    ! Kb.symmetric_reflect
-    ! Va = -HALF*Va + W
-    ! Vb = -HALF*Vb + W
-    ! E = .density_matrix.alpha.trace_of_product_with(Va) &
-    !   +  .density_matrix.beta.trace_of_product_with(Vb)
+      Ea = Ea - HALF*.density_matrix.alpha.trace_of_product_with(Va)
+      Eb = Eb - HALF* .density_matrix.beta.trace_of_product_with(Vb)
+      E  = Ea + Eb
       Vb.destroy; Va.destroy
       W.destroy
    end
 
-   add_GGA_XC_matrix(Ka,Kb,E)
+   add_GGA_XC_matrix(Ka,Kb,E,Ea,Eb)
    ! Add the exchange and correlation matrices to K. This routine supports
    ! local functional only, either exchange or correlation.
       Ka,Kb :: MAT{REAL}, target
-      E :: REAL
+      E,Ea,Eb :: REAL
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
@@ -12647,7 +12768,9 @@ contains
       Va.create(.n_bf,.n_bf)                    ! Use temporary V for parallelisation
       Vb.create(.n_bf,.n_bf)
       nullify(a0); nullify(b0)
-      E = ZERO
+    ! E = ZERO
+      Ea = ZERO
+      Eb = ZERO
       do q = 1,.no_of_atom_pairs
          if (NOT .overlapping_atoms(q)) cycle
          .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
@@ -12717,7 +12840,7 @@ contains
             ab0 = a0(:,a)*b0(:,b)
             Va_ab = sum(V0a*ab0) 
             Vb_ab = sum(V0b*ab0) 
-            E_ab  = sum(E0 *ab0)  ! Make the DFT energy correction matrix
+            E_ab  = fac*sum(E0 *ab0)  ! Make the DFT energy correction matrix
             do i = 1,3
                ab0 = a1(:,a,i)*b0(:,b) + a0(:,a)*b1(:,b,i)
                Va_ab = Va_ab + sum(V1a(:,i)*ab0)
@@ -12727,10 +12850,11 @@ contains
             bb = fb + b
             Va(aa,bb) = Va_ab                     
             Vb(aa,bb) = Vb_ab                     
-          ! W(aa,bb)  = E_ab
             Da_ab = .density_matrix.alpha(aa,bb)
             Db_ab = .density_matrix.beta(aa,bb)
-            E = E + fac*E_ab*(Da_ab+Db_ab)
+          ! E = E + fac*E_ab*(Da_ab+Db_ab)
+            Ea = Ea + E_ab*Da_ab
+            Eb = Eb + E_ab*Db_ab
   ! stdout.show("Va =",Va_ab)
   ! stdout.show("Vb =",Vb_ab)
   ! stdout.show("E  =",E)
@@ -12760,14 +12884,11 @@ contains
       Vb.symmetric_reflect
       Ka = Ka + Va
       Kb = Kb + Vb
-      E = E - HALF*.density_matrix.alpha.trace_of_product_with(Va) &
-            - HALF* .density_matrix.beta.trace_of_product_with(Vb)
-    ! Va = -HALF*Va + W
-    ! Vb = -HALF*Vb + W
-    ! Va.symmetric_reflect
-    ! Vb.symmetric_reflect
-    ! E = .density_matrix.alpha.trace_of_product_with(Va) &
-    !   +  .density_matrix.beta.trace_of_product_with(Vb)
+      Ea = Ea - HALF*.density_matrix.alpha.trace_of_product_with(Va) 
+      Eb = Eb - HALF* .density_matrix.beta.trace_of_product_with(Vb) 
+      E  = Ea + Eb
+    ! E = E - HALF*.density_matrix.alpha.trace_of_product_with(Va) &
+    !       - HALF* .density_matrix.beta.trace_of_product_with(Vb)
       Vb.destroy; Va.destroy
       W.destroy
    end
@@ -17402,14 +17523,29 @@ contains
          arch.write_a_la_xdgraph(grid,.grid,.atom)
       else
          select case (.grid.plot_format) ! dump specified format
-            case ("contour");         arch.write_contour_a_la_nancy(grid,.grid,.atom)
-            case ("cube");            arch.write_gaussian_cube(grid,.grid,.atom,name)
-            case ("gnuplot");         arch.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
-            case ("gaussian");        arch.write_gaussian_cube(grid,.grid,.atom,name)
-            case ("gaussian.cube");   arch.write_gaussian_cube(grid,.grid,.atom,name)
-            case ("mathematica");     arch.write_mathematica(grid, .grid.n_x, .grid.n_y, .grid.n_z)
-            case ("xdgraph");         arch.write_a_la_xdgraph(grid,.grid,.atom)
-            case default; UNKNOWN(.grid.plot_format)
+            case ("contour")
+               arch.set(.name,name,format="contour")
+               arch.write_contour_a_la_nancy(grid,.grid,.atom)
+            case ("cube")
+               arch.set(.name,name,format="gaussian.cube")
+               arch.write_gaussian_cube(grid,.grid,.atom,name)
+            case ("gnuplot")
+               arch.set(.name,name,format="gnuplot")
+               arch.write_gnuplot(grid, .grid.n_x, .grid.n_y, .grid.n_z)
+            case ("gaussian")
+               arch.set(.name,name,format="gaussian.cube")
+               arch.write_gaussian_cube(grid,.grid,.atom,name)
+            case ("gaussian.cube")
+               arch.set(.name,name,format="gaussian.cube")
+               arch.write_gaussian_cube(grid,.grid,.atom,name)
+            case ("mathematica")
+               arch.set(.name,name,format="mathematica")
+               arch.write_mathematica(grid, .grid.n_x, .grid.n_y, .grid.n_z)
+            case ("xdgraph")
+               arch.set(.name,name,format="xdgraph")
+               arch.write_a_la_xdgraph(grid,.grid,.atom)
+            case default
+               UNKNOWN(.grid.plot_format)
          end
       end
    end

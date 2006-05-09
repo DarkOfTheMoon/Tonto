@@ -126,7 +126,9 @@ contains
      .kinetic_energy          = ZERO
      .energy                  = ZERO
      .old_energy              = ZERO
-     .dft_energy_correction   = ZERO
+     .dft_energy_correction       = ZERO
+     .dft_alpha_energy_correction = ZERO
+     .dft_beta_energy_correction  = ZERO
      .energy_difference       = ZERO
      ! Constrained SCF/Crystal SCF data
      .lambda                  = ZERO
@@ -164,6 +166,7 @@ contains
      .diis.iteration          = -1
      .diis_error              = ZERO
      .old_diis_error          = ZERO
+     .diis_error_temp_cutoff  = DIIS_ERROR_TEMP_CUTOFF
      ! General Complex HF options
      .sl_1e_factor            = ONE
      .sl_2e_factor            = ONE
@@ -182,6 +185,7 @@ contains
      .using_bs_term           = TRUE
      .using_bs_t_term         = TRUE
      .using_damping           = SCFDATA_USING_DAMPING ! TRUE
+     .using_pFON              = FALSE
      .using_delta_build       = FALSE
      .using_direct_scf        = FALSE
      .using_dynamic_damping   = FALSE
@@ -195,46 +199,18 @@ contains
      .using_rough_convergence = SCFDATA_USING_ROUGH_CONVERGENCE ! TRUE
    end
 
-   set(nuclear_energy,energy,kinetic_energy,dft_energy_correction,crystal)
-   ! Set various parts of the scfdata type.
-     nuclear_energy,energy,kinetic_energy,dft_energy_correction :: REAL, IN, optional
-     crystal :: CRYSTAL*, optional
-     if (present(nuclear_energy))        .nuclear_energy = nuclear_energy
-     if (present(dft_energy_correction)) .dft_energy_correction = dft_energy_correction
-     if (present(crystal)) then
+   set_energy(energy,crystal)
+   ! Set the energy and crystal data. The latter is needed in constrained fits,
+   ! to set the penalty value.
+     energy :: REAL, IN
+     crystal :: CRYSTAL*
      if (associated(crystal)) then
        .crystal => crystal
-       .set_penalty 
+       if (.fitting) .set_penalty 
      end
-     end
-     if (present(energy)) then
-       .energy = energy
-       if (.fitting) .fit_value = energy + .lambda * .penalty
-     end
-     if (present(kinetic_energy))    .kinetic_energy = kinetic_energy
-   end
-
-   reset(nuclear_energy,energy,kinetic_energy,dft_energy_correction,crystal)
-   ! Reset SCF energy and iteration data , but don't change
-   ! nuclear_energy, convergence, direct, or max_it options
-      nuclear_energy,energy,kinetic_energy,dft_energy_correction :: REAL, IN, optional
-      crystal :: CRYSTAL*, optional
-     .energy                = ZERO
-     .fit_value             = ZERO
-     .old_fit_value         = ZERO
-     .kinetic_energy        = ZERO
-     .old_energy            = ZERO
-     .dft_energy_correction = ZERO
-     .iteration             = 0
-     .diis.iteration        = -1
-     .total_iterations      = 0
-     .lambda_iteration      = 0
-     .penalty               = ZERO
-     .old_eri_cutoff        = .eri_cutoff
-     .set(nuclear_energy,energy,kinetic_energy,dft_energy_correction,crystal)
-     if (present(energy)) .energy_difference = energy
-     if (present(crystal)) .old_fit_value = ZERO
-     if (present(dft_energy_correction)) .dft_energy_correction = dft_energy_correction
+     .energy = energy
+     if (.fitting) .fit_value = energy + .lambda * .penalty
+     .energy_difference = energy
    end
 
    set_penalty
@@ -252,7 +228,28 @@ contains
          ENSURE(.crystal.pnd_data.created,"No PND diffraction data")
          ENSURE(.crystal.xray_data.created,"No X-ray diffraction data")
          .penalty = log(.crystal.xray_data.F_chi2*.crystal.pnd_data.F_chi2)
+       case default
+         DIE("this is not a constrained scf")
       end    
+   end
+
+   reset
+   ! Reset SCF energy and iteration data , but don't change
+   ! nuclear_energy, convergence, direct, or max_it options
+     .energy                = ZERO
+     .fit_value             = ZERO
+     .old_fit_value         = ZERO
+     .kinetic_energy        = ZERO
+     .old_energy            = ZERO
+   ! .dft_energy_correction = ZERO
+   ! .dft_alpha_energy_correction = ZERO
+   ! .dft_beta_energy_correction  = ZERO
+     .iteration             = 0
+     .diis.iteration        = -1
+     .total_iterations      = 0
+     .lambda_iteration      = 0
+     .penalty               = ZERO
+     .old_eri_cutoff        = .eri_cutoff
    end
 
    reset_iteration_count
@@ -271,20 +268,23 @@ contains
      .fit_value        = .energy + .lambda * .penalty
    end
 
-   update(energy,kinetic_energy,dft_energy_correction,crystal)
-   ! Update the SCF energy and/or chi2 and increment iteration and any other
-   ! data of use in the SCF calculation.
-     energy,kinetic_energy,dft_energy_correction :: REAL, IN, optional
-     crystal :: CRYSTAL*, optional
-     .old_fit_value = .fit_value
-     .old_energy = .energy
-     .set(energy=energy,kinetic_energy=kinetic_energy, &
-                dft_energy_correction=dft_energy_correction,crystal=crystal)
+   update_iteration
+   ! Update the SCF iteration
+     energy :: REAL
      .iteration = .iteration + 1
      .total_iterations = .total_iterations + 1
-     .energy_difference = .energy - .old_energy
      ! For updating the fock matrix in incremental builds
      .old_eri_cutoff = .eri_cutoff
+   end
+
+   update_energy(energy,crystal)
+   ! Update the SCF energy
+     energy :: REAL
+     crystal :: CRYSTAL*
+     .old_energy = .energy
+     .old_fit_value = .fit_value
+     .set_energy(energy,crystal)
+     .energy_difference = .energy - .old_energy
    end
 
    set_diis_error(err)
@@ -460,6 +460,30 @@ contains
      end
    end
 
+   temperature_for_pFON result(res)
+   ! Return the temperature (in Kelvin) to use in the pFON method.
+   ! The temperature applies from iteration 0 i.e. theinitial guess
+   ! NOTE: To see whether to apply pFON use .apply_pFON
+     res :: REAL
+     if (.using_pFON) then
+        if      (.diis_error<.diis_error_temp_cutoff) then; res = ZERO
+        else if (.iteration<20) then;                       res = 1000d0 - 50*.iteration
+        else;                                               res = ZERO
+        end
+     else
+                                                            res = ZERO
+     end
+   end
+
+   apply_pFON result(res)
+   ! Return TRUE if pFON is to be applied this iteration.
+      res :: BIN
+      if      (NOT .using_pFON) then;                     res = FALSE
+      else if (.diis_error<.diis_error_temp_cutoff) then; res = FALSE
+      else;                                               res = .iteration<20
+      end
+   end
+
 !  *************
 !  Input methods
 !  *************
@@ -491,6 +515,7 @@ contains
          case ("dft_exchange_functional=     "); .read_exchange_functional
        ! case ("diis=                        "); .read_fock_diis
          case ("diis=                        "); .read_diis
+         case ("diis_error_temp_cutoff=      "); stdin.read(.diis_error_temp_cutoff)
          case ("direct=                      "); .read_direct
          case ("eri_cutoff=                  "); .read_eri_limit
          case ("eri_pair_cutoff=             "); .read_eri_pair_cutoff
@@ -544,6 +569,7 @@ contains
          case ("use_nudo=                    "); stdin.read(.using_NUDO)
          case ("use_pie=                     "); stdin.read(.using_PIE)
          case ("use_previous_diis_info=      "); stdin.read(.using_previous_diis_info)
+         case ("use_pfon=                    "); stdin.read(.using_pFON)
          case ("use_rough_convergence=       "); stdin.read(.using_rough_convergence)
          case ("xc_atom_separation_cutoff=   "); stdin.read(.XC_atom_separation_cutoff)
          case default;           UNKNOWN(word)
@@ -565,6 +591,12 @@ contains
       end
       if      (.using_MO_diis) then;   .diis.set_archive_name("DIIS")
       else if (.using_fock_diis) then; .diis.set_archive_name("DIIS")
+      end
+      if (.using_fock_diis) then
+      if (.diis.genre=="ediis" OR .diis.genre=="energy_diis" OR .diis.genre=="ediis+diis") then
+         .using_damping = FALSE
+         .using_level_shift = FALSE
+      end
       end
    end
 
@@ -1023,9 +1055,9 @@ contains
      stdout.text("Initial guess energies:")
      stdout.flush
      stdout.show("Nuclear Energy                = ", .nuclear_energy)
-     stdout.show("Electronic Energy             = ", .energy)
+     stdout.show("Electronic Energy             = ", .energy-.nuclear_energy)
      stdout.show("Kinetic Energy                = ", .kinetic_energy)
-     stdout.show("Total Energy                  = ", .energy+.nuclear_energy)
+     stdout.show("Total Energy                  = ", .energy)
      stdout.flush
      stdout.text("SCF termination criteria:")
      stdout.flush
@@ -1232,19 +1264,19 @@ contains
            diis_stage = 1
         end
         end
-        if (diis_up AND .apply_diis AND .diis.subspace_saturated) then
-           n = n + 1
-           info(n) = " *DIIS replaced iterate="//.diis.new.to_str.trim
-        end
-        if (diis_up AND .apply_diis AND .diis.was_stuck) then
-           n = n + 1
-           info(n) = " *DIIS was stuck, kept best"
-           diis_up = FALSE
-        end
         if (NOT diis_up AND .apply_diis AND .diis.subspace_saturated) then
            n = n + 1
            info(n) = " *DIIS subspace saturated"
            diis_up = TRUE
+        end
+        if (diis_up AND .apply_diis AND NOT .diis.subspace_saturated) then
+           n = n + 1
+           info(n) = " *DIIS was stuck, kept best"
+           diis_up = FALSE
+        end
+        if (.apply_diis AND .diis.subspace_saturated) then
+           n = n + 1
+           info(n) = " *DIIS replaced iterate="//.diis.new.to_str.trim
         end
         if (.using_dynamic_damping AND .dynamic_damp_factor > TOL(7)) then
            n = n + 1
