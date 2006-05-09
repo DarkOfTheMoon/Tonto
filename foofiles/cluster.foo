@@ -5,15 +5,14 @@
 ! An object to store information pertaining to a cluster of atoms or molecules
 ! generated from an underlying crystal structure.
 !
-! A lot of information regarding the cluster is generated, most notably the
-! symop operators which generate the cluster atoms from the asymmetric unit
-! parents, and (if possible) the symops operators which generate the cluster
-! from the fragment itself. The former is used for creating a molecule from the
-! cluster, resolving all basis sets and thermal tensors from the minimal unit,
-! while the latter is used for crystal claculations based on an embedded
-! molecular unit, where the minimal unit is too small.
+! A lot of information regarding the cluster is generated -- like the unit cell
+! connection table, the atom connection table, the occupation list (unit cell
+! atom numbers plus cell translation vectors), and the unit cell atom numbers. 
+! The symmetry operators for each atom are also available from the unit cell
+! numbers if the crystal information is available (it should be, otherwise
+! we can't generate a cluster!).
 !
-! Note: an associated crystal and atom list should be supplied. It is intended
+! NOTE: an associated crystal and atom list should be supplied. It is intended
 ! that these will come from the molecule which generates the cluster (perhaps a
 ! cluster should contain a molecule?). 
 !
@@ -60,7 +59,6 @@ contains
       nullify(.fragment_geometry)
       nullify(.shift)
       nullify(.shift_for_atom)
-      nullify(.unit_cell_atom_for_atom)
       nullify(.fragment_symop)
       nullify(.fragment_symop_for_atom)
       nullify(.fragment_parents_for_atom)
@@ -71,6 +69,7 @@ contains
       nullify(.occupation_list)
       nullify(.molecule_for_atom)
       nullify(.atom_connection)
+      nullify(.unit_cell_atom_for_atom)
    end
 
    destroy_ptr_part ::: leaky
@@ -95,7 +94,6 @@ contains
       .geometry.destroy
       .shift.destroy
       .shift_for_atom.destroy
-      .unit_cell_atom_for_atom.destroy
       .fragment_symop.destroy
       .fragment_symop_for_atom.destroy
       .fragment_parents_for_atom.destroy
@@ -106,6 +104,7 @@ contains
       .occupation_list.destroy
       .molecule_for_atom.destroy
       .atom_connection.destroy
+      .unit_cell_atom_for_atom.destroy
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -136,7 +135,6 @@ contains
       if (cluster.fragment_geometry.created)       .fragment_geometry.create_copy(cluster.fragment_geometry)
       if (cluster.shift.created)                   .shift.create_copy(cluster.shift)
       if (cluster.shift_for_atom.created)          .shift_for_atom.create_copy(cluster.shift_for_atom)
-      if (cluster.unit_cell_atom_for_atom.created) .unit_cell_atom_for_atom.create_copy(cluster.unit_cell_atom_for_atom)
       if (cluster.fragment_symop.created)          .fragment_symop.create_copy(cluster.fragment_symop)
       if (cluster.fragment_symop_for_atom.created) .fragment_symop_for_atom.create_copy(cluster.fragment_symop_for_atom)
       if (cluster.is_fragment_atom.created)        .is_fragment_atom.create_copy(cluster.is_fragment_atom)
@@ -145,6 +143,7 @@ contains
       if (cluster.occupation_list.created)         .occupation_list.create_copy(cluster.occupation_list)
       if (cluster.molecule_for_atom.created)       .molecule_for_atom.create_copy(cluster.molecule_for_atom)
       if (cluster.atom_connection.created)         .atom_connection.create_copy(cluster.atom_connection)
+      if (cluster.unit_cell_atom_for_atom.created) .unit_cell_atom_for_atom.create_copy(cluster.unit_cell_atom_for_atom)
    end
 
    create(crystal,asymmetric_cell_atom) ::: leaky
@@ -895,6 +894,7 @@ contains
 
    extract_geometry ::: leaky
    ! Extract the geometry from the final .occupation list.
+   ! Also extract the unit cell atoms.
    ENSURE(.occupation_list.created,"no occupation_list")
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
@@ -902,6 +902,8 @@ contains
      .n_atoms = .occupation_list.dim
      .geometry.destroy
      .geometry.create(3,.n_atoms)
+     .unit_cell_atom_for_atom.destroy
+     .unit_cell_atom_for_atom.create(.n_atoms)
      .is_fragment_atom.destroy
      .is_fragment_atom.create(.n_atoms)
      i = 1
@@ -918,6 +920,7 @@ contains
         if (i<=.n_fragment_atoms) then; .is_fragment_atom(i) = TRUE 
         else;                           .is_fragment_atom(i) = FALSE
         end
+        .unit_cell_atom_for_atom(i) = u
      end
    end
 
@@ -1938,6 +1941,7 @@ contains
       if (.unit_cell_connection.created) .put_uc_connection_table
       if (.occupation_list.created)      .put_occupation_list
       .put_atom_connection_table
+      .put_atom_symmetry_table
    end
 
    put_fragment_geometry
@@ -2061,8 +2065,6 @@ contains
    ! Put the atom connection table
    ENSURE(.atom_connection.created,"no atom_connection")
    ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
-   ENSURE(.crystal.created,"no crystal")
-   ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
       m,n,a,b :: INT
       stdout.save
       stdout.set_int_width(5)
@@ -2091,184 +2093,235 @@ contains
       stdout.unsave
    end
 
+   put_atom_symmetry_table
+   ! Put the atom symmetry table i.e. those atoms in the cluste related by
+   ! symmetry.
+   ENSURE(.unit_cell_atom_for_atom.created,"no unit_cell_atom_for_atom")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.asym_atom_for_unit_cell_atom.created,"no crystal asym_atom_for_unit_cell_atom")
+   ENSURE(.crystal.symop_for_unit_cell_atom.created,"no crystal symop_for_unit_cell_atom")
+      asym_atom_for_atom,unique :: VEC{INT}*
+      symop :: MAT3{REAL}*
+      a,u,i :: INT
+      asym_atom_for_atom.create(.n_atoms)
+      do a = 1,.n_atoms
+           u = .unit_cell_atom_for_atom(a)
+           asym_atom_for_atom(a) = .crystal.asym_atom_for_unit_cell_atom(u) 
+      end
+      unique => asym_atom_for_atom.indices_of_unique_elements
+      stdout.flush
+      stdout.text("Asymmetric (unique) atoms:")
+      stdout.flush
+      stdout.show("n_asym_atoms =",unique.dim)
+      stdout.put(unique,"column")
+      stdout.flush
+      stdout.text("Asymmetric (unique) atoms for each atom in the cluster, and associated symop:")
+      stdout.flush
+      stdout.dash(int_fields=3)
+      stdout.put("Atom",int_width=TRUE)
+      stdout.put("Unique",int_width=TRUE)
+      stdout.put("Symop",int_width=TRUE)
+      stdout.flush
+      do a = 1,.n_atoms                       ! Loop over molecules
+         u = .unit_cell_atom_for_atom(a)
+         stdout.put(a)
+         stdout.put(asym_atom_for_atom(a))
+         stdout.put(.crystal.symop_for_unit_cell_atom(u))
+         stdout.flush
+      end
+      stdout.dash(int_fields=3)
+      unique.destroy
+      asym_atom_for_atom.destroy
+      stdout.flush
+      stdout.text("Symop matrices:")
+      symop => .crystal.xyz_seitz_matrices
+      do i = 1,symop.dim3
+         stdout.flush
+         stdout.text("Symop "//trim(i.to_str))
+         stdout.put(symop(:,:,i),"row_wise")
+         stdout.flush
+      end
+      symop.destroy
+   end
+
 ! old ... delete?
 
-   put_cluster_table
-   ! Put the cluster information table
-   ENSURE(.info_made,"call make_info first")
-      a,u,p,q :: INT
-      stdout.flush
-      stdout.text("Cluster geometry (crystal axis system):")
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=3,width=12)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.tab(real_fields=3)
-      stdout.put("U cell",int_width=TRUE)
-      stdout.put("A cell",int_width=TRUE)
-      stdout.put("Symop",width=12)
-      stdout.flush
-      stdout.put("#",int_width=TRUE)
-      stdout.put("x")
-      stdout.put("y")
-      stdout.put("z")
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("s",width=3)
-      stdout.put("h",width=3)
-      stdout.put("k",width=3)
-      stdout.put("l",width=3)
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=3,width=12)
-      stdout.flush
-      do a = 1,.n_atoms
-         stdout.put(a)
-         stdout.put(.geometry(1,a))
-         stdout.put(.geometry(2,a))
-         stdout.put(.geometry(3,a))
-         u = .unit_cell_atom_for_atom(a)
-         p = .crystal.asym_atom_for_unit_cell_atom(u)
-         q = .shift_for_atom(a)
-         stdout.put(u)
-         stdout.put(p)
-         stdout.put(.crystal.symop_for_unit_cell_atom(u),width=3)
-         stdout.put(.shift(1,q),width=3)
-         stdout.put(.shift(2,q),width=3)
-         stdout.put(.shift(3,q),width=3)
-         stdout.flush
-      end
-      stdout.dash(int_fields=3,real_fields=3,width=12)
-   end
-
-   put_fragment_cluster_table
-   ! Put the fragment cluster information table. This only works if
-   ! .do_fragment_symop has been set i.e. when the fragment_geometry includes
-   ! an asymmetric cell unit.
-   ENSURE(.info_made,"call make_info first")
-      n,u,a,f,p,q :: INT
-      if (NOT .do_fragment_symop) return
-      stdout.flush
-      stdout.text("Cluster geometry (crystal axis system):")
-      stdout.flush
-      stdout.dash(int_fields=6,real_fields=3,width=16)
-      stdout.tab(int_fields=1,real_fields=3)
-      stdout.put("Unit",int_width=TRUE)
-      stdout.put("Asym",int_width=TRUE)
-      stdout.put("Frag",int_width=TRUE)
-      stdout.put("Frag",int_width=TRUE)
-      stdout.put("Cluster",int_width=TRUE)
-      stdout.flush
-      stdout.put("Atom",int_width=TRUE)
-      stdout.tab(real_fields=3)
-      stdout.put("cell",int_width=TRUE)
-      stdout.put("cell",int_width=TRUE)
-      stdout.put("cell",int_width=TRUE)
-      stdout.put("parent",int_width=TRUE)
-      stdout.put("symop",int_width=TRUE)
-      stdout.put("Cluster symop",width=16)
-      stdout.flush
-      stdout.put("#",int_width=TRUE)
-      stdout.put("x")
-      stdout.put("y")
-      stdout.put("z")
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("atom",int_width=TRUE)
-      stdout.put("index",int_width=TRUE)
-      stdout.put("s",width=4)
-      stdout.put("h",width=4)
-      stdout.put("k",width=4)
-      stdout.put("l",width=4)
-      stdout.flush
-      stdout.dash(int_fields=6,real_fields=3,width=16)
-      stdout.flush
-      do n = 1,.n_atoms
-         u = .unit_cell_atom_for_atom(n)
-         a = .crystal.asym_atom_for_unit_cell_atom(u)
-         f = .crystal.frag_cell_for_unit_cell_atom(u)
-         p = .crystal.frag_atom_for_unit_cell_atom(u)
-         q = .fragment_symop_for_atom(n)
-         if (.asymmetric_cell_atom.created) then
-            stdout.put(.asymmetric_cell_atom(a).label.trim//" ("//n.to_str.trim//")",int_width=TRUE)
-         else
-            stdout.put(n)
-         end
-         stdout.put(.geometry(1,n))
-         stdout.put(.geometry(2,n))
-         stdout.put(.geometry(3,n))
-         stdout.put(u)
-         stdout.put(a)
-         stdout.put(f)
-         stdout.put(p)
-         stdout.put(q)
-         stdout.put(.fragment_symop(1,q),width=4)
-         stdout.put(.fragment_symop(2,q),width=4)
-         stdout.put(.fragment_symop(3,q),width=4)
-         stdout.put(.fragment_symop(4,q),width=4)
-         stdout.flush
-      end
-      stdout.dash(int_fields=6,real_fields=3,width=16)
-   end
-
-   put_fragment_parents_for_atom
-   ! Put the fragment_parents_for_atom  table ... only if the .do_fragment_symop
-   ! has been set i.e. when fragment_geometry includes an asymmetric cell unit.
-   ENSURE(.info_made,"call make_info first")
-      a,i :: INT
-      if (NOT .do_fragment_symop) return
-      stdout.flush
-      stdout.text("Fragment parents for atom table:")
-      stdout.flush
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("Symops",int_width=TRUE)
-      stdout.flush
-      stdout.tab(int_fields=1)
-      do i = 1,.n_fragment_symop
-      stdout.put(i.to_str.trim,width=4)
-      end
-      stdout.flush
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-      stdout.flush
-      do a = 1,.n_atoms
-         stdout.put(a)
-         do i = 1,.n_fragment_symop
-         stdout.put(.fragment_parents_for_atom(a,i).to_str.trim,width=4)
-         end
-         stdout.flush
-      end
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-   end
-
-   put_fragment_child_for_atom
-   ! Put the fragment_child_for_atom table ... only if the .do_fragment_symop
-   ! has been set i.e. when fragment_geometry includes an asymmetric cell unit.
-   ENSURE(.info_made,"call make_info first")
-      a,i :: INT
-      if (NOT .do_fragment_symop) return
-      stdout.flush
-      stdout.text("Fragment child for atom table:")
-      stdout.flush
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("Symops",int_width=TRUE)
-      stdout.flush
-      stdout.tab(int_fields=1)
-      do i = 1,.n_fragment_symop
-      stdout.put(i.to_str.trim,width=4)
-      end
-      stdout.flush
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-      stdout.flush
-      do a = 1,.n_atoms
-         stdout.put(a)
-         do i = 1,.n_fragment_symop
-         stdout.put(.fragment_child_for_atom(a,i).to_str.trim,width=4)
-         end
-         stdout.flush
-      end
-      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
-   end
+!   put_cluster_table
+!   ! Put the cluster information table
+!   ENSURE(.info_made,"call make_info first")
+!      a,u,p,q :: INT
+!      stdout.flush
+!      stdout.text("Cluster geometry (crystal axis system):")
+!      stdout.flush
+!      stdout.dash(int_fields=3,real_fields=3,width=12)
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.tab(real_fields=3)
+!      stdout.put("U cell",int_width=TRUE)
+!      stdout.put("A cell",int_width=TRUE)
+!      stdout.put("Symop",width=12)
+!      stdout.flush
+!      stdout.put("#",int_width=TRUE)
+!      stdout.put("x")
+!      stdout.put("y")
+!      stdout.put("z")
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("s",width=3)
+!      stdout.put("h",width=3)
+!      stdout.put("k",width=3)
+!      stdout.put("l",width=3)
+!      stdout.flush
+!      stdout.dash(int_fields=3,real_fields=3,width=12)
+!      stdout.flush
+!      do a = 1,.n_atoms
+!         stdout.put(a)
+!         stdout.put(.geometry(1,a))
+!         stdout.put(.geometry(2,a))
+!         stdout.put(.geometry(3,a))
+!         u = .unit_cell_atom_for_atom(a)
+!         p = .crystal.asym_atom_for_unit_cell_atom(u)
+!         q = .shift_for_atom(a)
+!         stdout.put(u)
+!         stdout.put(p)
+!         stdout.put(.crystal.symop_for_unit_cell_atom(u),width=3)
+!         stdout.put(.shift(1,q),width=3)
+!         stdout.put(.shift(2,q),width=3)
+!         stdout.put(.shift(3,q),width=3)
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=3,real_fields=3,width=12)
+!   end
+!
+!   put_fragment_cluster_table
+!   ! Put the fragment cluster information table. This only works if
+!   ! .do_fragment_symop has been set i.e. when the fragment_geometry includes
+!   ! an asymmetric cell unit.
+!   ENSURE(.info_made,"call make_info first")
+!      n,u,a,f,p,q :: INT
+!      if (NOT .do_fragment_symop) return
+!      stdout.flush
+!      stdout.text("Cluster geometry (crystal axis system):")
+!      stdout.flush
+!      stdout.dash(int_fields=6,real_fields=3,width=16)
+!      stdout.tab(int_fields=1,real_fields=3)
+!      stdout.put("Unit",int_width=TRUE)
+!      stdout.put("Asym",int_width=TRUE)
+!      stdout.put("Frag",int_width=TRUE)
+!      stdout.put("Frag",int_width=TRUE)
+!      stdout.put("Cluster",int_width=TRUE)
+!      stdout.flush
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.tab(real_fields=3)
+!      stdout.put("cell",int_width=TRUE)
+!      stdout.put("cell",int_width=TRUE)
+!      stdout.put("cell",int_width=TRUE)
+!      stdout.put("parent",int_width=TRUE)
+!      stdout.put("symop",int_width=TRUE)
+!      stdout.put("Cluster symop",width=16)
+!      stdout.flush
+!      stdout.put("#",int_width=TRUE)
+!      stdout.put("x")
+!      stdout.put("y")
+!      stdout.put("z")
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("atom",int_width=TRUE)
+!      stdout.put("index",int_width=TRUE)
+!      stdout.put("s",width=4)
+!      stdout.put("h",width=4)
+!      stdout.put("k",width=4)
+!      stdout.put("l",width=4)
+!      stdout.flush
+!      stdout.dash(int_fields=6,real_fields=3,width=16)
+!      stdout.flush
+!      do n = 1,.n_atoms
+!         u = .unit_cell_atom_for_atom(n)
+!         a = .crystal.asym_atom_for_unit_cell_atom(u)
+!         f = .crystal.frag_cell_for_unit_cell_atom(u)
+!         p = .crystal.frag_atom_for_unit_cell_atom(u)
+!         q = .fragment_symop_for_atom(n)
+!         if (.asymmetric_cell_atom.created) then
+!            stdout.put(.asymmetric_cell_atom(a).label.trim//" ("//n.to_str.trim//")",int_width=TRUE)
+!         else
+!            stdout.put(n)
+!         end
+!         stdout.put(.geometry(1,n))
+!         stdout.put(.geometry(2,n))
+!         stdout.put(.geometry(3,n))
+!         stdout.put(u)
+!         stdout.put(a)
+!         stdout.put(f)
+!         stdout.put(p)
+!         stdout.put(q)
+!         stdout.put(.fragment_symop(1,q),width=4)
+!         stdout.put(.fragment_symop(2,q),width=4)
+!         stdout.put(.fragment_symop(3,q),width=4)
+!         stdout.put(.fragment_symop(4,q),width=4)
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=6,real_fields=3,width=16)
+!   end
+!
+!   put_fragment_parents_for_atom
+!   ! Put the fragment_parents_for_atom  table ... only if the .do_fragment_symop
+!   ! has been set i.e. when fragment_geometry includes an asymmetric cell unit.
+!   ENSURE(.info_made,"call make_info first")
+!      a,i :: INT
+!      if (NOT .do_fragment_symop) return
+!      stdout.flush
+!      stdout.text("Fragment parents for atom table:")
+!      stdout.flush
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.put("Symops",int_width=TRUE)
+!      stdout.flush
+!      stdout.tab(int_fields=1)
+!      do i = 1,.n_fragment_symop
+!      stdout.put(i.to_str.trim,width=4)
+!      end
+!      stdout.flush
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!      stdout.flush
+!      do a = 1,.n_atoms
+!         stdout.put(a)
+!         do i = 1,.n_fragment_symop
+!         stdout.put(.fragment_parents_for_atom(a,i).to_str.trim,width=4)
+!         end
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!   end
+!
+!   put_fragment_child_for_atom
+!   ! Put the fragment_child_for_atom table ... only if the .do_fragment_symop
+!   ! has been set i.e. when fragment_geometry includes an asymmetric cell unit.
+!   ENSURE(.info_made,"call make_info first")
+!      a,i :: INT
+!      if (NOT .do_fragment_symop) return
+!      stdout.flush
+!      stdout.text("Fragment child for atom table:")
+!      stdout.flush
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!      stdout.put("Atom",int_width=TRUE)
+!      stdout.put("Symops",int_width=TRUE)
+!      stdout.flush
+!      stdout.tab(int_fields=1)
+!      do i = 1,.n_fragment_symop
+!      stdout.put(i.to_str.trim,width=4)
+!      end
+!      stdout.flush
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!      stdout.flush
+!      do a = 1,.n_atoms
+!         stdout.put(a)
+!         do i = 1,.n_fragment_symop
+!         stdout.put(.fragment_child_for_atom(a,i).to_str.trim,width=4)
+!         end
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=1,width=4*.n_fragment_symop)
+!   end
 
    put_tonto_input
    ! Outputs the tonto input file for the cluster, given additionally the list
@@ -2283,8 +2336,8 @@ contains
       stdout.text("   atoms= {")
       stdout.flush
       stdout.text("      keys= { label= ")
-      stdout.text('              "{ axis_system= crystal }" pos=')
-      stdout.text('              "{ units= angstrom^2 }" thermal_tensor= }')
+      stdout.text('              { axis_system= crystal } pos=')
+      stdout.text('              { units= angstrom^2 } thermal_tensor= }')
       stdout.flush
       stdout.text("      data= {")
       seitz => .crystal.transposed_xyz_seitz_matrices ! transposed !
