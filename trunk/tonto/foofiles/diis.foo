@@ -112,9 +112,10 @@ contains
 
    set_defaults ::: leaky
    ! Set up the default settings
-      .genre = DIIS_GENRE
-      .iteration = -1 ! The first time called it is iteration 0
+      .set_genre(DIIS_GENRE)
       .start_iteration = DIIS_START_ITERATION
+      .save_iteration = DIIS_SAVE_ITERATION
+      .iteration = -1 ! The first time called it is iteration 0
       .keep = DIIS_KEEP
       .kept = 0
       .new = 0
@@ -163,10 +164,16 @@ contains
       .genre = genre
       .genre.to_lower_case
       select case (.genre)
-         case("fdiis","fock_diis","diis")
-         case("ediis","energy_diis"); .set_force_convexity(TRUE)
          case("ddiis","density_diis")
+         case("fdiis","fock_diis","diis")
+         case("ediis","energy_diis")
+            .set_force_convexity(TRUE)
+            .set_save_iteration(0)
+            .set_start_iteration(0)
          case("ediis+diis")
+             .set_force_convexity(TRUE)
+            .set_save_iteration(0)
+            .set_start_iteration(0)
          case default; UNKNOWN(.genre)
       end
    end
@@ -490,6 +497,8 @@ contains
 ! **************************************************
 ! Generic DIIS Extrapolation and EDIIS interpolation
 ! **************************************************
+
+! These are not really used now, and are probably broken
 
    extrapolate(par,err) ::: template
    ! Generic DIIS extrapolation of the parameter vector "par", using "err" as the 
@@ -953,9 +962,7 @@ contains
          case("lhs,ediis,restricted")
           ! res = .oldest_item
             .get_old_r_rhs(rhs)
-            diag.create(dim)
-            res = diag(1:dim-1).index_of_maximum ! Worst item has the highest energy
-            diag.destroy
+            res = rhs(1:dim-1).index_of_maximum ! Worst item has the highest energy
             rhs.destroy
          case("lhs,ediis,unrestricted")
           ! res = .oldest_item
@@ -1125,38 +1132,12 @@ contains
       .energy => energy
       if (present(J))   .J => J
       select case (.genre)
-         case("fdiis","fock_diis","diis"); .extrapolate_F(F,D,S,energy,J)
-         case("ediis","energy_diis");      .interpolate_F(F,D,S,energy,J)
-         case("ddiis","density_diis");     .interpolate_D(D,F,S,J)
-         case("ediis+diis")
-            .set_diis_error_length
-            select case (.stage)
-               case (0) ! Still doing first EDIIS .....
-                  if (.error_length>=.start_tolerance) then
-                     .interpolate_F(F,D,S,energy,J)        ! Keep doing EDIIS
-                  else
-                     .stage = 1                            ! Begin first DIIS
-                     .extrapolate_F(F,D,S,energy,J)
-                  end
-               case (1) ! EDIIS has converged, but .....
-                  if (.error_length>=.start_tolerance) then
-                     .stage = 2                            ! Must go back to EDIIS
-                     .encore = 1
-                     .interpolate_F(F,D,S,energy,J)        ! Do first encore EDIIS
-                  else
-                     .extrapolate_F(F,D,S,energy,J)        ! Keep doing DIIS
-                  end
-               case (2) ! Keep doing EDIIS until reached the encore level
-                  if (.encore==.encore_iterations) then
-                     .encore = 0
-                     .stage = 1                            ! Go back to DIIS
-                     .extrapolate_F(F,D,S,energy,J) 
-                  else
-                     .encore = .encore + 1
-                     .interpolate_F(F,D,S,energy,J)        ! Keep doing EDIIS
-                  end
-            end
-         case default; UNKNOWN (.genre)
+         case("fdiis","fock_diis","diis"); .fdiis(F,D,S,energy,J)
+         case("ediis","energy_diis");      .ediis(F,D,S,energy,J)
+         case("ddiis","density_diis");     .ddiis(D,F,S,energy,J)
+         case("ediis+diis");               .ediis_plus_diis(F,D,S,energy,J)
+         case("ediis+ddiis");              .ediis_plus_ddiis(F,D,S,energy,J)
+         case default;                     UNKNOWN (.genre)
       end
    end
 
@@ -1275,9 +1256,101 @@ contains
       .encore = 0
    end
 
+! EDIIS + DIIS, EDIIS + DDIIS
+
+   ediis_plus_diis(F,D,S,energy,J)
+   ! Combined EDIIS at the start + DIIS or FDIIS at the end.
+      F,D :: OPMATRIX*
+      S :: MAT{REAL}*
+      energy :: VEC{REAL}*
+      J :: OPMATRIX*, optional
+   ENSURE(.archive.file_name/=" ","no archive name specified")
+      .F => F; .D => D; .S => S
+      .energy => energy
+      if (present(J))   .J => J
+      .set_diis_error_length
+      select case (.stage)
+         case (0) ! Still doing first EDIIS .....
+            if (.error_length>=.start_tolerance) then
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Keep doing EDIIS
+            else
+               .stage = 1                            ! Begin first DIIS
+               .set_force_convexity(FALSE)
+               .fdiis(F,D,S,energy,J)
+            end
+         case (1) ! EDIIS has converged, but .....
+            if (.error_length>=.start_tolerance) then
+               .stage = 2                            ! Must go back to EDIIS
+               .encore = 1
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Do first encore EDIIS
+            else
+               .set_force_convexity(FALSE)
+               .fdiis(F,D,S,energy,J)                ! Keep doing DIIS
+            end
+         case (2) ! Keep doing EDIIS until reached the encore level
+            if (.encore==.encore_iterations) then
+               .encore = 0
+               .stage = 1                            ! Go back to DIIS
+               .set_force_convexity(FALSE)
+               .fdiis(F,D,S,energy,J) 
+            else
+               .encore = .encore + 1
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Keep doing EDIIS
+            end
+      end
+   end
+
+   ediis_plus_ddiis(F,D,S,energy,J)
+   ! Combined EDIIS at the start + DIIS or FDIIS at the end.
+      F,D :: OPMATRIX*
+      S :: MAT{REAL}*
+      energy :: VEC{REAL}*
+      J :: OPMATRIX*, optional
+   ENSURE(.archive.file_name/=" ","no archive name specified")
+      .F => F; .D => D; .S => S
+      .energy => energy
+      if (present(J))   .J => J
+      .set_diis_error_length
+      select case (.stage)
+         case (0) ! Still doing first EDIIS .....
+            if (.error_length>=.start_tolerance) then
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Keep doing EDIIS
+            else
+               .stage = 1                            ! Begin first DIIS
+               .set_force_convexity(FALSE)
+               .ddiis(F,D,S,energy,J)
+            end
+         case (1) ! EDIIS has converged, but .....
+            if (.error_length>=.start_tolerance) then
+               .stage = 2                            ! Must go back to EDIIS
+               .encore = 1
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Do first encore EDIIS
+            else
+               .set_force_convexity(FALSE)
+               .ddiis(F,D,S,energy,J)                ! Keep doing DIIS
+            end
+         case (2) ! Keep doing EDIIS until reached the encore level
+            if (.encore==.encore_iterations) then
+               .encore = 0
+               .stage = 1                            ! Go back to DIIS
+               .set_force_convexity(FALSE)
+               .ddiis(F,D,S,energy,J) 
+            else
+               .encore = .encore + 1
+               .set_force_convexity(TRUE)
+               .ediis(F,D,S,energy,J)                ! Keep doing EDIIS
+            end
+      end
+   end
+
 ! Normal Fock DIIS (Pulay)
 
-   extrapolate_F(F,D,S,energy,J)
+   fdiis(F,D,S,energy,J)
    ! DIIS extrapolation of the fock matrix ".F". ".D" is the density matrix
    ! which generated ".F". ".S" is the overlap matrix. This assumes that the DIIS
    ! object has been repeatedly called, previously, so that it has all the
@@ -1293,13 +1366,13 @@ contains
       .set_diis_error_length
       spinorbital_kind = F.spinorbital_kind
       select case (spinorbital_kind)
-         case("restricted");   .extrapolate_r_F
-         case("unrestricted"); .extrapolate_u_F
+         case("restricted");   .r_fdiis
+         case("unrestricted"); .u_fdiis
          case default;         UNKNOWN(spinorbital_kind)
       end
    end
 
-   extrapolate_r_F
+   r_fdiis ::: private
    ! Restricted DIIS extrapolation of the fock matrix ".F". ".D" is the density
    ! matrix which generated ".F". ".S" is the overlap matrix. This assumes that
    ! the DIIS object has been repeatedly called, previously, so that it has all
@@ -1331,8 +1404,8 @@ contains
       dim = .dimension
 ! stdout.show("dim              = ",dim)
 ! stdout.show("new              = ",.new)
-      .save_item(.F,.F_tag,.new)               ! Replace the old fock & error pair on disk
-      .save_item(.D,.D_tag,.new)
+      .save_item(.F,.F_tag,.new,genre="restricted") ! Replace the old fock & error pair on disk
+      .save_item(.D,.D_tag,.new,genre="restricted")
       .save_item(.energy(1),.e_tag,.new)   
       nullify(lhs); nullify(rhs)
       .make_r_ediis_system(lhs,rhs)            ! Need to make and save to disk
@@ -1361,7 +1434,65 @@ contains
       rhs.destroy; lhs.destroy
    end
 
-   extrapolate_u_F
+   u_fdiis ::: private
+   ! Unrestricted DIIS extrapolation of the fock matrix ".F" using a
+   ! concatenation of the alpha and beta parts, with a single set of
+   ! coefficients. ".D" is the density matrix which generated ".F". ".S" is the
+   ! overlap matrix. This assumes that the DIIS object has been repeatedly
+   ! called, previously, so that it has all the previous information on disk. 
+   ENSURE(.archive.file_name/=" ","no archive name specified")
+   ENSURE(.F.created,"no Fock matrix")
+   ENSURE(.D.created,"no density matrix")
+   ENSURE(.J.created,"no coulomb matrix")
+   ENSURE(.F.created("unrestricted"),"no Fock matrix")
+   ENSURE(.D.created("unrestricted"),"no density matrix")
+   ENSURE(.J.created("unrestricted"),"no coulomb matrix")
+   ENSURE(.S.created,"no overlap matrix")
+   ENSURE(.energy.dim==2,"no UHF energies")
+   ENSURE(.energy.dim==2,"must have two UHF energies")
+   ENSURE(.F.n_bf==.S.dim1,"Incompatible F and S")
+   ENSURE(.D.n_bf==.S.dim1,"Incompatible D and S")
+      C :: OPMATRIX*
+      lhs :: MAT{REAL}*
+      rhs,coeff :: VEC{REAL}*
+      dim,old :: INT
+      .iteration = .iteration + 1
+      if (.saved_iteration<=0) return
+      .new = .next_replacement                 ! Replace this index in the DIIS system
+      dim = .dimension
+      .save_item(.F,.F_tag,.new,genre="unrestricted") ! Replace the old fock & error pair on disk
+      .save_item(.D,.D_tag,.new,genre="unrestricted")
+      .save_item(.J,.J_tag,.new,genre="unrestricted")   
+      .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
+      .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
+      nullify(lhs); nullify(rhs)
+      .make_u_ediis_system(lhs,rhs)            ! Need to make and save to disk
+      rhs.destroy; lhs.destroy
+      .make_u_diis_system(lhs,rhs)             ! Need to make this and save it to disk
+      .update_kept_info
+      if (.solve_equations) then               ! Now solve the DIIS equations
+         coeff.create(dim)
+         .solve_r_diis_equations(lhs,rhs,coeff)
+!  stdout.text("lhs:")
+!  stdout.put(lhs)
+!  stdout.text("rhs:")
+!  stdout.put(rhs)
+!  stdout.text("coeff:")
+!  stdout.put(coeff)
+         C.create(.F.n_bf,"unrestricted")
+         .F.alpha = ZERO; .F.beta = ZERO
+         do old = 1,dim-1                      ! Construct the interpolation
+            .get_item(C,.F_tag,old)            ! Use "C" as work space for old "F"
+            .F.alpha = .F.alpha + coeff(old)*C.alpha
+            .F.beta  = .F.beta  + coeff(old)*C.beta
+         end
+         C.destroy
+         coeff.destroy
+      end
+      rhs.destroy; lhs.destroy
+   end
+
+   u2_fdiis ::: private
    ! Unrestricted DIIS extrapolation of the fock matrix ".F". ".D" is the density
    ! matrix which generated ".F". ".S" is the overlap matrix. This assumes that
    ! the DIIS object has been repeatedly called, previously, so that it has all
@@ -1386,15 +1517,15 @@ contains
       if (.saved_iteration<=0) return
       .new = .next_replacement                 ! Replace this index in the DIIS system
       dim = .dimension
-      .save_item(.F,.F_tag,.new)               ! Replace the old fock & error pair on disk
-      .save_item(.D,.D_tag,.new)
-      .save_item(.J,.J_tag,.new)   
+      .save_item(.F,.F_tag,.new,genre="unrestricted") ! Replace the old fock & error pair on disk
+      .save_item(.D,.D_tag,.new,genre="unrestricted")
+      .save_item(.J,.J_tag,.new,genre="unrestricted")   
       .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
       .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
       nullify(lhs); nullify(rhs)
       .make_u_ediis_system(lhs,rhs)            ! Need to make and save to disk
       rhs.destroy; lhs.destroy
-      .make_u_diis_system(lhs,rhs)             ! Need to make this and save it to disk
+      .make_u2_diis_system(lhs,rhs)            ! Need to make this and save it to disk
       .update_kept_info
       if (.solve_equations) then               ! Now solve the DIIS equations
          coeff.create(2*dim)
@@ -1462,6 +1593,48 @@ contains
    end
 
    make_u_diis_system(lhs,rhs) ::: private, leaky
+   ! Make the unrestricted DIIS left hand side matrix, "lhs", and the right hand
+   ! side, "rhs". "dimv" is the dimension of the DIIS vector. We replace only
+   ! column/row ".new" in the old DIIS "lhs". The DIIS "lhs" matrix is saved to
+   ! disk and reused next time.  NOTE: this version uses a concatenation of the
+   ! alpha and beta parts.
+      lhs :: MAT{REAL}*
+      rhs :: VEC{REAL}*
+   ENSURE(lhs.destroyed,"lhs exists")
+   ENSURE(rhs.destroyed,"rhs exists")
+      F,D,C_new,C_old :: OPMATRIX*
+      dimv,dim,old :: INT
+      e :: REAL
+      .lhs_tag = "lhs,diis,unrestricted" ! Get the saved LHS
+      .get_old_r_lhs(lhs)                ! Leaky here
+      dimv = .S.dim1
+      dim = .dimension
+      rhs.create(dim); rhs = ZERO
+      F.create(dimv,"unrestricted")
+      D.create(dimv,"unrestricted")
+      C_new.create(dimv,"unrestricted")
+      C_old.create(dimv,"unrestricted")
+      .make_diis_commutator(C_new,.F,.D,.S)
+      do old = 1,dim-1              ! Calculate the DIIS matrix
+         .get_item(F,.F_tag,old)
+         .get_item(D,.D_tag,old)
+         .make_diis_commutator(C_old,F,D,.S)
+         ! The column or row .new is the one we are replacing....
+         lhs(max(.new,old),min(.new,old)) = -C_new.alpha.dot(C_old.alpha) &
+                                            -C_new.beta.dot(C_old.beta)
+         ! The max and min are because we are doing only the lower triangle
+         ! We will symmetric reflect later.... 
+         lhs(dim,old) = ONE         ! Here we set the auxiliary row on the bottom
+      end
+      C_old.destroy; C_new.destroy
+      D.destroy; F.destroy
+      rhs(dim) = ONE                ! Set the last element
+      lhs(dim,dim) = ZERO           ! And here we set the corner
+      lhs.symmetric_reflect
+      .save_item(lhs,.lhs_tag)      ! Now save it ...
+   end
+
+   make_u2_diis_system(lhs,rhs) ::: private, leaky
    ! Make the unrestricted DIIS left hand side matrix, "lhs", and the right hand
    ! side, "rhs". "dimv" is the dimension of the DIIS vector. We replace only
    ! column/row ".new" in the alpha-alpha and beta-beta part of the old DIIS
@@ -1645,8 +1818,8 @@ contains
 
 ! Energy DIIS (Cances)
 
-   interpolate_F(F,D,S,energy,J)
-   ! Energy DIIS extrapolation of the fock matrix ".F". ".D" is the density
+   ediis(F,D,S,energy,J)
+   ! Energy DIIS interpolation of the fock matrix ".F". ".D" is the density
    ! matrix which generated ".F". ".S" is the overlap matrix. ".energy" are the
    ! SCF energies (only one energy for RHF). "J" are the coulomb matrices,
    ! required only for unrestricted EDIIS.  This assumes that the DIIS object
@@ -1664,13 +1837,13 @@ contains
       .set_diis_error_length
       ! These rouines do not use the overlap matrix S
       select case (spinorbital_kind)
-         case("restricted");   .interpolate_r_F
-         case("unrestricted"); .interpolate_u_F
+         case("restricted");   .r_ediis
+         case("unrestricted"); .u_ediis
          case default;         UNKNOWN(spinorbital_kind)
       end
    end
 
-   interpolate_r_F
+   r_ediis ::: private
    ! Energy DIIS extrapolation of the fock matrix ".F". ".D" is the density
    ! matrix which generated ".F". ".energy" is the RHF energies. This assumes
    ! that the DIIS object has been repeatedly called, previously, so that it has
@@ -1688,50 +1861,53 @@ contains
       rhs,coeff :: VEC{REAL}*
       dim,old :: INT 
       fail :: BIN
+      emin :: REAL
       .iteration = .iteration + 1
-  stdout.show("iteration        = ",.iteration)
-  stdout.show("start_iteration  = ",.start_iteration)
-  stdout.show("save_iteration   = ",.save_iteration)
-  stdout.show("dimension        = ",.dimension)
-  stdout.show("kept             = ",.kept)
-  stdout.show("saved_iteration  = ",.saved_iteration)
-  stdout.show("actual_iteration = ",.actual_iteration)
+! stdout.show("iteration        = ",.iteration)
+! stdout.show("start_iteration  = ",.start_iteration)
+! stdout.show("save_iteration   = ",.save_iteration)
+! stdout.show("dimension        = ",.dimension)
+! stdout.show("kept             = ",.kept)
+! stdout.show("saved_iteration  = ",.saved_iteration)
+! stdout.show("actual_iteration = ",.actual_iteration)
       if (.saved_iteration<=0) return
       .new = .next_replacement                 ! Replace this index in the DIIS system
       dim = .dimension
-  stdout.show("dim              = ",dim)
-  stdout.show("new              = ",.new)
-      .save_item(.D,.D_tag,.new)               ! Store on disk
-      .save_item(.F,.F_tag,.new)   
+! stdout.show("dim              = ",dim)
+! stdout.show("new              = ",.new)
+      .save_item(.D,.D_tag,.new,genre="restricted") ! Store on disk
+      .save_item(.F,.F_tag,.new,genre="restricted")   
       .save_item(.energy(1),.e_tag,.new)   
       nullify(lhs); nullify(rhs)
       .make_r_diis_system(lhs,rhs)             ! Need to make and save to disk
       rhs.destroy; lhs.destroy
       .make_r_ediis_system(lhs,rhs)            ! Need to make and save to disk
       .update_kept_info
-  stdout.show("new kept         = ",.kept)
-  stdout.text("rhs:")
-  stdout.put(rhs,"column")
-  stdout.text("lhs:")
-  stdout.put(lhs)
+! stdout.show("new kept         = ",.kept)
+! stdout.text("rhs:")
+! stdout.put(rhs,"column")
+! stdout.text("lhs:")
+! stdout.put(lhs)
       if (.solve_equations) then               ! Now solve the DIIS equations
          coeff.create(dim)
-         .solve_r_diis_equations(lhs,rhs,coeff)
-      stdout.text("coeff:")
-      stdout.put(coeff)
+         .solve_r_diis_equations(lhs,rhs,coeff,emin)
+!     stdout.text("coeff:")
+!     stdout.put(coeff)
          C.create(.F.n_bf,"restricted")
          .F.restricted = 0                           
          do old = 1,dim-1                      ! Construct the interpolation
             .get_item(C,.F_tag,old)            ! Use "C" as work space for old "F"
             .F.restricted = .F.restricted + coeff(old)*C.restricted
          end
+! stdout.show("emin *****       = ",emin)
+! stdout.show("emin prev        = ",minval(rhs(1:dim-1)))
          C.destroy
          coeff.destroy
       end
       lhs.destroy; rhs.destroy
    end
 
-   interpolate_u_F
+   u_ediis ::: private
    ! Unrestricted energy DIIS extrapolation of the fock matrix ".F". ".D" is the
    ! density matrix which generated ".F". ".energy" are the UHF energies. "J"
    ! are the coulomb matrices, required only for unrestricted EDIIS.  This
@@ -1754,16 +1930,26 @@ contains
       dim,old,k :: INT
       compress :: BIN
       .iteration = .iteration + 1
+! stdout.show("iteration        = ",.iteration)
+! stdout.show("start_iteration  = ",.start_iteration)
+! stdout.show("save_iteration   = ",.save_iteration)
+! stdout.show("dimension        = ",.dimension)
+! stdout.show("kept             = ",.kept)
+! stdout.show("saved_iteration  = ",.saved_iteration)
+! stdout.show("actual_iteration = ",.actual_iteration)
       if (.saved_iteration<=0) return
       .new = .next_replacement                 ! Replace this index in the DIIS system
       dim = .dimension
-      .save_item(.D,.D_tag,.new)                ! Store on disk
-      .save_item(.F,.F_tag,.new)   
-      .save_item(.J,.J_tag,.new)   
+! stdout.show("dim              = ",dim)
+! stdout.show("new              = ",.new)
+      .save_item(.D,.D_tag,.new,genre="unrestricted") ! Store on disk
+      .save_item(.F,.F_tag,.new,genre="unrestricted")   
+      .save_item(.J,.J_tag,.new,genre="unrestricted")   
       .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
       .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
       nullify(lhs); nullify(rhs)
-      .make_u_diis_system(lhs,rhs)             ! Need to make and save to disk
+    ! .make_u2_diis_system(lhs,rhs)            ! Need to make and save to disk
+      .make_u_diis_system(lhs,rhs)             ! Need to make and save it to disk
       rhs.destroy; lhs.destroy
       .make_u_ediis_system(lhs,rhs)            ! Need to make and save to disk
       .update_kept_info
@@ -1843,7 +2029,6 @@ contains
       .get_old_r_rhs(rhs)            ! For RHS, just get the energies, and put 1
       F_old.create(dimv,"restricted")
       D_old.create(dimv,"restricted")
-      lhs = TWO*lhs                  ! Double ... later halve it
       do old = 1,dim-1               ! Calculate the DIIS matrix
          .get_item(F_old,.F_tag,old)
          .get_item(D_old,.D_tag,old)
@@ -1853,9 +2038,8 @@ contains
          lhs(max(.new,old),min(.new,old)) = F_old.restricted.dot(D_old.restricted)
          ! The max and min are because we are doing only the lower triangle
          ! We will symmetric reflect later.... 
-         lhs(dim,old) = TWO         ! Here we set the auxiliary row on the bottom
+         lhs(dim,old) = ONE         ! Here we set the auxiliary row on the bottom
       end
-      lhs = HALF*lhs                ! Halve again
       D_old.destroy; F_old.destroy
       rhs(dim) = ONE                ! Set the last element
       lhs(dim,dim) = ZERO           ! And here we set the corner
@@ -2088,7 +2272,7 @@ contains
 
 ! Density DIIS (Jayatilaka)
 
-   interpolate_D(D,F,S,J)
+   ddiis(D,F,S,energy,J)
    ! Density DIIS extrapolation of the fock matrix ".F". ".D" is the density matrix
    ! which generated ".F". Even though this technique is based on a density
    ! matrix extrapolation, only ".F" is updated. This assumes that the DIIS
@@ -2096,20 +2280,22 @@ contains
    ! previous information on disk. 
       D,F :: OPMATRIX*
       S :: MAT{REAL}*
+      energy :: VEC{REAL}*
       J :: OPMATRIX*, optional
       spinorbital_kind :: STR
       .D => D; .F => F; .S => S
+      .energy => energy
       if (present(J)) .J => J
       spinorbital_kind = .F.spinorbital_kind
       .set_diis_error_length
       select case (spinorbital_kind)
-         case("restricted");   .interpolate_r_D
-         case("unrestricted"); .interpolate_u_D
+         case("restricted");   .r_ddiis
+         case("unrestricted"); .u_ddiis
          case default;         UNKNOWN(spinorbital_kind)
       end
    end
 
-   interpolate_r_D
+   r_ddiis ::: private
    ! Restricted Density DIIS extrapolation of the fock matrix ".F". ".D" is the
    ! density matrix which generated ".F". Even though this technique is based on
    ! a density matrix extrapolation, in the end only ".F" is updated. This
@@ -2133,11 +2319,15 @@ contains
       if (.saved_iteration<=0) return
       .new = .next_replacement                 ! Replace this index in the DIIS system
       dim = .dimension
-      .save_item(.D,.D_tag,.new)               ! Store on disk
-      .save_item(.F,.F_tag,.new)   
-      coeff.create(dim)
+      .save_item(.D,.D_tag,.new,genre="restricted") ! Store on disk
+      .save_item(.F,.F_tag,.new,genre="restricted")   
+      .save_item(.energy(1),.e_tag,.new)   
+      nullify(lhs); nullify(rhs)
+      .make_r_ediis_system(lhs,rhs)            ! Need to make and save to disk
+      rhs.destroy; lhs.destroy
       .make_r_diis_system(lhs,rhs)             ! Start with DIIS guess
-      .update_kept_info
+    ! .update_kept_info
+      coeff.create(dim)
       if      (.micro_starting_guess=="last_density") then
          coeff = ZERO
          coeff(.new) = ONE
@@ -2154,26 +2344,28 @@ contains
                tol,tol,step=TOL(2),max_it=.micro_max_iterations)
             nullify(saved_self)
             coeff(dim-1) = ONE - sum(coeff(1:dim-2))
+            .update_kept_info
          else if (.micro_iteration_method=="linearisation") then
+            .update_kept_info
             old_coeff.create(dim)
             iter = 0
             do
                iter = iter + 1
                old_coeff = coeff
                .make_r_ddiis_system(lhs,rhs,coeff)
-      stdout.text("lhs:")
-      stdout.put(lhs)
-      stdout.text("rhs:")
-      stdout.put(rhs)
+    ! stdout.text("lhs:")
+    ! stdout.put(lhs)
+    ! stdout.text("rhs:")
+    ! stdout.put(rhs)
                .solve_r_diis_equations(lhs,rhs,coeff)
                lhs.destroy; rhs.destroy
-      stdout.text("old_coeff:")
-      stdout.put(old_coeff)
-      stdout.text("coeff:")
-      stdout.put(coeff)
+    ! stdout.text("old_coeff:")
+    ! stdout.put(old_coeff)
+    ! stdout.text("coeff:")
+    ! stdout.put(coeff)
                coeff = .micro_damp_factor*old_coeff + (ONE-.micro_damp_factor)*coeff
-      stdout.text("damped coeff:")
-      stdout.put(coeff)
+    ! stdout.text("damped coeff:")
+    ! stdout.put(coeff)
                DIE_IF(iter>.micro_max_iterations,"too many DDIIS iterations") 
                if (coeff.same_as(old_coeff,eps=.micro_convergence_tol)) exit
             end
@@ -2190,7 +2382,7 @@ contains
       coeff.destroy
    end
 
-   interpolate_u_D
+   u_ddiis ::: private
    ! Unrestricted Density DIIS extrapolation of the fock matrix ".F". ".D" is
    ! the density matrix which generated ".F". Even though this technique is
    ! based on a density matrix extrapolation, in the end only ".F" is updated.
@@ -2217,18 +2409,22 @@ contains
       if (.saved_iteration<=0) return
       .new = .next_replacement                 ! Replace this index in the DIIS system
       dim = .dimension
-      .save_item(.D,.D_tag,.new)               ! Store on disk
-      .save_item(.F,.F_tag,.new)   
-      .save_item(.J,.J_tag,.new)   
+      .save_item(.D,.D_tag,.new,genre="unrestricted") ! Store on disk
+      .save_item(.F,.F_tag,.new,genre="unrestricted")   
+      .save_item(.J,.J_tag,.new,genre="unrestricted")   
+      .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
+      .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
       coeff.create(2*dim)
-      .make_u_diis_system(lhs,rhs)             ! Start with DIIS guess
-      .update_kept_info
+      nullify(lhs); nullify(rhs)
+      .make_u_diis_system(lhs,rhs)             ! Need to make and save it to disk
       if      (.micro_starting_guess=="last") then
          coeff = ZERO
          coeff(.new) = ONE
          coeff(dim+.new) = ONE
       else if (.micro_starting_guess=="diis") then
-         .solve_u_diis_equations(lhs,rhs,coeff)
+         .solve_r_diis_equations(lhs,rhs,coeff(1:dim))
+         coeff(dim+1:) = coeff(1:dim)
+         rhs.destroy; lhs.destroy
       end
       rhs.destroy; lhs.destroy
       coeff_a => coeff.alpha
@@ -2250,25 +2446,27 @@ contains
             coeff_a(dim-1) = ONE - sum(c1a)
             coeff_b(dim-1) = ONE - sum(c1b)
             coeff1.destroy
+            .update_kept_info
          else if (.micro_iteration_method=="linearisation") then
+            .update_kept_info
             old_coeff.create(2*dim)
             iter = 0
             do
                iter = iter + 1
                old_coeff = coeff
                .make_u_ddiis_system(lhs,rhs,coeff)
-      stdout.text("lhs:")
-      stdout.put(lhs)
-      stdout.text("rhs:")
+    ! stdout.text("lhs:")
+    ! stdout.put(lhs)
+    ! stdout.text("rhs:")
                .solve_u_diis_equations(lhs,rhs,coeff)
                lhs.destroy; rhs.destroy
-      stdout.text("old_coeff:")
-      stdout.put(old_coeff)
-      stdout.text("coeff:")
-      stdout.put(coeff)
+    ! stdout.text("old_coeff:")
+    ! stdout.put(old_coeff)
+    ! stdout.text("coeff:")
+    ! stdout.put(coeff)
                coeff = .micro_damp_factor*old_coeff + (ONE-.micro_damp_factor)*coeff
-      stdout.text("damped coeff:")
-      stdout.put(coeff)
+    ! stdout.text("damped coeff:")
+    ! stdout.put(coeff)
                DIE_IF(iter>.micro_max_iterations,"too many DDIIS iterations") 
                if (coeff.same_as(old_coeff,eps=.micro_convergence_tol)) exit
             end
@@ -2298,7 +2496,6 @@ contains
    ENSURE(lhs.destroyed,"lhs exists")
    ENSURE(rhs.destroyed,"rhs exists")
    ENSURE(coeff.created,"no coeff's supplied")
-   ENSURE(coeff.dim==.dimension,"wrong size, coeff")
       F,D :: OPMATRIX*
       e1 :: MAT3{REAL}*
       C :: MAT{REAL}*
@@ -2360,7 +2557,6 @@ contains
    ENSURE(lhs.destroyed,"lhs exists")
    ENSURE(rhs.destroyed,"rhs exists")
    ENSURE(coeff.created,"no rhs supplied")
-   ENSURE(coeff.dim==2*.dimension,"wrong size, coeff")
       F,G,D :: OPMATRIX*
       dim,dimv,i,j,aj,bj,ai,bi :: INT
       C,Wa,Wb,lhs_aa,lhs_bb,lhs_ab,lhs_ba :: MAT{REAL}*
@@ -2464,7 +2660,6 @@ contains
       dl :: VEC{REAL}, optional, OUT
    ENSURE(saved_self.created,"saved_self not defined")
    ENSURE(saved_self.dimension>=3,"dimension too small")
-   ENSURE(coeff.dim==(saved_self.dimension-2),"wrong size, coeff")
       F,D :: OPMATRIX*
       e1 :: MAT3{REAL}*
       C,lhs :: MAT{REAL}*
@@ -2509,18 +2704,18 @@ contains
       lhs.symmetric_reflect
       e1.destroy
       ! Finally make the value and derivative
-   stdout.text("coeff:")
-   stdout.put(coeff,"column")
-   stdout.text("coeff1:")
-   stdout.put(coeff1,"column")
+!  stdout.text("coeff:")
+!  stdout.put(coeff,"column")
+!  stdout.text("coeff1:")
+!  stdout.put(coeff1,"column")
       l = dot_product(coeff1,matmul(lhs,coeff1))
       if (present(dl)) then
          ENSURE(dl.dim==(dim-2),"wrong size, dl")
          dl = matmul(lhs(1:dim-2,:),coeff1)
          dl = dl - dot_product(lhs(dim-1,:),coeff1)
          dl = FOUR*dl
-   stdout.text("dl:")
-   stdout.put(dl,"column")
+!  stdout.text("dl:")
+!  stdout.put(dl,"column")
       end
       lhs.destroy; coeff1.destroy
    end
@@ -2535,7 +2730,6 @@ contains
       dl :: VEC{REAL}, optional, OUT
    ENSURE(saved_self.created,"saved_self not defined")
    ENSURE(saved_self.dimension>=3,"dimension too small")
-   ENSURE(coeff.dim==(2*(saved_self.dimension-2)),"wrong size, coeff")
       F,G,D :: OPMATRIX*
       dim,dimv,i,j,aj,bj,ai,bi :: INT
       lhs,C,Wa,Wb, lhs_aa,lhs_bb,lhs_ab,lhs_ba :: MAT{REAL}*
@@ -2559,12 +2753,12 @@ contains
       c1b(1:dim-2) = coeff0(dim-2+1:2*(dim-2))
       c1a(dim-1)   = ONE - sum(coeff0(1:dim-2))
       c1b(dim-1)   = ONE - sum(coeff0(dim-2+1:2*(dim-2)))
-   stdout.text("coeff:")
-   stdout.put(coeff,"column")
-   stdout.text("coeff0:")
-   stdout.put(coeff0,"column")
-   stdout.text("coeff1:")
-   stdout.put(coeff1,"column")
+!  stdout.text("coeff:")
+!  stdout.put(coeff,"column")
+!  stdout.text("coeff0:")
+!  stdout.put(coeff0,"column")
+!  stdout.text("coeff1:")
+!  stdout.put(coeff1,"column")
       lhs.create(2*(dim-1),2*(dim-1))
       F.create(dimv,"unrestricted")  ! Temporaries for commutators
       G.create(dimv,"unrestricted")
@@ -2635,8 +2829,8 @@ contains
          dlb => dl.beta                ! No cross terms in the (dim-1) derivative
          dla = TWO*(matmul(lhs_aa(1:dim-2,:),c1a) - dot_product(lhs_aa(dim-1,:),c1a))
          dlb = TWO*(matmul(lhs_bb(1:dim-2,:),c1b) - dot_product(lhs_bb(dim-1,:),c1b))
-   stdout.text("dl:")
-   stdout.put(dl,"column")
+!  stdout.text("dl:")
+!  stdout.put(dl,"column")
          do i = 1,dim-1                ! Make the derivative term which
             ai = i                     ! sums over the second e index
             bi = i + dim-1
@@ -2677,8 +2871,8 @@ contains
           ! end
             l = huge(ONE)
          end
-   stdout.text("dl:")
-   stdout.put(dl,"column")
+!  stdout.text("dl:")
+!  stdout.put(dl,"column")
       end
       e1.destroy; e0.destroy
       Wb.destroy; Wa.destroy; C.destroy
@@ -2690,26 +2884,32 @@ contains
 ! Solving the DIIS equations
 ! **************************
 
-   solve_r_diis_equations(lhs,rhs,solution)
+   solve_r_diis_equations(lhs,rhs,solution,emin)
    ! Solve the restricted DIIS equations. This solver can enforce the positivity
    ! of the coefficients to ensure that the corresponding extrapolated density
    ! has eigenvalues between 0 and 1.
       lhs :: MAT{REAL}
       rhs,solution :: VEC{REAL}
+   ENSURE(lhs.is_square,"lhs must be square")
+   ENSURE(lhs.dim1==rhs.dim,"lhs and rhs are incompatible")
+   ENSURE(lhs.dim1==solution.dim,"lhs and solution are incompatible")
+      emin :: REAL, optional
       coeff :: VEC{REAL}*
-      plist :: VEC{INT}*
+      plist,keep0 :: VEC{INT}*
       dim,k :: INT
       fail :: BIN
       if (.force_convexity) then
      ! stdout.show("kept =",.kept)
          dim = rhs.dim
          plist.create(dim-1); plist = [(k,k=1,dim-1)] ! ; plist.prune([.new])
-         lhs.solve_convex_linear_equation(rhs,solution,plist,keep0=[.new],fail=fail) 
+         keep0.create(1); keep0(1) = .new
+         DIIS::solve_convex(self,lhs,rhs,solution,plist,keep0,emin,fail) 
          DIE_IF(fail,"failed to find a convex solution")
        ! if (fail) then
        ! lhs.solve_convex_linear_equation(rhs,coeff,plist,keep1=[.new],fail=fail) 
        ! DIE_IF(fail,"failed to find a convex solution")
        ! end
+         keep0.destroy
          plist.destroy
       else
          lhs.solve_linear_equation(rhs,solution)  ! Solve diis equations
@@ -2722,14 +2922,19 @@ contains
    ! has eigenvalues between 0 and 1.
       lhs :: MAT{REAL}
       rhs,solution :: VEC{REAL}
+   ENSURE(lhs.is_square,"lhs must be square")
+   ENSURE(lhs.dim1==rhs.dim,"lhs and rhs are incompatible")
+   ENSURE(lhs.dim1==solution.dim,"lhs and solution are incompatible")
+   ENSURE(rhs.dim.is_even,"rhs must have an even dimension")
       plist :: VEC{INT}*
       dim,k :: INT
       fail :: BIN
       if (.force_convexity) then
-         dim = rhs.dim
+         dim = rhs.dim/2
          plist.create(2*dim); plist = [(k,k=1,2*dim)] 
          plist.prune([dim,2*dim])
-         lhs.solve_convex_linear_equation(rhs,solution,plist,keep0=[.new,dim+.new],fail=fail) 
+       ! lhs.solve_convex_linear_equation(rhs,solution,plist,keep0=[.new,dim+.new],fail=fail) 
+         DIIS::solve_convex(self,lhs,rhs,solution,plist,keep0=[.new,dim+.new],fail=fail) 
          DIE_IF(fail,"failed to find a convex solution")
        ! if (fail) then
        ! lhs.solve_convex_linear_equation(rhs,solution,plist,keep1=[.new,dim+.new],fail=fail) 
@@ -2738,6 +2943,128 @@ contains
          plist.destroy
       else
          lhs.solve_linear_equation(rhs,solution)  ! Solve diis equations
+      end
+   end
+
+   solve_convex(lhs,rhs,solution,plist,keep0,fmin,fail) ::: private
+   ! This routine solves the quadratic minimisation problem:
+   !    f(X) = rhs . X  -  HALF * X^T . self . X 
+   ! where, in addition, X >= 0 for all elements in "plist" and any elements of
+   ! the "solution" X not in "plist" are not constrained to be positive AND do
+   ! not participate in the evaluation of the quadratic function f -- they are
+   ! usually lagrange multipliers. This routine involves solving reduced linear
+   ! equations with "self" as the LHS and "rhs" as the RHS, over all partitions
+   ! of the elements in "plist".  If "keep0" is present, then at least one of
+   ! the indices in this sublist of "plist" must be kept when considering all
+   ! partitions. If present, "fail" is set TRUE if no solutions are found,
+   ! otherwise the routine terminates with an error.  WARNING: if the dimension
+   ! of the matrix is too large, this routine will take a long time.  NOTE: it
+   ! appears that if keep0 is even, one of the combonation indices must be in
+   ! the first half, and the other must be in the second half.
+      lhs :: MAT{REAL}
+      rhs,solution :: VEC{REAL}
+      plist :: VEC{INT}, IN
+      keep0 :: VEC{INT}, optional
+      fmin :: REAL, OUT, optional
+      fail :: BIN, OUT, optional
+   ENSURE(lhs.is_square,"non-square matrix")
+   ENSURE(rhs.dim==lhs.dim1,"incompatible rhs")
+   ENSURE(solution.dim==lhs.dim1,"incompatible solution vector")
+   ENSURE(plist.dim<=lhs.dim1,"plist to large")
+   ENSURE(plist.all_in_range([1,lhs.dim1]),"plist indices out of range")
+      pdim,rdim,kdim,k,n,n_combinations :: INT
+      ulist,list,comb :: VEC{INT}*
+      combination :: MAT{INT}*
+      lhs0 :: MAT{REAL}*
+      sol,sol0,rhs0 :: VEC{REAL}*
+      e,e0 :: REAL
+      found_one,even,no_solution :: BIN
+    ! even = FALSE
+      if (present(keep0)) then
+         ENSURE(keep0.has_all_elements_common_with(plist),"keep0 not a sublist of plist")
+         kdim = keep0.dim
+    !    even = kdim.is_even
+      end
+      pdim = plist.dim
+      WARN_IF(pdim>=20,"LHS dimension may be too large")
+      found_one = FALSE
+      e = huge(ONE)
+      sol.create(lhs.dim1)
+      ulist.create(lhs.dim1); ulist = [(k,k=1,lhs.dim1)]
+      ulist.prune(plist)                          ! ulist = all - plist = unconstrained 
+    ! print *, "-----------start------------"
+    ! print *, "even =",even
+    ! print *, "plist:"
+    ! print *, plist
+    ! print *, "ulist:"
+    ! print *, ulist
+      do k = pdim,1,-1 ! Loop over indice groups of length "k" which are non-zero
+    ! print *, "---> combinations of length k =", k
+         n_combinations = nint(pdim.choose(k)) 
+         combination.create(k,n_combinations)         
+         plist.make_combinations_of_length(k,combination)
+         rdim = k + lhs.dim1 - pdim
+         lhs0.create(rdim,rdim)
+         rhs0.create(rdim)
+         sol0.create(rdim)
+         list.create(rdim)                        ! list = comb(plist) + ulist
+         do n = 1,n_combinations                  ! Loop over a particular "k" length combo
+    ! print *, "combination:"
+    ! print *, combination(:,n)
+            comb => combination(:,n)
+            if (present(keep0)) then               ! if present, keep only these elements
+               if (NOT keep0.has_all_elements_common_with(comb)) cycle
+             ! if (even AND all(combination(:,n)> lhs.dim1/2)) cycle
+             ! if (even AND all(combination(:,n)<=lhs.dim1/2)) cycle
+            end
+            list(1:k)  = comb                     ! The "list" of non-zero solution elements
+            list(k+1:) = ulist                    ! Always add the list of unconstrained elements
+    ! print *, "list:"
+    ! print *, list
+    ! print *, "rhs:"
+    ! print *, rhs
+            rhs0 = rhs(list)
+            lhs0 = lhs(list,list)
+    ! print *, "rhs0:"
+    ! print *, rhs0
+    ! print *, "lhs0:"
+    ! print *, lhs0
+            lhs0.solve_linear_equation(rhs0,sol0,no_solution) ! Find the subset solution, "sol"
+            if (no_solution) cycle
+            sol = ZERO
+            sol(list) = sol0
+    ! print *, "sol0:"
+    ! print *, sol0
+    ! print *, "sol:"
+    ! print *, sol
+            e0 = dot_product(rhs(comb),sol(comb)) &
+               - HALF*dot_product(sol(comb),matmul(lhs(comb,comb),sol(comb)))
+    ! print *, ">>> e0 = ",e0
+            if (any(sol(comb)<ZERO)) cycle        ! Unacceptable ..............
+            if (e0>=e) cycle                      ! Found a better solution before
+            solution = sol                        ! Keep this solutions
+    ! print *, "new solution found:"
+    ! print *, solution
+    ! print *, "keep0:"
+    ! print *, keep0
+    ! print *, "comb:"
+    ! print *, comb
+            e = e0                                ! Keep this E value
+            found_one = TRUE
+            if (present(fmin)) fmin = e
+         end
+         list.destroy
+         sol0.destroy; rhs0.destroy; lhs0.destroy
+         combination.destroy
+      end
+      ulist.destroy
+      sol.destroy
+      if (present(fail)) then
+         if (NOT found_one) then; fail = TRUE
+         else;                    fail = FALSE
+         end
+      else
+         DIE_IF(NOT found_one,"acceptable solution was not found")
       end
    end
 
@@ -2899,33 +3226,34 @@ contains
 ! Saving and reading items from disk
 ! **********************************
 
-   save_item(item,name,i) ::: template
+   save_item(item,name,i,genre) ::: template
    ! Save "item" to disk with identifiers: label "name", and number "i".
      item :: ITEM_TYPE, IN
      name :: STR, IN
      i :: INT, IN, optional
+     genre :: STR, IN, optional
    ENSURE(.saved_iteration>0,"cannot save before the save_iteration") 
      old_name,new_name :: STR
      old_name = .archive.name
      new_name = .archive_name(name,i)
      .archive.set_name(new_name)
-     .archive.write(item)
+     .archive.write(item,genre)
      .archive.set_name(old_name)
    end
 
-   save_item(item,name,i) ::: get_from(DIIS, ITEM_TYPE=>REAL)
+   save_item(item,name,i,genre) ::: get_from(DIIS, ITEM_TYPE=>REAL)
    ! Save "item" to disk with identifiers: label "name", and number "i".
    end
 
-   save_item(item,name,i) ::: get_from(DIIS, ITEM_TYPE=>VEC{REAL})
+   save_item(item,name,i,genre) ::: get_from(DIIS, ITEM_TYPE=>VEC{REAL})
    ! Save "item" to disk with identifiers: label "name", and number "i".
    end
 
-   save_item(item,name,i) ::: get_from(DIIS, ITEM_TYPE=>MAT{REAL})
+   save_item(item,name,i,genre) ::: get_from(DIIS, ITEM_TYPE=>MAT{REAL})
    ! Save "item" to disk with identifiers: label "name", and number "i".
    end
 
-   save_item(item,name,i) ::: get_from(DIIS, ITEM_TYPE=>OPMATRIX)
+   save_item(item,name,i,genre) ::: get_from(DIIS, ITEM_TYPE=>OPMATRIX)
    ! Save "item" to disk with identifiers: label "name", and number "i".
    end
 
@@ -3021,7 +3349,7 @@ contains
      stdout.show("DIIS replacement method       = ",.replacement_method)
      stdout.show("Force convexity?              = ",.force_convexity)
      if (.genre=="ediis+diis") then
-     stdout.show("EDIIS finish                  = ",.start_tolerance)
+     stdout.show("EDIIS finish/DIIS start       = ",.start_tolerance)
      stdout.show("# EDIIS encore iterations     = ",.encore_iterations)
      end
      if (.genre=="ddiis") then

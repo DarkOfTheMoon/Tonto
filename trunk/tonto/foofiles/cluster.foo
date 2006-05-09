@@ -70,6 +70,7 @@ contains
       nullify(.unit_cell_mol_for_atom)
       nullify(.occupation_list)
       nullify(.molecule_for_atom)
+      nullify(.atom_connection)
    end
 
    destroy_ptr_part ::: leaky
@@ -104,6 +105,7 @@ contains
       .unit_cell_mol_for_atom.destroy
       .occupation_list.destroy
       .molecule_for_atom.destroy
+      .atom_connection.destroy
    end
 
    created result(res) ::: get_from(OBJECT), inlined_by_foo
@@ -142,6 +144,7 @@ contains
       if (cluster.unit_cell_mol_for_atom.created)  .unit_cell_mol_for_atom.create_copy(cluster.unit_cell_mol_for_atom)
       if (cluster.occupation_list.created)         .occupation_list.create_copy(cluster.occupation_list)
       if (cluster.molecule_for_atom.created)       .molecule_for_atom.create_copy(cluster.molecule_for_atom)
+      if (cluster.atom_connection.created)         .atom_connection.create_copy(cluster.atom_connection)
    end
 
    create(crystal,asymmetric_cell_atom) ::: leaky
@@ -408,7 +411,7 @@ contains
      unit_cell_mol_for_atom,unique :: VEC{INT}*
      geom0,geom1 :: MAT{REAL}*
      rcm :: MAT{REAL}(3,3)
-     atom_pair :: VEC{ATOM}(2)
+     atom_i,atom_j :: ATOM
      pos_i,pos_j,offset :: VEC{REAL}(3)
      n_unit_cell_atoms,i,j,parent_i,parent_j, h1,h2,h3, mi,mj :: INT
      n_unit_cell_atoms = .crystal.n_unit_cell_atoms
@@ -431,18 +434,18 @@ contains
         do i = 1,n_unit_cell_atoms      ! Loop over the (0,0,0) unit cell atoms
            pos_i = geom0(:,i)
            parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
-           atom_pair(1).atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
-           atom_pair(1).pos = pos_i
+           atom_i.atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+           atom_i.pos = pos_i
            mi = unit_cell_mol_for_atom(i) ! Atom i belongs to mol "mi"
            do j = i+1,n_unit_cell_atoms ! Loop over the (0,0,0) unit cell atoms 
               pos_j = geom0(:,j)        ! Gross test for closeness
-              if (abs(pos_j(1)-pos_i(1))>SIX) cycle
-              if (abs(pos_j(2)-pos_i(2))>SIX) cycle
-              if (abs(pos_j(3)-pos_i(3))>SIX) cycle 
+              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
+              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
+              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
               parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
-              atom_pair(2).atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
-              atom_pair(2).pos = pos_j
-              if (atom_pair.bonded(1,2)) then
+              atom_j.atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+              atom_j.pos = pos_j
+              if (atom_i.is_bonded_to(atom_j)) then
                  new(1)[:] = [h1,h2,h3,j]; .unit_cell_connection(i).element.append(new)
                  new(1)[4] = i;            .unit_cell_connection(j).element.append(new)
                  mj = unit_cell_mol_for_atom(j)
@@ -465,18 +468,18 @@ contains
         do i = 1,n_unit_cell_atoms      ! (0,0,0) unit cell atoms
            pos_i = geom0(:,i)
            parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
-           atom_pair(1).atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
-           atom_pair(1).pos = pos_i
+           atom_i.atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+           atom_i.pos = pos_i
            mi = unit_cell_mol_for_atom(i) ! Atom i belongs to mol "mi"
            do j = 1,n_unit_cell_atoms   ! (h1,h2,h3) unit cell atoms 
               pos_j = geom1(:,j)        ! Gross test for closeness
-              if (abs(pos_j(1)-pos_i(1))>SIX) cycle
-              if (abs(pos_j(2)-pos_i(2))>SIX) cycle
-              if (abs(pos_j(3)-pos_i(3))>SIX) cycle 
+              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
+              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
+              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
               parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
-              atom_pair(2).atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
-              atom_pair(2).pos = pos_j
-              if (atom_pair.bonded(1,2)) then
+              atom_j.atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+              atom_j.pos = pos_j
+              if (atom_i.is_bonded_to(atom_j)) then
                  new(1)[:] = [h1,h2,h3,j]
                  .unit_cell_connection(i).element.append(new)
                  mj = unit_cell_mol_for_atom(j)
@@ -702,6 +705,8 @@ contains
      i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
      con,unique,molecule_for_atom :: VEC{INT}*
      .n_atoms = .occupation_list.dim
+     .atom_connection.destroy
+     .atom_connection.create(.n_atoms)
      .molecule_for_atom.destroy
      .molecule_for_atom.create(.n_atoms)
      molecule_for_atom.create(.n_atoms)
@@ -738,6 +743,7 @@ contains
               else if (mo>mi) then
                  where (molecule_for_atom==mo) molecule_for_atom = mi
               end
+              .atom_connection(i).element.append(old)
            end
         end
      end
@@ -754,6 +760,70 @@ contains
      molecule_for_atom.destroy
    end
 
+!   do_defrag ::: leaky
+!   ! Defragment the generated cluster and find the connected molecules using the
+!   ! .unit_cell_connection table.
+!   ENSURE(.unit_cell_connection.created,"no connection table")
+!   ENSURE(.occupation_list.created,"no occupation_list")
+!     i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
+!     con,unique,molecule_for_atom :: VEC{INT}*
+!     .n_atoms = .occupation_list.dim
+!     .molecule_for_atom.destroy
+!     molecule_for_atom.create(.n_atoms)
+!     do i = 1,.n_atoms
+!        molecule_for_atom(i) = i
+!     end
+!     i = 0
+!     do 
+!        i = i + 1
+!        if (i>.n_atoms) exit        ! no more connections found
+!        mi = molecule_for_atom(i)   ! atom i belongs to molecule "m"
+!        code = .occupation_list(i)  ! decode the unit cell atom and offset
+!        u  = code/1000; code = code - u*1000
+!        h3 = code/100;  code = code - h3*100
+!        h2 = code/10;   code = code - h2*10
+!        h1 = code; 
+!        h1 = h1 - 5                 ! h is the cell offset
+!        h2 = h2 - 5
+!        h3 = h3 - 5                 ! find atoms which connect to u
+!        if (.unit_cell_connection(u).element.destroyed) cycle
+!        do c = 1,.unit_cell_connection(u).element.dim
+!           con => .unit_cell_connection(u)[c].element
+!           k1 = h1 + con(1) + 5     ! get new code
+!           k2 = h2 + con(2) + 5
+!           k3 = h3 + con(3) + 5
+!           t  = con(4)              ! is it new in the occupation list?
+!           code = k1 + k2*10 + k3*100 + t*1000
+!           old = .occupation_list.index_of_value(code)
+!           if (old>0) then          ! this is not a new atom
+!              mo = molecule_for_atom(old)
+!              if (mo<mi) then       ! replace all previous by the lowest molecule
+!                 where (molecule_for_atom==mi) molecule_for_atom = mo
+!                 mi = mo            ! replace molecule for atom i too
+!              else if (mo>mi) then
+!                 where (molecule_for_atom==mo) molecule_for_atom = mi
+!              end
+!           else                     ! this is new
+!              .occupation_list.append(code)
+!              molecule_for_atom.append(mi)
+!              .n_atoms = .n_atoms + 1
+!           end
+!        end
+!     end
+!     .molecule_for_atom => molecule_for_atom
+!     molecule_for_atom.create_copy(.molecule_for_atom)
+!     unique => molecule_for_atom.unique_elements
+!     .n_molecules = unique.dim
+!     unique.sort
+!     do mi = 1,.n_molecules
+!        mo = unique(mi)
+!        if (mo==mi) cycle
+!        where (molecule_for_atom==mo) .molecule_for_atom = mi
+!     end
+!     unique.destroy
+!     molecule_for_atom.destroy
+!   end
+
    do_defrag ::: leaky
    ! Defragment the generated cluster and find the connected molecules using the
    ! .unit_cell_connection table.
@@ -762,6 +832,8 @@ contains
      i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
      con,unique,molecule_for_atom :: VEC{INT}*
      .n_atoms = .occupation_list.dim
+     .atom_connection.destroy
+     .atom_connection.create(.n_atoms)
      .molecule_for_atom.destroy
      molecule_for_atom.create(.n_atoms)
      do i = 1,.n_atoms
@@ -797,11 +869,14 @@ contains
               else if (mo>mi) then
                  where (molecule_for_atom==mo) molecule_for_atom = mi
               end
+              .atom_connection(i).element.append(old)
            else                     ! this is new
               .occupation_list.append(code)
               molecule_for_atom.append(mi)
               .n_atoms = .n_atoms + 1
-           end
+              .atom_connection.expand(.n_atoms)
+              .atom_connection(i).element.append(.n_atoms)
+           end                     
         end
      end
      .molecule_for_atom => molecule_for_atom
@@ -1860,8 +1935,9 @@ contains
       stdout.show("h_max                   =",.h_max)
       stdout.show("Do fragment symop?      =",.do_fragment_symop)
       if (.fragment_geometry.created)    .put_fragment_geometry
-      if (.unit_cell_connection.created) .put_connection_table
+      if (.unit_cell_connection.created) .put_uc_connection_table
       if (.occupation_list.created)      .put_occupation_list
+      .put_atom_connection_table
    end
 
    put_fragment_geometry
@@ -1891,7 +1967,7 @@ contains
       stdout.dash(int_fields=1,real_fields=3)
    end
 
-   put_connection_table
+   put_uc_connection_table
    ! Put the .unit_cell_connection table
    ENSURE(.unit_cell_connection.created,"no unit_cell_connection")
  ! ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
@@ -1979,6 +2055,40 @@ contains
          stdout.flush
       end
       stdout.dash(int_fields=6,real_fields=3)
+   end
+
+   put_atom_connection_table
+   ! Put the atom connection table
+   ENSURE(.atom_connection.created,"no atom_connection")
+   ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
+      m,n,a,b :: INT
+      stdout.save
+      stdout.set_int_width(5)
+      stdout.flush
+      stdout.text("Molecules and atom connections:")
+      stdout.flush
+      do m = 1,.n_molecules                   ! Loop over molecules
+         stdout.flush
+         stdout.show("Molecule =",m)
+         stdout.flush
+         stdout.put("Atom",int_width=TRUE)
+         stdout.put("Conn",int_width=TRUE)
+         stdout.flush
+         n = count(.molecule_for_atom==m)
+         do a = 1,.n_atoms                    ! Loop over atoms in molecules
+            if (.molecule_for_atom(a)/=m) cycle
+            stdout.put(a)
+            if (.atom_connection(a).element.created) then
+            do b = 1,.atom_connection(a).element.dim
+               stdout.put(.atom_connection(a).element(b))
+            end
+            end
+            stdout.flush
+         end
+      end
+      stdout.unsave
    end
 
 ! old ... delete?
