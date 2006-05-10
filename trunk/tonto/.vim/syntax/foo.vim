@@ -155,8 +155,8 @@ syn keyword fortranStatementOb	assign pause to
 
   syn keyword fortranType	type array none
 
-  syn keyword fortranStructure	private public intent optional
-  syn keyword fortranStructure	pointer target allocatable
+  syn keyword fortranStructure	private public intent optional 
+  syn keyword fortranStructure	pointer target allocatable readonly selfless
   syn keyword fortranStorageClass	in out
   syn match fortranStorageClass	"\<kind\s*="me=s+4
   syn match fortranStorageClass	"\<len\s*="me=s+3
@@ -382,21 +382,25 @@ syn match   fortranConditional "end"
 syn keyword fortranType leaky recursive routinal functional get_from
 syn keyword fortranType pure always_pure elemental always_elemental
 syn keyword fortranType SELF_TYPE ELEMENT_TYPE
+syn keyword fortranType OBJECT INTRINSIC KEY VAL
 syn keyword fortranType TYPES SYSTEM PARALLEL
 syn keyword fortranType STR BSTR BIN INT REAL CPX
 syn keyword fortranType VEC MAT MAT3 MAT4 MAT5 MAT6 MAT7
 syn keyword fortranType VEC_ MAT_ MAT3_ MAT4_ MAT5_ MAT6_ MAT7_
 syn keyword fortranType HASH
 syn keyword fortranType OPVECTOR OPMATRIX RYS
-syn keyword fortranType BUFFER FILE TEXTFILE ARCHIVE TIME UNITNUMBER
+syn keyword fortranType BUFFER FILE TEXTFILE ARCHIVE TIME UNIT_NUMBER
+syn keyword fortranType GAUSSIAN_DATA
 syn keyword fortranType GAUSSIAN GAUSSIAN2 GAUSSIAN4 
 syn keyword fortranType SHELL SHELL1 SHELL2 SHELL4 
-syn keyword fortranType SHELLVEC SHELLPAIR SHELLPAIRVEC SHELLQUARTET SHELL1QUARTET
+syn keyword fortranType SHELLVEC SHELLPAIR SHELLPAIRVEC SHELLQUARTET SHELL1PAIR SHELL1QUARTET
 syn keyword fortranType BASIS BASISVEC ATOM ATOMVEC
 syn keyword fortranType COPPENSORBITAL COPPENSORBITALVEC COPPENSBASIS COPPENSBASISVEC
-syn keyword fortranType PLOTGRID DFTGRID DIIS SCFDATA INTERPOLATOR ROBY
+syn keyword fortranType PLOTGRID QUADRATURE LEBEDEV BECKE_GRID DFTGRID
+syn keyword fortranType DIIS DIFFRACTION_DATA SCFDATA INTERPOLATOR ROBY
 syn keyword fortranType REFLECTION REFLECTIONVEC SLATERSHELL SLATERBASIS
-syn keyword fortranType IRREP IRREPVEC POINTGROUP SPACEGROUP UNITCELL CRYSTAL CLUSTER CIF
+syn keyword fortranType RMS_INDICES RMS2_INDICES
+syn keyword fortranType IRREP IRREPVEC POINTGROUP SPACEGROUP UNIT_CELL CRYSTAL CLUSTER CIF
 syn keyword fortranType COLOUR COLOURFUNCTION MARCHINGCUBE MARCHINGCUBEVEC ISOSURFACE
 syn keyword fortranType MOLECULE MOLECULE.MAIN 
 syn keyword fortranOperator AND OR NOT IN INOUT OUT
