@@ -22,7 +22,8 @@ my $VENDOR = '';                      # Name of the compiler vendor.
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f';                    # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
-my $PLATFORM_ID = '';                 # e.g. LAHEY
+my $PLATFORM_ID = '';                 # e.g. LAHEY-lf95-on-WINDOWS
+my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
 my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
 
 my $show_help = 0;
@@ -123,6 +124,7 @@ if ($FC ne '') {
   else {&print_result('cannot determine');}
 
   $PLATFORM_ID = "${VENDOR}-${FC}-on-${OS}";
+  $PLATFORM_ID_ = "${VENDOR}_${FC}_on_${OS}";
   $PLATFORM_INFO_FILE = "${SRCDIR}/platforms/${PLATFORM_ID}";
   print STDERR "Options for your compiler are in $PLATFORM_INFO_FILE\n";
   &check_siteconfig;
@@ -297,6 +299,7 @@ sub do_substitutions_into_Makefile {
     s/\@FC\@/$FULLFC/g;
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
+    s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
     print OUTFILE;
   }
   close(OUTFILE);
