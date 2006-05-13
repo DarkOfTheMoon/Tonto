@@ -389,6 +389,11 @@ contains
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
       if (.atom.destroyed) return
+      ! OK ... destroy all bases so we can only ever have one of them
+      .atom.nullify_bases
+      .basis.destroy
+      .slaterbasis.destroy
+      .coppensbasis.destroy
       if (.n_atom <1) return
       do_slaterbasis = .basis_set_kind.same_as("Thakkar",ignore_case=TRUE) &
                     OR .basis_set_kind.same_as("Clementi-Roetti",ignore_case=TRUE)
@@ -412,16 +417,19 @@ contains
          .slaterbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
          stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
          library_basis_labels.destroy
+         .atom.basis_kind = "slater"
       else if (do_coppensbasis) then
          library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
          .coppensbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
          stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
          library_basis_labels.destroy
+         .atom.basis_kind = "coppens"
       else if (do_gaussianbasis) then ! gaussian basis
          library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
          .basis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
          stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
          library_basis_labels.destroy
+         .atom.basis_kind = "gaussian"
       end
       ! Now try to resolve atom bases afresh, and fix up atom.basis pointers
       ! Note that the .basis_set_kind is only used to resolve the basis if the
@@ -445,8 +453,12 @@ contains
          end
       end
       ! Unnormalise if completely done
-      if (.slaterbasis.created)  .slaterbasis.unnormalise  ! NOTE this
-      if (.coppensbasis.created) .coppensbasis.unnormalise ! NOTE this
+      if (.slaterbasis.created) then
+         .slaterbasis.unnormalise    ! NOTE this
+      end
+      if (.coppensbasis.created) then
+         .coppensbasis.unnormalise   ! NOTE this
+      end
       if (.basis.created) then
          .basis.unnormalise          ! NOTE this
          .set_basis_info             ! This finalisation is just for gaussians, so far ...
@@ -5233,11 +5245,11 @@ contains
       .isosurface.grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
       .isosurface.grid.set_points_widths_origin
       .isosurface.iso_kind = "stockholder_density" ! WARNING: The above will leak
-      .isosurface.interpolator.destroy
-      .isosurface.interpolator.create              ! Always use interpolators
-      if (.cluster.generation_method=="for_hirshfeld_surface") then
-         .isosurface.interpolator.set_table_length(.cluster.radius)
-      end
+    ! .isosurface.interpolator.destroy             ! Creating this interpolator
+    ! .isosurface.interpolator.create              ! implies it will always be used 
+    ! if (.cluster.generation_method=="for_hirshfeld_surface") then
+    !    .isosurface.interpolator.set_table_length(.cluster.radius)
+    ! end             ! The settings in this interpolator may be overridden by user
       !!!!!!!!!!!!!!!!!!!!!!!!!
       .isosurface.read_keywords
       !!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5342,6 +5354,21 @@ contains
          .basis_set_kind = last
       else
          .resolve_basis_info ! <-- this bit might be leaky
+      end
+   end
+
+   read_saved_basis_set_kind ::: leaky
+   ! Read in a suffix string representing the basis type to be used
+   ! for the atoms in the *saved* molecule.
+   ENSURE(.saved.created,"there is no saved molecule")
+      last :: STR
+      last = .saved.basis_set_kind
+      stdin.read(.saved.basis_set_kind)
+      if (last=="Coppens" AND .saved.basis_set_kind=="Clementi-Roetti") then
+         WARN("basis_set_kind was already Coppens, cannot change to Clementi-Roetti")
+         .saved.basis_set_kind = last
+      else
+         .saved.resolve_basis_info ! <-- this bit might be leaky
       end
    end
 
@@ -17291,28 +17318,10 @@ contains
    plot ::: leaky
    ! Do one of the many kinds of plot calculations
    ENSURE(.grid.created, "no grid")
-     slaterbasis :: VEC{SLATERBASIS}*
-     coppensbasis :: VEC{COPPENSBASIS}*
      dft :: BIN
+     basis_kind :: STR
      .grid.put
-     if (.grid.plot_kind(1:11)=="deformation") then
-        ENSURE(.basis.created,"no basis sets")
-        nullify(slaterbasis)
-        nullify(coppensbasis)
-        if (.slaterbasis.created) then
-           WARN("deformation plots require to reassign Slater type atomic densities")
-           slaterbasis => .slaterbasis; nullify(.slaterbasis)
-        end
-        if (.coppensbasis.created) then
-           WARN("deformation plots require to reassign Coppens type atomic densities")
-           coppensbasis => .coppensbasis; nullify(.coppensbasis)
-        end
-        if (.scfdata.destroyed) then; dft = FALSE
-        else;                         dft = .scfdata.is_DFT_calculation
-        end
-        .get_ANO_data(use_ks=dft)
-        .set_atom_shell_info
-     end
+     .set_ANO_info(.isosurface.iso_kind)
      select case (.grid.plot_kind)
         case("crystal_error_map                   "); .make_crystal_error_map
         case("current_density                     "); .make_j_grid
@@ -17370,10 +17379,6 @@ contains
         case("v_kirzhnits                         "); .make_V_Kirzhnits_grid
         case("v_from_virial                       "); .make_V_from_virial_grid
         case default;                UNKNOWN(.grid.plot_kind)
-     end
-     if (.grid.plot_kind(1:11)=="deformation") then
-        if (slaterbasis.created)  .slaterbasis  => slaterbasis
-        if (coppensbasis.created) .coppensbasis => coppensbasis
      end
    end
 
@@ -17538,6 +17543,10 @@ contains
      MAKE_GRID(grid,pt)
      promolecule_grid.create(grid.dim)
      MAKE_PRO_GRID(promolecule_grid,pt)
+  print *,"grid"
+  print *,grid
+  print *,"promolecule_grid"
+  print *,promolecule_grid
      grid = grid - promolecule_grid
      promolecule_grid.destroy
    end
@@ -18807,44 +18816,44 @@ contains
    ! Work out the promolecule "density_grid" from the supplied points "pt".  
    end
 
-   make_promolecule_density_grid(density,d_density,d2_density,pt)
-   ! Work out the promolecule electron "density" , its 1st derivative
-   ! "d_density", and 2nd derivative "d2_density" for the supplied points "pt".
-   ! The density is calculated from the slater basis if available; otherwise
-   ! from the coppens basis; otherwise from the atomic natural orbitals and the
-   ! atomic gaussian basis set.
-     self :: IN
-     density :: VEC{REAL}, OUT
-     d_density :: MAT{REAL}, OUT
-     d2_density :: MAT3{REAL}, OUT
-     pt :: MAT{REAL}, IN
-   ENSURE(.atom.created,"no atoms")
-   ENSURE(.atom.has_all_density_data,"no atomic orbitals")
-   ENSURE(density.dim==d_density.dim2,"inconsistent density grids")
-   ENSURE(density.dim==d2_density.dim3,"inconsistent density grids")
-   ENSURE(d_density.dim1==3,"wrong dim1 for d_density grid")
-   ENSURE(d2_density.dim1==3,"wrong dim1 for d2_density grid")
-   ENSURE(d2_density.dim2==3,"wrong dim2 for d2_density grid")
-     grid :: VEC{REAL}*
-     d_grid :: MAT{REAL}*
-     d2_grid :: MAT3{REAL}*
-     a :: INT
-     grid.create(density.dim)
-     d_grid.create(3,density.dim)
-     d2_grid.create(3,3,density.dim)
-     density = ZERO
-     d_density = ZERO
-     d2_density = ZERO
-     do a = 1,.n_atom
-        .atom(a).make_density_grid(grid,d_grid,d2_grid,pt) ! this incorporates a skip step
-        density = density + grid
-        d_density = d_density + d_grid
-        d2_density = d2_density + d2_grid
-     end
-     d2_grid.destroy
-     d_grid.destroy
-     grid.destroy
-   end
+!   make_promolecule_density_grid(density,d_density,d2_density,pt)
+!   ! Work out the promolecule electron "density" , its 1st derivative
+!   ! "d_density", and 2nd derivative "d2_density" for the supplied points "pt".
+!   ! The density is calculated from the slater basis if available; otherwise
+!   ! from the coppens basis; otherwise from the atomic natural orbitals and the
+!   ! atomic gaussian basis set.
+!     self :: IN
+!     density :: VEC{REAL}, OUT
+!     d_density :: MAT{REAL}, OUT
+!     d2_density :: MAT3{REAL}, OUT
+!     pt :: MAT{REAL}, IN
+!   ENSURE(.atom.created,"no atoms")
+!   ENSURE(.atom.has_all_density_data,"no atomic orbitals")
+!   ENSURE(density.dim==d_density.dim2,"inconsistent density grids")
+!   ENSURE(density.dim==d2_density.dim3,"inconsistent density grids")
+!   ENSURE(d_density.dim1==3,"wrong dim1 for d_density grid")
+!   ENSURE(d2_density.dim1==3,"wrong dim1 for d2_density grid")
+!   ENSURE(d2_density.dim2==3,"wrong dim2 for d2_density grid")
+!     grid :: VEC{REAL}*
+!     d_grid :: MAT{REAL}*
+!     d2_grid :: MAT3{REAL}*
+!     a :: INT
+!     grid.create(density.dim)
+!     d_grid.create(3,density.dim)
+!     d2_grid.create(3,3,density.dim)
+!     density = ZERO
+!     d_density = ZERO
+!     d2_density = ZERO
+!     do a = 1,.n_atom
+!        .atom(a).make_density_grid(grid,d_grid,d2_grid,pt) ! this incorporates a skip step
+!        density = density + grid
+!        d_density = d_density + d_grid
+!        d2_density = d2_density + d2_grid
+!     end
+!     d2_grid.destroy
+!     d_grid.destroy
+!     grid.destroy
+!   end
 
 ! ***********************
 ! Grad rho on rho density
@@ -19709,24 +19718,7 @@ contains
      dft :: BIN
      saved_self => self ! Note this !
      .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
-     if (.isosurface.iso_kind(1:11)=="deformation") then
-        ENSURE(.basis.created,"no basis sets")
-        nullify(slaterbasis)
-        nullify(coppensbasis)
-        if (.slaterbasis.created) then
-           WARN("deformation plots require to reassign Slater type atomic densities")
-           slaterbasis => .slaterbasis; nullify(.slaterbasis)
-        end
-        if (.coppensbasis.created) then
-           WARN("deformation plots require to reassign Coppens type atomic densities")
-           coppensbasis => .coppensbasis; nullify(.coppensbasis)
-        end
-        if (.scfdata.destroyed) then; dft = FALSE
-        else;                         dft = .scfdata.is_DFT_calculation
-        end
-        .get_ANO_data(use_ks=dft)
-        .set_atom_shell_info
-     end
+     .set_ANO_info(.isosurface.iso_kind)
      select case (.isosurface.iso_kind)
         case("deformation_density              "); .isosurface.cubify(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential    "); .isosurface.cubify(MOLECULE::def_dft_eff_pot_grid)
@@ -19759,22 +19751,7 @@ contains
         case("tsirelson_elf                    "); .isosurface.cubify(MOLECULE::Tsirelson_ELF_grid)
         case default;                UNKNOWN(.isosurface.iso_kind)
      end
-     if (.isosurface.iso_kind(1:11)=="deformation") then
-        if (slaterbasis.created)  .slaterbasis  => slaterbasis
-        if (coppensbasis.created) .coppensbasis => coppensbasis
-     end
    end
-
-!   zero_flux_surface_plot ::: leaky
-!   ! Do one of the many kinds of isosurface plot calculations
-!   ENSURE(.isosurface.created,"no isosurface")
-!     self :: target
-!     saved_self => self ! Note this !
-!     .set_d_interpolator_info(.isosurface)
-!     select case (.isosurface.iso_kind)
-!        case("promolecule_density"); .isosurface.zero_flux_cubify(MOLECULE::promolecule_d_density_grid)
-!     end
-!   end
 
    plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
@@ -19787,24 +19764,7 @@ contains
      dft :: BIN
      saved_self => self ! Note this !
      .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
-     if (.isosurface.surface_property(1:11)=="deformation") then
-        ENSURE(.basis.created,"no basis sets")
-        nullify(slaterbasis)
-        nullify(coppensbasis)
-        if (.slaterbasis.created) then
-           WARN("deformation plots require to reassign Slater type atomic densities")
-           slaterbasis => .slaterbasis; nullify(.slaterbasis)
-        end
-        if (.coppensbasis.created) then
-           WARN("deformation plots require to reassign Coppens type atomic densities")
-           coppensbasis => .coppensbasis; nullify(.coppensbasis)
-        end
-        if (.scfdata.destroyed) then; dft = FALSE
-        else;                         dft = .scfdata.is_DFT_calculation
-        end
-        .get_ANO_data(use_ks=dft)
-        .set_atom_shell_info
-     end
+     .set_ANO_info(.isosurface.iso_kind)
      select case (.isosurface.surface_property)
         case("deformation_density             "); .isosurface.plot_function(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential   "); .isosurface.plot_function(MOLECULE::def_dft_eff_pot_grid)
@@ -19837,10 +19797,6 @@ contains
         case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
         case default;                UNKNOWN(.isosurface.surface_property)
      end
-     if (.isosurface.surface_property(1:11)=="deformation") then
-        if (slaterbasis.created)  .slaterbasis  => slaterbasis
-        if (coppensbasis.created) .coppensbasis => coppensbasis
-     end
    end
 
    saved_isosurface_plot ::: leaky
@@ -19857,26 +19813,8 @@ contains
      saved_self => .saved ! Note this !
      saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
      .saved.isosurface => .isosurface      ! ... or this
-     .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
-     if (.isosurface.iso_kind(1:11)=="deformation") then
-        ENSURE(.saved.basis.created,"no saved basis sets")
-        nullify(slaterbasis)
-        nullify(coppensbasis)
-        if (.saved.slaterbasis.created) then
-           WARN("deformation plots require to reassign Slater type atomic densities")
-           slaterbasis => .saved.slaterbasis; nullify(.saved.slaterbasis)
-        end
-        if (.saved.coppensbasis.created) then
-           WARN("deformation plots require to reassign Coppens type atomic densities")
-           coppensbasis => .saved.coppensbasis; nullify(.saved.coppensbasis)
-        end
-        if (.saved.scfdata.destroyed) then; dft = FALSE
-        else;                               dft = .saved.scfdata.is_DFT_calculation
-        end
-        .saved.get_ANO_data(use_ks=dft)
-      stdout.show("has all ANO data =",.saved.atom.has_all_ANO_data)
-        .saved.set_atom_shell_info
-     end
+     .saved.set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
+     .saved.set_ANO_info(.isosurface.iso_kind)
      select case (.isosurface.iso_kind)
         case("deformation_density             "); .isosurface.cubify(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential   "); .isosurface.cubify(MOLECULE::def_dft_eff_pot_grid)
@@ -19909,27 +19847,8 @@ contains
         case("grad_rho_on_rho                 "); .isosurface.cubify(MOLECULE::grad_rho_on_rho_grid)
         case default;                UNKNOWN(.isosurface.iso_kind)
      end
-     if (.isosurface.iso_kind(1:11)=="deformation") then
-        if (slaterbasis.created)  .saved.slaterbasis  => slaterbasis
-        if (coppensbasis.created) .saved.coppensbasis => coppensbasis
-     end
      .saved.isosurface => saved_isosurface
    end
-
-!   saved_zero_flux_surface_plot ::: leaky
-!   ! Do one of the many kinds of isosurface plot calculations
-!   ENSURE(.isosurface.created,"no isosurface")
-!   ENSURE(.saved.created,"no saved molecule")
-!     saved_isosurface :: ISOSURFACE*
-!     saved_self => .saved ! Note this !
-!     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
-!     .saved.isosurface => .isosurface      ! ... or this
-!     .set_d_interpolator_info(.isosurface)
-!     select case (.isosurface.iso_kind)
-!        case("promolecule_density"); .isosurface.zero_flux_cubify(MOLECULE::promolecule_d_density_grid)
-!     end
-!     .saved.isosurface => saved_isosurface
-!   end
 
    saved_plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
@@ -19946,25 +19865,8 @@ contains
      saved_self => .saved ! Note this !
      saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
      .saved.isosurface => .isosurface      ! ... or this
-     .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
-     if (.isosurface.surface_property(1:11)=="deformation") then
-        ENSURE(.saved.basis.created,"no saved basis sets")
-        nullify(slaterbasis)
-        nullify(coppensbasis)
-        if (.saved.slaterbasis.created) then
-           WARN("deformation plots require to reassign Slater type atomic densities")
-           slaterbasis => .saved.slaterbasis; nullify(.saved.slaterbasis)
-        end
-        if (.saved.coppensbasis.created) then
-           WARN("deformation plots require to reassign Coppens type atomic densities")
-           coppensbasis => .saved.coppensbasis; nullify(.saved.coppensbasis)
-        end
-        if (.saved.scfdata.destroyed) then; dft = FALSE
-        else;                               dft = .saved.scfdata.is_DFT_calculation
-        end
-        .saved.get_ANO_data(use_ks=dft)
-        .saved.set_atom_shell_info
-     end
+     .saved.set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
+     .saved.set_ANO_info(.isosurface.surface_property)
      select case (.isosurface.surface_property)
         case("deformation_density             "); .isosurface.plot_function(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential   "); .isosurface.plot_function(MOLECULE::def_dft_eff_pot_grid)
@@ -19996,10 +19898,6 @@ contains
         case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
         case default;                UNKNOWN(.isosurface.surface_property)
      end
-     if (.isosurface.surface_property(1:11)=="deformation") then
-        if (slaterbasis.created)  .saved.slaterbasis  => slaterbasis
-        if (coppensbasis.created) .saved.coppensbasis => coppensbasis
-     end
      .saved.isosurface => saved_isosurface
    end
 
@@ -20012,32 +19910,63 @@ contains
    ENSURE(.atom.created,"no atoms")
       if (plot_kind/="stockholder_density" AND plot_kind/="promolecule_density") return
       ! If we get here, the interpolator information will be used
-      if (interpolator.created) then ! use interpolator as the default
-         if (.slaterbasis.created)  .atom.make_slater_interpolators(interpolator)
-         if (.coppensbasis.created) .atom.make_coppens_interpolators(interpolator)
-      else ! always make default interpolators for stockholder or promolecule isosurfaces
-         if (.slaterbasis.created)  .atom.make_slater_interpolators
-         if (.coppensbasis.created) .atom.make_coppens_interpolators
+      if (interpolator.created) then  ! Only if the user enters it
+         if (.slaterbasis.created)  .make_slater_interpolators(interpolator)
+         if (.coppensbasis.created) .make_coppens_interpolators(interpolator)
+      else if (.cluster.created) then ! Default: use cluster atom density cutoff
+         if (.slaterbasis.created)  .make_slater_interpolators(tol=.cluster.atom_density_cutoff)
+         if (.coppensbasis.created) .make_coppens_interpolators(tol=.cluster.atom_density_cutoff)
+      else                            ! Use global default
+         if (.slaterbasis.created)  .make_slater_interpolators
+         if (.coppensbasis.created) .make_coppens_interpolators
       end
    end
 
-   set_d_interpolator_info(isosurface) ::: leaky
-   ! Set the interpolator info for all the atoms if the isosurface kind is such
-   ! that interpolation tables could be beneficial. This should be called just
-   ! prior to doing the plot to take advantage of speed-ups.
-      isosurface :: ISOSURFACE
-   ENSURE(.atom.created,"no atoms")
+   make_slater_interpolators(interpolator,tol) ::: leaky
+   ! Make the slaterbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ! Otherwise use an atom density cutoff "tol".
+   ! NOTE: any existing interpolators are destroyed first
+      interpolator :: INTERPOLATOR*, optional
+      tol :: REAL, optional
+   ENSURE(.slaterbasis.created,"no slaterbasis")
+      i :: INT
+      do i = 1,.slaterbasis.dim   ! Make the interpolators
+        .slaterbasis(i).make_interpolator(interpolator,tol)
+      end                         ! If the atom bases are resolved, they now have interpolators
+   end
+
+   make_coppens_interpolators(interpolator,tol) ::: leaky
+   ! Make the coppensbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ! Otherwise use an atom density cutoff "tol".
+   ! NOTE: any existing interpolators are destroyed first
+      interpolator :: INTERPOLATOR*, optional
+      tol :: REAL, optional
+   ENSURE(.coppensbasis.created,"no slaterbasis")
+      i :: INT
+      do i = 1,.coppensbasis.dim  ! Make the interpolators
+        .coppensbasis(i).make_interpolator(interpolator,tol)
+      end                         ! If the atom bases are resolved, they now have interpolators
+   end
+
+   set_ANO_info(plot_kind) ::: leaky
+   ! Set the ANO info for all the atoms if the "plot_kind" is such that the ANO
+   ! data must be made.
       plot_kind :: STR
-      plot_kind = isosurface.iso_kind
-      if (plot_kind/="promolecule_density") return
-      ! If we get here, the interpolator information will be used
-      if (isosurface.interpolator.created) then ! use interpolator as the default
-         if (.slaterbasis.created)  .atom.make_slater_d_interpolators(isosurface.interpolator)
-       ! if (.coppensbasis.created) .atom.make_coppens_interpolators(isosurface.interpolator)
-      else ! always make default interpolators for stockholder or promolecule isosurfaces
-         if (.slaterbasis.created)  .atom.make_slater_d_interpolators
-       ! if (.coppensbasis.created) .atom.make_coppens_interpolators
+      dft :: BIN
+      if (plot_kind(1:11)/="deformation") return
+      ! If we get here, the ANO information will be used
+      ENSURE(.basis.created,"no basis sets")
+      ENSURE(.slaterbasis.destroyed,"cannot have slater basis present")
+      ENSURE(.coppensbasis.destroyed,"cannot have coppens basis present")
+      ENSURE(.atom.created,"no atoms")
+      ENSURE(.atom(1).basis_kind=="gaussian","must use gaussian basis on atoms")
+      if (.scfdata.destroyed) then; dft = FALSE
+      else;                         dft = .scfdata.is_DFT_calculation
       end
+      .get_ANO_data(use_ks=dft)
+      .set_atom_shell_info
    end
 
    deformation_density_grid(g,pt) ::: selfless
@@ -20367,16 +20296,16 @@ contains
       .make_promolecule_density_grid(g,pt)
    end
 
-   promolecule_d_density_grid(g,dg,d2g,pt) ::: selfless
-   ! Work out the promolecule density grid "g", its derivative "dg", and second
-   ! derivative "d2g" for a series of points "pt".
-      g   :: VEC{REAL}, OUT
-      dg  :: MAT{REAL}, OUT
-      d2g :: MAT3{REAL}, OUT
-      pt  :: MAT{REAL}, IN
-      self :: MOLECULE*; self => saved_self
-      .make_promolecule_density_grid(g,dg,d2g,pt)
-   end
+!   promolecule_d_density_grid(g,dg,d2g,pt) ::: selfless
+!   ! Work out the promolecule density grid "g", its derivative "dg", and second
+!   ! derivative "d2g" for a series of points "pt".
+!      g   :: VEC{REAL}, OUT
+!      dg  :: MAT{REAL}, OUT
+!      d2g :: MAT3{REAL}, OUT
+!      pt  :: MAT{REAL}, IN
+!      self :: MOLECULE*; self => saved_self
+!      .make_promolecule_density_grid(g,dg,d2g,pt)
+!   end
 
 ! ****************************
 ! Vibrationally averaged grids
@@ -21036,6 +20965,7 @@ contains
    ! Get the restricted atomic natural orbitals (ANO) data for all atoms in the
    ! molecule, from an archive. If it is not there, then make it and archive it.
       use_ks :: BIN, optional
+   ENSURE(.atom.created,"no atoms")
    ENSURE(.basis_info_made,"no basis_set info")
    ENSURE(.basis.created,"no basis set")
    ENSURE(.unique_atom.created,"no unique atom list")
@@ -21044,7 +20974,6 @@ contains
       do k = 1,.n_atom_kind ! Get ANO data only for unique atoms
         u = .unique_atom(k)
         .get_ANO_data_for_atom(u,use_ks)
-      stdout.show("atom u has data =",.atom(u).has_ANO_data)
         do j = u+1,.n_atom
            if (.atom_kind(j)/=k) cycle
            .atom(j).density_matrix     => .atom(u).density_matrix
@@ -21634,6 +21563,7 @@ contains
      .crystal.create_copy(.saved.cluster.crystal)      ! Make from the saved cluster crystal
      .cluster.create_fragment_atom_list(fragment_atom) ! This uses the info already in .cluster
      .crystal.make_fragment_data(fragment_atom)
+     fragment_atom.nullify_basis_part                  ! Bases were only pointer assigned
      fragment_atom.destroy
      ! Make sure basis is OK.
      .basis_set_kind = .saved.basis_set_kind
