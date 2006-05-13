@@ -388,69 +388,62 @@ contains
       do_slaterbasis,do_coppensbasis,do_gaussianbasis :: BIN
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
+      library_bf_kind :: STR
       if (.atom.destroyed) return
-      ! OK ... destroy all bases so we can only ever have one of them
-      .atom.nullify_bases
-      .basis.destroy
-      .slaterbasis.destroy
-      .coppensbasis.destroy
       if (.n_atom <1) return
-      do_slaterbasis = .basis_set_kind.same_as("Thakkar",ignore_case=TRUE) &
-                    OR .basis_set_kind.same_as("Clementi-Roetti",ignore_case=TRUE)
-      if (any(.atom.atomic_number>54) AND do_slaterbasis) then
+      library_bf_kind = .basis_function_kind
+      if (any(.atom.atomic_number>54) AND library_bf_kind=="slater") then
+         ! This is a hack for Crystal Explorer
          WARN("high Z atoms are present, changing to Coppens style bases")
-         .basis_set_kind = "Coppens"
-         .slaterbasis.destroy
-         do_slaterbasis = FALSE
+         .set_basis_set_kind("Coppens")
       end
-      do_coppensbasis = .basis_set_kind.same_as("Coppens",ignore_case=TRUE)
-      do_gaussianbasis = .basis_set_kind/=" " AND NOT do_coppensbasis AND NOT do_slaterbasis
       ! Renormalise basis sets in case we are going to add bases from the library
       ! (The library basis sets are in normalised form)
       if (.slaterbasis.created)  .slaterbasis.renormalise
       if (.coppensbasis.created) .coppensbasis.renormalise
       if (.basis.created)        .basis.renormalise
-      ! Now, add all library bases; this may scramble atom.basis ptr's.
-      ! Afterwards, try to resolve atom bases afresh, to fix up atom.basis pointers
-      if (do_slaterbasis) then
-         library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-         .slaterbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-         stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-         library_basis_labels.destroy
-         .atom.basis_kind = "slater"
-      else if (do_coppensbasis) then
-         library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-         .coppensbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-         stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-         library_basis_labels.destroy
-         .atom.basis_kind = "coppens"
-      else if (do_gaussianbasis) then ! gaussian basis
-         library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-         .basis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-         stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-         library_basis_labels.destroy
-         .atom.basis_kind = "gaussian"
+      ! Now, add all *library* bases; this may scramble atom.basis ptr's.
+      ! NOTE: a blank library_bf_kind indicates a non-library basis set
+      select case (library_bf_kind)
+         case ("slater")
+            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
+            .slaterbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
+            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
+            library_basis_labels.destroy
+         case ("coppens")
+            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
+            .coppensbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
+            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
+            library_basis_labels.destroy
+         case ("gaussian")
+            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
+            .basis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
+            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
+            library_basis_labels.destroy
       end
-      ! Now try to resolve atom bases afresh, and fix up atom.basis pointers
-      ! Note that the .basis_set_kind is only used to resolve the basis if the
-      ! .atom.basis_label is blank.
+      ! Now try to resolve atom bases afresh, and fix up atom.basis pointers.
+      ! If library .basis_set_kind is non-blank then library bases are used to
+      ! resolve the atom bases. If it is blank, then we use the .atom.basis_label.
       if (.slaterbasis.created) then
          .atom.resolve_bases(.slaterbasis,.basis_set_kind)
          if (.atom.slaterbases_are_resolved) then; stdout.text("Slater bases all resolved")
          else;                                     WARN("not all Slater bases were resolved")
          end
+         .atom.basis_kind = "slater"
       end
       if (.coppensbasis.created) then
          .atom.resolve_bases(.coppensbasis,.basis_set_kind)
          if (.atom.coppensbases_are_resolved) then; stdout.text("Coppens bases all resolved")
          else;                                      WARN("not all Coppens bases were resolved")
          end
+         .atom.basis_kind = "coppens"
       end
       if (.basis.created) then
          .atom.resolve_bases(.basis,.basis_set_kind)
          if (.atom.bases_are_resolved) then; stdout.text("Gaussian bases all resolved")
          else;                               WARN("not all Gaussian bases were resolved")
          end
+         .atom.basis_kind = "gaussian"
       end
       ! Unnormalise if completely done
       if (.slaterbasis.created) then
@@ -505,6 +498,43 @@ contains
     ! .occupation_numbers.create(.n_bf)
     ! .fock_matrix.destroy
     ! .fock_matrix.create(.n_bf)
+   end
+
+   set_basis_set_kind(kind) ::: leaky
+   ! Set the *library* basis set kind
+      kind :: STR
+      last,bf_kind,bf_last :: STR
+      last = .basis_set_kind
+      if (last=="Coppens" AND kind=="Clementi-Roetti") then
+         WARN("basis_set_kind was already Coppens, cannot change to Clementi-Roetti")
+      else 
+         .basis_set_kind = kind
+         bf_kind = .basis_function_kind(kind)
+         bf_last = .basis_function_kind(last)
+         if (bf_kind/=bf_last) then  ! Basis function kind has changed
+            .atom.nullify_bases      ! Destroy previous bases
+            .basis.destroy
+            .slaterbasis.destroy
+            .coppensbasis.destroy
+         end
+         .resolve_basis_info         ! <-- this bit might be leaky
+      end
+   end
+
+   basis_function_kind(basis_set_kind) result (res)
+   ! Return the kind of basis function used given the "basis_set_kind"..
+      basis_set_kind :: STR, optional
+      res :: STR
+      bs_kind :: STR
+      bs_kind = .basis_set_kind
+      if (present(basis_set_kind)) bs_kind = basis_set_kind
+      bs_kind.to_lower_case
+      select case (bs_kind)
+         case (" ");                         res = " "
+         case ("thakkar","clementi-roetti"); res = "slater"
+         case ("coppens");                   res = "coppens"
+         case default;                       res = "gaussian"
+      end
    end
 
    assign_NOs_to_MOs ::: leaky
@@ -5346,30 +5376,20 @@ contains
    read_basis_set_kind ::: leaky
    ! Read in a suffix string representing the basis type to be used
    ! for the atoms.
-      last :: STR
+      last,this :: STR
       last = .basis_set_kind
-      stdin.read(.basis_set_kind)
-      if (last=="Coppens" AND .basis_set_kind=="Clementi-Roetti") then
-         WARN("basis_set_kind was already Coppens, cannot change to Clementi-Roetti")
-         .basis_set_kind = last
-      else
-         .resolve_basis_info ! <-- this bit might be leaky
-      end
+      stdin.read(this)
+      .set_basis_set_kind(this)
    end
 
    read_saved_basis_set_kind ::: leaky
    ! Read in a suffix string representing the basis type to be used
    ! for the atoms in the *saved* molecule.
    ENSURE(.saved.created,"there is no saved molecule")
-      last :: STR
+      last,this :: STR
       last = .saved.basis_set_kind
-      stdin.read(.saved.basis_set_kind)
-      if (last=="Coppens" AND .saved.basis_set_kind=="Clementi-Roetti") then
-         WARN("basis_set_kind was already Coppens, cannot change to Clementi-Roetti")
-         .saved.basis_set_kind = last
-      else
-         .saved.resolve_basis_info ! <-- this bit might be leaky
-      end
+      stdin.read(this)
+      .saved.set_basis_set_kind(this)
    end
 
    read_basis_sets ::: leaky
@@ -5646,7 +5666,7 @@ contains
       .atom.create(.n_atom)
       do a = 1, .n_atom
          chkfile.read(.atom(a).atomic_number )
-         .atom(a).label = trim(.atom(a).chemical_symbol) // trim(a.to_str)
+         .atom(a).label = trim(.atom(a).chemical_symbol)
       end
       chkfile.look_for("Current cartesian coordinates")
       chkfile.read_line
@@ -5721,7 +5741,7 @@ contains
       .basis.create(n_basis)
       do a = 1, .n_atom
          basis1.create
-         basis1.label = trim(.atom(a).label) // "_g94_basis"
+         basis1.label = trim(.atom(a).label) // ":gaussian"
          n_shell = count(shell_to_atom==a)
          basis1.n_shell = n_shell
          basis1.shell.create(n_shell)
@@ -5768,6 +5788,7 @@ contains
       m1 = .n_bf
       ! .basis.unnormalise ! NOTE this
       .set_atom_info
+      .basis_set_kind = " "
       .resolve_basis_info
       ENSURE(m1==.n_bf,"No. of basis functions inconsistent with basis set, did you use 6d/10f?")
 
