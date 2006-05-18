@@ -25,6 +25,8 @@ my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
 my $PLATFORM_ID = '';                 # e.g. LAHEY-lf95-on-WINDOWS
 my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
 my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
+my $INT_KIND = 4;                     # The default integer kind
+my $BIN_KIND = 4;                     # The default logical kind
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -118,6 +120,7 @@ if (defined $FC && $FC ne '') {
 print STDERR "\n";  # Just a gap to separate checks from Makefile stuff.
 
 if ($FC ne '') {
+
   print STDERR "Determining Fortran compiler vendor ...";
   $VENDOR = &get_vendor($FC);
   if ($VENDOR ne '') {&print_result($VENDOR)}
@@ -126,10 +129,26 @@ if ($FC ne '') {
   $PLATFORM_ID = "${VENDOR}-${FC}-on-${OS}";
   $PLATFORM_ID_ = "${VENDOR}_${FC}_on_${OS}";
   $PLATFORM_INFO_FILE = "${SRCDIR}/platforms/${PLATFORM_ID}";
+
+  print STDERR "Determining Fortran default integer kind ...";
+  &get_default_integer_kind;
+  &print_result($INT_KIND);
+
+  print STDERR "Determining Fortran default logical kind ...";
+  &get_default_logical_kind;
+  &print_result($BIN_KIND);
+
+  print STDERR "Determining Fortran default double precision kind ...";
+  &get_default_double_precision_kind;
+  &print_result($REAL_KIND);
+
   print STDERR "Options for your compiler are in $PLATFORM_INFO_FILE\n";
   &check_siteconfig;
+
 } else {
+
   die "Cannot find a Fortran compiler on your system.";
+
 }
 
 &do_substitutions_into_Makefile;
@@ -180,7 +199,7 @@ sub check_for_program {
 ################################################################################
 sub check_if_f95_compiler {
   my($CONFTEST);
-  open(CONFTEST,"conftest.${FSUFFIX}");
+  open(CONFTEST,"conftest.${FSUFFIX}",">");
   print CONFTEST "program main\n";
   print CONFTEST "  integer :: i\n";
   print CONFTEST "  real, dimension(10) :: a\n";
@@ -197,6 +216,71 @@ sub check_if_f95_compiler {
     $f95_compiler = 0;
   }
   unlink("conftest.${FSUFFIX}","conftest.exe","conftest.o","conftest.obj");
+}
+
+################################################################################
+sub get_default_integer_kind {
+  $INT_KIND = "4";
+  my($INTTEST);
+  open(INTTEST,">","inttest.f90");
+  print INTTEST "program main\n";
+  print INTTEST "  integer :: i\n";
+  print INTTEST "  print *,kind(i)\n";
+  print INTTEST "end program\n";
+  close(INTTEST);
+  unlink("inttest.exe","inttest.o","inttest.obj");
+  system("${FC} -o inttest.exe inttest.f90 2>&1");
+  if (! -x 'inttest.exe') { return }
+  system("./inttest.exe > inttest.out");
+  if (open(INTTEST,"<","inttest.out")) {
+     $INT_KIND = <INTTEST>;
+     chomp($INT_KIND);
+     $INT_KIND =~s/ *//g;
+  } 
+  unlink("inttest.f90","inttest.out","inttest.exe","inttest.o","inttest.obj");
+}
+
+################################################################################
+sub get_default_double_precision_kind {
+  $REAL_KIND = "8";
+  my($REALTEST);
+  open(REALTEST,">","realtest.f90");
+  print REALTEST "program main\n";
+  print REALTEST "  print *,kind(1.0d0)\n";
+  print REALTEST "end program\n";
+  close(REALTEST);
+  unlink("realtest.exe","realtest.o","realtest.obj");
+  system("${FC} -o realtest.exe realtest.f90 2>&1");
+  if (! -x 'realtest.exe') { return }
+  system("./realtest.exe > realtest.out");
+  if (open(REALTEST,"<","realtest.out")) {
+     $REAL_KIND = <REALTEST>;
+     chomp($REAL_KIND);
+     $REAL_KIND =~s/ *//g;
+  } 
+  unlink("realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
+}
+
+################################################################################
+sub get_default_logical_kind {
+  $BIN_KIND = "4";
+  my($BINTEST);
+  open(BINTEST,">","bintest.f90");
+  print BINTEST "program main\n";
+  print BINTEST "  logical :: l\n";
+  print BINTEST "  print *,kind(l)\n";
+  print BINTEST "end program\n";
+  close(BINTEST);
+  unlink("bintest.exe","bintest.o","bintest.obj");
+  system("${FC} -o bintest.exe bintest.f90 2>&1");
+  if (! -x 'bintest.exe') { return }
+  system("./bintest.exe > bintest.out");
+  if (open(BINTEST,"<","bintest.out")) {
+     $BIN_KIND = <BINTEST>;
+     chomp($BIN_KIND);
+     $BIN_KIND =~s/ *//g;
+  } 
+  unlink("bintest.f90","bintest.out","bintest.exe","bintest.o","bintest.obj");
 }
 
 ################################################################################
@@ -300,6 +384,9 @@ sub do_substitutions_into_Makefile {
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
+    s/\@INT_KIND\@/$INT_KIND/g;
+    s/\@BIN_KIND\@/$BIN_KIND/g;
+    s/\@REAL_KIND\@/$REAL_KIND/g;
     print OUTFILE;
   }
   close(OUTFILE);
