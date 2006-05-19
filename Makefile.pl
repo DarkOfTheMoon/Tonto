@@ -118,7 +118,7 @@ if (defined $FC && $FC ne '') {
 }
 &print_result($FULLFC);
 
-print STDERR "\n";  # Just a gap to separate checks from Makefile stuff.
+# print STDERR "\n";  # Just a gap to separate checks from Makefile stuff.
 
 if ($FC ne '') {
 
