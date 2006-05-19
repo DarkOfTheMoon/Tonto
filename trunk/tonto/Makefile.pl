@@ -27,6 +27,7 @@ my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
 my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
 my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
+my $REAL_KIND = 8;                    # The default real kind
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -220,7 +221,6 @@ sub check_if_f95_compiler {
 
 ################################################################################
 sub get_default_integer_kind {
-  $INT_KIND = "4";
   my($INTTEST);
   open(INTTEST,">","inttest.f90");
   print INTTEST "program main\n";
@@ -229,7 +229,7 @@ sub get_default_integer_kind {
   print INTTEST "end program\n";
   close(INTTEST);
   unlink("inttest.exe","inttest.o","inttest.obj");
-  system("${FC} -o inttest.exe inttest.f90 2>&1");
+  system("${FC} -o inttest.exe inttest.f90 >& /dev/null");
   if (! -x 'inttest.exe') { return }
   system("./inttest.exe > inttest.out");
   if (open(INTTEST,"<","inttest.out")) {
@@ -242,7 +242,6 @@ sub get_default_integer_kind {
 
 ################################################################################
 sub get_default_double_precision_kind {
-  $REAL_KIND = "8";
   my($REALTEST);
   open(REALTEST,">","realtest.f90");
   print REALTEST "program main\n";
@@ -250,7 +249,7 @@ sub get_default_double_precision_kind {
   print REALTEST "end program\n";
   close(REALTEST);
   unlink("realtest.exe","realtest.o","realtest.obj");
-  system("${FC} -o realtest.exe realtest.f90 2>&1");
+  system("${FC} -o realtest.exe realtest.f90 >& /dev/null");
   if (! -x 'realtest.exe') { return }
   system("./realtest.exe > realtest.out");
   if (open(REALTEST,"<","realtest.out")) {
@@ -263,7 +262,6 @@ sub get_default_double_precision_kind {
 
 ################################################################################
 sub get_default_logical_kind {
-  $BIN_KIND = "4";
   my($BINTEST);
   open(BINTEST,">","bintest.f90");
   print BINTEST "program main\n";
@@ -272,7 +270,7 @@ sub get_default_logical_kind {
   print BINTEST "end program\n";
   close(BINTEST);
   unlink("bintest.exe","bintest.o","bintest.obj");
-  system("${FC} -o bintest.exe bintest.f90 2>&1");
+  system("${FC} -o bintest.exe bintest.f90 >& /dev/null");
   if (! -x 'bintest.exe') { return }
   system("./bintest.exe > bintest.out");
   if (open(BINTEST,"<","bintest.out")) {
