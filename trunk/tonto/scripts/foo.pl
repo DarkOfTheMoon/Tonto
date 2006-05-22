@@ -2230,7 +2230,7 @@ sub fortran_dump_interface {
 
   foreach $rout (sort keys %overload_count) {
       next if (defined $routine{$rout}{inlined_by_foo});
-      next if ($do_usd && ! defined $usd{$rout});
+      next if ($do_usd && ! &routine_used($rout));
       $cnt = $overload_count{$rout}-1;
       $pvt = $routine{$rout}{generic_access};
       if ($do_generic) {
@@ -2794,7 +2794,7 @@ sub fortran_do_new_program_scope {
 
   if ($do_routine_calls && $pass==2) {
      $current_rout_name = lc($module_full_name);
-     print RCFILE "$current_rout_name";
+     print RCFILE "\n$current_rout_name calls:";
   }
 }
 
@@ -3168,11 +3168,11 @@ sub fortran_do_new_end_scope {
    # print "do_usd            = $do_usd";
    # if (defined $do_usd) { print "usd defined"; }
    # print "short_name        = $usd{$routine{$current_rout_name}{short_name}}";
-     if    ($#scope<1 && $do_usd && ! defined $usd{$current_rout_name}) {
+     if    ($#scope<1 && $do_usd && ! &routine_used($current_rout_name)) {
    #    print "HERE";
         $skip_fortran_out = 1; return; # MOdule interface
      }
-     elsif ($#scope>=2 && $do_usd && ! defined $usd{$routine{$current_rout_name}{short_name}}) {
+     elsif ($#scope>=2 && $do_usd && ! &routine_used($routine{$current_rout_name}{short_name})) {
    #    print "HERE2";
         $skip_fortran_out = 1; return; # Routine interface
      } else {
@@ -3338,7 +3338,7 @@ sub fortran_do_new_module_interface_scope {
 
 # $current_rout_name = $1;
 
-  if ($do_usd && ! defined $usd{$current_rout_name}) {
+  if ($do_usd && ! &routine_used($current_rout_name)) {
       $skip_fortran_out = 1; return;
   }
 
@@ -3348,7 +3348,7 @@ sub fortran_do_new_module_interface_scope {
      $fortran_out = "   public    ${module_fort_type}_$1\n   interface ${module_fort_type}_$1";
   }
   if ($do_routine_calls && $pass==2) {
-     print RCFILE $1;
+     print RCFILE "\n$1 interfaces:";
   }
 }
 
@@ -3378,7 +3378,7 @@ sub html_do_module_interface_scope {
 # The line is within the scope of an interface within a module.
 sub fortran_do_module_interface_scope {
 
-   if ($do_usd && ! defined $usd{$current_rout_name}) {
+   if ($do_usd && ! &routine_used($current_rout_name)) {
       $skip_fortran_out = 1; return;
    }
 
@@ -3676,8 +3676,8 @@ sub fortran_do_routine_scope {
       ($fortran_out,$comment) = &split_by_comment($fortran_out);
       $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
       &fortran_change_square_brackets;
-      $fortran_out = &module_colon_to_fortran($fortran_out);
       $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
+      $fortran_out = &module_colon_to_fortran($fortran_out);
       &fortran_change_variable_declarations;
       ######## lines that contain a dot. ###########
       $fortran_out = &dots_to_fortran($fortran_out);
@@ -3898,8 +3898,8 @@ sub fortran_do_routine_body {
    
      $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
      &fortran_change_square_brackets;
-     $fortran_out = &module_colon_to_fortran($fortran_out);
      $fortran_out = &convert_inherited_type_arg_macros($fortran_out);
+     $fortran_out = &module_colon_to_fortran($fortran_out);
    
      ######## lines that contain a dot. ###########
      $fortran_out = &dots_to_fortran($fortran_out);
@@ -4570,7 +4570,12 @@ sub module_colon_to_fortran {
      if ($do_generic) { $X = $pre.$rout.$post; } 
      else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
-          print RCFILE "   $rout_type:$rout";
+         my $call = $rout_type . "::" . $rout;
+         my $short_name = $routine{$current_rout_name}{short_name};
+         if (! &routine_calls_this_routine($short_name,$call)) {
+            print RCFILE "   $call";
+            push @{$routine_calls{$short_name}}, $call;
+         }
      }
   }
 
@@ -4594,7 +4599,12 @@ sub module_colon_to_fortran {
      if ($do_generic) { $X = $pre."call ".$rout.$post; } 
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
-          print RCFILE "   $rout_type:$rout";
+         my $call = $rout_type . "::" . $rout;
+         my $short_name = $routine{$current_rout_name}{short_name};
+         if (! &routine_calls_this_routine($short_name,$call)) {
+            print RCFILE "   $call";
+            push @{$routine_calls{$short_name}}, $call;
+         }
      }
   }
 
@@ -4628,7 +4638,12 @@ sub module_colon_to_fortran {
      if ($do_generic) { $X = $pre.$rout."_".$post; } 
      else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
-          print RCFILE "   $rout_type:$rout";
+         my $call = $rout_type . ":" . $rout;
+         my $short_name = $routine{$current_rout_name}{short_name};
+         if (! &routine_calls_this_routine($short_name,$call)) {
+            print RCFILE "   $call";
+            push @{$routine_calls{$short_name}}, $call;
+         }
      }
   }
 
@@ -4651,7 +4666,12 @@ sub module_colon_to_fortran {
      if ($do_generic) { $X = $pre."call ".$rout."_".$post; } 
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
-          print RCFILE "   $rout_type:$rout";
+         my $call = $rout_type . ":" . $rout;
+         my $short_name = $routine{$current_rout_name}{short_name};
+         if (! &routine_calls_this_routine($short_name,$call)) {
+            print RCFILE "   $call";
+            push @{$routine_calls{$short_name}}, $call;
+         }
      }
   }
 
@@ -5340,7 +5360,7 @@ sub analyse_rout_name {
 
     # This checks if the current routine is an interface within an unused/used routine
     my ($within_unused) = $#scope>2 && $do_usd && 
-            ! defined $usd{$routine{$current_rout_name}{short_name}};
+            ! &routine_used($routine{$current_rout_name}{short_name});
 
     # Check for common typo
     if ($X =~ / :: /) {
@@ -5378,7 +5398,7 @@ sub analyse_rout_name {
     }
 
     # If this is a template or unused routine, do the minimum and get out.
-    my $is_unused = $do_usd && ! defined $usd{$short_name} && $#scope<=2;
+    my $is_unused = $do_usd && ! &routine_used($short_name) && $#scope<=2;
     if ($attr =~ /^template/ || $is_unused || $within_unused) {
        $routine{$short_name}{template} = 1;  
        $routine{$short_name}{short_name} = $short_name;
@@ -5439,6 +5459,9 @@ sub analyse_rout_name {
 
     # Clear the routine attributes hash
     undef %{$routine{$name}}; 
+
+    # Clear the routine_calls array
+    @{$routine_calls{$short_name}} = ();
 
     # Put back only this old stuff
     $routine{$name}{short_name} = $short_name;
@@ -5607,7 +5630,7 @@ sub analyse_rout_name {
     } 
 
     if ($do_routine_calls && $pass==2 && $#scope<=2) {
-        print RCFILE "$short_name:";
+        print RCFILE "\n$short_name calls:";
     }
 
 }
@@ -5892,4 +5915,14 @@ sub routine_calls_this_routine {
        last;
     }
     return ($has);
+}
+
+################################################################################
+# Return TRUE if the routine with name $rout is used in this module.
+sub routine_used {
+    my $rout = $_[0];
+
+    if    (defined $usd{"*all*"}) { return(1); }
+    elsif (defined $usd{$rout})   { return(1); }
+    else                          { return(0); }
 }

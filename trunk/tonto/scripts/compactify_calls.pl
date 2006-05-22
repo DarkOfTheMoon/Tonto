@@ -136,18 +136,24 @@ foreach $foofile (@all_files) {
    # Read in all the routines and their calls.
 
    my $line;
+   my $explicit_call;
    my @item;
 
   print "\n";
 
    while ($line = <RCFFILE>) {
 
-  # print "line = $line";
-    chomp($line);
-       $line =~ s/^ *//;
-       @item = split(/ *: */,$line);
-  # print "item = @item\n";
+       # Remove calls: or interfaces: part, and space
+       chomp($line);
+       next if $line =~ /^ *$/;
+       $line =~ s/\w+:$//; 
+       $line =~ s/ *//g;
 
+       # Split the line into items
+       if ($line =~ /::/) { @item = split(/::/,$line); $explicit_call = 1; }
+       else               { @item = split(/:/,$line);  $explicit_call = 0; }
+
+       # One item: a routine definition or interfce
        if (@item==1) {
           $routine = $item[0];
           print "   Found routine \"$routine\":\n";
@@ -155,12 +161,15 @@ foreach $foofile (@all_files) {
              %{$module{$module}{$routine}} = ();
           }
        }
+       # Two items: routines called by a routine
        else {
           if (! defined $module{$module}{$routine}) {
              die "Routine \"$routine\" in module \"$module\" was not found.  Stopped";
           }
           $called_module  = $item[0];
           $called_routine = $item[1];
+          # For explicit calls put an extra colon in front
+          if ($explicit_call==1) { $called_routine = ":" . $called_routine; }
           print "      Found call to \"$called_module:$called_routine\"\n";
           push(@{$module{$module}{$routine}{$called_module}},$called_routine);
        }
@@ -194,11 +203,16 @@ foreach $routine (keys %{$module{$caller_module}}) {
 
 my $usdfile;
 
+print "\n";
+print "The list of used routines:\n";
+print "\n";
+
 foreach $module (keys %call_list) {
    print "module = $module\n";
    $usdfile = lc($module) . ".usd";
    open(USDFILE, ">$usdfile");
    foreach $routine (keys %{$call_list{$module}}) {
+      $routine =~ s/^://;
       print "   $routine\n";
       print USDFILE "$routine\n";
    }
@@ -215,23 +229,33 @@ sub add_calls_from {
    $indent = $indent.'   ';
  
    my $routine;
+   my $rout;
+   my $explicit_call;
    my $module_call;
  
    foreach $routine (@called_routine) {
 
+      if ($routine =~ s/^://) { $explicit_call = 1; }
+      else                    { $explicit_call = 0; }
+
       print "$indent$called_module:$routine\n";
 
       if (! defined $call_list{$called_module}{$routine}) {
-
-         $call_list{$called_module}{$routine} = 1;
 
          if (! defined $module{$called_module}) {
             die "The .rcf file for module \"$called_module\" was not scanned.  Stopped";
          }
 
          if (! defined $module{$called_module}{$routine}) {
-            die "Routine \"$routine\" in \"$called_module\" was not found in the rcf file.  Stopped";
+            if ($explicit_call == 1) {
+               print "$indent\"$routine\" in \"$called_module\" appears to be a module variable\n";
+               next;
+            } else {
+               die "Routine \"$routine\" in \"$called_module\" was not found in the rcf file.  Stopped";
+            }
          }
+
+         $call_list{$called_module}{$routine} = 1;
 
          foreach $module_call (keys %{$module{$called_module}{$routine}}) {
             &add_calls_from($module_call,@{$module{$called_module}{$routine}{$module_call}});
