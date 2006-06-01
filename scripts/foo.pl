@@ -2304,10 +2304,8 @@ sub fortran_dump_use {
     }
   }
 
-  my ($mod,$fort_mod,$fort_typ,$fort_fun);
-
   # Loop over the TONTO modules $mod to which the called routines belong
-  foreach $mod (sort keys %called_routines) { 
+  foreach my $mod (sort keys %called_routines) { 
 
       print USEFILE " ";
 
@@ -2320,9 +2318,10 @@ sub fortran_dump_use {
       # The name $rout may be overloaded, of course. 
       foreach $rout (sort keys %{$called_routines{$mod}}) {
          # This is the mangled fortran module name of the called routine
-         $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
-         $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
-         $fort_fun = $called_routines{$mod}{$rout}{non_generic_call};
+         my $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
+         my $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
+         my $fort_fun = $called_routines{$mod}{$rout}{non_generic_call};
+         my $fort_dat = $called_routines{$mod}{$rout}{module_data};
          if ($mod eq "TEXTFILE" && $first==0 && $mod ne $module_full_name) {
             print USEFILE "   use TEXTFILE_MODULE, only: stdin";
             print USEFILE "   use TEXTFILE_MODULE, only: stdout";
@@ -2343,7 +2342,11 @@ sub fortran_dump_use {
                   print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
                }
             } else {
+               if (defined $fort_dat and $fort_dat==1) {
+                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+               } else {
                   print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
+               }
             }
          } elsif ($mod eq "unknown") {
             if ($do_generic) {
@@ -4567,20 +4570,24 @@ sub module_colon_to_fortran {
      $called_routines{$rout_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
      $called_routines{$rout_type}{$rout}{fortran_type_name} = $fortran_type_name;
      $called_routines{$rout_type}{$rout}{non_generic_call} = 1;
-     if ($do_generic) { $X = $pre.$rout.$post; } 
-     else             { $X = $pre.$fortran_mod_name."_".$rout.$post; }
+     my $is_module_data = &is_module_data($rout_type,$rout);
+     if ($is_module_data) { $called_routines{$rout_type}{$rout}{module_data} = 1; }
+     if    ($do_generic)     { $X = $pre.$rout.$post; } 
+     elsif ($is_module_data) { $X = $pre.$rout.$post; } 
+     else                    { $X = $pre.$fortran_mod_name."_".$rout.$post; }
      if ($do_routine_calls && $pass==2) {
          my $call = $rout_type . "::" . $rout;
          my $short_name = $routine{$current_rout_name}{short_name};
-         if (! &routine_calls_this_routine($short_name,$call)) {
+         if (   ! &routine_calls_this_routine($short_name,$call)
+             && ! $is_module_data) {
             print RCFILE "   $call";
             push @{$routine_calls{$short_name}}, $call;
          }
      }
   }
 
-  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/) { # Routine call, anywhere not a function
-     my $pre = $PREMATCH.$1;                            # and starting from a new line
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/) { # Routine call, anywhere, not a function
+     my $pre = $PREMATCH.$1;                             # and starting from a new line
      my $rout_type = $2; 
      my $rout = $3; 
      my $post = $POSTMATCH;
@@ -5925,4 +5932,28 @@ sub routine_used {
     if    (defined $usd{"*all*"}) { return(1); }
     elsif (defined $usd{$rout})   { return(1); }
     else                          { return(0); }
+}
+
+################################################################################
+# Return TRUE if $data is really some data in module $module
+sub is_module_data {
+    my $module = $_[0];
+    my $data = $_[1];
+
+    # Make the module file and open it
+    $module = lc($module);
+    my $modfile = File::Spec->catpath($foofile_volume,$foofile_directory,"$module.foo"); 
+    open(MODFILE,$modfile); 
+
+    # Does the $data occur before the contains?
+    my $res = 0;
+    while (<MODFILE>) {       # Loop over .foo lines
+       last if (/^ *contains/);
+       if (/^ *$data/) {
+          $res = 1;
+          last;
+       }
+    }
+
+    return($res)
 }
