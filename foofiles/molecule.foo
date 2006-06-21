@@ -9891,7 +9891,7 @@ contains
      if (add_r12) then
         J.create(.n_bf,.n_bf)
         K.create(.n_bf,.n_bf)
-        if (do_direct) then; .make_r_JK_direct(J,K,P.restricted)
+        if (do_direct) then; .make_r_JK_direct2(J,K,P.restricted)
         else;                .make_r_JK_disk(J,K,P.restricted)
         end
         F.restricted = J - HALF*K
@@ -11097,6 +11097,90 @@ contains
      .put_debug(K,"direct k matrix")
    end
 
+   make_r_JK_direct2(J,K,P)
+   ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
+   ! directly. This uses the J matrix engine, but it can be easily disabled.
+     J,K,P :: MAT{REAL}
+   ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
+     PP,JJ :: VEC{VEC_{REAL}}*
+     max_P,Jab,Jcd,Pab,Pcd :: VEC{REAL}*
+     sh4s,sh4n :: SHELL1QUARTET
+     ab,cd,aa,bb,cc,dd,fa,fb,fc,fd,la,lb,lc,ld :: INT
+     atom_a,atom_b,atom_c,atom_d :: INT
+     factor,cutoff,P_max,IP_max :: REAL
+     skip_J,skip_K,ab_same,cd_same,any_same,no_max_I,ab_eq_cd :: BIN
+     .reverse_transfer(P,PP)
+     .create_transfer(JJ)
+     J = ZERO
+     K = ZERO
+     cutoff = .scfdata.eri_cutoff
+     no_max_I = FALSE
+     if (.max_I.destroyed) no_max_I = TRUE
+     if (no_max_I) .initialise_max_I
+     max_P.create(.n_shell_pairs)
+     .make_max_density_elements(max_P,P)
+     P_max = maxval(max_P)
+     IP_max = maxval(.max_I) * P_max
+     parallel do ab = 1,.n_shell_pairs
+       if (.max_I(ab)*IP_max < cutoff)  cycle 
+       .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb,atom_a,atom_b)
+       ab_same = atom_a==atom_b
+       .set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
+       .set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
+       Jab => JJ(ab).element
+       Pab => PP(ab).element
+       do cd = 1,ab
+         if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
+         .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d) 
+         cd_same = atom_c==atom_d
+         .schwarz_test(skip_J,skip_K,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         if (skip_J AND skip_K) cycle
+         Jcd => JJ(cd).element
+         Pcd => PP(cd).element
+         ab_eq_cd = FALSE
+         if (aa==bb) then; factor = HALF 
+         else;             factor = ONE
+         end
+         if (cc==dd) factor = HALF * factor
+         if (aa==cc AND bb==dd) then
+            ab_eq_cd = TRUE
+            factor = HALF * factor
+         end
+         any_same = ab_same OR cd_same OR &
+                    atom_a==atom_c OR atom_a==atom_d OR &
+                    atom_b==atom_c OR atom_b==atom_d 
+         if (any_same) then
+            .set_new_shell_quartet_cd(sh4n,cc,dd,skip=FALSE)
+            sh4n.make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,ab_eq_cd,factor,fa,la,fb,lb,fc,lc,fd,ld)
+            sh4n.destroy_cd
+         else
+            .set_new_shell_quartet_cd(sh4s,cc,dd,skip=TRUE)
+            sh4s.make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,ab_eq_cd,factor,fa,la,fb,lb,fc,lc,fd,ld)
+            sh4s.destroy_cd
+         end
+       end
+       sh4n.destroy_ab
+       sh4s.destroy_ab
+     end
+     max_P.destroy
+     if (no_max_I) .max_I.destroy
+     .forward_transfer(JJ,J)
+     .weight_diagonal_blocks(J,TWO)
+     .blockwise_symmetric_fold(K)
+     J = TWO*J
+     if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(J)
+        PARALLEL_SYMMETRIC_SUM(K)
+     else
+        J.symmetric_reflect
+        K.symmetric_reflect
+     end
+     JJ.destroy
+     PP.destroy
+     .put_debug(J,"direct j matrix 2")
+     .put_debug(K,"direct k matrix 2")
+   end
+
    make_r_J_direct(J,P)
    ! Make the real coulomb matrix "J" from a symmetric density matrix "P"
    ! directly. This uses the J matrix engine, but it can be easily disabled.
@@ -11132,7 +11216,6 @@ contains
          if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d) 
          cd_same = atom_c==atom_d
-      !  skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          .schwarz_J_test(skip,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
          Jcd => JJ(cd).element
