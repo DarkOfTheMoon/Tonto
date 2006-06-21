@@ -3235,17 +3235,19 @@ sub fortran_do_new_parallel_do_scope {
   if ($fortran_out =~ /^(\s*)parallel\s do                    # do part
                         (?:\s+(\w+)\s*=\s*(\S+)\s*,\s*(\S+))? # variable and limits
                         (?:\s*,\s*(\S+))?                     # stride part
-                        (\s*$|\s*!.*$)/x) {
+                        (\s*|\s*!.*) $/x) {
       if (defined $2 && defined $5) {
-         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,$5),$4,PARALLEL_DO_STRIDE($5)$6";
+         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,$5),$4,PARALLEL_DO_STRIDE($5)$6" .
+                      "\n$1LOCK_PARALLEL_DO(\"" .
+                        $module_full_name . ":" .
+                        $routine{$current_rout_name}{real_name} ."\")";
       }
       elsif (defined $2) {
-         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,1),$4,PARALLEL_DO_STRIDE(1)$6";
-      }
-# print "mod = $module_full_name";
-      $fortran_out .= "\n" . $1 . "LOCK_PARALLEL_DO(\"" .
-                      $module_full_name . ":" .
-                      $routine{$current_rout_name}{real_name} ."\")";
+         $fortran_out = "$1do $2 = PARALLEL_DO_START($3,1),$4,PARALLEL_DO_STRIDE(1)$6" .
+                      "\n$1LOCK_PARALLEL_DO(\"" .
+                        $module_full_name . ":" .
+                        $routine{$current_rout_name}{real_name} ."\")";
+      };
   }
 }
 
@@ -4714,7 +4716,7 @@ sub dots_to_fortran {
       if (! &outside_of_string($left)) { next THIS; }
 
       # What is to the right of the dot - object feature and other stuff.
-      if ($right !~ m'^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)'o) {next THIS};
+      if ($right !~ /^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)/so) {next THIS};
       undef $sub_mod_name;
       if (defined $1) {  # If preceded by a colon this is the submodule name
          $sub_mod_name = $1; 
