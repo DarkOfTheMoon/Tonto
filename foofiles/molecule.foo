@@ -12777,6 +12777,167 @@ contains
       V.destroy
    end
 
+   add_GGA_XC_matrix_new(K,E)
+   ! Add the exchange and correlation matrices to K. This routine supports
+   ! non-local functionals, either exchange or correlation.
+      K :: MAT{REAL}, target
+      E :: REAL
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
+      pt0,pt,rho1,V1,a0,a1,a2,a3,b0,b1,b2,b3,V :: MAT{REAL}*
+      wt0,wt,rho0,V0,E0,ab0 :: VEC{REAL}*
+      xa,ya,za,aa,xb,yb,zb,bb,ex,ee :: VEC{REAL}*
+      atom_a,atom_b,a,sa,fsa,lsa,na,fa,la,b,sb,fsb,lsb,nb,fb,lb,n_pt0,n_pt,i,n :: INT
+      sha,shb :: SHELL1
+      same_atoms :: BIN
+      keep  :: VEC{BIN}*
+      atom1 :: VEC{INT}(1), target
+      atom2 :: VEC{INT}(2), target
+      atoms :: VEC{INT}*
+      V_ab,E_ab,fac,cutoff,ea,eb :: REAL
+      V.create(.n_bf,.n_bf)                              ! Use temporary V for parallelisation
+      cutoff = -log(.becke_grid.rho_cutoff)              ! Cutoff
+      E = ZERO
+      do atom_a = 1,.n_atom                              ! Loop over atom pairs   
+         fsa = .first_shell_for_atom(atom_a)
+         lsa = .last_shell_for_atom(atom_a)
+         do atom_b = 1,atom_a
+            if (NOT .is_overlapping_atom(atom_a,atom_b)) cycle 
+            fsb = .first_shell_for_atom(atom_b)          ! Only atom pairs which overlap
+            lsb = .last_shell_for_atom(atom_b)
+            if (atom_a==atom_b) then                     ! One or two atoms in grid?
+               atom1 = [atom_a]; atoms => atom1
+            else;
+               atom2 = [atom_a,atom_b]; atoms => atom2
+            end                                          ! Make unreduced grid and weights
+            .becke_grid.make_grid(pt0,wt0,atoms)
+            .atom(atom_a).make_displaced_points(xa,ya,za,aa,pt0,create=TRUE)
+            .atom(atom_b).make_displaced_points(xb,yb,zb,bb,pt0,create=TRUE)
+            n_pt0 = pt0.dim1                 
+    ! stdout.show("atom_a=",atom_a)
+    ! stdout.show("atom_b=",atom_b)
+    ! stdout.show("n_pt0 =",n_pt0)
+    ! stdout.text("pt0:"); stdout.put(pt0)
+    ! stdout.text("wt0:"); stdout.put(wt0)
+    ! stdout.text("aa:");  stdout.put(aa)
+    ! stdout.text("bb:");  stdout.put(bb)
+            ex.create(n_pt0)
+            keep.create(n_pt0)
+            do sa = fsa,lsa                              ! Loop over shell pairs
+               .get_shell(sha,sa,fa,la); fa = fa - 1
+               na = sha.n_comp
+               ea = minval(sha.ex)
+               do sb = fsb,min(sa,lsb)
+                  .get_shell(shb,sb,fb,lb); fb = fb - 1
+                  nb = shb.n_comp
+                  eb = minval(shb.ex)
+                  ex = ea*aa+eb*bb
+                  keep = ex<=cutoff
+                  n_pt = count(keep)                     ! # of significant points
+    ! stdout.show("sa=",sa)
+    ! stdout.show("sb=",sb)
+    ! stdout.show("cutoff=",cutoff)
+    ! stdout.show("n_pt  =",n_pt)
+    ! stdout.text("ex:"); stdout.put(ex)
+    ! stdout.text("kp:"); stdout.put(keep)
+                  if (n_pt>0) then                       ! <<< cycle if no sig.  points
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+                     a0.create(n_pt,na)                     ! Make reduced "a" basis fn. grid
+                     a1.create(n_pt,na); a2.create(n_pt,na); a3.create(n_pt,na)
+                     sha.make_nabla_grid(a1,a2,a3,a0,xa,ya,za,aa,keep) 
+                     if (sa==sb) then
+                        b0 => a0
+                        b1 => a1; b2 => a2; b3=> a3
+                     else                                   ! Make "b" grid only if needed
+                        b0.create(n_pt,nb)
+                        b1.create(n_pt,nb); b2.create(n_pt,nb); b3.create(n_pt,nb)
+                        shb.make_nabla_grid(b1,b2,b3,b0,xb,yb,zb,bb,keep) 
+                     end
+       ! stdout.text("a0:"); stdout.put(a0)
+       ! stdout.text("a1:"); stdout.put(a1)
+       ! stdout.text("a2:"); stdout.put(a2)
+       ! stdout.text("a3:"); stdout.put(a3)
+       ! stdout.text("b0:"); stdout.put(b0)
+       ! stdout.text("b1:"); stdout.put(b1)
+       ! stdout.text("b2:"); stdout.put(b2)
+       ! stdout.text("b3:"); stdout.put(b3)
+                     V0.create(n_pt); V1.create(n_pt,3)     ! local/non-local potential grids
+                     E0.create(n_pt)                        ! The energy density
+                     ab0.create(n_pt)              
+                     wt.create(n_pt)
+                     rho0.create(n_pt); rho1.create(n_pt,3) ! The density/nabla density grids
+                     pt.create(n_pt,3); ee.create(n_pt)
+                     i = 0
+                     do n = 1,n_pt0                         ! Make reduced points and weights
+                        if (NOT keep(n)) cycle
+                        i = i + 1
+                        pt(i,1) = pt0(n,1)
+                        pt(i,2) = pt0(n,2)
+                        pt(i,3) = pt0(n,3)
+                        wt(i)   = wt0(n)
+                        ee(i)   = ex(n)
+                     end                                    ! <<< Make the density grid
+       ! stdout.text("pt:"); stdout.put(pt)
+       ! stdout.text("wt:"); stdout.put(wt)
+                     .make_nabla_density_grid_r_A(rho1,rho0,pt,atoms,ee)
+                     ee.destroy; pt.destroy
+                     V0 = ZERO                              ! Re-use a0, b0 grids?
+                     V1 = ZERO                              
+                     .add_r_XC_potentials(V0,rho0,V1,rho1)  ! Evaluation the XC potentials
+                     .set_r_XC_energy_density(E0,rho0,rho1)
+       ! stdout.text("rho0:"); stdout.put(rho0)
+       ! stdout.text("rho1:"); stdout.put(rho1)
+       ! stdout.text("E0:"); stdout.put(E0)
+       ! stdout.text("V0:"); stdout.put(V0)
+       ! stdout.text("V1:"); stdout.put(V1)
+                     rho1.destroy; rho0.destroy
+                     V0 = wt*V0
+                     E0 = wt*E0
+                     forall (i=1:3) V1(:,i) = wt*V1(:,i)
+                     wt.destroy
+                     do b = 1,nb
+                        lb = fb + b
+                        do a = 1,na                         ! <<< Make the XC matrix
+                           la = fa + a
+                           ab0 = a0(:,a)*b0(:,b)
+                           V_ab = sum(V0*ab0) &
+                                + sum(V1(:,1)*(a1(:,a)*b0(:,b)+a0(:,a)*b1(:,b))) &
+                                + sum(V1(:,2)*(a2(:,a)*b0(:,b)+a0(:,a)*b2(:,b))) &
+                                + sum(V1(:,3)*(a3(:,a)*b0(:,b)+a0(:,a)*b3(:,b)))
+                           E_ab = sum(E0*ab0) 
+                           V(la,lb) = V_ab                     
+                           E = E + fac*E_ab*.density_matrix.restricted(la,lb)
+                        end
+                     end
+       ! stdout.show("E =",E)
+                     ab0.destroy; E0.destroy
+                     V1.destroy; V0.destroy
+                     if (sa==sb) then
+                        nullify(b3); nullify(b2); nullify(b1); nullify(b0)
+                        a3.destroy; a2.destroy; a1.destroy; a0.destroy
+                     else
+                        b3.destroy; b2.destroy; b1.destroy; b0.destroy
+                        a3.destroy; a2.destroy; a1.destroy; a0.destroy
+                     end
+                  end
+                  shb.destroy_ptr_part
+               end
+               sha.destroy_ptr_part
+            end
+            keep.destroy; ex.destroy
+            .atom(atom_b).tidy_displaced_points(xb,yb,zb,bb)
+            .atom(atom_a).tidy_displaced_points(xa,ya,za,aa)
+            wt0.destroy; pt0.destroy
+         end
+      end
+      V.symmetric_reflect
+      K = K + V
+      E = E - HALF*.density_matrix.restricted.trace_product_with(V)
+      V.destroy
+   end
+
    add_r_XC_functionals(E,rho0,rho1)
    ! Return the *restricted* exchange correlation functional "E", for given
    ! densities "rho0" and gradient densities "rho1".
@@ -15535,7 +15696,7 @@ contains
 !   end
 
 
-   make_nabla_density_grid_r_A(grid1,grid0,pt,atoms,cutoff)
+   make_nabla_density_grid_r_A(grid1,grid0,pt,atoms,ex)
    ! Evaluate the nabla density grid "grid1" and density grid "grid0" on a set
    ! of grid points "pt", for use in matrix elements needed by DFT grid
    ! integration. "atoms" lists the atoms whose grid points are to be used in
@@ -15551,7 +15712,7 @@ contains
       grid0 :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
       atoms :: VEC{INT}
-      cutoff :: REAL, IN
+      ex :: VEC{REAL}, IN
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,"no atom list")
    ENSURE(.density_matrix.created,"no density matrix")
@@ -15559,75 +15720,86 @@ contains
    ENSURE(grid1.dim1==pt.dim1,"grid1 has wrong 1st dimension")
    ENSURE(grid1.dim2==3,"grid1 has wrong 2nd dimension")
    ENSURE(grid0.dim==pt.dim1,"grid0 has wrong 1st dimension")
+   ENSURE(ex.dim==pt.dim1,"ex has wrong dimension")
    ENSURE(pt.dim2==3,"pt has wrong 2nd dimension")
    ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
       xa,ya,za,aa,xb,yb,zb,bb :: VEC{REAL}*
-      doa,dob  :: VEC{BIN}*
+      keep  :: VEC{BIN}*
       sha,shb :: SHELL1
       a0,a1,a2,a3,b0,bP :: MAT{REAL}*
-      n_pt,a,sa,fsa,lsa,fa,la,b,sb,fsb,lsb,fb,lb, n,na,nb,i,j :: INT
-      val :: REAL
-      n_pt = pt.dim1
-      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
-      xb.create(n_pt); yb.create(n_pt); zb.create(n_pt)
-      aa.create(n_pt); doa.create(n_pt)
-      bb.create(n_pt); dob.create(n_pt)
+      atom_a,sa,fsa,lsa,fa,la,atom_b,sb,fsb,lsb,fb,lb, n_pt,na,nb,i,j :: INT
+      cutoff,val,ea,eb,fac :: REAL
+      cutoff = -log(.becke_grid.rho_cutoff)              ! Cutoff
+      keep.create(pt.dim1)
+      sha.nullify_ptr_part
+      shb.nullify_ptr_part
       grid1 = ZERO
       grid0 = ZERO
       ! Loop over density basis functions "a" and "b". Keep only significant
       ! points at each stage using a density cutoff not basis function cutoff.
-      do a = 1,.n_atom                                 
-         if (NOT .is_overlapping_atom(a,atoms)) cycle  
-         .atom(a).make_displaced_points(xa,ya,za,aa,pt)
-         fsa = .first_shell_for_atom(a)
-         lsa = .last_shell_for_atom(a)
-         do b = 1,a
-            if (NOT .is_overlapping_atom(b,atoms)) cycle
-            .atom(b).make_displaced_points(xb,yb,zb,bb,pt)
-            fsb = .first_shell_for_atom(b)
-            lsb = .last_shell_for_atom(b)
+      do atom_a = 1,.n_atom                                 
+         if (NOT .is_overlapping_atom(atom_a,atoms)) cycle  
+         fsa = .first_shell_for_atom(atom_a)
+         lsa = .last_shell_for_atom(atom_a)
+         .atom(atom_a).make_displaced_points(xa,ya,za,aa,pt,create=TRUE)
+         do atom_b = 1,atom_a
+            if (NOT .is_overlapping_atom(atom_b,atoms)) cycle
+            if (NOT .is_overlapping_atom(atom_a,atom_b)) cycle     ! Only atom pairs which overlap
+            fsb = .first_shell_for_atom(atom_b)
+            lsb = .last_shell_for_atom(atom_b)
+            .atom(atom_b).make_displaced_points(xb,yb,zb,bb,pt,create=TRUE)
             do sa = fsa,lsa
                .get_shell(sha,sa,fa,la)
                na = sha.n_comp
-               doa = aa<=sha.r_max(cutoff)
-               do sb = fsb,lsb
+               ea = minval(sha.ex)
+               do sb = fsb,min(sa,lsb)
                   .get_shell(shb,sb,fb,lb)
                   nb = shb.n_comp
-                  dob = doa AND bb<=shb.r_max(cutoff)
-                  n = count(dob)                                   ! # of significant points
-                  if (n==0) cycle
-                  a1.create(n,na)
-                  a2.create(n,na)
-                  a3.create(n,na)
-                  a0.create(n,na)
-                  sha.make_nabla_grid(a1,a2,a3,a0,xa,ya,za,aa,dob) ! Call this as little as possible
-                  bP.create(n,na)
-                  b0.create(n,nb)
-                  shb.make_grid(b0,xb,yb,zb,bb,dob)                ! Call this as little as possible
-                  bP = matmul(b0,.density_matrix.restricted(fb:lb,fa:la))
-                  b0.destroy
-                  do j = 1,na
-                  do i = 1,n
-                     val = bP(i,j)
-                     grid0(i)   = grid0(i)   + a0(i,j)*val
-                     grid1(i,1) = grid1(i,1) + a1(i,j)*val
-                     grid1(i,2) = grid1(i,2) + a2(i,j)*val
-                     grid1(i,3) = grid1(i,3) + a3(i,j)*val
+                  eb = minval(shb.ex)
+                  keep = ea*aa+eb*bb<=cutoff
+                  keep = TRUE
+                  n_pt = count(keep)                                   ! # of significant points
+    ! stdout.text("============")
+    ! stdout.show("atom_a=",atom_a)
+    ! stdout.show("atom_b=",atom_b)
+    ! stdout.show("sa=",sa)
+    ! stdout.show("sb=",sb)
+    ! stdout.show("cutoff=",cutoff)
+    ! stdout.show("n_pt0 =",n_pt)
+    ! stdout.text("============")
+                  if (n_pt>0) then
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+                     a0.create(n_pt,na)
+                     a1.create(n_pt,na); a2.create(n_pt,na); a3.create(n_pt,na)
+                     sha.make_nabla_grid(a1,a2,a3,a0,xa,ya,za,aa,keep) 
+                     bP.create(n_pt,na)
+                     b0.create(n_pt,nb)
+                     shb.make_grid(b0,xb,yb,zb,bb,keep)
+                     bP = matmul(b0,.density_matrix.restricted(fb:lb,fa:la))
+                     b0.destroy
+                     do j = 1,na
+                     do i = 1,n_pt
+                        val = fac*bP(i,j)
+                        grid0(i)   = grid0(i)   + a0(i,j)*val
+                        grid1(i,1) = grid1(i,1) + a1(i,j)*val
+                        grid1(i,2) = grid1(i,2) + a2(i,j)*val
+                        grid1(i,3) = grid1(i,3) + a3(i,j)*val
+                     end
+                     end
+                     bP.destroy
+                     a0.destroy; a3.destroy; a2.destroy; a1.destroy
                   end
-                  end
-                  bP.destroy
                   shb.destroy_ptr_part
-                  a0.destroy; a3.destroy; a2.destroy; a1.destroy
                end
                sha.destroy_ptr_part
             end
+            .atom(atom_b).tidy_displaced_points(xb,yb,zb,bb)
          end
+         .atom(atom_a).tidy_displaced_points(xa,ya,za,aa)
       end
+      keep.destroy
       grid1 = TWO*grid1
-      dob.destroy; bb.destroy;
-      doa.destroy; aa.destroy;
-      zb.destroy; yb.destroy; xb.destroy
-      za.destroy; ya.destroy; xa.destroy
    end
 
 !   make_nabla_density_grid_r_A(grid1,grid0,pt,atoms)
@@ -15836,10 +16008,10 @@ contains
             else;                   do_b = .is_overlapping_atom(a,atoms(2))
             end
             if (do_a AND do_b) then                            ! Both overlap
-               .atom(a).make_significant_points(x,y,z,r2,skip,pt,cutoff)
-               n_cut = x.dim
                do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
                   .get_shell(sh,s,fs,ls)
+                  sh.make_significant_points(x,y,z,r2,skip,pt,cutoff)
+                  n_cut = x.dim
                   sh_grid1.create(n_cut,sh.n_comp,3)
                   sh_grid0.create(n_cut,sh.n_comp)
                   sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
@@ -15862,14 +16034,14 @@ contains
                   gg0.destroy; gg1.destroy
                   sh_grid0.destroy
                   sh_grid1.destroy
+                  x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
                   sh.destroy_ptr_part
                end
-               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
             else if (do_a) then                               ! Only the first overlaps
-               .atom(a).make_significant_points(x,y,z,r2,skip,pt(1:ma,:),cutoff)
-               n_cut = x.dim
                do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
                   .get_shell(sh,s,fs,ls)
+                  sh.make_significant_points(x,y,z,r2,skip,pt(1:ma,:),cutoff)
+                  n_cut = x.dim
                   sh_grid1.create(n_cut,sh.n_comp,3)
                   sh_grid0.create(n_cut,sh.n_comp)
                   sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
@@ -15892,14 +16064,14 @@ contains
                   gg0.destroy; gg1.destroy
                   sh_grid0.destroy
                   sh_grid1.destroy
+                  x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
                   sh.destroy_ptr_part
                end
-               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
             else if (atoms.dim==2 AND do_b) then               ! Only the second overlaps
-               .atom(a).make_significant_points(x,y,z,r2,skip,pt(ma+1:,:),cutoff)
-               n_cut = x.dim
                do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
                   .get_shell(sh,s,fs,ls)
+                  sh.make_significant_points(x,y,z,r2,skip,pt(ma+1:,:),cutoff)
+                  n_cut = x.dim
                   sh_grid1.create(n_cut,sh.n_comp,3)
                   sh_grid0.create(n_cut,sh.n_comp)
                   sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
@@ -15922,9 +16094,9 @@ contains
                   gg0.destroy; gg1.destroy
                   sh_grid0.destroy
                   sh_grid1.destroy
+                  x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
                   sh.destroy_ptr_part
                end
-               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
             end
          end
       end
@@ -15942,6 +16114,184 @@ contains
       g0.destroy; g1.destroy; list.destroy
       rho1 = TWO*rho1
    end
+
+!   make_nabla_density_grid_r_B_good(rho1,rho0,pt,atoms,a1,a0,b1,b0,ma,mb,cutoff)
+!   ! Evaluate the nabla density grid "rho1" as well as the density grid
+!   ! "rho0" on a set of grid points "pt", for use in matrix elements needed by
+!   ! DFT grid integration. "atoms" is a list of indices of the atoms whose grid
+!   ! points are to be used in DFT integrations. "a1", "a0", and "b1", "b0" are
+!   ! the basis function grids for the atoms listed in "atoms". These are the
+!   ! grids for the atoms whose matrix elements are to be evaluated. We don't have
+!   ! to calculate the density contributions for any atoms which do not have
+!   ! basis functions which overlap with those in "atoms", because the orbital
+!   ! density from those atoms evaluated at those in the "atoms" list will be
+!   ! negligible. NOTE: this routine depends on having the .overlapping_atoms
+!   ! array defined. NOTE: it depends on having the natural orbitals defined, and
+!   ! it may take much more memory than version A above, but it may be quicker.
+!      rho1 :: MAT{REAL}, OUT
+!      rho0 :: VEC{REAL}, OUT
+!      pt :: MAT{REAL}, IN
+!      atoms :: VEC{INT}
+!      a1,b1 :: MAT3{REAL}
+!      a0,b0 :: MAT{REAL}
+!      ma,mb :: INT, IN
+!      cutoff :: REAL, IN
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(rho1.dim1==pt.dim1,"rho1 has wrong 1st dimension")
+!   ENSURE(rho1.dim2==3,"rho1 has wrong 2nd dimension")
+!   ENSURE(rho0.dim==pt.dim1,"rho0 has wrong 1st dimension")
+!   ENSURE(pt.dim2==3,"pt has wrong 2nd dimension")
+!   ENSURE(.overlapping_atoms.created,"no .overlappin_atoms")
+!   ENSURE(.natural_orbitals.created("restricted"), "no restricted NO's")
+!   ENSURE(.occupation_numbers.created("restricted"),"no occupation numbers")
+!      sh :: SHELL1
+!      skip :: VEC{BIN}*
+!      list :: VEC{INT}*
+!      x,y,z,r2 :: VEC{REAL}*
+!      g1,gg1,sh_grid1 :: MAT3{REAL}*
+!      g0,gg0,sh_grid0,NO :: MAT{REAL}*
+!      n_pt,n_cut,n_occ,aa,a,s,f,l,fs,ls,n, i,k :: INT
+!      do_a,do_b :: BIN
+!      occ :: REAL
+!      n_pt = pt.dim1
+!      n_occ = .occupation_numbers.no_of_occupied("restricted")
+!      ! Evaluate *all* the natural orbitals on the grid, to save calling
+!      ! make_nabla_grid too many times
+!      list => .overlapping_atoms_for(atoms)
+!      g1.create(n_pt,n_occ,3)
+!      g0.create(n_pt,n_occ)
+!      g1 = ZERO
+!      g0 = ZERO
+!      do aa = 1,list.dim
+!         a = list(aa)
+!         if (any(a==atoms)) then                               ! Use the supplied grids
+!            f = .first_basis_fn_for_atom(a)
+!            l =  .last_basis_fn_for_atom(a)
+!            NO => .natural_orbitals.restricted(f:l,:n_occ)     ! Multiply by all orbitals
+!            if (a==atoms(1)) then
+!               g1(:,:,1) = g1(:,:,1) + matmul(a1(:,:,1),NO)
+!               g1(:,:,2) = g1(:,:,2) + matmul(a1(:,:,2),NO)
+!               g1(:,:,3) = g1(:,:,3) + matmul(a1(:,:,3),NO)
+!               g0        = g0        + matmul(a0,NO)
+!            else
+!               g1(:,:,1) = g1(:,:,1) + matmul(b1(:,:,1),NO)
+!               g1(:,:,2) = g1(:,:,2) + matmul(b1(:,:,2),NO)
+!               g1(:,:,3) = g1(:,:,3) + matmul(b1(:,:,3),NO)
+!               g0        = g0        + matmul(b0,NO)
+!            end
+!         else                                                  ! Do only overlapping atoms
+!            do_a = .is_overlapping_atom(a,atoms(1))
+!            if (atoms.dim==1) then; do_b = TRUE
+!            else;                   do_b = .is_overlapping_atom(a,atoms(2))
+!            end
+!            if (do_a AND do_b) then                            ! Both overlap
+!               .atom(a).make_significant_points(x,y,z,r2,skip,pt,cutoff)
+!               n_cut = x.dim
+!               do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
+!                  .get_shell(sh,s,fs,ls)
+!                  sh_grid1.create(n_cut,sh.n_comp,3)
+!                  sh_grid0.create(n_cut,sh.n_comp)
+!                  sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
+!                  NO => .natural_orbitals.restricted(fs:ls,:n_occ)   ! Multiply by all orbitals
+!                  gg1.create(n_cut,n_occ,3)
+!                  gg0.create(n_cut,n_occ)
+!                  gg1(:,:,1) = matmul(sh_grid1(:,:,1),NO)
+!                  gg1(:,:,2) = matmul(sh_grid1(:,:,2),NO)
+!                  gg1(:,:,3) = matmul(sh_grid1(:,:,3),NO)
+!                  gg0        = matmul(sh_grid0,NO)
+!                  k = 0
+!                  do i = 1,n_pt
+!                     if (skip(i)) cycle
+!                     k = k + 1
+!                     g1(i,:,1) = g1(i,:,1) + gg1(k,:,1)
+!                     g1(i,:,2) = g1(i,:,2) + gg1(k,:,2)
+!                     g1(i,:,3) = g1(i,:,3) + gg1(k,:,3)
+!                     g0(i,:)   = g0(i,:)   + gg0(k,:)
+!                  end
+!                  gg0.destroy; gg1.destroy
+!                  sh_grid0.destroy
+!                  sh_grid1.destroy
+!                  sh.destroy_ptr_part
+!               end
+!               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
+!            else if (do_a) then                               ! Only the first overlaps
+!               .atom(a).make_significant_points(x,y,z,r2,skip,pt(1:ma,:),cutoff)
+!               n_cut = x.dim
+!               do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
+!                  .get_shell(sh,s,fs,ls)
+!                  sh_grid1.create(n_cut,sh.n_comp,3)
+!                  sh_grid0.create(n_cut,sh.n_comp)
+!                  sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
+!                  NO => .natural_orbitals.restricted(fs:ls,:n_occ)   ! Multiply by all orbitals
+!                  gg1.create(n_cut,n_occ,3)
+!                  gg0.create(n_cut,n_occ)
+!                  gg1(:,:,1) = matmul(sh_grid1(:,:,1),NO)
+!                  gg1(:,:,2) = matmul(sh_grid1(:,:,2),NO)
+!                  gg1(:,:,3) = matmul(sh_grid1(:,:,3),NO)
+!                  gg0        = matmul(sh_grid0,NO)
+!                  k = 0
+!                  do i = 1,ma
+!                     if (skip(i)) cycle
+!                     k = k + 1
+!                     g1(i,:,1) = g1(i,:,1) + gg1(k,:,1)
+!                     g1(i,:,2) = g1(i,:,2) + gg1(k,:,2)
+!                     g1(i,:,3) = g1(i,:,3) + gg1(k,:,3)
+!                     g0(i,:)   = g0(i,:)   + gg0(k,:)
+!                  end
+!                  gg0.destroy; gg1.destroy
+!                  sh_grid0.destroy
+!                  sh_grid1.destroy
+!                  sh.destroy_ptr_part
+!               end
+!               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
+!            else if (atoms.dim==2 AND do_b) then               ! Only the second overlaps
+!               .atom(a).make_significant_points(x,y,z,r2,skip,pt(ma+1:,:),cutoff)
+!               n_cut = x.dim
+!               do s = .first_shell_for_atom(a),.last_shell_for_atom(a)
+!                  .get_shell(sh,s,fs,ls)
+!                  sh_grid1.create(n_cut,sh.n_comp,3)
+!                  sh_grid0.create(n_cut,sh.n_comp)
+!                  sh.make_nabla_grid(sh_grid1,sh_grid0,x,y,z,r2,cutoff) ! Call this as little as possible
+!                  NO => .natural_orbitals.restricted(fs:ls,:n_occ)   ! Multiply by all orbitals
+!                  gg1.create(n_cut,n_occ,3)
+!                  gg0.create(n_cut,n_occ)
+!                  gg1(:,:,1) = matmul(sh_grid1(:,:,1),NO)
+!                  gg1(:,:,2) = matmul(sh_grid1(:,:,2),NO)
+!                  gg1(:,:,3) = matmul(sh_grid1(:,:,3),NO)
+!                  gg0        = matmul(sh_grid0,NO)
+!                  k = 0
+!                  do i = ma+1,n_pt
+!                     if (skip(i-ma)) cycle
+!                     k = k + 1
+!                     g1(i,:,1) = g1(i,:,1) + gg1(k,:,1)
+!                     g1(i,:,2) = g1(i,:,2) + gg1(k,:,2)
+!                     g1(i,:,3) = g1(i,:,3) + gg1(k,:,3)
+!                     g0(i,:)   = g0(i,:)   + gg0(k,:)
+!                  end
+!                  gg0.destroy; gg1.destroy
+!                  sh_grid0.destroy
+!                  sh_grid1.destroy
+!                  sh.destroy_ptr_part
+!               end
+!               x.destroy; y.destroy; z.destroy; r2.destroy; skip.destroy
+!            end
+!         end
+!      end
+!      ! Now square up each natural orbital. We can't skip any NO's since they
+!      ! could be all delocalised.
+!      rho1 = ZERO
+!      rho0 = ZERO
+!      do n = 1,n_occ
+!         occ = .occupation_numbers.restricted(n)
+!         rho1(:,1) = rho1(:,1) + occ*g0(:,n)*g1(:,n,1)
+!         rho1(:,2) = rho1(:,2) + occ*g0(:,n)*g1(:,n,2)
+!         rho1(:,3) = rho1(:,3) + occ*g0(:,n)*g1(:,n,3)
+!         rho0      = rho0      + occ*g0(:,n)*g0(:,n)
+!      end
+!      g0.destroy; g1.destroy; list.destroy
+!      rho1 = TWO*rho1
+!   end
 
 !   make_nabla_density_grid_r_B(rho1,rho0,pt,atoms,a1,a0,b1,b0,cutoff)
 !   ! Evaluate the nabla density grid "rho1" as well as the density grid
