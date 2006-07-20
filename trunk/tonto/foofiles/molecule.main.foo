@@ -4211,7 +4211,7 @@ contains
         case ("put_qq_plot                   "); .crystal.put_qq_plot
         case ("put_sylvain_csizmadia_tensors "); .MAIN:put_sylvain_csizmadia_tensors
         case ("put_sos_dipole_polarisability "); .MAIN:put_sos_dipole_polarisability
-        case ("put_dipole_polarisability     "); .MAIN:put_dipole_polarisability
+        case ("put_scf_dipole_polarisability "); .MAIN:put_scf_dipole_polarisability
         case ("put_mikes_polarisability      "); .MAIN:put_mikes_polarisability
         case ("put_uc_dipole_polarisability  "); .MAIN:put_uc_dipole_polarisability
         case ("put_time_taken                "); .put_time_taken(timer)
@@ -4997,7 +4997,7 @@ contains
          alpha(l,m) = val 
       end
       end
-      alpha = TWO*alpha
+      alpha = FOUR*alpha
       alpha.symmetric_reflect
 
       stdout.flush
@@ -5011,7 +5011,7 @@ contains
       D.destroy
    end
 
-   put_dipole_polarisability ::: leaky
+   put_scf_dipole_polarisability ::: leaky
    ! Calculate the polarisability using Coupled Perturbed Hartree-Fock theory.
    ENSURE(.molecular_orbitals.created,"no MO's")
    ENSURE(.molecular_orbitals.restricted.created,"no restricted MO's")
@@ -5019,30 +5019,34 @@ contains
    ENSURE(.scfdata.scf_kind=="rhf","SOS polarisability only for RHF case")
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom info")
-      D_mo,D_ao,U  :: MAT3{REAL}*
-      MO :: MAT{REAL}*
+      D_mo,D_ao,U,F :: MAT3{REAL}*
+      e :: VEC{REAL}*
+      MO,xi_vv,xi_oo :: MAT{REAL}*
       alpha :: MAT{REAL}(3,3)
-      n_occ,n_vir,l,m,a,i :: INT
-      val :: REAL
+      beta  :: MAT3{REAL}(3,3,3)
+      n,n_occ,n_vir,l,m,a,b,i,j :: INT
+      val,val1,val2 :: REAL
    
       MO => .molecular_orbitals.restricted
+      e  => .orbital_energies.restricted
+      n = .n_bf
+
       n_occ = .n_a 
-      n_vir = .n_bf - n_occ
+      n_vir = n - n_occ
 
       ! Get the dipole moment matrices in the AO basis.
+      U.create(n_vir,n_occ,3)
+      D_ao.create(n,n,3)
       D_mo.create(n_vir,n_occ,3)
-      D_ao.create(.n_bf,.n_bf,3)
       .get_dipole_matrices(D_ao(:,:,1),D_ao(:,:,2),D_ao(:,:,3))
       
       ! Change dipole matrices from AO -> MO basis
       D_ao(:,:,1).change_basis_to(D_mo(:,:,1),MO(:,n_occ+1:),MO(:,:n_occ))
       D_ao(:,:,2).change_basis_to(D_mo(:,:,2),MO(:,n_occ+1:),MO(:,:n_occ))
       D_ao(:,:,3).change_basis_to(D_mo(:,:,3),MO(:,n_occ+1:),MO(:,:n_occ))
-      D_ao.destroy
 
       ! Solve the CPHF equations
       D_mo = -D_mo
-      U.create(n_vir,n_occ,3)
       .MAIN:solve_CPHF_equations(U,D_mo) 
    
       ! Finally calculate polarisability using U and D
@@ -5058,7 +5062,7 @@ contains
          alpha(l,m) = val
       end
       end
-      alpha = TWO*alpha
+      alpha = FOUR*alpha
       alpha.symmetric_reflect
    
       stdout.flush
@@ -5070,8 +5074,50 @@ contains
       .dipole_polarisability.create(3,3) ! leaky here
       .dipole_polarisability = alpha
     
-      U.destroy
       D_mo.destroy
+
+      ! Calculate hyperpolarisability using U and D
+      ! Taken from Colwell et al, CPL 210, p. 261 (1993)
+
+      ! Make F(k). We don't need the U term in eqn (29)
+      F.create(n,n,3)
+      D_ao(:,:,1).change_basis_to(F(:,:,1),MO)
+      D_ao(:,:,2).change_basis_to(F(:,:,2),MO)
+      D_ao(:,:,3).change_basis_to(F(:,:,3),MO)
+      .MAIN:add_A_times_U(F,U)
+
+      ! Make beta
+      beta = ZERO
+      xi_oo.create(n_occ,n_occ)
+      xi_vv.create(n_vir,n_vir)
+      do m = 1,3
+      do n = 1,3
+         xi_vv = - matmul(U(:,:,m),transpose(U(:,:,n))) &
+                 - matmul(U(:,:,n),transpose(U(:,:,m))) 
+         xi_oo = - matmul(transpose(U(:,:,m)),U(:,:,n)) &
+                 - matmul(transpose(U(:,:,n)),U(:,:,m)) 
+         do l = 1,3
+            val1 =  TWO*F(1 :n_occ,1 :n_occ,l).trace_product_with(xi_oo)
+            val2 = -TWO*F(n_occ+1:,n_occ+1:,l).trace_product_with(xi_vv)
+            val  = val1 + val2
+            beta(l,m,n) = beta(l,m,n) + val
+            beta(m,n,l) = beta(m,n,l) + val
+            beta(n,l,m) = beta(n,l,m) + val
+         end
+      end
+      end
+   
+      stdout.flush
+      stdout.text("Dipole hyperpolarisability:")
+      stdout.flush
+      stdout.put(beta) 
+
+      .dipole_hyperpolarisability.destroy
+      .dipole_hyperpolarisability.create(3,3,3) ! leaky here
+      .dipole_hyperpolarisability = beta
+
+      xi_vv.destroy; xi_oo.destroy; F.destroy
+      D_ao.destroy; U.destroy
    end
 
    put_uc_dipole_polarisability ::: leaky
@@ -5150,6 +5196,9 @@ contains
       U_old.create(n_vir,n_occ,U.dim3)
       U_ao.create(.n_bf,.n_bf)
       AU => U_ao
+      W.create(n_vir,n_occ)        ! AU -> MO basis
+      J.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
 
       ! Begin iterative procedure
       iteration = 0
@@ -5164,20 +5213,14 @@ contains
          do n = 1,U.dim3
             U(:,:,n).back_transform_to(U_ao,MO(:,n_occ+1:),MO(:,:n_occ))
             U_ao.symmetrize              ! U -> AO basis
-            J.create(.n_bf,.n_bf)
-            K.create(.n_bf,.n_bf)
             .make_r_JK_direct(J,K,U_ao)  ! A times U
             AU = FOUR*J - TWO*K
-            K.destroy
-            J.destroy
-            W.create(n_vir,n_occ)        ! AU -> MO basis
             AU.change_basis_to(W,MO(:,n_occ+1:),MO(:,:n_occ))
             do a = 1,n_vir               ! Update
             do i = 1,n_occ
                U(a,i,n) = (ONE/(e(n_occ+a) - e(i))) * (rhs(a,i,n) - W(a,i))
             end
             end
-            W.destroy
          end
 
          ! Converged ?
@@ -5186,9 +5229,74 @@ contains
          converged = test<.scfdata.convergence
          if (converged) exit
       end
+
+      K.destroy
+      J.destroy
+      W.destroy
    
       U_ao.destroy
       U_old.destroy
+   end
+
+   make_A_times_U(AU,U) 
+   ! Make the full A times U matrix in the MO basis
+      AU,U :: MAT3{REAL}*
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
+   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
+   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
+   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
+      MO,U_ao,J,K :: MAT{REAL}*
+      n :: INT
+      MO => .molecular_orbitals.restricted
+      U_ao.create(.n_bf,.n_bf)
+      J.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+      do n = 1,U.dim3
+         U(:,:,n).back_transform_to(U_ao,MO(:,.n_a+1:),MO(:,:.n_a))
+         U_ao.symmetrize              ! U -> AO basis
+         .make_r_JK_direct(J,K,U_ao)  ! A times U
+         AU(:,:,n) = FOUR*J - TWO*K
+         AU(:,:,n).change_basis_using(MO)
+      end
+      K.destroy
+      J.destroy
+      U_ao.destroy
+   end
+
+   add_A_times_U(AU,U) ::: private
+   ! Add the full A matrix times the full U matrix to "AU". "U" is the
+   ! virtual-occupied block of the full U matrix.
+      AU,U :: MAT3{REAL}*
+   ENSURE(.scfdata.created,"no scf data")
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom info")
+   ENSURE(U.dim1==(.n_bf-.n_a),"wrong size, U, dimension 1")
+   ENSURE(U.dim2==.n_a,"wrong size, rhs, dimension 2")
+   ENSURE(AU.dim1==.n_bf,"wrong size, AU")
+   ENSURE(AU.dim2==.n_bf,"wrong size, AU")
+   ENSURE(U.dim3==AU.dim3,"incompatible sizes, U and AU")
+      MO,J,K,W :: MAT{REAL}*
+      n,n_occ :: INT
+      MO => .molecular_orbitals.restricted
+      J.create(.n_bf,.n_bf)
+      K.create(.n_bf,.n_bf)
+      n_occ = .n_a
+      W.create(.n_bf,.n_bf)
+      do n = 1,U.dim3
+         U(:,:,n).back_transform_to(W,MO(:,.n_a+1:),MO(:,:.n_a))
+         W.symmetrize              ! U -> AO basis
+         .make_r_JK_direct(J,K,W)  
+         W = FOUR*J - TWO*K        ! W = A times U
+         W.change_basis_using(MO)
+         AU(:,:,n) = AU(:,:,n) + W
+      end
+      W.destroy
+      K.destroy
+      J.destroy
    end
 
    put_mikes_polarisability 
