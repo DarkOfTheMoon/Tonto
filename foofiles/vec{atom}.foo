@@ -3007,7 +3007,7 @@ contains
       a,b :: INT
       range_factor :: REAL, optional
       res :: BIN
-      res = self(a).is_bonded_to(self(b))
+      res = self(a).is_bonded_to(self(b),range_factor)
    end
 
    bond_distinguisher(a,b) result(res)
@@ -3060,6 +3060,178 @@ contains
       res = res AND ( .bonded(b,a) OR .bonded(b,c) OR .bonded(b,d) )
       res = res AND ( .bonded(c,a) OR .bonded(c,b) OR .bonded(c,d) )
       res = res AND ( .bonded(d,a) OR .bonded(d,b) OR .bonded(d,c) )
+   end
+
+   neighbours_of(a,range_factor) result(res) ::: leaky
+   ! Return the list of atoms bonded to atom "a".
+      a :: INT
+      range_factor :: REAL, optional
+      res :: VEC{INT}*
+      b :: INT
+      nullify(res)
+      do b = 1,.dim
+         if (b==a) cycle
+         if (NOT .bonded(a,b,range_factor)) cycle 
+         res.append(b)
+      end
+   end
+
+   is_next_neighbour_chiral(a) result(res) ::: leaky
+   ! Return TRUE if there are four next nearest neighbours for the
+   ! atom "a", and if they are all different.
+      a :: INT
+      res :: BIN
+      neighbour :: VEC{INT}*
+      Z :: VEC{INT}(4)
+      neighbour => .neighbours_of(a)
+      if (neighbour.destroyed) then
+         res = FALSE
+      else if (neighbour.dim==4) then
+         Z = self(neighbour).atomic_number
+         res = NOT Z.has_repetitions
+      else
+         res = FALSE
+      end
+      neighbour.destroy
+   end
+
+   next_neighbour_handedness_of(a) result(res) ::: leaky
+   ! Return the handedness of the atom "a" based only on the four
+   ! connecting atoms around it.
+      a :: INT
+      res :: STR
+      n :: INT
+      p2,p3,p4,pc :: VEC{REAL}(3)
+      Z,order :: VEC{INT}(4)
+      neighbour :: VEC{INT}*
+      neighbour => .neighbours_of(a)
+      DIE_IF(neighbour.destroyed,"there are no neighbours")
+      n = neighbour.dim
+      DIE_IF(neighbour.dim/=4,"must have four neighbours, n = "//trim(n.to_str))
+    ! stdout.show("neighbours =",neighbour)
+      Z = self(neighbour).atomic_number
+      Z.quick_sort(order)
+      neighbour = neighbour(order)
+    ! stdout.show("sorted neighbours =",neighbour)
+      p2 = self(neighbour(2)).pos - self(a).pos
+      p3 = self(neighbour(3)).pos - self(a).pos
+      p4 = self(neighbour(4)).pos - self(a).pos
+      pc = p4.cross(p3)
+      if (p2.dot(pc)>ZERO) then; res = "R"
+      else;                      res = "S"
+      end
+      neighbour.destroy
+   end
+
+   invariom_label_of(a) result(res) ::: leaky
+   ! Return the invariom label for the atom "a"
+      a :: INT
+      res :: STR
+
+      i,j,n,m,f15,l15,p :: INT
+      Z,bond,order,neighbour,Z2,bond2,order2,neighbour2 :: VEC{INT}*
+      bonds,bonds2,mesomer,ZZ :: VEC{STR}*
+
+      ! Start with the R or S symbol, if the atom is chiral
+      if (.is_next_neighbour_chiral(a)) then; res = trim(.next_neighbour_handedness_of(a))//"-"
+      else;                                   res = " "
+      end
+
+      ! Start with "a" atoms chemical symbol
+      res = trim(res)//self(a).chemical_symbol
+
+      ! Get indices of the nearest neighbours; return if no neighbours
+      neighbour => .neighbours_of(a)
+      if (neighbour.destroyed) return
+      if (neighbour.dim==0) return
+
+      ! Order the nearest neighbours in decreasing bond-order/atomic number
+      n = neighbour.dim
+      bond.create(n)
+      bonds.create(n)
+      Z.create(n)
+      order.create(n)
+      Z = self(neighbour).atomic_number
+    ! .allred_rochow_bond_orders(bond,bonds)
+      bond = 10 ! Call routine here. bond order for each neighbour times 10
+      bonds = "1"
+      Z = 1000*bond + Z
+      Z.quick_sort(order,decreasing_order=TRUE)
+      neighbour = neighbour(order)
+      order.destroy; Z.destroy
+
+      ! Find out how many mesomeric bonds there are
+      f15 = bond.index_of_value(15)
+      l15 = 0
+      if (f15>0) l15 = bond(f15+1:).index_of_value_ne_to(15); l15 = f15 + l15 - 1
+
+      ! If we have at least 1 mesomeric bond, sort the neighbour list
+      if (l15>=f15) then
+
+         mesomer.create(f15,l15)
+         ZZ.create(f15,l15)
+
+         ! Loop over mesomeric atoms
+         do i = f15,l15
+
+            ! Get indices of the 2nd nearest neighbours; return if no neighbours
+            neighbour2 => .neighbours_of(neighbour(i))
+            DIE_IF(neighbour2.destroyed,"mesomeric atom has no neighbours")
+            DIE_IF(neighbour2.dim==0,"mesomeric atom has no neighbours")
+
+           ! Order the 2nd nearest neighbours in decreasing bond-order/atomic number
+            m = neighbour2.dim
+            bond2.create(m)
+            bonds2.create(m)
+            Z2.create(m)
+            order2.create(m)
+            Z2 = self(neighbour2).atomic_number
+          ! .allred_rochow_bond_orders(bond,bonds)
+            bond2 = 10  ! Call routine here
+            bonds2 = "1"
+            Z2 = 1000*bond2 + Z2
+            Z2.quick_sort(order2,decreasing_order=TRUE)
+            neighbour2 = neighbour2(order2)
+            Z2 = Z2(order2)
+
+           ! Make and store the unsorted mesomer 2nd nearest neighbour invariom names
+            mesomer(i) = "["
+            do j = 1,m
+               mesomer(i) = trim(mesomer(i))//trim(bonds2(j))//trim(self(neighbour2(j)).chemical_symbol)
+            end
+            mesomer(i) = trim(mesomer(i))//"]"
+
+            ! Make the ordering string
+            ZZ(i) = " "
+            p = 1
+            do j = 1,m
+               ZZ(i)(p:p+3) = trim(Z2(j).to_str)
+               p = p + 4
+            end
+            order2.destroy
+            Z2.destroy
+            bonds2.destroy
+            bond2.destroy
+            neighbour2.destroy
+         end
+
+         ! Now reorder the mesomer strings
+         order.create(f15,l15)
+         ZZ.quick_sort(order,decreasing_order=TRUE)
+         order = order + f15 - 1
+         neighbour = neighbour(order)
+         mesomer = mesomer(order)
+         order.destroy;ZZ.destroy
+      end
+
+      ! Now everything is sorted; just make the invariom label
+      do i = 1,n
+         res = trim(res)//trim(bonds(i))//trim(self(neighbour(i)).chemical_symbol)
+         if (bond(i)==15) &
+         res = trim(res)//trim(mesomer(i))
+      end
+
+      mesomer.destroy; bonds.destroy; bond.destroy; neighbour.destroy
    end
 
    no_of_bonds result(res)
