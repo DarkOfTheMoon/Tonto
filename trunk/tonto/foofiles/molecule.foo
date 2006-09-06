@@ -4513,7 +4513,25 @@ contains
       arch.close
    end
 
-   make_structure_factors
+   make_x_structure_factors
+   ! Make the X-ray structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
+      .crystal.assign_xray
+      .make_x_structure_factors_p
+   end
+
+   make_xf_structure_factors
+   ! Make the free X-ray structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_r_free_data.created, "no x-ray R-free reflection data")
+   ENSURE(.density_matrix.created, "no density matrix")
+      .crystal.assign_xray_r_free
+      .make_x_structure_factors_p
+   end
+
+   make_x_structure_factors_p ::: private
    ! Make the structure factors for this molecule.
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
@@ -4521,7 +4539,6 @@ contains
       sf_eq,Fc :: VEC{CPX}*
       k_pts :: MAT{REAL}*
       genre :: STR
-      .crystal.assign_xray
       Fc.create(.crystal.n_refl)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
       .crystal.make_unique_SF_k_pts(k_pts)
@@ -4554,17 +4571,34 @@ contains
      ! .crystal.data.reflections.put_structure_factor_data
    end
 
-   make_sz_structure_factors
+   make_n_structure_factors
+   ! Make the PND structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+      .crystal.assign_pnd  ! <------------ Assign PND data here
+      .make_n_structure_factors_p
+   end
+
+   make_nf_structure_factors
+   ! Make the free PND structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+      .crystal.assign_pnd_r_free
+      .make_n_structure_factors_p
+   end
+
+   make_n_structure_factors_p ::: private
    ! Make the structure factors for this molecule.
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.reflection_data_exists, "no reflection data")
+   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
       sf_eq,Fc :: VEC{CPX}*
       k_pts :: MAT{REAL}*
       arch :: ARCHIVE
       genre :: STR
       complx :: BIN
-      .crystal.assign_pnd  ! <------------ Assign PND data here
-   ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.reflection_data_exists, "no reflection data")
-   ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
       Fc.create(.crystal.n_refl)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
       .crystal.make_unique_SF_k_pts(k_pts)
@@ -4573,12 +4607,12 @@ contains
       genre = .density_matrix.spinorbital_kind
       complx = genre.includes("complex")
       if (complx) then; .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
-      else;              .make_ft(sf_eq,.density_matrix.restricted,k_pts)
+      else;             .make_ft(sf_eq,.density_matrix.restricted,k_pts)
       end
       .crystal.sum_unique_sf(Fc,sf_eq)
       ! Now destroy the S_z density matrix
       if (complx) then; .density_matrix.destroy("restricted_complex")
-      else;              .density_matrix.destroy("restricted")
+      else;             .density_matrix.destroy("restricted")
       end
       sf_eq.destroy
       k_pts.destroy
@@ -6843,16 +6877,16 @@ contains
         .scfdata.put_banner
         if (.scfdata.fitting) then
            if (.crystal.xray_data.created AND .scfdata.scf_kind.includes("xray")) then
-           .crystal.assign_xray
-           stdout.flush
-           stdout.text("X-ray correction data:")
-           .crystal.put_correction_data
+              .crystal.assign_xray
+              stdout.flush
+              stdout.text("X-ray correction data:")
+              .crystal.put_correction_data
            end
            if (.crystal.pnd_data.created AND .scfdata.scf_kind.includes("pnd")) then
-           .crystal.assign_pnd
-           stdout.flush
-           stdout.text("PND correction data:")
-           .crystal.put_correction_data
+              .crystal.assign_pnd
+              stdout.flush
+              stdout.text("PND correction data:")
+              .crystal.put_correction_data
            end
         end
      end
@@ -7822,10 +7856,14 @@ contains
       scf_kind :: STR
       scf_kind = .scfdata.scf_kind
       select case (scf_kind)
-         case ("xray_rhf","xray_rks","xray_uhf","xray_uks"); .make_structure_factors
-         case ("pnd_uhf","pnd_uks");                         .make_sz_structure_factors
-         case ("xray_pnd_uhf","xray_pnd_uks");               .make_structure_factors
-                                                             .make_sz_structure_factors
+         case ("xray_rhf","xray_rks","xray_uhf","xray_uks"); .make_x_structure_factors
+                      if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
+         case ("pnd_uhf","pnd_uks");                         .make_n_structure_factors
+                      if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+         case ("xray_pnd_uhf","xray_pnd_uks");               .make_x_structure_factors
+                                                             .make_n_structure_factors
+                      if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
+                      if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
          case default
             DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
       end
@@ -8680,6 +8718,28 @@ contains
      end
    end
 
+   archive(item,archive_name,genre,with_lambda)
+   ! Save "item" to an archive on disk with name "archive_name". 
+     item :: REAL
+     archive_name :: STR
+     genre :: STR, optional
+     with_lambda :: BIN, optional
+     archive :: ARCHIVE
+     avec_lambda :: BIN
+     avec_lambda = FALSE
+     if (present(with_lambda)) avec_lambda = with_lambda
+     archive.set(.name,archive_name)
+     archive.write(item,genre)
+     if (avec_lambda) then
+        if (.scfdata.created) then
+        if (.scfdata.scf_kind.includes("xray_") OR .scfdata.scf_kind.includes("pnd_")) then
+        archive.set(.name,trim(archive_name)//",lambda="//trim(.scfdata.lambda.to_str("f5.3")))
+        archive.write(item,genre)
+        end
+        end
+     end
+   end
+
    archive_scf_results
    ! Save the SCF results in various archives on disk
       .archive_density_matrix
@@ -8750,6 +8810,18 @@ contains
      .archive(.occupation_numbers,name)
    end
 
+   archive_energy(archive_name,genre)
+   ! Save the density matrix in an archive on disk
+     archive_name :: STR, optional
+     genre :: STR, optional
+   ENSURE(.scfdata.created,"no scf data")
+     name :: STR
+     archive :: ARCHIVE
+     name = "energy"
+     if (present(archive_name)) name = archive_name
+     .archive(.scfdata.energy,name,genre,with_lambda=TRUE)
+   end
+
    get_scf_results ::: leaky
    ! Get the SCF results in from archives. Do not get the density matrix,
    ! because it can/should be generated from the orbitals, depending on the kind
@@ -8783,6 +8855,16 @@ contains
      archive :: ARCHIVE
      archive.set(.name,archive_name)
      archive.read(opvector,genre)
+   end
+
+   unarchive(item,archive_name,genre) ::: leaky
+   ! Recover the "item" from an archive on disk with name "archive_name".
+     item :: REAL
+     archive_name :: STR
+     genre :: STR, optional
+     archive :: ARCHIVE
+     archive.set(.name,archive_name)
+     archive.read(item,genre)
    end
 
    unarchive_object(archive_name,genre) ::: template
@@ -18535,6 +18617,8 @@ contains
         case("electric_potential                  "); .make_electric_potential_grid
         case("electron_density                    "); .make_electron_density_grid
         case("elf                                 "); .make_ELF_grid
+        case("e_hf_density_from_rho               "); .make_E_hf_dens_from_rho_grid
+      ! case("energy_density_from_rho             "); .make_deformation_density_grid
         case("fermi_mobility                      "); .make_fermi_mobility_grid
         case("g_kinetic_energy                    "); .make_G_kinetic_energy_grid
         case("g_kirzhnits                         "); .make_G_Kirzhnits_grid
@@ -19324,6 +19408,33 @@ contains
 
    make_pro_rG_kinetic_grid(density_grid,pt) ::: get_from(MOLECULE:pro_grid, MAKE_GRID=>make_rG_kinetic_energy_grid)
    ! Work out the promolecule "density_grid" from the supplied points "pt".  
+   end
+
+! *****************************
+! Energy density from rho grids
+! *****************************
+
+   make_E_hf_dens_from_rho_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_E_hf_dens_from_rho_grid, LABEL=>"E_hf_density_from_rho_grid")
+   ! Work out the property density on ".grid" using ".natural orbitals" and the
+   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   end
+
+   make_E_hf_dens_from_rho_grid(E_grid,pt)
+   ! Work out the energy density as the scaled electron density.
+      E_grid :: VEC{REAL}
+      pt :: MAT{REAL}
+   ENSURE(.scfdata.created,"no scfdata") 
+   ENSURE(.scfdata.scf_kind.is_one_of(["rhf","uhf"]),"scf kind is not Hartree-Fock") 
+      fac :: REAL
+      .make_density_grid(E_grid,pt)
+      fac = .scfdata.energy/.n_e
+      E_grid = fac*E_grid
+   end
+
+   make_def_E_hf_from_rho_grid(grid,pt) ::: get_from(MOLECULE:deformation_grid, MAKE_GRID=>.make_E_hf_dens_from_rho_grid, MAKE_PRO_GRID=>.make_E_hf_dens_from_rho_grid)
+   ! Make a Gnuplot ascii file containing the deformation density grid.
+     grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
    end
 
 ! ********************************************************
@@ -21147,7 +21258,7 @@ contains
    ! data must be made.
       plot_kind :: STR
       dft :: BIN
-      if (plot_kind(1:11)/="deformation") return
+      if (plot_kind(1:11)/="deformation" AND plot_kind(1:4)/="e_hf") return
       ! If we get here, the ANO information will be used
       ENSURE(.basis.created,"no basis sets")
       ENSURE(.slaterbasis.destroyed,"cannot have slater basis present")
@@ -22172,6 +22283,7 @@ contains
            .atom(j).density_matrix     => .atom(u).density_matrix
            .atom(j).natural_orbitals   => .atom(u).natural_orbitals
            .atom(j).occupation_numbers => .atom(u).occupation_numbers
+           .atom(j).energy             =  .atom(u).energy
         end
       end
    end
@@ -22186,6 +22298,7 @@ contains
    ENSURE(.atom(a).density_matrix.destroyed,"density exists, atom "//trim(a.to_str))
      mol :: MOLECULE*
      n_no :: INT
+     energy :: REAL
      output :: BIN
      mol.create
      .make_molecule_from_atom(a,mol)
@@ -22194,9 +22307,11 @@ contains
      mol.unarchive_natural_orbitals(genre="restricted")
      mol.unarchive_occupation_numbers(genre="restricted")
      mol.unarchive_density_matrix(genre="restricted")
+     mol.unarchive(energy,"energy",genre="restricted")
      .atom(a).natural_orbitals   => mol.natural_orbitals
      .atom(a).occupation_numbers => mol.occupation_numbers
      .atom(a).density_matrix     => mol.density_matrix
+     .atom(a).energy             =  energy
      mol.atom.nullify_ptr_part       ! do not destroy basis part
      nullify(mol.natural_orbitals)   ! do not destroy this
      nullify(mol.occupation_numbers) ! do not destroy this
@@ -22232,6 +22347,7 @@ contains
      mol.pointgroup.create("oh")
      mol.symmetrise(mol.density_matrix)
      mol.archive_density_matrix
+     mol.archive_energy(genre=.density_matrix.spinorbital_kind)
      mol.make_natural_orbitals       ! ... and archive them
      mol.atom.nullify_basis_part     ! do not destroy basis part
      mol.atom.destroy_ptr_part       ! do not destroy basis part
@@ -23281,7 +23397,7 @@ contains
    end
 
    get_thermal_parameters(U) ::: private
-   ! Set a new set of thermal parameters for all the atoms, assuming
+   ! Get a set of thermal parameters from the atoms, assuming
    ! "U" is a vector of the independent thermal parameters.
       U :: VEC{REAL}
    ENSURE(size(U)==6*.n_atom, "wrong size, U")
@@ -23326,7 +23442,7 @@ contains
      self => saved_self
      ENSURE(.crystal.created, "no crystal")
      .set_thermal_parameters(U)
-     .make_structure_factors
+     .make_x_structure_factors
      res = .crystal.F_chi2
      stdout.show("new F_chi2 =",res)
    end
@@ -23361,6 +23477,156 @@ contains
      res = .crystal.d_chi2_dU(sf_deriv)
      sf_deriv.destroy
      k_pts.destroy
+   end
+
+!*******************************************************************************
+!                      Atom position fitting
+!*******************************************************************************
+
+   get_atom_positions(R) ::: private
+   ! Get a set of atom positions "R"
+      R :: VEC{REAL}
+   ENSURE(R.dim==3*.n_atom, "wrong size, R")
+      n,base :: INT
+      do n = 1,.n_atom      ! get thermal parameters into array
+        base = (n-1) * 3
+        R(base+1) = .atom(n).pos(1)
+        R(base+2) = .atom(n).pos(2)
+        R(base+3) = .atom(n).pos(3)
+      end
+   end
+
+   set_atom_positions(R) ::: private
+   ! Set the atom positions from "R"
+      R :: VEC{REAL}
+   ENSURE(R.dim==3*.n_atom, "wrong size, R")
+      n,base :: INT
+      do n = 1,.n_atom      ! get thermal parameters into array
+        base = (n-1) * 3
+        .atom(n).pos(1) = R(base+1)
+        .atom(n).pos(2) = R(base+2)
+        .atom(n).pos(3) = R(base+3)
+      end
+   end
+
+   chi2_pos(R) result(res) ::: leaky, selfless
+   ! Evaluate the structure factor chi2 as a function of atom
+   ! positions "R"
+     R :: VEC{REAL}
+     res :: REAL
+     self :: MOLECULE*
+     self => saved_self
+     ENSURE(.crystal.created, "no crystal")
+     .set_atom_positions(R)
+     .make_x_structure_factors
+     res = .crystal.F_chi2
+     stdout.show("new F_chi2 =",res)
+   end
+
+!   d_chi2_pos(R) result(res) ::: leaky, selfless
+!   ! Evaluate the derivative of the structure factor chi2 with respect to the
+!   ! atom positions "R".
+!     R :: VEC{REAL}
+!     res :: VEC{REAL}(size(U))
+!     sf_deriv,sf_deriv_eq :: MAT{CPX}*
+!     k_pts :: MAT{REAL}*
+!     genre :: STR
+!     self :: MOLECULE*
+!     self => saved_self
+!     ENSURE(.crystal.created, "no crystal")
+!     ENSURE(.density_matrix.created, "no density matrix")
+!     .set_thermal_parameters(U)
+!     k_pts.create(.crystal.n_unique_SF_k_pts,3)
+!     .crystal.make_unique_SF_k_pts(k_pts)
+!     sf_deriv.create( .crystal.n_refl, .n_atom * 6) ! d_Fc/d_U
+!     sf_deriv_eq.create(.n_atom * 6,.crystal.n_unique_SF_k_pts)
+!     genre = .density_matrix.spinorbital_kind
+!     if (genre.includes("complex")) then
+!       .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted_complex,k_pts)
+!     else
+!       .make_ft_deriv_U(sf_deriv_eq,.density_matrix.restricted,k_pts)
+!     end
+!     .crystal.sum_unique_sf_deriv_U(sf_deriv,sf_deriv_eq)
+!     sf_deriv_eq.destroy
+!     ! Do the derivative with respect to chi2
+!     res = .crystal.d_chi2_dU(sf_deriv)
+!     sf_deriv.destroy
+!     k_pts.destroy
+!   end
+
+!   make_ft(res,dens,k_pts)
+!   ! Fourier transform of a density described by AO density matrix dens
+!   ! evaluated at a series of reciprocal space points k_pts
+!   ! Size of res is [size(k_pts,1)]
+!      dens :: MAT{REAL}, target
+!      k_pts :: MAT{REAL}, IN
+!      res :: VEC{CPX}, OUT
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!      k_max,k,fa,fb,la,lb,q,atom_a,atom_b :: INT
+!      sh :: SHELL2
+!      ft_ab :: MAT3{CPX}*
+!      dens_ba :: MAT{REAL}*
+!      cutoff :: REAL
+!      k_max = size(k_pts,1)
+!      cutoff = TOL(10) / .n_shell_pairs
+!      res = ZERO
+!      parallel do q = 1,.n_shell_pairs
+!         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+!         if (sh.skip_ft(cutoff)) then
+!           sh.destroy_ptr_part
+!           cycle
+!         end
+!         ft_ab.create(k_max,sh.a.n_comp,sh.b.n_comp)
+!         .make_ft_pair(ft_ab,k_pts,sh,atom_a,atom_b)
+!!         dens_ba => dens(fb:lb,fa:la) ! P^dagger
+!         dens_ba => dens(fa:la,fb:lb)
+!         if (fa/=fb) then ! count off-diagonals twice.
+!           do k = 1,k_max
+!!              res(k) = res(k) + TWO*ft_ab(k,:,:).trace_product_with(dens_ba)
+!              res(k) = res(k) + TWO*sum(ft_ab(k,:,:)*dens_ba(:,:))
+!           end
+!         else
+!           do k = 1,k_max
+!!              res(k) = res(k) + ft_ab(k,:,:).trace_product_with(dens_ba)
+!              res(k) = res(k) + sum(ft_ab(k,:,:)*dens_ba(:,:))
+!           end
+!         end
+!         ft_ab.destroy
+!         sh.destroy_ptr_part
+!      end
+!      PARALLEL_SUM(res)
+!   end
+
+
+   zero_off_atom_density
+   ! Zero the off-atom overlap blocks of the density matrix
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"no restricted density")
+      .zero_off_atom_blocks(.density_matrix.restricted)
+   end
+
+   zero_off_atom_blocks(P)
+   ! Zero the off-atom overlap blocks in "P"
+      P :: MAT{REAL}
+   ENSURE(P.is_square,"wrong shape, P")
+   ENSURE(P.dim1==.n_bf,"wrong size, P")
+   ENSURE(.atom.created,"no atoms")
+      a,b,na,fa,la,nb,fb,lb :: INT
+      la = 0
+      do a = 1,.n_atom
+         na = .atom(a).n_bf
+         fa = la + 1
+         la = la + na
+         lb = 0
+         do b = 1,.n_atom
+            nb = .atom(b).n_bf
+            fb = lb + 1
+            lb = lb + nb
+            if (a==b) cycle
+            P(fa:la,fb:lb) = ZERO
+         end
+      end
    end
 
 end
