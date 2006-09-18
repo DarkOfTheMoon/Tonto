@@ -89,6 +89,8 @@ sub compare {
       return (1) if (!$line1 and !$line2); # EOF on both files
       $line1 =~ s/\s+/ /g;  # Condense all whitespace
       $line2 =~ s/\s+/ /g;  # Condense all whitespace
+      $line1 =~ s/\W+//g;   # Remove non-word characters
+      $line2 =~ s/\W+//g;   # Remove non-word characters
       return (0) if ( $line1 ne   $line2); # Lines differ, not same
    }
 }
