@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#/usr/bin/tcsh /usr/bin/perl
 
 #  Run this script to configure the Makefile for your system.
 #  It runs some tests such as determining what your compiler is.
@@ -153,6 +153,13 @@ if ($FC ne '') {
 
 }
 
+# Escape blank spaces in file names
+$INSTALLDIR =~ s/ /\\ /g;
+$SRCDIR =~ s/ /\\ /g;
+$PERL =~ s/ /\\ /g;
+$MAKE =~ s/ /\\ /g;
+$FULLFC =~ s/ /\\ /g;
+
 &do_substitutions_into_Makefile;
 
 ################################################################################
@@ -223,63 +230,66 @@ sub check_if_f95_compiler {
 ################################################################################
 sub get_default_integer_kind {
   my($INTTEST);
+  unlink("inttest.map","inttest","inttest.f90","inttest.out","inttest.exe","inttest.o","inttest.obj");
   open(INTTEST,">","inttest.f90");
   print INTTEST "program main\n";
   print INTTEST "  integer :: i\n";
   print INTTEST "  print *,kind(i)\n";
   print INTTEST "end program\n";
   close(INTTEST);
-  unlink("inttest.exe","inttest.o","inttest.obj");
-  system("${FC} -o inttest.exe inttest.f90 >& /dev/null");
-  if (! -x 'inttest.exe') { return }
-  system("./inttest.exe > inttest.out");
+  system("${FC} -o inttest inttest.f90 >& /dev/null");
+  if ( -x 'inttest.exe')  { system("./inttest.exe > inttest.out"); }
+  if ( -x 'inttest')      { system("./inttest     > inttest.out"); }
   if (open(INTTEST,"<","inttest.out")) {
      $INT_KIND = <INTTEST>;
      chomp($INT_KIND);
-     $INT_KIND =~s/ *//g;
+     $INT_KIND =~s/\s+//g;
+     $INT_KIND =~s/\W+//g;
   } 
-  unlink("inttest.f90","inttest.out","inttest.exe","inttest.o","inttest.obj");
+  unlink("inttest.map","inttest","inttest.f90","inttest.out","inttest.exe","inttest.o","inttest.obj");
 }
 
 ################################################################################
 sub get_default_double_precision_kind {
   my($REALTEST);
+  unlink("realtest.map","realtest","realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
   open(REALTEST,">","realtest.f90");
   print REALTEST "program main\n";
   print REALTEST "  print *,kind(1.0d0)\n";
   print REALTEST "end program\n";
   close(REALTEST);
-  unlink("realtest.exe","realtest.o","realtest.obj");
   system("${FC} -o realtest.exe realtest.f90 >& /dev/null");
-  if (! -x 'realtest.exe') { return }
-  system("./realtest.exe > realtest.out");
+  if ( -x 'realtest.exe') { system("./realtest.exe > realtest.out"); }
+  if ( -x 'realtest')     { system("./realtest     > realtest.out"); }
   if (open(REALTEST,"<","realtest.out")) {
      $REAL_KIND = <REALTEST>;
      chomp($REAL_KIND);
-     $REAL_KIND =~s/ *//g;
+     $REAL_KIND =~s/\s+//g;
+     $REAL_KIND =~s/\W+//g;
   } 
-  unlink("realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
+  unlink("realtest.map","realtest","realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
 }
 
 ################################################################################
 sub get_default_logical_kind {
   my($BINTEST);
+  unlink("bintest.map","bintest","bintest.f90","bintest.out","bintest.exe","bintest.o","bintest.obj");
   open(BINTEST,">","bintest.f90");
   print BINTEST "program main\n";
   print BINTEST "  logical :: l\n";
   print BINTEST "  print *,kind(l)\n";
   print BINTEST "end program\n";
   close(BINTEST);
-  unlink("bintest.exe","bintest.o","bintest.obj");
   system("${FC} -o bintest.exe bintest.f90 >& /dev/null");
-  if (! -x 'bintest.exe') { return }
-  system("./bintest.exe > bintest.out");
+  if ( -x 'bintest.exe') { system("./bintest.exe > bintest.out"); }
+  if ( -x 'bintest')     { system("./bintest     > bintest.out"); }
   if (open(BINTEST,"<","bintest.out")) {
      $BIN_KIND = <BINTEST>;
      chomp($BIN_KIND);
-     $BIN_KIND =~s/ *//g;
+     $BIN_KIND =~s/\s+//g;
+     $BIN_KIND =~s/\W+//g;
   } 
-  unlink("bintest.f90","bintest.out","bintest.exe","bintest.o","bintest.obj");
+  unlink("bintest.map","bintest","bintest.f90","bintest.out","bintest.exe","bintest.o","bintest.obj");
 }
 
 ################################################################################
