@@ -2759,9 +2759,11 @@ sub analyse_new_module_scope {
   @type_arg = &get_all_type_arguments(\@type_arg);
   $n_type_args = $#type_arg;
 
+  # Ignore error for programs as well as virtual modules
   if (! defined($tonto_type_info{$module_name}) &&
      $module_name ne 'TYPES' &&
-     $virtual ne 'virtual module') {
+     $virtual ne 'virtual module' &&
+     $virtual ne 'program' ) {
      &report_error("module type \"$module_name\" was not defined in \"$typesfile\".");
   }
 
