@@ -40,6 +40,9 @@ module VEC{ATOM}
    first_basis_fn_4_atom  :: VEC{INT}*, private DEFAULT_NULL
    last_basis_fn_4_atom   :: VEC{INT}*, private DEFAULT_NULL
 
+   ! Atom connection table, to save work
+   connections_for :: VEC{VEC_{INT}}*, private DEFAULT_NULL
+
 contains
 
 !  ******************
@@ -1077,7 +1080,6 @@ contains
             DIE("code must be one or three characters")
          end 
 
-         
          ! Print the new atom label from one read in
          pdbfile.tab(width=1)
          if (position_number==" ") then
@@ -3400,6 +3402,136 @@ contains
       end
 
       mesomer.destroy; bonds.destroy; bond.destroy; neighbour.destroy
+   end
+
+   make_connection_table(skip_hydrogen) ::: leaky
+   ! Make the atom connection table "connections_for".  If
+   ! "skip_hydrogen" is present and TRUE, connections are not made to
+   ! any hydrogen atom.
+     skip_hydrogen :: BIN, optional
+     if (connections_for.created) return
+     .make_connection_table(connections_for,skip_hydrogen)
+   end
+
+   make_connection_table(connections_for,skip_hydrogen) ::: leaky
+   ! Make the atom connection table "connections_for".  If
+   ! "skip_hydrogen" is present and TRUE, connections are not made to
+   ! any hydrogen atom.
+     connections_for :: VEC{VEC_{INT}}* 
+     skip_hydrogen :: BIN, optional
+     pos_i,pos_j :: VEC{REAL}(3)
+     i,j :: INT
+     skip_H :: BIN
+     skip_H = FALSE
+     if (present(skip_hydrogen)) skip_H = skip_hydrogen
+     connections_for.create(.dim,0)
+     do i = 1,.dim
+        if (skip_H) then
+           if (self(i).atomic_number==1) cycle
+        end
+        do j = i+1,.dim
+           if (skip_H) then
+              if (self(j).atomic_number==1) cycle
+           end
+           if (NOT self(i).is_bonded_to(self(j))) cycle
+           connections_for(i).element.append(j)
+           connections_for(j).element.append(i)
+        end
+     end
+   end
+
+   find_N_terminal_atoms(list) ::: leaky
+   ! Return the "list" of indices of the N terminal atoms.
+     list :: VEC{INT}* 
+     nn,N,Ca,Cc,N1,Ot :: INT
+     found :: BIN
+     .make_connection_table(skip_hydrogen=TRUE)
+     list.create(0)                           
+     do N = 1,.dim                           
+        if (self(N).atomic_number/=7) cycle
+        nn = connections_for(N).element.dim 
+        if (nn/=1) cycle
+        .find_protein_backbone_from_N(N,0,found,Ca,Cc,N1,Ot)
+        if (found) list.append(N)
+     end
+   end
+
+   find_protein_backbone_from_N(N,C,found,Ca,Cc,N1,Ot)
+   ! Given the index "N" of a nitrogen atom and possibly the index "C"
+   ! of a connected carbon atom, return "found" as TRUE if that
+   ! nitrogen atom is part of a protein backbone. Also return the
+   ! index "Ca" of the C-alpha carbon, the index "Cc" of the C-carboxy
+   ! carbon, and either "N1" the next nitrogen in the backbone, or
+   ! "Ot" the terminal oxygen in the backbone. This assumes a
+   ! connection table has been made.
+     N,C :: INT, IN
+     found :: BIN, OUT
+     Ca,Cc,N1,Ot :: INT, OUT
+
+   ENSURE(connections_for.created,"no connection table")
+   ENSURE(connections_for.dim==.dim,"wrong size connection table")
+   ENSURE(N>0 AND N<=.dim,"N index out of range")
+   ENSURE(self(N).atomic_number==7,"N is not the index of a nitrogen atom")
+   ENSURE(C>=0 AND C<=.dim,"C index out of range")
+
+     nn,na,ia,nc,ic,O2,X :: INT
+
+     ! Set defaults
+     found = FALSE
+     Ca = 0; Cc = 0; N1 = 0; Ot = 0
+
+     ! Check if C is bonded to N
+     if (C>0) then
+        DIE_IF(NOT self(N).is_bonded_to(self(C)),"N is not bonded to C")
+     end
+
+     ! # of connections for N
+     nn = connections_for(N).element.dim                  
+
+     ! A backbone N must have 1 connection and can't have 
+     ! more than 2 connections
+     if (nn<=0) return
+     if (nn >2) return
+
+     ! Get the index of C-alpha atom
+     Ca = connections_for(N)[1]                         
+     if (Ca==C) then
+        DIE_IF(nn<2,"not enough connections to N = "//trim(N.to_str))
+        Ca = connections_for(N)[2]                         
+     end
+
+     ! C-alpha must be a carbon
+     if (self(Ca).atomic_number/=6) return
+
+     ! # of  connections for C-alpha
+     na = connections_for(Ca).element.dim 
+
+     ! C-alpha must have 2 connections (GLY) or 3 connections
+     if (na/=3 AND na/=2) return
+
+     ! Now find C-carboxy carbon
+     do ia = 1,na 
+        Cc = connections_for(Ca)[ia]          ! Index of C-carboxy
+        if (Cc==N) cycle                      ! Cc can't be the first N
+        if (self(Cc).atomic_number/=6) cycle  ! Cc must be a carbon
+        nc = connections_for(Cc).element.dim
+        if (nc/=3) cycle                      ! C-carboxy must have 3 connections
+        O2 = 0                                ! It must have a =O
+        N1 = 0                                ! It must have a -N, or
+        Ot = 0                                ! It must have a terminal -OH
+        do ic = 1,nc
+           X = connections_for(Cc)[ic]
+           if (X==Ca) cycle
+           if (self(X).atomic_number==7) N1 = X
+           if (self(X).atomic_number==8) then
+              if (Ot==0) then; O2 = X
+              else;            Ot = X
+              end
+           end
+        end
+        found = O2/=0 AND (N1/=0 OR Ot/=0)
+        if (found) exit
+     end
    end
 
    no_of_bonds result(res)
