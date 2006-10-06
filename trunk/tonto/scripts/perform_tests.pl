@@ -104,12 +104,14 @@ foreach my $job (@jobs) {
     my $ok = 1;
     foreach my $output (@output) {
       $ok = ($ok && ! system("$cmp $testdir/$job/$output $output"));
-      copy($output,"$testdir/$job/$output".".bad");
     }
     if ($ok) {
       $agreed++; $status = "passed";
     } else {
       $disagreed++; $status = "FAILED";
+      foreach my $output (@output) {
+        copy($output,"$testdir/$job/$output".".bad");
+      }
     }
 
   }
