@@ -226,7 +226,7 @@ contains
          .fragment_geometry.create_copy(crystal.fragment_geometry)
          .n_fragment_atoms = crystal.fragment_geometry.dim2
          mean = crystal.fragment_geometry.mean_column_vector
-         .fragment_offset  = nint(mean-HALF)
+         .fragment_offset  = int(mean)
       else
          .n_fragment_atoms = 0
          .fragment_offset = 0
@@ -243,10 +243,12 @@ contains
       .generation_method = method
       .generation_method.to_lower_case
       select case (.generation_method)
-         case("for_hirshfeld_surface "); .start_with_fragment = TRUE
-         case("fragment              "); .start_with_fragment = TRUE
-         case("unit_cell             ")
-         case("within_radius         "); .start_with_fragment = TRUE
+         case("for_hirshfeld_surface  "); .start_with_fragment = TRUE
+         case("fragment               "); .start_with_fragment = TRUE
+         case("unit_cell              "); .start_with_fragment = FALSE
+         case("unit_cell_plus_2a      "); .start_with_fragment = FALSE
+         case("for_unit_cell_densities"); .start_with_fragment = FALSE
+         case("within_radius          "); .start_with_fragment = TRUE
          case default;   UNKNOWN(.generation_method)
       end
    end
@@ -273,7 +275,6 @@ contains
          case ("defragment=           "); .read_defragment
          case ("fractional_fragment=  "); .read_fractional_fragment
          case ("fragment_geometry=    "); .read_fragment_geometry
-         case ("crystal_fragment=     "); .read_crystal_fragment
          case ("generation_method=    "); .read_generation_method
          case ("make_info             "); .make_info
       !  case ("partition_factors=    "); .read_partition_factors
@@ -293,15 +294,9 @@ contains
    ! Read the add criteria, whether to add atoms by whole clusters within a
    ! certain radius of the starting fragment, or by individual atoms within a
    ! certain distance of the starting fragment.
-      stdin.read(.generation_method)
-      .generation_method.to_lower_case
-      select case (.generation_method)
-         case("for_hirshfeld_surface "); .start_with_fragment = TRUE
-         case("fragment              "); .start_with_fragment = TRUE
-         case("unit_cell             ")
-         case("within_radius         "); .start_with_fragment = TRUE
-         case default;   UNKNOWN(.generation_method)
-      end
+      generation_method :: STR
+      stdin.read(generation_method)
+      .set_generation_method(generation_method)
    end
 
    read_defragment
@@ -367,20 +362,6 @@ contains
       tmp.destroy
    end
 
-   read_crystal_fragment ::: leaky
-   ! Read in the crystal fragment geometry, in fractional coordinate units.
-   ! NOTE: to define the Hirshfeld surface, all fragment atom positions must
-   ! correspond to the positions of actual atoms in the crystal lattice.
-      tmp :: VEC{REAL}*
-      stdin.read_ptr(tmp)
-      ENSURE(mod(tmp.dim,3)==0,"# of elements not divisible by 3")
-      .n_fragment_atoms = tmp.dim/3
-      .fragment_geometry.destroy
-      .fragment_geometry.create(3,.n_fragment_atoms)
-      .fragment_geometry = reshape(tmp,[3,.n_fragment_atoms])
-      tmp.destroy
-   end
-
 !  ***************************
 !  Cluster generation routines
 !  ***************************
@@ -393,18 +374,19 @@ contains
       if (.info_made) return
       .do_fragment_symop = .crystal.has_complete_fragment
       .do_fragment_symop = FALSE
-    ! if (.generation_method=="for_hirshfeld_surface") .make_radius
-    ! .make_symop_list_and_geometry
-    ! .find_fragment_atoms
-    ! .make_fragment_parents_for_atom 
-    ! .make_fragment_child_for_atom 
       .make_unit_cell_connections
       .make_occupation_list
-      if (.generation_method=="within_radius") then
+      if (     .generation_method=="within_radius") then
          .make_within_radius
       else if (.generation_method=="for_hirshfeld_surface") then
          .make_radius
          .make_within_radius
+         .defragment = FALSE
+      else if (.generation_method=="for_unit_cell_densities") then
+         .do_defrag
+         .make_radius
+         .make_within_radius
+         .defragment = FALSE
       end
       if (.defragment) then; .do_defrag
       else;                  .do_connectify
@@ -543,22 +525,21 @@ contains
    ! connected across a cell boundary; they are made correct at the end of the
    ! cluster generation procedure, using the connection table.
    ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell")
    ENSURE(.fragment_geometry.created,"no fragment_geometry")
      h   :: VEC{INT}(3)
-     pos :: VEC{REAL}(3)
      tol :: REAL
-     i,u :: INT
+     pos,b,t :: VEC{REAL}(3)
+     i,u,u1000 :: INT
      tol = TOL(1)/maxval(.crystal.unit_cell.length)
      tol = TOL(3)                        ! <--- getting this number wrong can stuff things
      select case (.generation_method)
         case("within_radius","for_hirshfeld_surface","fragment")
            ENSURE(.fragment_geometry.created,"no fragment_geometry")
            pos = .fragment_geometry.mean_column_vector
-           .fragment_offset = nint(pos-HALF)
+           .fragment_offset = int(pos)
            .occupation_list.destroy
            .occupation_list.create(.n_fragment_atoms)
-         ! .molecule_for_atom.destroy
-         ! .molecule_for_atom.create(.n_fragment_atoms)
            do i = 1,.n_fragment_atoms
               pos = .fragment_geometry(:,i) - .fragment_offset
               .crystal.put_to_unit_cell(pos,shift=h)
@@ -572,18 +553,58 @@ contains
               end
               h = -h + 5
               .occupation_list(i) = h(1) + h(2)*10 + h(3)*100 + u*1000
-         !    .molecule_for_atom(i) = .unit_cell_mol_for_atom(u)
            end
         case("unit_cell             ")
            .fragment_offset = 0
            .occupation_list.destroy
            .occupation_list.create(.crystal.n_unit_cell_atoms)
-         ! .molecule_for_atom.destroy
-         ! .molecule_for_atom.create(.crystal.n_unit_cell_atoms)
            h = 5
            do u = 1,.crystal.n_unit_cell_atoms
               .occupation_list(u) = h(1) + h(2)*10 + h(3)*100 + u*1000
-         !    .molecule_for_atom(u) = .unit_cell_mol_for_atom(u)
+           end
+        case("unit_cell_plus_2a","for_unit_cell_densities")
+           .fragment_offset = 0
+           .occupation_list.destroy
+           .occupation_list.create(.crystal.n_unit_cell_atoms)
+           do u = 1,.crystal.n_unit_cell_atoms
+              .occupation_list(u) = 5 + 5*10 + 5*100 + u*1000
+           end
+           ! Go 2 angstrom from unit cell edges
+           b = TWO.from_units("angstrom")/.crystal.unit_cell.length
+           t = ONE - b
+           u1000 = 0
+           do u = 1,.crystal.n_unit_cell_atoms
+              pos = .crystal.unit_cell_geometry(:,u) 
+              u1000 = u1000 + 1000
+
+              if (pos(1)<b(1)) .occupation_list.append(6+5*10+5*100+u1000)
+              if (pos(2)<b(2)) .occupation_list.append(5+6*10+5*100+u1000)
+              if (pos(3)<b(3)) .occupation_list.append(5+5*10+6*100+u1000)
+              if (pos(1)>t(1)) .occupation_list.append(4+5*10+5*100+u1000)
+              if (pos(2)>t(2)) .occupation_list.append(5+4*10+5*100+u1000)
+              if (pos(3)>t(3)) .occupation_list.append(5+5*10+4*100+u1000)
+
+              if (pos(1)<b(1) AND pos(2)<b(2)) .occupation_list.append(6+6*10+5*100+u1000)
+              if (pos(1)<b(1) AND pos(3)<b(3)) .occupation_list.append(6+5*10+6*100+u1000)
+              if (pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(5+6*10+6*100+u1000)
+              if (pos(1)>t(1) AND pos(2)<b(2)) .occupation_list.append(4+6*10+5*100+u1000)
+              if (pos(1)>t(1) AND pos(3)<b(3)) .occupation_list.append(4+5*10+6*100+u1000)
+              if (pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(5+4*10+6*100+u1000)
+              if (pos(1)<b(1) AND pos(2)>t(2)) .occupation_list.append(6+4*10+5*100+u1000)
+              if (pos(1)<b(1) AND pos(3)>t(3)) .occupation_list.append(6+5*10+4*100+u1000)
+              if (pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(5+6*10+4*100+u1000)
+              if (pos(1)>t(1) AND pos(2)>t(2)) .occupation_list.append(4+4*10+5*100+u1000)
+              if (pos(1)>t(1) AND pos(3)>t(3)) .occupation_list.append(4+5*10+4*100+u1000)
+              if (pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(5+4*10+4*100+u1000)
+
+              if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(6+6*10+6*100+u1000)
+              if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)<b(3)) .occupation_list.append(4+6*10+6*100+u1000)
+              if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(6+4*10+6*100+u1000)
+              if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)<b(3)) .occupation_list.append(4+4*10+6*100+u1000)
+              if (pos(1)<b(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(6+6*10+4*100+u1000)
+              if (pos(1)>t(1) AND pos(2)<b(2) AND pos(3)>t(3)) .occupation_list.append(4+6*10+4*100+u1000)
+              if (pos(1)<b(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(6+4*10+4*100+u1000)
+              if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(4+4*10+4*100+u1000)
            end
         case default
            UNKNOWN(.generation_method)
@@ -629,7 +650,6 @@ contains
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit_cell_geometry")
    ENSURE(.occupation_list.created,"no occupation_list")
- ! ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
      geom0,geom1,frag :: MAT{REAL}*
      rcm :: MAT{REAL}(3,3)
      pos,d :: VEC{REAL}(3)
@@ -645,14 +665,15 @@ contains
      frag  = matmul(rcm,.fragment_geometry)
      d = matmul(rcm,.fragment_offset)
      frag = frag - spread(d,2,.n_fragment_atoms)
-   ! frag_width = frag.max_abs_column_difference
-   ! h_max = ceiling((.radius+HALF*frag_width)/.crystal.unit_cell.length)
-     .h_max = floor(( .radius+maxval(frag,dim=2))/.crystal.unit_cell.length)
-     .h_min = floor((-.radius+minval(frag,dim=2))/.crystal.unit_cell.length)
-     .h_max = max(.h_max,[2,2,2])                               ! Look at least one cell away
-     .h_min = min(.h_min,[-2,-2,-2])
+     ! Changed the line below to use ceiling, to avoid a mandatory two cell lookout
+     .h_max = ceiling(( .radius+maxval(frag,dim=2))/.crystal.unit_cell.length)
+     .h_min =   floor((-.radius+minval(frag,dim=2))/.crystal.unit_cell.length)
+     .h_max = max(.h_max,[1,1,1])                         ! Look at least one cell away
+     .h_min = min(.h_min,[-1,-1,-1])
+   ! .h_max = max(.h_max,[2,2,2])                         ! Look at least two cells away
+   ! .h_min = min(.h_min,[-2,-2,-2])                      ! This was put by Josh I think
      ENSURE(all(.h_min>=-5),"search range too low, h_min = "//trim(.h_min.to_str))
-     ENSURE(all(.h_min<=4),"search range too high, h_max = "//trim(.h_max.to_str))
+     ENSURE(all(.h_max<=4),"search range too high, h_max = "//trim(.h_max.to_str))
      frag = frag + spread(d,2,.n_fragment_atoms)
      geom0.create(3,n_unit_cell_atoms)                    ! Cartesian geometry
      geom1.create(3,n_unit_cell_atoms)                    ! Displaced cartesian geometry
@@ -664,7 +685,6 @@ contains
      uskip.create(n_unit_cell_atoms)
      hlist = mod(.occupation_list,1000)                   ! Cells which fragment occupies
      ulist = .occupation_list/1000                        ! Unit cell atoms for fragment atoms
-   ! m = .n_unit_cell_mols                                ! The molecule number
      do h1 = .h_min(1),.h_max(1)                           ! Loop over allowed cells
      do h2 = .h_min(2),.h_max(2)
      do h3 = .h_min(3),.h_max(3)
@@ -701,13 +721,8 @@ contains
            if (NOT within_radius) cycle
            code = hcode + u*1000                          ! New atom
            .occupation_list.append(code)                  ! Add it in ...
-         ! mu = .unit_cell_mol_for_atom(u)
-         ! if (is_cell000) then; .molecule_for_atom.append(mu)
-         ! else;                 .molecule_for_atom.append(m+mu)
-         ! end
         end
         match.destroy
-      ! m = m + .n_unit_cell_mols
      end
      end
      end
