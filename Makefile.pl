@@ -17,8 +17,9 @@ my $MAKE = '';
 my $SRCDIR = '.';                     # Default directory for the source files.
 my $INSTALLDIR = '/usr/local/bin';    # Default directory to install executables.
 my $PERL = '';                        # Location of the perl executable.
-my $FC = '';                          # Location of the compiler executable.
-my $VENDOR = '';                      # Name of the compiler vendor.
+my $FC = '';                          # The fortran compiler command.
+my $COMPILER_VENDOR = '';             # Name of the compiler vendor.
+my $COMPILER_ID = '';                 # Compiler ID 
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f';                    # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
@@ -124,12 +125,13 @@ if (defined $FC && $FC ne '') {
 if ($FC ne '') {
 
   print STDERR "Determining Fortran compiler vendor ...";
-  $VENDOR = &get_vendor($FC);
-  if ($VENDOR ne '') {&print_result($VENDOR)}
+  $COMPILER_VENDOR = &get_vendor($FC);
+  if ($COMPILER_VENDOR ne '') {&print_result($COMPILER_VENDOR)}
   else {&print_result('cannot determine');}
 
-  $PLATFORM_ID = "${VENDOR}-${FC}-on-${OS}";
-  $PLATFORM_ID_ = "${VENDOR}_${FC}_on_${OS}";
+  $PLATFORM_ID = "${COMPILER_VENDOR}-${FC}-on-${OS}";
+  $PLATFORM_ID_ = "${COMPILER_VENDOR}_${FC}_on_${OS}";
+  $COMPILER_ID_ = "${COMPILER_VENDOR}_${FC}";
   $PLATFORM_INFO_FILE = "${SRCDIR}/platforms/${PLATFORM_ID}";
 
   print STDERR "Determining Fortran default integer kind ...";
@@ -390,6 +392,7 @@ sub do_substitutions_into_Makefile {
     s/\@MAKE\@/$MAKE/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
+    s/\@COMPILER_ID\@/$COMPILER_ID/g;
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
