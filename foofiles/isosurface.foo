@@ -181,6 +181,7 @@ contains
       .y = 0
       .z = 0
       .big_interior = FALSE
+      .cap_ends = 0
       .surface_point = ISOSURFACE_SURFACE_POINT ! [TOL(6),TOL(6),TOL(6)]
       .surface_property_lower_bound = ISOSURFACE_PROPERTY_LB
       .surface_property_upper_bound = ISOSURFACE_PROPERTY_UB
@@ -322,9 +323,9 @@ contains
       keyword :: STR
       select case (keyword)
          case ("}                            ")  ! exit case
-         case ("colourfunction=              "); .read_colourfunction
-         case ("put_colourfunction           "); .colour.put
          case ("big_interior=                "); .read_big_interior
+         case ("cap_ends=                    "); .read_cap_ends
+         case ("colourfunction=              "); .read_colourfunction
          case ("interpolator=                "); .read_interpolator
        ! case ("interpolation_kind=          "); .read_interpolation_kind
        ! case ("interpolator_table_eps=      "); .read_interpolator_eps
@@ -342,6 +343,7 @@ contains
          case ("surface_prop_upper_bound_abs="); .read_surface_property_ub_abs
          case ("chop_surface_property_range= "); stdin.read(.chop_surface_property_range)
          case ("put                          "); .put
+         case ("put_colourfunction           "); .colour.put
          case ("put_connected_area           "); .put_connected_area
          case ("put_cx                       "); .put_CX("CX")
          case ("put_faces                    "); .put_faces
@@ -366,6 +368,14 @@ contains
    ! Read a switch which tells if the interior of the isosurface is bigger than
    ! the exterior i.e. whether to reverse the surface gradients or not.
       stdin.read(.big_interior)
+   end
+
+   read_cap_ends
+   ! Set non-zero if you want the ends of the isosurface on the
+   ! bounding cube to be capped. Set less than one if you want values
+   ! less than the isosurface capped, or greater than one if you want
+   ! values greater than the iso value capped.
+      stdin.read(.cap_ends)
    end
 
    read_colourfunction
@@ -878,31 +888,56 @@ contains
       front :: VEC{INT}(8) = [0,0,1,2,0,0,5,6] ! The lexical index of the front-cube
       below :: VEC{INT}(8) = [0,0,0,0,1,2,3,4] ! The lexical index of the bottom cube
       ix,iy,iz :: VEC{INT}(8)
-      bit,x,y,z,k, l,f,b :: INT
+      bit,x,y,z,k :: INT
       vol :: REAL
       do_divide,oblique :: BIN
+
+      ! Which cube division level we are at
       .level = .level + 1
+
+      ! Which bit to be set which describes the cube axis positions
       bit = .final_level - .level
+
+      ! Oblique axis systems require special interpolation
       oblique = .grid.use_unit_cell_as_bbox
+
+      ! Oblique axes have different spacings on each axis
       .del_x = .del_x/TWO
       if (oblique) then; .del_y = .del_y/TWO; .del_z = .del_z/TWO
       else;              .del_y = .del_x;     .del_z = .del_x
       end
       vol = .del_x*.del_y*.del_z
+
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      if (.level<.final_level) then ! Divide into 8 cubes and do again
+      ! Divide into 8 cubes and do again
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      if (.level<.final_level) then 
+
+         ! Evaluate the parent  points and function values to pass down
          .grid.make_cube_of_points(p3,0,2,.del_x,.del_y,.del_z,.x,.y,.z) 
          .make_3_cube_of_values(f3,func,p3,parent_cube)
+
+         ! Set the default cube
          cube = .cube
        ! .set_default_cube(cube)
+
+         ! Loop over the 8 subcubes
          do z = 0,1
          do y = 0,1
          do x = 0,1
-            cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
-                                   f3(x:x+1,y:y+1,z:z+1))
-          ! MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Set "cube" to be one of the child cubes
+          ! cube.set_vertex_info(p3(:,x:x+1,y:y+1,z:z+1), &
+          !                        f3(x:x+1,y:y+1,z:z+1))
+            MARCHINGCUBE::set_vertex_info3(cube,p3,f3,x,y,z)
+
+            ! Which vertices are inside or outside isosurface?
             cube.set_case_info
+
+            ! Determine of we must divide this child further
             do_divide = (.level<.scan_level) OR cube.is_nearly_on_surface(.voxel_proximity_factor)
+
+            ! If dividing, set the child cube coordinates and do it
             if (do_divide) then 
                .x = ibclr(.x,bit); if (x==1) .x = ibset(.x,bit) ! Set cube coords
                .y = ibclr(.y,bit); if (y==1) .y = ibset(.y,bit)
@@ -911,114 +946,210 @@ contains
                .x = ibclr(.x,bit)                               ! Clear the cube coords
                .y = ibclr(.y,bit)
                .z = ibclr(.z,bit)
+            ! If not dividing get a rough estimate of the volume
             else
                if (cube.is_inside_surface) then
                   .volume_min = .volume_min + vol
                   .volume_max = .volume_max + vol
                end
             end
+
          end
          end
          end
+
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-      else                     ! Divide by 8 the last time, and triangulate
+      ! Divide by 8 the last time, and triangulate
+      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      else                
+
+         ! A 5-cube of points needed for gradients and hessians
          .grid.make_cube_of_points(p5,-1,3,.del_x,.del_y,.del_z,.x,.y,.z) 
+
+         ! Start with a 3-cube of values for now
          f5 = ZERO
          .make_3_cube_of_values(f5(1:3,1:3,1:3),func,p5(:,1:3,1:3,1:3),parent_cube)
+
+         ! Set the default cube, for interpolations
          cube = .cube
        ! .set_default_cube(cube)
-         eval = FALSE          ! First evaluate only the needed function points
-         skip = TRUE           ! ... for the kube's which won't be skipped ...
+
+         ! Tells which of the points in the 5-cube must be evaluated
+         eval = FALSE          
+
+         ! List of cubes which are not triangulated.
+         skip = TRUE
+
+         ! Indices of previous cubes in the hash table which have been
+         ! triangulated; no need to re-triangulate shared faces.
          ix = 0; iy = 0; iz = 0
+
+         ! The child cube index, in range 1 ... 8
          k = 0
+
+         ! Loop over the child cubes the first time; triangulate later
+         ! when we know which cubes to do, which helps avoid function
+         ! evaluations on the 5 x 5 x 5 cube
          do z = 0,1
          do y = 0,1
          do x = 0,1
+
             k = k + 1
-            cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2), &
-                                   f5(x+1:x+2,y+1:y+2,z+1:z+2))
-          ! MARCHINGCUBE::set_vertex_info5(cube,p5,f5,x,y,z)
+
+            ! Set child cube info; store only needed parts in kube(k)
+          ! cube.set_vertex_info(p5(:,x+1:x+2,y+1:y+2,z+1:z+2), &
+          !                        f5(x+1:x+2,y+1:y+2,z+1:z+2))
+            MARCHINGCUBE::set_vertex_info5(cube,p5,f5,x,y,z)
+
+            ! Which cube vertices are inside or outside isosurface?
             cube.set_case_info
             if (cube.is_inside_surface)      .volume_min = .volume_min + vol
             if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
+
+            ! Is the cube on the surface?
             if (NOT cube.is_on_surface) cycle 
-            .x = .x + x                                      ! Set cube coords
+
+            ! We are on the surface: set the cube coords
+            .x = .x + x
             .y = .y + y
             .z = .z + z
-            skip(k) = FALSE                                  ! This cube is on the surface
+ 
+            ! Don't skip this cube
+            skip(k) = FALSE
+
+            ! Which cube edges cut the surface? Hence, which cube vertices are
+            ! needed? Hence, what triangles are to be made?
             cube.skip_bit_string = 0
-            cube.set_triangulation_info                      
-            if (cube.has_left_face_on_surface) then          ! We triangulated some faces already?
-               if ( x>0 OR &
-                  (.x>0 AND .hash.has_key([.x-1,.y,.z],index=ix(k)))) &
-                  cube.set_left_skip_bit_string              ! Previous left cube exists
+            cube.set_triangulation_info
+
+            ! Find out which faces of the cube should have been triangulated 
+            ! already, and store in ix, iy, iz arrays, and store in the 
+            ! skip_bit_string for hessian evaluation
+            if (cube.has_left_face_on_surface) then
+               if (x>0) then
+                  ix(k) = -1
+                  cube.set_left_skip_bit_string  ! Left child cube exists
+               else if (.x>0 AND .hash.has_key([.x-1,.y,.z],index=ix(k))) then
+                  cube.set_left_skip_bit_string  ! Left hash cube exists
+               end
             end
             if (cube.has_front_face_on_surface) then
-               if ( y>0 OR &
-                  (.y>0 AND .hash.has_key([.x,.y-1,.z],index=iy(k)))) &
-                  cube.set_front_skip_bit_string             ! Previous front cube exists
+               if (y>0) then
+                  iy(k) = -1
+                  cube.set_front_skip_bit_string ! Front child cube exists
+               else if (.y>0 AND .hash.has_key([.x,.y-1,.z],index=iy(k))) then
+                  cube.set_front_skip_bit_string ! Front hash cube exists
+               end
             end
             if (cube.has_lower_face_on_surface) then
-               if ( z>0 OR &
-                  (.z>0 AND .hash.has_key([.x,.y,.z-1],index=iz(k)))) &
-                  cube.set_below_skip_bit_string             ! Previous lower cube exists
+               if (z>0) then
+                  iz(k) = -1
+                  cube.set_below_skip_bit_string ! Lower child cube exists
+               else if (.z>0 AND .hash.has_key([.x,.y,.z-1],index=iz(k))) then
+                  cube.set_below_skip_bit_string ! Lower hash cube exists
+               end
             end
-            cube.set_cube_bit_string                         ! Now we know which edges to do
-            cube.set_hessian_eval_array(eval,x,y,z)          ! "eval" has the needed points
-            kube(k) = cube                                   ! store the cube for later ...
-            .x = .x - x                                      ! Clear the cube coords
+
+            ! Set which edges to interpolate, accounting for those
+            ! already done above in skip_bit_string
+            cube.set_cube_bit_string 
+
+            ! Set which of the 5 x 5 x 5 points are needed for hessian
+            ! and gradient.
+            cube.set_hessian_eval_array(eval,x,y,z)
+
+            ! Store the needed parts of cube for later interpolation
+            kube(k) = cube
+          ! kube(k).cube_bit_string = cube.cube_bit_string
+          ! kube(k).edge_bit_string = cube.edge_bit_string
+          ! kube(k).skip_bit_string = cube.skip_bit_string
+
+
+            ! Clear the cube coords
+            .x = .x - x                                      
             .y = .y - y
             .z = .z - z
          end
          end
          end
-         eval(2:4,2:4,2:4) = FALSE                           ! <<< Evaluate only the needed
-         .make_5_cube_of_values(f5,func,p5,eval)             ! <<< points for the gradient ...
+
+         ! Don't evaluate the 3 x 3 x 3 points/values -- already done
+         eval(2:4,2:4,2:4) = FALSE 
+       
+         ! Now evaluate the function only at the needed points. The
+         ! previous loops over the 8 kubes was all for this.
+         .make_5_cube_of_values(f5,func,p5,eval)
+
+         ! Loop over the child cubes the second time, and do the
+         ! triangulation.
          k = 0                
-         do z = 0,1            ! Now to the actual marching cube triangle interpolation
+         do z = 0,1 
          do y = 0,1
          do x = 0,1
+
             k = k + 1
             if (skip(k)) cycle
+
+            ! Get stored cobe
             cube = kube(k)
+
+            ! Evaluate the gradient and hessian
             cube.set_hessian_info(f5(x:x+3,y:y+3,z:z+3))
-            .x = .x + x                                      ! Set cube coords
+
+            ! Set the cube coordinates; for storing in hash table
+            .x = .x + x 
             .y = .y + y
             .z = .z + z
+
             ! Use previously triangulated cubes if possible
-            l = left(k); f = front(k); b = below(k)
-            if (cube.has_left_face_on_surface) then
-               if      ( x>0)    then; cube.set_left_info(kube(l).edge_vertex_index)
-               else if (ix(k)>0) then; cube.set_left_info(.hash.value_for_item(ix(k)))
+            if (ix(k)/=0) then
+               if (ix(k)<0) then; cube.set_left_info(kube(left(k)).edge_vertex_index)
+               else;              cube.set_left_info(.hash.value_for_item(ix(k)))
           !    else if (.x>0)    then; cube.set_left_info(.hash.value_for_key([.x-1,.y,.z]))
                end
             end
-            if (cube.has_front_face_on_surface) then
-               if      ( y>0)    then; cube.set_front_info(kube(f).edge_vertex_index)
-               else if (iy(k)>0) then; cube.set_front_info(.hash.value_for_item(iy(k)))
+            if (iy(k)/=0) then
+               if (iy(k)<0) then; cube.set_front_info(kube(front(k)).edge_vertex_index)
+               else;              cube.set_front_info(.hash.value_for_item(iy(k)))
           !    else if (.y>0)    then; cube.set_front_info(.hash.value_for_key([.x,.y-1,.z]))
                end
             end
-            if (cube.has_lower_face_on_surface) then
-               if      ( z>0)    then; cube.set_below_info(kube(b).edge_vertex_index)
-               else if (iz(k)>0) then; cube.set_below_info(.hash.value_for_item(iz(k)))
+            if (iz(k)/=0) then
+               if (iz(k)<0) then; cube.set_below_info(kube(below(k)).edge_vertex_index)
+               else;              cube.set_below_info(.hash.value_for_item(iz(k)))
           !    else if (.z>0)    then; cube.set_below_info(.hash.value_for_key([.x,.y,.z-1]))
                end
             end
-            cube.set_n_pt(.n_pt)                             ! All known edge vertices resolved
+
+            ! Set the cube vertex index to the last vertex
+            cube.set_n_pt(.n_pt)                         
+
+            ! Finally, do the interpolation
             if (oblique) then; cube.interpolate_oblique_faces                 
             else;              cube.interpolate_faces                 
             end
+           
+            ! Copy the cube interpolation info to the isosurface
             .append_new_face_info(cube)
+
+            ! Append this cube to the hash
             .hash.append_pair([.x,.y,.z],cube.edge_vertex_index)
-            kube(k) = cube                                   ! We may still need it later ...
-            .x = .x - x                                      ! Clear the cube coords
+
+            ! Might need to keep this, it may share a face
+            if (x==0 OR y==0 OR z==0) &
+               kube(k).edge_vertex_index = cube.edge_vertex_index 
+
+            ! Clear the cube coords
+            .x = .x - x 
             .y = .y - y
             .z = .z - z
          end
          end
          end
+
       end
+
+      ! Go up to the next level: double side lengths, decrease level
       .del_x = TWO*.del_x
       if (oblique) then; .del_y = TWO*.del_y; .del_z = TWO*.del_z
       else;              .del_y = .del_x;     .del_z = .del_x
