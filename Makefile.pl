@@ -19,7 +19,7 @@ my $INSTALLDIR = '/usr/local/bin';    # Default directory to install executables
 my $PERL = '';                        # Location of the perl executable.
 my $FC = '';                          # The fortran compiler command.
 my $COMPILER_VENDOR = '';             # Name of the compiler vendor.
-my $COMPILER_ID = '';                 # Compiler ID 
+my $COMPILER_ID_ = '';                # Compiler ID 
 my $havelibs = 0;                     # Whether have determined the libraries to use.
 my $FSUFFIX = 'f';                    # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
@@ -392,7 +392,7 @@ sub do_substitutions_into_Makefile {
     s/\@MAKE\@/$MAKE/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
-    s/\@COMPILER_ID\@/$COMPILER_ID/g;
+    s/\@COMPILER_ID_\@/$COMPILER_ID_/g;
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
