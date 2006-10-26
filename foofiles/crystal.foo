@@ -58,6 +58,12 @@ contains
      nullify(.unique_atom_for_frag_atom)
      nullify(.unique_symop_for_frag_atom)
      nullify(.unique_shift_for_frag_atom)
+     nullify(.stabilizer_symop)
+     nullify(.str)
+     nullify(.ptr)
+     nullify(.dtr)
+     nullify(.ftr)
+     nullify(.gtr)
    ! nullify(.reduced_symop)
    ! nullify(.cluster_symop)
      nullify(.inverted_symop)
@@ -109,6 +115,12 @@ contains
      .unique_atom_for_frag_atom.destroy
      .unique_symop_for_frag_atom.destroy
      .unique_shift_for_frag_atom.destroy
+     .stabilizer_symop.destroy
+     .str.destroy
+     .ptr.destroy
+     .dtr.destroy
+     .ftr.destroy
+     .gtr.destroy
    ! .reduced_symop.destroy
    ! .cluster_symop.destroy
      .inverted_symop.destroy
@@ -172,6 +184,12 @@ contains
      if (crystal.unique_atom_for_frag_atom.created)  .unique_atom_for_frag_atom.create_copy(crystal.unique_atom_for_frag_atom)
      if (crystal.unique_symop_for_frag_atom.created) .unique_symop_for_frag_atom.create_copy(crystal.unique_symop_for_frag_atom)
      if (crystal.unique_shift_for_frag_atom.created) .unique_shift_for_frag_atom.create_copy(crystal.unique_shift_for_frag_atom)
+     if (crystal.stabilizer_symop.created)           .stabilizer_symop.create_copy(crystal.stabilizer_symop)
+     if (crystal.str.created)           .str.create_copy(crystal.str)
+     if (crystal.ptr.created)           .ptr.create_copy(crystal.ptr)
+     if (crystal.dtr.created)           .dtr.create_copy(crystal.dtr)
+     if (crystal.ftr.created)           .ftr.create_copy(crystal.ftr)
+     if (crystal.gtr.created)           .gtr.create_copy(crystal.gtr)
    ! if (crystal.reduced_symop.created) &
    !    .reduced_symop.create_copy(crystal.reduced_symop)
    ! if (crystal.cluster_symop.created) &
@@ -1118,6 +1136,8 @@ contains
       .unit_cell.change_into_fractional(.fragment_geometry)
     ! .make_reduced_symops         ! These don't seem to be used
     ! .make_cluster_symops
+      .make_stabilizer_symops 
+      .make_stabilizer_xyz_matrices 
       .make_inverted_symops        ! These are used to save time in SF calcs
       .make_translated_symops
       .make_unique_SF_symops
@@ -1158,6 +1178,35 @@ contains
          f = f + atom(n).atomic_number
       end
       res = u/f
+   end
+
+   make_stabilizer_symops ::: leaky, private
+   ! Make a list of the indices of the Seitz matrices, ".stabilizer_symop", which
+   ! will generate the same geometries to that in ".fragment_geometry" when
+   ! both the original and transformed geometries are converted to unit cell
+   ! coordinates.  ".n_stabilizer_symops" is set to the number of these 
+   ! symmetry operations.
+      g1,gi :: MAT{REAL}*
+      i,n :: INT
+      identical :: BIN
+      .stabilizer_symop.create(.spacegroup.n_seitz)
+      g1.create(3,.n_fragment_atoms)
+      gi.create(3,.n_fragment_atoms)
+      g1 = .fragment_geometry
+      n = 1
+      .stabilizer_symop(1) = 1
+      do i = 2,.spacegroup.n_seitz
+         gi = .fragment_geometry
+         .transform_geometry(gi,i)
+         identical  = .is_same_geometry(gi,g1)
+         if (NOT identical) cycle
+         n = n + 1
+         .stabilizer_symop(n) = i
+      end
+      gi.destroy
+      g1.destroy
+      .n_stabilizer_symops = n
+      .stabilizer_symop.shrink(n)
    end
 
 !   make_reduced_symops ::: leaky, private
@@ -1862,10 +1911,7 @@ contains
 
    xyz_seitz_matrices result (res) ::: leaky
    ! Create and return a list of the 3x3 part of the seitz matrices
-   ! in the cartesian axis system. NOTE: these are actually the
-   ! *transpose* of the matrices in Hall's paper.
-   !               S_cartesian  =  D  S^_crystal  D^-1
-   ! NOTE: I think they are not transposed any more ...
+   ! in the cartesian axis system. 
       res :: MAT3{REAL}*
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
       i :: INT
@@ -1878,10 +1924,7 @@ contains
 
    transposed_xyz_seitz_matrices result (res) ::: leaky
    ! Create and return a list of the 3x3 part of the seitz matrices
-   ! in the cartesian axis system. NOTE: these are actually the
-   ! *transpose* of the matrices in Hall's paper.
-   !               S^T_cartesian  =  B  S^T_crystal  B^-1
-   ! NOTE: I think they are not transposed any more ...
+   ! in the cartesian axis system. 
       res :: MAT3{REAL}*
    ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
       i :: INT
@@ -1890,6 +1933,58 @@ contains
          res(:,:,i) = matmul(.unit_cell.reciprocal_matrix, &
                       matmul(transpose(.spacegroup.seitz(1:3,1:3,i)), &
                              transpose(.unit_cell.direct_matrix)))
+      end
+   end
+
+!  ***********
+!  Stabilizers
+!  ***********
+
+   xyz_stabilizer_matrices result (res) ::: leaky
+   ! Create and return a list of the 3x3 part of the seitz matrices
+   ! in the cartesian axis which stabilize the fragment geometry. 
+      res :: MAT3{REAL}*
+   ENSURE(.spacegroup.seitz.created,"no Seitz matrices")
+   ENSURE(.stabilizer_symops.created,"no stabilizer symop matrices")
+      i,s :: INT
+      res.create(3,3,.n_stabilizer_symops)
+      do i = 1,.n_stabilizer_symops
+         s = .stabilizer_symop(i)
+         res(:,:,i) = matmul(.unit_cell.direct_matrix, &
+                      matmul(.spacegroup.seitz(1:3,1:3,s),.unit_cell.inverse_matrix))
+      end
+   end
+
+   make_stabilizer_xyz_matrices ::: leaky, private
+   ! Make the representation matrices for xyz products found in
+   ! gaussian shells, i.e. work out matrix R, where the shell row vector
+   ! p'(r) = p(S^{-1}r) = p(r)R, and S is a stabilizer symop.
+   ! WARNING: this routine is tied to an explicit ordering of the cartesian
+   ! gaussian basis functions in a shell.
+      str :: MAT3{REAL}*
+      str.create(1,1,.n_stabilizer_symops)
+      str = ONE
+      .str => str                          ! 1  x 1
+      .ptr => .xyz_stabilizer_matrices     ! 3  x 1
+      .dtr => .ptr.gaussian_d_xyz_matrices ! 6  x 6
+      .ftr => .ptr.gaussian_f_xyz_matrices ! 10 x 10
+      .gtr => .ptr.gaussian_g_xyz_matrices ! 15 x 15
+   end
+
+   xyz_stabilizer_matrix(n,l) result(res)
+   ! Return the "n"-th stabilizer representation matrix for xyz
+   ! product found in a gaussian shell of angular momentum "l"
+      n,l :: INT
+      res :: MAT{REAL}*
+   ENSURE(l>=0,"l must be non-negative")
+   ENSURE(l<5, "l must be less than 5 (no h functions or higher)")
+      select case (l)
+         case(0); res => .str(:,:,n)
+         case(1); res => .ptr(:,:,n)
+         case(2); res => .dtr(:,:,n)
+         case(3); res => .ftr(:,:,n)
+         case(4); res => .gtr(:,:,n)
+         case default; DIE("not implemented beyond l=4")
       end
    end
 
@@ -2294,6 +2389,7 @@ contains
       stdout.show("Fragment partition model     = ",.partition_model)
       stdout.show("Thermal smearing model       = ",.thermal_smearing_model)
     ! .put_reduced_symop_data
+    ! .put_stabilizer_symops 
       .put_inv_trans_symop_data
       .put_fragment_geometry(atom)
       .put_unique_fragment_geometry(atom)
@@ -2343,10 +2439,21 @@ contains
 !      stdout.dash(int_fields=5)
 !   end
 
+   put_stabilizer_symops ::: private
+   ! Put out the stabilizer symop data
+   ENSURE(.stabilizer_symop.created,"no stabilizer_symop")
+      stdout.flush
+      stdout.text("Crystal stabilizer symop information:")
+      stdout.flush
+      stdout.show("n_stabilizer_symops = ",.n_stabilizer_symops)
+      stdout.flush
+      stdout.put(.stabilizer_symop,"column")
+   end
+
    put_inv_trans_symop_data ::: private
    ! Put out the inverted translated symop data
-   ENSURE(.fragment_geometry.created,"fragment_geometry?")
-   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array")
+   ENSURE(.inverted_symop.created,"no inverted_symop")
+   ENSURE(.translated_symop.created,"no translated_symop")
       n :: INT
       inverted,translated :: BIN
       stdout.flush
