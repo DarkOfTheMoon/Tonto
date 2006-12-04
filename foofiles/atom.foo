@@ -406,11 +406,12 @@ contains
       .energy = ZERO
       .group  = 0
       ! MM/protien defaults
-      .sequence_number = 0
-      .residue_atom_name = "?"
-      .residue_name = "UNK"
-      .mm_forcefield_name = "?"
-      .mm_atom_type = "?"
+      .protein_strand = 0
+      .residue_atom_code = " "
+      .residue_code = " "
+      .residue_sequence_number = 0
+      .mm_forcefield_name = " "
+      .mm_atom_type = " "
       .mm_charge = ZERO
       .restraining_position = [ ZERO,ZERO,ZERO ]
       .restraining_force_constant = ZERO
@@ -497,11 +498,11 @@ contains
        case ("position=                    "); .read_pos
        case ("put                          "); .put
        case ("put_interpolator             "); .put_interpolator
-       case ("residue_atom_name=           "); .read_residue_atom_name
-       case ("residue_name=                "); .read_residue_name
+       case ("residue_atom_code=           "); .read_residue_atom_code
+       case ("residue_code=                "); .read_residue_code
        case ("restraining_position=        "); .read_restraining_position
        case ("restraining_force_constant=  "); .read_restraining_force
-       case ("sequence_number=             "); .read_sequence_number
+       case ("residue_sequence_number=     "); .read_residue_sequence_number
        case ("site_occupancy=              "); .read_site_occupancy
        case ("slaterbasis_label=           "); .read_slaterbasis_label
        case ("thermal_axis_system=         "); .read_thermal_axis_system
@@ -563,14 +564,15 @@ contains
       stdin.read(.oxidation_state)
    end
 
-   read_residue_atom_name
-   ! Read the atom name that this atom belongs to a residue (case sensitive).
-      stdin.read(.residue_atom_name)
+   read_residue_atom_code
+   ! Read the atom code describing where in the residue this atom
+   ! resides (case sensitive).
+      stdin.read(.residue_atom_code)
    end
 
-   read_residue_name
+   read_residue_code
    ! Read the residue name that this atom belongs to.
-      stdin.read(.residue_name)
+      stdin.read(.residue_code)
    end
 
    read_pdb_input_line
@@ -579,18 +581,18 @@ contains
       stdin.read(word)
       word.to_lower_case
       ENSURE(word=="atom","PDB line does not begin with 'atom'")
-      .read_residue_atom_name
-      .read_residue_name
-      .read_sequence_number
+      .read_residue_atom_code
+      .read_residue_code
+      .read_residue_sequence_number
       .read_pos
       ATOM::read_junk
       ATOM::read_junk
       .read_label
    end
 
-   read_sequence_number
-   ! Read the sequence number of the residue in the molecule
-      stdin.read(.sequence_number)
+   read_residue_sequence_number
+   ! Read the residue sequence number of the atom in the molecule
+      stdin.read(.residue_sequence_number)
    end
 
    read_mm_atom_type
@@ -1526,22 +1528,123 @@ contains
       end
    end
 
+!  *********
+!  Invarioms
+!  *********
+
    allred_rochow_en result (res)
    ! Returns the Allred-Rochow EN for this atom
       res :: REAL
    ENSURE(.atomic_number > 0,"atomic number less than 1")
       if (.atomic_number>82) then; res = 1.0d0
-      else;                  res = allred_rochow_electronegs(.atomic_number)/TEN
+      else;                  res = allred_rochow_electronegs(.atomic_number)*0.01d0
       end
    end
 
-   covalent_radius result (res)
+   invariom_covalent_radius result (res)
    ! Returns the covalent radius for this atom
       res :: REAL
    ENSURE(.atomic_number > 0,"atomic number less than 1")
       if (.atomic_number>109) then; res = 1.0d0
-      else;                  res = covalent_radii_invariom(.atomic_number)/TEN
+      else;                  res = covalent_radii_invariom(.atomic_number)*0.01d0
       end
+   end
+
+   get_invariom_rotation(U,actual,reference,L,fail)
+   ! Returns the invariom rotation matrix "U" which matches
+   ! coordinates "reference" to "actual" in a least squares sense.
+   ! Return the mean fitting error "L" or else "fail"  for failure.
+      U :: MAT{REAL}, OUT
+      actual,reference :: MAT{REAL}, IN
+      L :: REAL
+      fail :: BIN
+   ENSURE(U.is_square,"U must be square")
+   ENSURE(U.dim==actual.dim2,"U incompatible with actual")
+   ENSURE(reference.dim2==actual.dim2,"reference incompatible with actual")
+
+      U0,X,Rd :: MAT{REAL}*
+      d,n,p,q,i,iteration :: INT
+      val :: REAL
+
+      ! Set dimension, number of points to fit
+      d = U.dim1
+      n = reference.dim2
+
+      ! Set minimum L value
+      L = ZERO
+
+      ! Start with U being unit matrix
+      U.to_unit_matrix
+
+      ! Create antisymmetric matrix X, temporary rotation U
+      X.create(d,d)
+      U0.create(d,d)
+      Rd.create(reference.dim1,reference.dim2)
+
+      ! Repeatedly update U until converged
+      iteration = 0
+      fail = FALSE
+      do
+
+         iteration = iteration + 1
+
+         ! Rotate actual positions
+         Rd.to_product_of(U,actual,transpose_A=TRUE)
+
+         ! Get the derivative of L wrt. X_pq
+         do p = 1,d
+            do q = 1,p
+               val = ZERO
+               do i = 1,n
+                  val = val + Rd(p,i)*reference(q,i) - Rd(q,i)*reference(p,q)
+               end
+               val = -TWO*val
+               X(p,q) =  val
+               X(q,p) = -val
+            end
+            X(p,p) = ZERO
+         end
+
+         ! Get maximum gradient
+         val = maxval(abs(X))
+
+         ! Exit if gradient converged or too many iteration
+         if (val<TOL(4)) exit
+         fail = iteration==1000
+         if (fail) exit
+
+         ! Otherwise scale X so the maximum value is less than 0.1
+         val = TOL(1)/val
+         X = X*val
+
+         ! Exponentiate X
+         X.exponentiate_to(U0)
+
+         ! Update U
+         X.to_product_of(U,U0)
+         U = X
+
+      end
+
+      ! Clean up
+      Rd.destroy; U0.destroy; X.destroy
+
+      ! If failed, return, otherwise calculate L
+      if (fail) return
+
+      Rd.create(reference.dim1,reference.dim2)
+      Rd.to_product_of(U,reference)
+
+      L = ZERO
+      do i = 1,d
+         L = L + dot_product(actual(:,i),actual(:,i)) &
+               + dot_product(reference(:,i),reference(:,i)) &
+               - TWO*dot_product(actual(:,i),Rd(:,i))
+      end
+      L = sqrt(L)/d
+
+      Rd.destroy
+      
    end
 
 !  *************************
@@ -1702,9 +1805,55 @@ contains
       end
    end
 
+   make_density_grid(density_grid,pt,D)
+   ! Make the "density_grid" for the supplied points "pt" from a
+   ! density matrix "D"
+     self :: IN
+     density_grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}
+     D :: MAT{REAL}
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(D.is_square,"D, not square")
+   ENSURE(D.dim1==.basis.no_of_basis_functions,"D, wrong size")
+     g :: MAT{REAL}*
+     W :: VEC{REAL}*
+     i :: INT
+     W.create(D.dim1)
+     g.create(pt.dim1,D.dim1)
+     .make_AO_grid(g,pt,.pos)
+     do i = 1,pt.dim1
+        W = matmul(g(i,:),D)
+        density_grid(i) = sum(W*g(i,:))
+     end
+     W.destroy
+     g.destroy
+   end
+
 !  ************************
 !  Orbital density routines
 !  ************************
+
+   make_AO_grid(g,pt,pos)
+   ! Evaluate the AO density grid "g" on a set of grid points "pt" for an atom at position
+   ! "pos". 
+      g :: MAT{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      pos :: VEC{REAL}(3), IN
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(pt.dim1==g.dim1,"pt and g, incompatible")
+   ENSURE(.basis.no_of_basis_functions==g.dim2,"pt and g, incompatible")
+   ENSURE(pt.dim2==3,"wrong size, pt")
+      sh :: SHELL1
+      f,l,s :: INT
+      l = 0
+      do s = 1,.basis.n_shell
+         sh.set(.basis.shell(s),pos)
+         f = l + 1
+         l = l + sh.n_comp
+         sh.make_grid(g(:,f:l),pt)
+      end
+   end
 
    make_orbital_grid_r(g,orb,pt,pos,square)
    ! Evaluate the orbital density grid "g" for *one* AO-basis coefficient
@@ -3087,23 +3236,23 @@ contains
      stdout.show("Atomic No.             =",.atomic_number)
      stdout.show("Chemical symbol        =",trim(.chemical_symbol))
      stdout.show("Atom coordinates       =",.pos(1),.pos(2),.pos(3))
-     if (.sequence_number/=0) .put_mm_info
-     if (.basis.created) .basis.put
-     if (.coppensbasis.created) .coppensbasis.put
-   ! if (.interpolator.created) .interpolator.put
+     if (.residue_sequence_number/=0) .put_mm_info
+     if (.basis.created)              .basis.put
+     if (.coppensbasis.created)       .coppensbasis.put
+   ! if (.interpolator.created)       .interpolator.put
    end
 
    put_mm_info
    ! Put out the MM/protien part of the atom information to file "stdout"
      stdout.flush
-     stdout.show("Residue atom name      =",trim(.residue_atom_name))
-     stdout.show("Residue name           =",trim(.residue_name))
-     stdout.show("Sequence number        =",.sequence_number)
-     stdout.show("MM forcefield name     =",.mm_forcefield_name)
-     stdout.show("MM atom type           =",.mm_atom_type)
-     stdout.show("MM charge              =",.mm_charge)
-     stdout.show("Restraining position   =",.restraining_position)
-     stdout.show("Restraining force      =",.restraining_force_constant)
+     stdout.show("Residue atom code       =",trim(.residue_atom_code))
+     stdout.show("Residue code            =",trim(.residue_code))
+     stdout.show("Residue sequence number =",.residue_sequence_number)
+     stdout.show("MM forcefield name      =",.mm_forcefield_name)
+     stdout.show("MM atom type            =",.mm_atom_type)
+     stdout.show("MM charge               =",.mm_charge)
+     stdout.show("Restraining position    =",.restraining_position)
+     stdout.show("Restraining force       =",.restraining_force_constant)
    end
 
    put_thermal_tensor(units)
