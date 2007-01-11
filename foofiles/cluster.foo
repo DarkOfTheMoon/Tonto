@@ -280,6 +280,8 @@ contains
       !  case ("partition_factors=    "); .read_partition_factors
          case ("put                   "); .put
          case ("put_lff_l_tensors     "); .put_centroid_LFF_tensors
+         case ("put_lff_l_tensors2    "); .put_centroid_LFF_tensors2
+         case ("put_lff_info          "); .put_LFF_info
          case ("put_tonto_input       "); .put_tonto_input
          case ("radius=               "); .read_radius
          case ("units=                "); CLUSTER::read_units
@@ -937,12 +939,44 @@ contains
       u :: INT, IN
       geometry :: MAT{REAL}*
    ENSURE(.unit_cell_connection.created,"no connection table")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.frag_atom_for_unit_cell_atom.created,"no frag_atom_for_unit_cell_atom")
+   ENSURE(all(.crystal.frag_atom_for_unit_cell_atom>0),"incomplete fragment")
       occupation_list :: VEC{INT}*
       occupation_list.create(1)
       occupation_list(1) = 5 + 5*10 + 5*100 + u*1000
       .do_defragment(occupation_list)
       .extract_geometry(occupation_list,geometry)
       occupation_list.destroy
+   end
+
+   do_defragment_uc_atom(u,ind,pos,charge,dipole,alpha_q,alpha_m) ::: leaky
+   ! Defragment the "occ_list" and get a whole load of electric
+   ! property info for LFF refractive index calculations.
+      u :: INT, IN
+      ind :: VEC{INT}, OUT
+      pos :: MAT{REAL}, OUT
+      charge :: VEC{REAL}, OUT
+      dipole :: MAT{REAL}, OUT
+      alpha_q :: MAT{REAL}, OUT
+      alpha_m :: MAT3{REAL}, OUT
+
+   ENSURE(.unit_cell_connection.created,"no connection table")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.frag_atom_for_unit_cell_atom.created,"no frag_atom_for_unit_cell_atom")
+   ENSURE(all(.crystal.frag_atom_for_unit_cell_atom>0),"incomplete fragment")
+
+      occ_list :: VEC{INT}*
+
+      occ_list.create(1)
+      occ_list(1) = 5 + 5*10 + 5*100 + u*1000
+
+      .do_defragment(occ_list)
+
+      .extract_atom_info(occ_list,ind,pos,charge,dipole,alpha_q,alpha_m)
+
+      occ_list.destroy
+
    end
 
    extract_geometry ::: leaky
@@ -978,26 +1012,117 @@ contains
    end
 
    extract_geometry(occupation_list,geometry) ::: leaky
-   ! Extract the "geometry" from the "occupation_list".
+   ! Extract the cluster "geometry" from the "occupation_list".
       occupation_list :: VEC{INT}, IN
       geometry :: MAT{REAL}*
+
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
+
      n_atoms,i,code,h1,h2,h3,u :: INT
+
+     ! Create the cluster geometry array
      n_atoms = occupation_list.dim
      geometry.create(3,n_atoms)
-     i = 1
+
      do  i = 1,n_atoms
-        code = occupation_list(i)   ! decode the unit cell atom and offset
+
+        code = occupation_list(i)   
+
+        ! Get unit cell atom u and cell offset h
         u  = code/1000; code = code - u*1000
         h3 = code/100;  code = code - h3*100
         h2 = code/10;   code = code - h2*10
         h1 = code; 
-        h1 = h1 - 5                 ! h is the cell offset
+        h1 = h1 - 5          
         h2 = h2 - 5
         h3 = h3 - 5
+
+        ! Get the cluster atom position
         geometry(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+
      end
+
+   end
+
+   extract_atom_info(occ_list,ind,pos,charge,dipole,alpha_q,alpha_m)
+   ! From the "occ_list", extract the fragment atom indices "ind", the
+   ! atom positions "pos" , the atomic charges "charge", atomic dipoles
+   ! "dipole", atomic charge polarisabilities "alpha_q" and dipole
+   ! polarisabilities "alpha_m". This assumes that the quantities are
+   ! available and non-zero. NOTE: "pos" and everything is in cartesians.
+      occ_list :: VEC{INT}, IN
+      ind :: VEC{INT}, OUT
+      pos :: MAT{REAL}, OUT
+      charge :: VEC{REAL}, OUT
+      dipole :: MAT{REAL}, OUT
+      alpha_q :: MAT{REAL}, OUT
+      alpha_m :: MAT3{REAL}, OUT
+
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
+   ENSURE(.crystal.asym_atom_for_unit_cell_atom.created,"no crystal asym_atom_for_unit_cell_atom")
+   ENSURE(.crystal.symop_for_unit_cell_atom.created,"no crystal symop_for_unit_cell_atom")
+   ENSURE(.asymmetric_cell_atom.created, "no asymmetric_cell_atom data")
+   ENSURE(ind.dim==occ_list.dim, "ind, wrong size")
+   ENSURE(charge.dim==occ_list.dim, "charge, wrong size")
+   ENSURE(pos.dim1==3 AND pos.dim2==occ_list.dim, "pos, wrong size")
+   ENSURE(dipole.dim1==3 AND dipole.dim2==occ_list.dim, "dipole, wrong size")
+   ENSURE(alpha_q.dim1==3 AND alpha_q.dim2==occ_list.dim, "alpha_q, wrong size")
+   ENSURE(alpha_m.dim1==3 AND alpha_m.dim2==3 AND alpha_m.dim3==occ_list.dim, "alpha_m, wrong size")
+
+     T  :: MAT{REAL}*
+     seitz :: MAT3{REAL}*
+     i,code,h1,h2,h3,u, p,s :: INT
+
+     ! Transposed/Inverse symops
+     seitz => .crystal.transposed_xyz_seitz_matrices       
+
+     do  i = 1,occ_list.dim
+
+        code = occ_list(i)   
+
+        ! Get unit cell atom u and cell offset h
+        u  = code/1000; code = code - u*1000
+        h3 = code/100;  code = code - h3*100
+        h2 = code/10;   code = code - h2*10
+        h1 = code; 
+        h1 = h1 - 5          
+        h2 = h2 - 5
+        h3 = h3 - 5
+
+        ! Get the cluster atom position
+        pos(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
+        pos(:,i) = matmul(.crystal.unit_cell.direct_matrix,pos(:,i))
+
+        ! Get the fragment atom indices
+        ind(i) = .crystal.frag_atom_for_unit_cell_atom(u)
+        DIE_IF(ind(i)<=0,"no fragment atom for unit cell atom "//trim(u.to_str))
+        
+        ! Get parent asymmetric atom and symop
+        p = .crystal.asym_atom_for_unit_cell_atom(u)
+        s = .crystal.symop_for_unit_cell_atom(u)
+        T => seitz(:,:,i)
+
+        ! Atomic charge
+        charge(i) = .asymmetric_cell_atom(p).charge &
+                  - .asymmetric_cell_atom(p).atomic_number
+
+        ! Atomic dipole
+        dipole(:,i) = .asymmetric_cell_atom(p).dipole
+        dipole(:,i) = matmul(transpose(T),dipole(:,i))
+
+        ! Atomic charge polarisability
+        alpha_q(:,i) = .asymmetric_cell_atom(p).charge_polarisability
+        alpha_q(:,i) = matmul(T,alpha_q(:,i))
+
+        ! Atomic dipole polarisability
+        alpha_m(:,:,i) = .asymmetric_cell_atom(p).dipole_polarisability
+        alpha_m(:,:,i).change_basis_using(T)
+
+     end
+
+     seitz.destroy
    end
 
 !   make_symop_list_and_geometry ::: leaky, private
@@ -2014,6 +2139,73 @@ contains
 !  Local field factor tensors
 !  **************************
 
+   put_centroid_LFF_tensors2
+   ! Put the local field factor L tensors at the centroids of all
+   ! molecules in the unit cell.
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+      n,i,k1,k2,m1,m2 :: INT
+      L0,L1 :: MAT{REAL}* 
+      centroid :: MAT{REAL}*
+      mol_for,site_for :: VEC{INT}*
+      n = .n_unit_cell_mols
+      L0.create(3*n,n)
+      L1.create(3*n,3*n)
+      centroid.create(3,n)
+      .get_uc_molecule_centroids(centroid) 
+      centroid = matmul(.crystal.unit_cell.direct_matrix,centroid)
+    ! .crystal.unit_cell.make_LFF_tensors(L2,centroid)
+      site_for.create(n); site_for = [ (i,i=1,n) ]
+      mol_for.create(n);   mol_for = [ (i,i=1,n) ]
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,centroid,site_for,mol_for)
+
+      stdout.flush
+      stdout.text("Local Field Factor L tensors:")
+      stdout.flush
+      stdout.show("n_unit_cell_mols = ",.n_unit_cell_mols)
+      stdout.flush
+      stdout.text("Molecule centroids:")
+      stdout.flush
+      stdout.put(transpose(centroid))
+
+      stdout.flush
+      stdout.text("L tensors:")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      stdout.put("k1",int_width=TRUE)
+      stdout.put("k2",int_width=TRUE)
+      stdout.put("L(xx)")
+      stdout.put("L(yy)")
+      stdout.put("L(zz)")
+      stdout.put("L(xy)")
+      stdout.put("L(xz)")
+      stdout.put("L(yz)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      do k1 = 1,n
+      do k2 = 1,k1
+         m1 = 3*(k1-1)
+         m2 = 3*(k2-1)
+         stdout.put(k1)
+         stdout.put(k2)
+         stdout.put(L1(m1+1,m2+1))
+         stdout.put(L1(m1+2,m2+2))
+         stdout.put(L1(m1+3,m2+3))
+         stdout.put(L1(m1+1,m2+2))
+         stdout.put(L1(m1+1,m2+3))
+         stdout.put(L1(m1+2,m2+3))
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=6)
+
+      mol_for.destroy
+      site_for.destroy
+      centroid.destroy
+      L1.destroy
+      L0.destroy
+   end
+
    put_centroid_LFF_tensors 
    ! Put the local field factor L tensors at the centroids of all
    ! molecules in the unit cell.
@@ -2095,7 +2287,7 @@ contains
 
    get_uc_molecule_centroids(centroid) 
    ! Get the unit cell molecule centroids; they are transformed back
-   ! inot the unit cell if the defragmented molecule lies outside the
+   ! into the unit cell if the defragmented molecule lies outside the
    ! unit cell.
       centroid :: MAT{REAL}
    ENSURE(.crystal.created,"no crystal")
@@ -2117,47 +2309,269 @@ contains
       end
    end
 
-   get_atom_LFF_tensors(L2)
-   ! Get the local field factor tensors for the atom centers of all
+   put_LFF_info
+   ! Put the local field factor L tensors at the centroids of all
    ! molecules in the unit cell.
-      L2 :: MAT3{REAL}* 
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
-      nu,m,u,n,k,k1,k2 :: INT
-      pos :: MAT{REAL}*
-      nu = .crystal.n_unit_cell_atoms
-      L2.create(3,3,nu.triangle)
-      pos.create(3,nu)
-      .get_uc_molecule_positions(pos) 
-      pos = matmul(.crystal.unit_cell.direct_matrix,pos)
-      .crystal.unit_cell.make_LFF_tensors(L2,pos)
-      pos.destroy
-    ! L2.destroy
+      n,i,k1,k2,m1,m2 :: INT
+      L0,L1 :: MAT{REAL}* 
+      mol,ind :: VEC{INT}*
+      pos,coc,dipole,alpha_q :: MAT{REAL}*
+      charge :: VEC{REAL}*
+      alpha_m :: MAT3{REAL}*
+
+      ! Get the electrical properties
+      .get_LFF_molecule_info(mol,ind,pos,coc,charge,dipole,alpha_q,alpha_m) 
+
+      ! Make the charge and dipole Lorentz factor tensors
+      n = ind.dim
+      L0.create(3*n,n)
+      L1.create(3*n,3*n)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,ind,mol)
+
+      ! Output
+      stdout.flush
+      stdout.text("Local Field Factor L tensors:")
+      stdout.flush
+      stdout.show("n_unit_cell_atoms = ",ind.dim)
+      stdout.show("n_unit_cell_mols = ",coc.dim2)
+      stdout.flush
+      stdout.text("Molecule atom positions:")
+      stdout.flush
+      stdout.put(transpose(pos))
+
+      stdout.flush
+      stdout.text("L tensors:")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      stdout.put("k1",int_width=TRUE)
+      stdout.put("k2",int_width=TRUE)
+      stdout.put("L(xx)")
+      stdout.put("L(yy)")
+      stdout.put("L(zz)")
+      stdout.put("L(xy)")
+      stdout.put("L(xz)")
+      stdout.put("L(yz)")
+      stdout.flush
+      stdout.dash(int_fields=2,real_fields=6)
+      do k1 = 1,n
+      do k2 = 1,k1
+         m1 = 3*(k1-1)
+         m2 = 3*(k2-1)
+         stdout.put(k1)
+         stdout.put(k2)
+         stdout.put(L1(m1+1,m2+1))
+         stdout.put(L1(m1+2,m2+2))
+         stdout.put(L1(m1+3,m2+3))
+         stdout.put(L1(m1+1,m2+2))
+         stdout.put(L1(m1+1,m2+3))
+         stdout.put(L1(m1+2,m2+3))
+         stdout.flush
+      end
+      end
+      stdout.dash(int_fields=2,real_fields=6)
+
+      ! Clean up
+      L1.destroy
+      L0.destroy
+      alpha_m.destroy; alpha_q.destroy
+      dipole.destroy; charge.destroy; coc.destroy
+      ind.destroy; mol.destroy
+
    end
 
-   get_uc_molecule_positions(pos) 
-   ! Get the unit cell molecule positions as a flat list. It helps if
-   ! there is only one molecule in the unit cell.
-      pos :: MAT{REAL}
+   make_susceptibility2(chi2)
+   ! Make the second ortder susceptibility from distributed
+   ! polarisabilities.
+      chi2 :: MAT{REAL}(3,3)
+
+   ENSURE(.crystal.created,"no crystal")
+
+      L0,L1,Ld,D,Dd,AA :: MAT{REAL}* 
+      mol,ind :: VEC{INT}*
+      pos,coc,dipole,alpha_q :: MAT{REAL}*
+      charge,r,Lv :: VEC{REAL}*
+      alpha_m :: MAT3{REAL}*
+      n,a,b,i,j :: INT
+      fac,facq,facm :: REAL
+
+      ! Get the electrical properties
+      .get_LFF_molecule_info(mol,ind,pos,coc,charge,dipole,alpha_q,alpha_m) 
+
+      ! Make the charge and dipole Lorentz factor tensors
+      n = ind.dim
+      D.create(3*n,3*n)
+      L0.create(3*n,n)
+      L1.create(3*n,3*n)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,ind,mol)
+
+      ! Make the D matrix
+      D.to_unit_matrix
+      fac = -HARTREE_SI/(ELECTRIC_FIELD_SI_PER_AU)
+      fac = fac/PERMITTIVITY_OF_FREE_SPACE_SI_PER_AU
+      facq = fac/(.crystal.unit_cell.volume*BOHR_SI**3)
+      facm = facq/ELECTRIC_FIELD_SI_PER_AU
+      i = 0
+      do a = 1,n
+         i = i + 3
+         j = 0
+         do b = 1,n
+            Dd => D(i+1:i+3,j+1:j+3)      
+            Lv => L0(i+1:i+3,b)      
+            Ld => L1(i+1:i+3,j+1:j+3)      
+            Dd = Dd + facq*Lv.outer_product_with(alpha_q(:,b))
+            Dd = Dd + facm*matmul(Ld,alpha_m(:,:,b))
+            j = j + 3
+         end
+      end
+      D.to_inverse_of(D)
+      L1.destroy
+      L0.destroy
+
+      ! Make the chi2 susceptibility
+      chi2 = ZERO
+      AA.create(3,3)
+      r.create(3,3)
+      fac = ONE/PERMITTIVITY_OF_FREE_SPACE_SI_PER_AU
+      fac = fac/(.crystal.unit_cell.volume*BOHR_SI**3)
+      i = 0
+      do a = 1,n
+         r = pos(:,a) - coc(:,a)
+         r = fac*r*BOHR_SI
+         AA = r.outer_product_with(alpha_q(:,a)) + fac*alpha_m(:,:,a)
+         i = i + 3
+         j = 0
+         do b = 1,n
+            Dd => D(i+1:i+3,j+1:j+3)      
+            chi2 = chi2 + matmul(AA,Dd)
+            j = j + 3
+         end
+      end
+
+      ! Clean up
+      r.destroy; AA.destroy
+      D.destroy
+
+      alpha_m.destroy; alpha_q.destroy
+      dipole.destroy; charge.destroy; coc.destroy
+      pos.destroy
+      ind.destroy; mol.destroy
+
+   end
+
+   get_LFF_molecule_info(mol,ind,pos,coc,charge,dipole,alpha_q,alpha_m) ::: leaky
+   ! Get the unit cell molecule information for a distributed local field factor
+   ! (LFF) calculation. "coc" are the molecular center of charges.
+      mol,ind :: VEC{INT}*
+      pos,coc,dipole,alpha_q :: MAT{REAL}*
+      charge :: VEC{REAL}*
+      alpha_m :: MAT3{REAL}*
+
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
-   ENSURE(pos.dim1==3 AND pos.dim2==.crystal.n_unit_cell_atoms,"wrong shape, centroid")
-      m,n,na,u :: INT
-      geometry :: MAT{REAL}*
+
+      n_atom,n_mol,n,m,u,a :: INT
+      mol0,ind0 :: VEC{INT}*
+      charge0 :: VEC{REAL}*
+      e_dipole :: VEC{REAL}(3)
+      pos0,dipole0,alpha_q0 :: MAT{REAL}*
+      alpha_m0 :: MAT3{REAL}*
+
+      ! Create the info arrays
+      n_mol = .n_unit_cell_mols
+      n_atom = .crystal.n_unit_cell_atoms
+      mol.create(n_atom)
+      ind.create(n_atom)
+      pos.create(3,n_atom)
+      coc.create(3,n_atom)
+      charge.create(n_atom)
+      dipole.create(3,n_atom)
+      alpha_q.create(3,n_atom)
+      alpha_m.create(3,3,n_atom)
+
+      ! Set n_atom to the # of atoms in one molecule
+      DIE_IF(mod(n_atom,n_mol)/=0,"# of unit cell atoms is not divisible by number of molecules")
+      n_atom = n_atom/n_mol
+
       n = 0
-      do m = 1,.n_unit_cell_mols
-         nullify(geometry)
+      do m = 1,n_mol
+
+         ! Find atom "u" on molecule "m", defragment, get the info
          do u = 1,.crystal.n_unit_cell_atoms
+
             if (.unit_cell_mol_for_atom(u)/=m) cycle
-            .do_defragment_uc_atom(u,geometry)
+
+            mol(n+1:n+n_atom) = m
+            ind0     => ind(n+1:n+n_atom)
+            pos0     => pos(:,n+1:n+n_atom)
+            charge0  => charge(n+1:n+n_atom)
+            dipole0  => dipole(:,n+1:n+n_atom)
+            alpha_q0 => alpha_q(:,n+1:n+n_atom)
+            alpha_m0 => alpha_m(:,:,n+1:n+n_atom)
+
+            .do_defragment_uc_atom(u,ind0,pos0,charge0,dipole0,alpha_q0,alpha_m0)
+
             exit
+
          end
-         na = geometry.dim2
-         pos(:,n+1:n+na) = geometry
-         n  = n + na
-         geometry.destroy
+
+         ! Calculate electronic dipole and centre of charge
+         e_dipole = ZERO
+         do a = 1,n_atom
+            e_dipole = e_dipole + dipole0(:,a)
+            e_dipole = e_dipole + charge0(a)*pos0(:,a)
+         end
+         e_dipole = e_dipole/sum(charge0)
+         coc(:,n+1:n+n_atom) = spread(e_dipole,2,n_atom)
+
+         n = n + 1
+
       end
+
    end
+
+!   get_atom_LFF_tensors(L2)
+!   ! Get the local field factor tensors for the atom centers of all
+!   ! molecules in the unit cell.
+!      L2 :: MAT3{REAL}* 
+!   ENSURE(.crystal.created,"no crystal")
+!   ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+!      nu,m,u,n,k,k1,k2 :: INT
+!      pos :: MAT{REAL}*
+!      nu = .crystal.n_unit_cell_atoms
+!      L2.create(3,3,nu.triangle)
+!      pos.create(3,nu)
+!      .get_uc_molecule_positions(pos) 
+!      pos = matmul(.crystal.unit_cell.direct_matrix,pos)
+!      .crystal.unit_cell.make_LFF_tensors(L2,pos)
+!      pos.destroy
+!    ! L2.destroy
+!   end
+
+!   get_uc_molecule_positions(pos) 
+!   ! Get the unit cell molecule positions as a flat list. It helps if
+!   ! there is only one molecule in the unit cell.
+!      pos :: MAT{REAL}
+!   ENSURE(.crystal.created,"no crystal")
+!   ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+!   ENSURE(pos.dim1==3 AND pos.dim2==.crystal.n_unit_cell_atoms,"wrong shape, centroid")
+!      m,n,na,u :: INT
+!      geometry :: MAT{REAL}*
+!      n = 0
+!      do m = 1,.n_unit_cell_mols
+!         nullify(geometry)
+!         do u = 1,.crystal.n_unit_cell_atoms
+!            if (.unit_cell_mol_for_atom(u)/=m) cycle
+!            .do_defragment_uc_atom(u,geometry)
+!            exit
+!         end
+!         na = geometry.dim2
+!         pos(:,n+1:n+na) = geometry
+!         n  = n + na
+!         geometry.destroy
+!      end
+!   end
 
 !  **************
 !  Output methods
