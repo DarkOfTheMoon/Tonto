@@ -1102,23 +1102,35 @@ contains
         ! Get parent asymmetric atom and symop
         p = .crystal.asym_atom_for_unit_cell_atom(u)
         s = .crystal.symop_for_unit_cell_atom(u)
-        T => seitz(:,:,i)
+        T => seitz(:,:,s) ! This is an inverse symop
+   stdout.show("atom          = ",i)
+   stdout.show("atomic number =",.asymmetric_cell_atom(p).atomic_number)
+   stdout.show("frag parent   =",ind(i))
+   stdout.show("asym parent   =",p)
+   stdout.show("asym pos      =",.asymmetric_cell_atom(p).pos)
+   stdout.text("T:")
+   stdout.put(T)
 
         ! Atomic charge
         charge(i) = .asymmetric_cell_atom(p).charge &
                   - .asymmetric_cell_atom(p).atomic_number
+   stdout.show("charge        =",charge(i))
 
         ! Atomic dipole
-        dipole(:,i) = .asymmetric_cell_atom(p).dipole
-        dipole(:,i) = matmul(transpose(T),dipole(:,i))
+   stdout.show("dipole parent =",.asymmetric_cell_atom(p).dipole)
+        dipole(:,i) = matmul(transpose(T),.asymmetric_cell_atom(p).dipole)
+   stdout.show("dipole        =",dipole(:,i))
 
         ! Atomic charge polarisability
-        alpha_q(:,i) = .asymmetric_cell_atom(p).charge_polarisability
-        alpha_q(:,i) = matmul(T,alpha_q(:,i))
+   stdout.show("alpha_q par   =",.asymmetric_cell_atom(p).charge_polarisability)
+        alpha_q(:,i) = matmul(.asymmetric_cell_atom(p).charge_polarisability,T)
+   stdout.show("alpha_q       =",alpha_q(:,i))
 
         ! Atomic dipole polarisability
         alpha_m(:,:,i) = .asymmetric_cell_atom(p).dipole_polarisability
         alpha_m(:,:,i).change_basis_using(T)
+   stdout.text("alpha_m:")
+   stdout.put(alpha_m(:,:,i))
 
      end
 
@@ -2381,10 +2393,11 @@ contains
 
    end
 
-   make_susceptibility2(chi2)
+
+   make_susceptibility2(chi2,alpha)
    ! Make the second ortder susceptibility from distributed
    ! polarisabilities.
-      chi2 :: MAT{REAL}(3,3)
+      chi2,alpha :: MAT{REAL}(3,3)
 
    ENSURE(.crystal.created,"no crystal")
 
@@ -2394,7 +2407,7 @@ contains
       charge,r,Lv :: VEC{REAL}*
       alpha_m :: MAT3{REAL}*
       n,a,b,i,j :: INT
-      fac,facq,facm :: REAL
+      fac :: REAL
 
       ! Get the electrical properties
       .get_LFF_molecule_info(mol,ind,pos,coc,charge,dipole,alpha_q,alpha_m) 
@@ -2408,46 +2421,62 @@ contains
 
       ! Make the D matrix
       D.to_unit_matrix
-      fac = -HARTREE_SI/(ELECTRIC_FIELD_SI_PER_AU)
-      fac = fac/PERMITTIVITY_OF_FREE_SPACE_SI_PER_AU
-      facq = fac/(.crystal.unit_cell.volume*BOHR_SI**3)
-      facm = facq/ELECTRIC_FIELD_SI_PER_AU
+      fac = FOUR*PI/.crystal.unit_cell.volume
       i = 0
       do a = 1,n
-         i = i + 3
          j = 0
+      stdout.show("a = ",a)
          do b = 1,n
             Dd => D(i+1:i+3,j+1:j+3)      
             Lv => L0(i+1:i+3,b)      
             Ld => L1(i+1:i+3,j+1:j+3)      
-            Dd = Dd + facq*Lv.outer_product_with(alpha_q(:,b))
-            Dd = Dd + facm*matmul(Ld,alpha_m(:,:,b))
+      stdout.show("b = ",b)
+      stdout.text("Lv:")
+      stdout.put(Lv,"column")
+      stdout.text("Ld:")
+      stdout.put(Ld)
+            Dd = Dd - fac*Lv.outer_product_with(alpha_q(:,b))
+            Dd = Dd - fac*matmul(Ld,alpha_m(:,:,b))
             j = j + 3
          end
+         i = i + 3
       end
+      stdout.text("D:")
+      stdout.put(D)
       D.to_inverse_of(D)
       L1.destroy
       L0.destroy
+      stdout.text("D_inv:")
+      stdout.put(D)
 
       ! Make the chi2 susceptibility
       chi2 = ZERO
+      alpha = ZERO
       AA.create(3,3)
-      r.create(3,3)
-      fac = ONE/PERMITTIVITY_OF_FREE_SPACE_SI_PER_AU
-      fac = fac/(.crystal.unit_cell.volume*BOHR_SI**3)
+      r.create(3)
       i = 0
       do a = 1,n
          r = pos(:,a) - coc(:,a)
-         r = fac*r*BOHR_SI
-         AA = r.outer_product_with(alpha_q(:,a)) + fac*alpha_m(:,:,a)
-         i = i + 3
+         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
+         alpha = alpha + AA
+         AA = fac*AA
          j = 0
+      stdout.show("a = ",a)
          do b = 1,n
             Dd => D(i+1:i+3,j+1:j+3)      
             chi2 = chi2 + matmul(AA,Dd)
+      stdout.show("b = ",b)
+      stdout.text("AA:")
+      stdout.put(AA)
+      stdout.text("Dd:")
+      stdout.put(Dd)
             j = j + 3
          end
+         i = i + 3
       end
+
+      stdout.text("chi2 :")
+      stdout.put(chi2)
 
       ! Clean up
       r.destroy; AA.destroy
@@ -2474,7 +2503,7 @@ contains
       n_atom,n_mol,n,m,u,a :: INT
       mol0,ind0 :: VEC{INT}*
       charge0 :: VEC{REAL}*
-      e_dipole :: VEC{REAL}(3)
+      e_dipole,r :: VEC{REAL}(3)
       pos0,dipole0,alpha_q0 :: MAT{REAL}*
       alpha_m0 :: MAT3{REAL}*
 
@@ -2525,9 +2554,30 @@ contains
          e_dipole = e_dipole/sum(charge0)
          coc(:,n+1:n+n_atom) = spread(e_dipole,2,n_atom)
 
-         n = n + 1
+         n = n + n_atom
 
       end
+
+         ! Debug
+       ! stdout.flush
+       ! stdout.text("mol:")
+       ! stdout.put(mol,"column")
+       ! stdout.text("ind:")
+       ! stdout.put(ind,"column")
+       ! stdout.text("pos:")
+       ! stdout.put(transpose(pos))
+       ! stdout.text("coc:")
+       ! stdout.put(transpose(coc))
+       ! stdout.text("charge:")
+       ! stdout.put(charge,"column")
+       ! stdout.text("dipole:")
+       ! stdout.put(transpose(dipole))
+       ! stdout.text("alpha_q:")
+       ! stdout.put(transpose(alpha_q))
+       ! stdout.text("alpha_m:")
+       ! do a = 1,alpha_m.dim3
+       ! stdout.put(alpha_m(:,:,a))
+       ! end
 
    end
 

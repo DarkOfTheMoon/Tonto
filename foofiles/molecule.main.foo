@@ -4198,6 +4198,7 @@ contains
       ! case ("put_f_calc                    "); .crystal.put_F_calc
         case ("put_fcalc_plots               "); .crystal.put_fcalc_plots
         case ("put_g_tensor_information      "); .put_g_tensor_information
+        case ("put_hirshfeld_atom_info       "); .put_Hirshfeld_atom_info
         case ("put_labelled_qq_plot          "); .crystal.put_labelled_qq_plot
       ! case ("put_mikes_polarisability      "); .MAIN:put_mikes_polarisability
         case ("put_molecular_orbitals        "); .put_molecular_orbitals
@@ -4228,6 +4229,8 @@ contains
         case ("put_total_time                "); .put_total_time
         case ("put_uc_dipole_polarisability  "); .MAIN:put_uc_dipole_polarisability
         case ("put_uc_dipole_hyperpolarisabil"); .MAIN:put_uc_dipole_hyperpolar
+        case ("put_uc_refractive_index       "); stdout.text("00")
+                                                 .MAIN:put_uc_refractive_index
         case ("put_vrml                      "); .put_vrml
 
         case ("read_archive                  "); .read_archive
@@ -5268,7 +5271,6 @@ contains
       stdout.unsave
    end
 
-
 !   put_scf_dipole_polarisability ::: leaky
 !   ! Calculate the polarisability using Coupled Perturbed Hartree-Fock theory.
 !   ENSURE(.molecular_orbitals.created,"no MO's")
@@ -6134,6 +6136,69 @@ contains
    end
 
 
+   put_uc_refractive_index ::: leaky
+   ! Calculate the unit cell refractive index from the atomic charge
+   ! and dipoole polarisabilities.
+   DIE_IF(NOT .Hirshfeld_atom_info_made,"no Hirshfeld atom properties")
+   DIE_IF(NOT .atomic_polarisabilities_made,"no atomic polarisabilities")
+   ENSURE(.dipole_polarisability.created,"no dipole_polarisability")
+   ENSURE(.atom.created,"no atom data")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+      eigenvalues :: VEC{REAL}(3)
+      chi2,eps,alpha,eigenvectors :: MAT{REAL}(3,3)
+
+      .cluster.destroy
+      DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom==0),"some asymetric unit atoms were not found")
+      .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+      .cluster.make_info ! leaky here
+      .cluster.make_susceptibility2(chi2,alpha)
+
+      stdout.save
+      stdout.set_real_style("e")
+
+      stdout.flush
+      stdout.text("Unit cell naive polarisability (au):")
+      stdout.flush
+      stdout.put(alpha) 
+      stdout.flush
+
+      stdout.flush
+      stdout.text("Unit cell susceptibility (SI):")
+      stdout.flush
+      stdout.put(chi2) 
+      stdout.flush
+
+      stdout.flush
+      stdout.text("Unit cell permittivity tensor (SI):")
+      stdout.flush
+      eps.to_unit_matrix
+      eps = eps + chi2
+      stdout.put(eps) 
+      stdout.flush
+
+      stdout.flush
+      stdout.text("Principal values (au) :")
+      stdout.flush
+      eps.solve_eigenproblem(eigenvalues,eigenvectors)
+      stdout.put(eigenvalues,"column")
+      stdout.flush
+      stdout.text("Principal values (SI) :")
+      stdout.flush
+      stdout.put(eigenvalues,"column")
+      stdout.flush
+      stdout.text("Principal directions :")
+      stdout.flush
+      stdout.put(eigenvectors)
+
+      stdout.text("Refractive indices in crystal axis system :")
+      stdout.flush
+      stdout.put(sqrt(eigenvalues),"column")
+      stdout.unsave
+
+   end
+
+
    make_scf_dipole_polarisability ::: leaky
    ! Make the SCF electric dipole polarisability
       U,D_mo :: MAT3{REAL}*
@@ -6176,6 +6241,132 @@ contains
       D_mo.destroy
 
    end
+
+   put_scf_dipole_polarisability ::: leaky
+   ! Put the SCF polarisability
+      alpha :: MAT{REAL}* 
+      eigenvectors :: MAT{REAL}(3,3)
+      eigenvalues :: VEC{REAL}(3)
+      mean :: REAL
+   
+      ! Do it .....
+      .MAIN:make_scf_dipole_polarisability
+      alpha => .dipole_polarisability
+   
+      ! Print out the answer
+      stdout.save
+      stdout.set_real_style("e")
+
+      stdout.flush
+      stdout.text("Dipole polarisability (au):")
+      stdout.flush
+      stdout.put(alpha) 
+      stdout.flush
+      mean = THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3))
+      stdout.show("Mean polarisability = ",mean)
+
+      stdout.flush
+      stdout.text("Dipole polarisability (SI):")
+      stdout.flush
+      stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
+      stdout.flush
+      mean = mean*ELECTRIC_POLARISABILITY_SI_PER_AU
+      stdout.show("Mean polarisability = ",mean)
+
+      ! Get principal axes
+      alpha.solve_eigenproblem(eigenvalues,eigenvectors)
+      stdout.put(eigenvalues,"column")
+
+      stdout.flush
+      stdout.text("Principal values (au) :")
+      stdout.flush
+      stdout.put(eigenvalues,"column")
+      stdout.flush
+      stdout.text("Principal values (SI) :")
+      stdout.flush
+      stdout.put(eigenvalues*ELECTRIC_POLARISABILITY_SI_PER_AU,"column")
+      stdout.flush
+      stdout.text("Principal directions :")
+      stdout.flush
+      stdout.put(eigenvectors)
+
+      .MAIN:put_big_dipole_pol_contr
+
+   end
+
+   put_big_dipole_pol_contr ::: leaky
+   ! Put the main contributions to the SCF polarisability
+   ! Tidied from mjt --- dylan
+      U,D_mo :: MAT3{REAL}* 
+      alpha_bar,alpha_abs :: VEC{REAL}*
+      indices :: VEC{INT}*
+      a,i,ai,l,n_vir,n_occ :: INT 
+      val :: REAL
+
+      ! Make the U matrices/dipole integrals if needed
+      if (.U_electric_dipole.destroyed) .MAIN:make_U_electric_dipole
+      U => .U_electric_dipole
+   
+      ! Get the virtual-occupied MO dipole moment matrices
+      n_occ = .n_a 
+      n_vir = .n_bf - .n_a
+      D_mo.create(n_vir,n_occ,3)
+      .MAIN:get_VO_MO_dipole_matrices(D_mo)
+      D_mo = -D_mo
+      
+      ! Get the individual orbital contributions to the
+      ! mean polarisabilitity
+      alpha_bar.create(n_vir*n_occ)
+      ai = 0
+      do i = 1,n_occ
+      do a = 1,n_vir
+         val = ZERO
+         do l = 1,3
+            val = val + D_mo(a,i,l)*U(a,i,l)
+         end
+         ai = ai + 1
+         alpha_bar(ai) = val
+      end
+      end
+      alpha_bar = THIRD * FOUR * alpha_bar
+      D_mo.destroy
+
+      ! Get largest contributions in "indices"
+      indices.create(n_vir*n_occ)
+      alpha_abs.create(n_vir*n_occ)
+      alpha_abs = abs(alpha_bar)
+      alpha_abs.quick_sort(indices,decreasing_order=TRUE)
+
+      ! Print out the largest contributions
+      stdout.flush
+      stdout.text("Mean dipole polarisability, top orbital-pair contributions:")
+      stdout.flush
+      stdout.show("Check: mean polarisability =",sum(alpha_bar))
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=1)
+      stdout.put("Rank",int_width=TRUE)
+      stdout.put("a",int_width=TRUE)
+      stdout.put("i",int_width=TRUE)
+      stdout.put("alpha_ai")
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=1)
+      do l = 1,5 ! take the top 5 results
+         ai = indices(l) ! get the index
+         a  = mod(ai,n_vir)
+         i  = (ai-1)/n_vir + 1
+         stdout.put(l)
+         stdout.put(a)
+         stdout.put(i)
+         stdout.put(alpha_bar(ai))
+         stdout.flush
+      end
+      stdout.dash(int_fields=3,real_fields=1)
+    
+      indices.destroy
+      alpha_bar.destroy
+      
+   end
+
 
    make_scf_atomic_polarisability 
    ! Calculate the polarisability using Coupled Perturbed Hartree-Fock theory.
@@ -6380,6 +6571,8 @@ contains
          alpha_q(:,1) = alpha_q(:,1) + .atom(a).pos*qpol(1)
          alpha_q(:,2) = alpha_q(:,2) + .atom(a).pos*qpol(2)
          alpha_q(:,3) = alpha_q(:,3) + .atom(a).pos*qpol(3)
+         stdout.show("alphaq, a =",a)
+         stdout.put(alpha_q)
       end
       stdout.dash(int_fields=1,real_fields=3)
       stdout.flush
@@ -6416,6 +6609,8 @@ contains
          asym = max(asym,abs(dpol(2,3)-dpol(3,2)))
          stdout.flush
          alpha_m = alpha_m + dpol
+         stdout.show("alpham, a =",a)
+         stdout.put(alpha_m)
       end
       stdout.dash(int_fields=1,real_fields=6)
       stdout.flush
@@ -6431,132 +6626,10 @@ contains
       alpha = alpha_q + alpha_m
       stdout.put(alpha)
 
-   end
-
-   put_scf_dipole_polarisability ::: leaky
-   ! Put the SCF polarisability
-      alpha :: MAT{REAL}* 
-      eigenvectors :: MAT{REAL}(3,3)
-      eigenvalues :: VEC{REAL}(3)
-      mean :: REAL
-   
-      ! Do it .....
-      .MAIN:make_scf_dipole_polarisability
-      alpha => .dipole_polarisability
-   
-      ! Print out the answer
-      stdout.save
-      stdout.set_real_style("e")
-
-      stdout.flush
-      stdout.text("Dipole polarisability (au):")
-      stdout.flush
-      stdout.put(alpha) 
-      stdout.flush
-      mean = THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3))
-      stdout.show("Mean polarisability = ",mean)
-
-      stdout.flush
-      stdout.text("Dipole polarisability (SI):")
-      stdout.flush
-      stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
-      stdout.flush
-      mean = mean*ELECTRIC_POLARISABILITY_SI_PER_AU
-      stdout.show("Mean polarisability = ",mean)
-
-      ! Get principal axes
-      alpha.solve_eigenproblem(eigenvalues,eigenvectors)
-      stdout.put(eigenvalues,"column")
-
-      stdout.flush
-      stdout.text("Principal values (au) :")
-      stdout.flush
-      stdout.put(eigenvalues,"column")
-      stdout.flush
-      stdout.text("Principal values (SI) :")
-      stdout.flush
-      stdout.put(eigenvalues*ELECTRIC_POLARISABILITY_SI_PER_AU,"column")
-      stdout.flush
-      stdout.text("Principal directions :")
-      stdout.flush
-      stdout.put(eigenvectors)
-
-      .MAIN:put_big_dipole_pol_contr
+      .atomic_polarisabilities_made = TRUE
 
    end
 
-   put_big_dipole_pol_contr ::: leaky
-   ! Put the main contributions to the SCF polarisability
-   ! Tidied from mjt --- dylan
-      U,D_mo :: MAT3{REAL}* 
-      alpha_bar,alpha_abs :: VEC{REAL}*
-      indices :: VEC{INT}*
-      a,i,ai,l,n_vir,n_occ :: INT 
-      val :: REAL
-
-      ! Make the U matrices/dipole integrals if needed
-      if (.U_electric_dipole.destroyed) .MAIN:make_U_electric_dipole
-      U => .U_electric_dipole
-   
-      ! Get the virtual-occupied MO dipole moment matrices
-      n_occ = .n_a 
-      n_vir = .n_bf - .n_a
-      D_mo.create(n_vir,n_occ,3)
-      .MAIN:get_VO_MO_dipole_matrices(D_mo)
-      D_mo = -D_mo
-      
-      ! Get the individual orbital contributions to the
-      ! mean polarisabilitity
-      alpha_bar.create(n_vir*n_occ)
-      ai = 0
-      do i = 1,n_occ
-      do a = 1,n_vir
-         val = ZERO
-         do l = 1,3
-            val = val + D_mo(a,i,l)*U(a,i,l)
-         end
-         ai = ai + 1
-         alpha_bar(ai) = val
-      end
-      end
-      alpha_bar = THIRD * FOUR * alpha_bar
-      D_mo.destroy
-
-      ! Get largest contributions in "indices"
-      indices.create(n_vir*n_occ)
-      alpha_abs.create(n_vir*n_occ)
-      alpha_abs = abs(alpha_bar)
-      alpha_abs.quick_sort(indices,decreasing_order=TRUE)
-
-      ! Print out the largest contributions
-      stdout.flush
-      stdout.text("Mean dipole polarisability, top orbital-pair contributions:")
-      stdout.flush
-      stdout.show("Check: mean polarisability =",sum(alpha_bar))
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=1)
-      stdout.put("Rank",int_width=TRUE)
-      stdout.put("a",int_width=TRUE)
-      stdout.put("i",int_width=TRUE)
-      stdout.put("alpha_ai")
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=1)
-      do l = 1,5 ! take the top 5 results
-         ai = indices(l) ! get the index
-         a  = mod(ai,n_vir)
-         i  = (ai-1)/n_vir + 1
-         stdout.put(l)
-         stdout.put(a)
-         stdout.put(i)
-         stdout.put(alpha_bar(ai))
-         stdout.flush
-      end
-      stdout.dash(int_fields=3,real_fields=1)
-    
-      indices.destroy
-      alpha_bar.destroy
-      
-   end
 
    make_scf_dipole_hyperpolarisa ::: leaky
    ! Calculate scf dipole hyperpolarisability
@@ -6642,12 +6715,14 @@ contains
 
    end
 
+
    make_U_electric_dipole ::: leaky
    ! Calculate U matrices for electric dipole perturbations using
    ! Coupled Perturbed Hartree-Fock theory. NOTE: restricted case only
    ! so far.
       U,D_mo :: MAT3{REAL}*
       n_occ,n_vir :: INT 
+      arch :: ARCHIVE
    
       ! <<<<< U matrices. Leaky. >>>>>
       .U_electric_dipole.destroy
@@ -6666,6 +6741,10 @@ contains
 
       ! Assign U matrices
       .U_electric_dipole => U
+
+      ! Write archive
+      arch.set(.name,"U_electric_dipole",genre="restricted")
+      arch.write(.U_electric_dipole)
    
    end
 
@@ -6762,6 +6841,7 @@ contains
       n_str :: STR
       test :: REAL
       use_diis,converged :: BIN
+      arch :: ARCHIVE
 
       ! Set up DIIS
       use_diis = .scfdata.using_CPHF_diis
@@ -6781,13 +6861,20 @@ contains
       n_occ = .n_a 
       n_vir = .n_bf - .n_a
    
-      ! Calculate initial approximation for U
-      n_pert = U.dim3
-      do n = 1,n_pert
-         do a = 1,n_vir
-         do i = 1,n_occ
-            U(a,i,n) =  rhs(a,i,n)/(e(n_occ+a) - e(i))
-         end
+      ! Read or calculate initial approximation for U
+      if (.scfdata.initial_Us=="restricted") then
+         stdout.flush
+         stdout.text("As requested from scfdata, reading U's from disk ...")
+         arch.set(.name,"U_electric_dipole",genre="restricted")
+         arch.read(U)
+      else ! Set SOS initial guess
+         n_pert = U.dim3
+         do n = 1,n_pert
+            do a = 1,n_vir
+            do i = 1,n_occ
+               U(a,i,n) =  rhs(a,i,n)/(e(n_occ+a) - e(i))
+            end
+            end
          end
       end
 
