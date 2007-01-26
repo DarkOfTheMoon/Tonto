@@ -66,9 +66,9 @@ contains
      nullify(.gtr)
    ! nullify(.reduced_symop)
    ! nullify(.cluster_symop)
-     nullify(.inverted_symop)
-     nullify(.translated_symop)
-     nullify(.unique_SF_symop)
+   ! nullify(.inverted_symop)
+   ! nullify(.translated_symop)
+   ! nullify(.unique_SF_symop)
      nullify(.repetition_factor)
      nullify(.asymmetric_unit_geometry)
      nullify(.unit_cell_geometry)
@@ -123,9 +123,9 @@ contains
      .gtr.destroy
    ! .reduced_symop.destroy
    ! .cluster_symop.destroy
-     .inverted_symop.destroy
-     .translated_symop.destroy
-     .unique_SF_symop.destroy
+   ! .inverted_symop.destroy
+   ! .translated_symop.destroy
+   ! .unique_SF_symop.destroy
      if (NOT .use_manual_repetition_factors) &
         .repetition_factor.destroy
    ! .asymmetric_unit_geometry.destroy ! This is nothing to do with a fragment !
@@ -194,9 +194,9 @@ contains
    !    .reduced_symop.create_copy(crystal.reduced_symop)
    ! if (crystal.cluster_symop.created) &
    !    .cluster_symop.create_copy(crystal.cluster_symop)
-     if (crystal.inverted_symop.created) .inverted_symop.create_copy(crystal.inverted_symop)
-     if (crystal.translated_symop.created) .translated_symop.create_copy(crystal.translated_symop)
-     if (crystal.unique_SF_symop.created) .unique_SF_symop.create_copy(crystal.unique_SF_symop)
+   ! if (crystal.inverted_symop.created) .inverted_symop.create_copy(crystal.inverted_symop)
+   ! if (crystal.translated_symop.created) .translated_symop.create_copy(crystal.translated_symop)
+   ! if (crystal.unique_SF_symop.created) .unique_SF_symop.create_copy(crystal.unique_SF_symop)
      if (crystal.repetition_factor.created) .repetition_factor.create_copy(crystal.repetition_factor)
      if (crystal.asymmetric_unit_geometry.created) .asymmetric_unit_geometry.create_copy(crystal.asymmetric_unit_geometry)
      if (crystal.unit_cell_geometry.created) .unit_cell_geometry.create_copy(crystal.unit_cell_geometry)
@@ -422,8 +422,10 @@ contains
       if (.xray_data.destroyed) .xray_data.create
       .xray_data.read_keywords
       .xray_data.update
-      .assign_xray
-      .prune_negative_F_exp
+      if (.xray_data.created) then
+         .assign_xray
+         if (.xray_data.reflections.created) .prune_negative_F_exp
+      end
    end
 
    read_pnd_data ::: leaky
@@ -433,7 +435,7 @@ contains
       .pnd_data.data_kind = "pnd"
       .pnd_data.read_keywords
       .pnd_data.update
-      .assign_pnd
+      if (.pnd_data.created) .assign_pnd
    end
 
    read_use_manual_rep_factors ::: leaky, private
@@ -595,7 +597,10 @@ contains
    ! The number of unique k-points for an SF calculation
      self :: IN
      res :: INT
-     res = .n_unique_SF_symops * .data.reflections.dim
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+     res = .spacegroup.n_unique_SF_symops * .data.reflections.dim
    end
 
    make_unique_SF_k_pts(k)
@@ -603,20 +608,28 @@ contains
    ! for structure factor calculations.
    ! (c) Dylan Jayatilaka, UWA, feb 1996
       k :: MAT{REAL}
-   ENSURE(.unique_SF_symop.created,"no unique_SF_symop array!")
-   ENSURE(k.dim1>0,"no unique k points")
-   ENSURE(k.dim1==.n_unique_SF_k_pts,"wrong # of k points")
+
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.spacegroup.unique_SF_symop.created,"no unique_SF_symop array!")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(k.dim1==.n_unique_SF_k_pts,"wrong dim1, k")
+   ENSURE(k.dim2==3,"wrong dim2, k")
+
       p,u,n :: INT
       b,rcm,symop :: MAT{REAL}(3,3)
       hkl :: VEC{INT}(3)
-      p = 0
+
       rcm = TWO*PI*.unit_cell.reciprocal_matrix
-      do u = 1,.n_unique_SF_symops
-         symop = .unique_SF_symop_mat(u)
+
+      p = 0
+      do u = 1,.spacegroup.n_unique_SF_symops
+
+         symop = .spacegroup.unique_SF_symop_mat(u)
          symop = transpose(symop)
          b = matmul(rcm,symop)
-       ! b = matmul(rcm,transpose(.unique_SF_symop_mat(u)))
-         do n = 1,.data.reflections.n_refl
+
+         do n = 1,.data.reflections.dim
             p = p + 1
             hkl(1) = .data.reflections(n).h
             hkl(2) = .data.reflections(n).k
@@ -625,70 +638,26 @@ contains
             k(p,2) = dot_product(b(2,:),hkl)
             k(p,3) = dot_product(b(3,:),hkl)
          end
+
       end
+
    end
 
 !  *************************************
 !  Service methods used by other modules
 !  *************************************
 
-   make_phases_for_symop(u,phase,mask) ::: private
-   ! Return the sum of the "phase" shifts for each (hkl) reflection from each
-   ! glide vector for all symops which are equivalent to the "u"-th
-   ! unique symmetry operation, .unique_SF_symop(u), as determined by the mask
-   ! array.
-     u :: INT, IN
-     phase :: VEC{CPX}, OUT
-     mask :: VEC{INT}, IN
-   ENSURE(.unique_SF_symop.created,"no unique_SF_symop array!")
-   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
-   ENSURE(size(phase)==.data.reflections.n_refl,"wrong length for phase array")
-     pi2,tx,ty,tz,dot :: REAL
-     s,n,n_refl,h,k,l :: INT
-     seitz :: MAT{REAL}*
-     refl :: VEC{REFLECTION}*
-     n_refl = .data.reflections.n_refl
-     pi2 = TWO*PI
-     refl => .data.reflections
-     phase = ZERO
-     do s = 1,.spacegroup.n_seitz
-       if (mask(s)/=.unique_SF_symop(u)) cycle
-       seitz => .spacegroup.seitz(:,:,s)
-       tx = pi2*seitz(1,4)
-       ty = pi2*seitz(2,4)
-       tz = pi2*seitz(3,4)
-       do n = 1,n_refl
-         h = refl(n).h
-         k = refl(n).k
-         l = refl(n).l
-         dot = h*tx+k*ty+l*tz
-         phase(n) = phase(n) + exp(cmplx(ZERO,dot,kind=CPX_KIND))
-       end
-     end
-   end
-
    sum_unique_sf(sf,unique_sf)
    ! Form the structure factors "sf" from the sum of the list of
    ! unique structure factors, "unique_sf".
      sf :: VEC{CPX}
      unique_sf :: VEC{CPX}, IN
-     phase :: VEC{CPX}*
-     u,uf,ul,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE( size(sf)==n_refl,"incorrect size for array sf")
-     phase.create(n_refl)
-     sf = ZERO
-     parallel do u = 1,.n_unique_SF_symops
-        uf = n_refl*(u-1)+1
-        ul = n_refl*u
-        .make_phases_for_symop(u,phase,.translated_symop)
-        sf(:) = sf(:) + phase(:)*unique_sf(uf:ul)
-        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-        .make_phases_for_symop(u,phase,.inverted_symop)
-        sf(:) = sf(:) + phase(:)*conjg(unique_sf(uf:ul))
-     end
-     PARALLEL_SUM(sf)
-     phase.destroy
+
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+
+     .spacegroup.sum_unique_sf(sf,unique_sf,.data.reflections)
    end
 
    sum_unique_sf_ints(sf_ints,unique_sf_ints)
@@ -696,54 +665,12 @@ contains
    ! of unique structure factors integrals  "unique_sf_ints".
      sf_ints :: MAT3{CPX}
      unique_sf_ints :: MAT3{CPX}, IN
-     phase :: VEC{CPX}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(sf_ints,1)==n_refl,"wrong size for sf_ints!")
-     phase.create(n_refl)
-     sf_ints = ZERO
-     parallel do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phases_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop)
-       do n = 1,n_refl
-         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
-       end
-     end
-     PARALLEL_SUM(sf_ints)
-     phase.destroy
-   end
 
-   sum_unique_sf_deriv_U(sf,unique_sf)
-   ! Form the structure factor derivatives "sf" (wrt the thermal paramaters,U)
-   !  from a sum of the list of unique structure factor derivatives "unique_sf".
-     sf :: MAT{CPX}
-     unique_sf :: MAT{CPX}, IN
-     phase :: VEC{CPX}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(sf,1)==n_refl, "wrong size, matrix sf")
-     ENSURE(size(unique_sf,2)==.n_unique_SF_k_pts, "wrong size, matrix sf")
-     phase.create(n_refl)
-     sf = ZERO
-     parallel do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phases_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop)
-       do n = 1,n_refl
-         sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
-       end
-     end
-     PARALLEL_SUM(sf)
-     phase.destroy
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+
+     .spacegroup.sum_unique_sf_ints(sf_ints,unique_sf_ints,.data.reflections)
    end
 
    sum_ft_ints(ft_ints,unique_ft_ints)
@@ -752,364 +679,683 @@ contains
    ! [.n_refl,n_comp_a,n_comp_b].
      ft_ints :: MAT3{CPX}
      unique_ft_ints :: MAT3{CPX}, IN
-     phase :: VEC{CPX}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
-     phase.create(n_refl)
-     ft_ints = ZERO
-     parallel do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phases_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*unique_ft_ints(uf+n,:,:)
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-       .make_phases_for_symop(u,phase,.inverted_symop)
-       do n = 1,n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*conjg(unique_ft_ints(uf+n,:,:))
-       end
-     end
-     PARALLEL_SUM(ft_ints)
-     phase.destroy
+
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   
+     .spacegroup.sum_ft_ints(ft_ints,unique_ft_ints,.data.reflections)
    end
 
-   make_phased_matrix_for_symop(u,phase,mask) ::: private
-   ! Return the sum of the "phase" shifts times the seitz matrices for all
-   ! symops which are equivalent to the "u"-th unique symmetry operation,
-   ! .unique_SF_symop(u), as determined by the "mask" array, when
-   ! mask(u)==.unique_SF_symop(u).
-     u :: INT, IN
-     phase :: MAT3{CPX}, OUT
-     mask :: VEC{INT}, IN
-   ENSURE(.unique_SF_symop.created,"no unique_SF_symop array!")
-   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
-   ENSURE(phase.dim1==.data.reflections.n_refl,"wrong size, dim=1, phase array")
-   ENSURE(phase.dim2==3,"wrong size, dim=2, phase array")
-   ENSURE(phase.dim3==3,"wrong size, dim=3, phase array")
-     pi2,tx,ty,tz,dot :: REAL
-     s,n,n_refl,h,k,l :: INT
-     seitz :: MAT{REAL}(4,4)
-     refl :: VEC{REFLECTION}*
-     n_refl = .data.reflections.n_refl
-     pi2 = TWO*PI
-     refl => .data.reflections
-     phase = ZERO
-     do s = 1,.spacegroup.n_seitz
-       if (mask(s)/=.unique_SF_symop(u)) cycle
-       seitz = .spacegroup.seitz(:,:,s)
-       tx = pi2*seitz(1,4)
-       ty = pi2*seitz(2,4)
-       tz = pi2*seitz(3,4)
-       if (seitz(3,3)>0) then                  ! M points along +z always
-         do n = 1,n_refl
-           h = refl(n).h
-           k = refl(n).k
-           l = refl(n).l
-           dot = h*tx+k*ty+l*tz
-           phase(n,:,:) = phase(n,:,:) + &
-              seitz(:,:)*exp(cmplx(ZERO,dot,kind=CPX_KIND))
-         end
-       else                                    ! M points in -z direction
-         seitz(3,:3) = -seitz(3,:3)            ! Invert
-         do n = 1,n_refl
-           h = refl(n).h
-           k = refl(n).k
-           l = refl(n).l
-           dot = h*tx+k*ty+l*tz
-           phase(n,:,:) = phase(n,:,:) + &
-              seitz(:,:)*exp(cmplx(ZERO,dot,kind=CPX_KIND))
-         end
-       end
-     end
+   sum_unique_sf_deriv_U(sf,unique_sf)
+   ! Form the structure factor derivatives "sf" (wrt the thermal paramaters,U)
+   !  from a sum of the list of unique structure factor derivatives "unique_sf".
+     sf :: MAT{CPX}
+     unique_sf :: MAT{CPX}, IN
+
+   ENSURE(.spacegroup.analysed,"spacegroup not analysed")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+
+     .spacegroup.sum_unique_sf_deriv_U(sf,unique_sf,.data.reflections)
    end
 
-   sum_PND_spin_ints(ft_ints,unique_ft_ints)
-   ! Form the Fourier transform integrals "ft_ints", required for the spin
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
-   ! [.n_refl,n_comp_a,n_comp_b,3].
-     ft_ints :: MAT4{CPX}
-     unique_ft_ints :: MAT3{CPX}, IN
-     phase :: MAT3{CPX}*
-     q :: MAT{REAL}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
-     q.create(n_refl,3)
-     phase.create(n_refl,3,3)
-     .make_k_pts(q)
-     ft_ints = ZERO
-     do u = 1,.n_unique_SF_symops
-        uf = n_refl*(u-1)
-        .make_phased_matrix_for_symop(u,phase,.translated_symop)
-        do n = 1,n_refl
-           ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
-              ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
-              - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
-              unique_ft_ints(uf+n,:,:)
-           ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
-              ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
-              - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
-              unique_ft_ints(uf+n,:,:)
-           ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
-              ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
-              - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
-              unique_ft_ints(uf+n,:,:)
-        end
-        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions...
-        .make_phased_matrix_for_symop(u,phase,.inverted_symop)
-        do n = 1,n_refl
-           ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
-              ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
-              - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
-              conjg(unique_ft_ints(uf+n,:,:))
-           ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
-              ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
-              - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
-              conjg(unique_ft_ints(uf+n,:,:))
-           ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
-              ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
-              - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
-              conjg(unique_ft_ints(uf+n,:,:))
-        end
-     end
-     phase.destroy
-     ! The factor of two for conversion to Bohr magnetons cancels the
-     ! factor of half for the S=sigma/2 operator, and g_e x mu_B = 1.
-     do n = 1,n_refl
-       ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-     end
-     q.destroy
-   end
 
-   sum_PND_nabla_ints(ft_ints,unique_ft_ints)
-   ! Form the fourier transform nabla_a_3 integrals "ft_ints", required for the
-   ! PND magnetic structure factors, from a sum of "unique_ft_ints".
-   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
-     ft_ints :: MAT3{CPX}
-     unique_ft_ints :: MAT4{CPX}, IN
-     phase :: MAT3{CPX}*
-     q :: MAT{REAL}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
-     q.create(n_refl,3)
-     phase.create(n_refl,3,3)
-     .make_k_pts(q)
-     ft_ints = ZERO
-     do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phased_matrix_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + &
-          (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*unique_ft_ints(uf+n,:,:,1) + &
-          (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*unique_ft_ints(uf+n,:,:,2) + &
-          (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*unique_ft_ints(uf+n,:,:,3)
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions ...
-       .make_phased_matrix_for_symop(u,phase,.translated_symop) ! .inverted_symop here ??????????????
-       do n = 1,n_refl
-         ft_ints(n,:,:) = ft_ints(n,:,:) + &
-          (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*conjg(unique_ft_ints(uf+n,:,:,1)) + &
-          (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*conjg(unique_ft_ints(uf+n,:,:,2)) + &
-          (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*conjg(unique_ft_ints(uf+n,:,:,3))
-       end
-     end
-     phase.destroy
-     ! The factor of 2 to convert to Bohr magnetons cancels the factor
-     ! of 1/2 for the Bohr magneton.
-     do n = 1,n_refl
-       ft_ints(n,:,:) = ft_ints(n,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-     end
-     q.destroy
-   end
+!   make_phases_for_symop(u,phase,mask) ::: private
+!   ! Return the sum of the "phase" shifts for each (hkl) reflection from each
+!   ! glide vector for all symops which are equivalent to the "u"-th
+!   ! unique symmetry operation, .spacegroup.unique_SF_symop(u), as determined by the mask
+!   ! array.
+!     u :: INT, IN
+!     phase :: VEC{CPX}, OUT
+!     mask :: VEC{INT}, IN
+!
+!   ENSURE(.spacegroup.analysed,"no spacegroup")
+!   ENSURE(u<=.spacegroup.n_unique_SF_symops,"symop index out of range")
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflections")
+!   ENSURE(phase.dim==.data.reflections.n_refl,"wrong size, phase array")
+!
+!     pi2,tx,ty,tz,dot :: REAL
+!     s,n,n_refl,h,k,l :: INT
+!     seitz :: MAT{REAL}*
+!     refl :: VEC{REFLECTION}*
+!
+!     refl => .data.reflections
+!     n_refl = refl.dim
+!     pi2 = TWO*PI
+!
+!     phase = ZERO
+!     do s = 1,.spacegroup.n_seitz
+!
+!       ! Sum only those which match unique symop u
+!       if (mask(s)/=.spacegroup.unique_SF_symop(u)) cycle
+!
+!       ! Get the symop translation vector
+!       seitz => .spacegroup.seitz(:,:,s)
+!       tx = pi2*seitz(1,4)
+!       ty = pi2*seitz(2,4)
+!       tz = pi2*seitz(3,4)
+!
+!       ! Sum the phase here
+!       do n = 1,n_refl
+!         h = refl(n).h
+!         k = refl(n).k
+!         l = refl(n).l
+!         dot = h*tx + k*ty + l*tz
+!         phase(n) = phase(n) + exp(cmplx(ZERO,dot,kind=CPX_KIND))
+!       end
+!
+!     end
+!
+!   end
+!
+!   sum_unique_sf(sf,unique_sf)
+!   ! Form the structure factors "sf" from the sum of the list of
+!   ! unique structure factors, "unique_sf".
+!     sf :: VEC{CPX}
+!     unique_sf :: VEC{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(sf.dim==.data.reflections.n_refl,"wrong size, array sf")
+!   ENSURE(unique_sf.dim==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_sf")
+!
+!     phase :: VEC{CPX}*
+!     u,uf,ul,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!
+!     sf = ZERO
+!     parallel do u = 1,.spacegroup.n_unique_SF_symops
+!
+!        uf = n_refl*(u-1)+1
+!        ul = n_refl*u
+!
+!        ! Add up translated symop contribution
+!        .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!        sf(:) = sf(:) + phase(:)*unique_sf(uf:ul)
+!
+!        ! Add up inverted symop contribution, if any
+!        if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle
+!        .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!        sf(:) = sf(:) + phase(:)*conjg(unique_sf(uf:ul))
+!
+!     end
+!
+!     PARALLEL_SUM(sf)
+!     phase.destroy
+!
+!   end
+!
+!   sum_unique_sf_ints(sf_ints,unique_sf_ints)
+!   ! Form the structure factor integrals "sf_ints" from a sum of the list
+!   ! of unique structure factors integrals  "unique_sf_ints".
+!     sf_ints :: MAT3{CPX}
+!     unique_sf_ints :: MAT3{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(sf_ints.dim1==.data.reflections.n_refl,"wrong size, array sf_ints")
+!   ENSURE(unique_sf_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_sf_ints")
+!
+!     phase :: VEC{CPX}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!
+!     sf_ints = ZERO
+!     parallel do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*unique_sf_ints(uf+n,:,:)
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!       do n = 1,n_refl
+!         sf_ints(n,:,:) = sf_ints(n,:,:) + phase(n)*conjg(unique_sf_ints(uf+n,:,:))
+!       end
+!
+!     end
+!
+!     PARALLEL_SUM(sf_ints)
+!     phase.destroy
+!
+!   end
+!
+!   sum_ft_ints(ft_ints,unique_ft_ints)
+!   ! Form the Fourier transform integrals "ft_ints" from a sum of the list
+!   ! of unique integrals "unique_ft_ints".  Dimensions of ft_ints are
+!   ! [.n_refl,n_comp_a,n_comp_b].
+!     ft_ints :: MAT3{CPX}
+!     unique_ft_ints :: MAT3{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: VEC{CPX}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!
+!     ft_ints = ZERO
+!     parallel do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*unique_ft_ints(uf+n,:,:)
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!       do n = 1,n_refl
+!         ft_ints(n,:,:) = ft_ints(n,:,:) + phase(n)*conjg(unique_ft_ints(uf+n,:,:))
+!       end
+!
+!     end
+!
+!     PARALLEL_SUM(ft_ints)
+!     phase.destroy
+!
+!   end
+!
+!   sum_unique_sf_deriv_U(sf,unique_sf)
+!   ! Form the structure factor derivatives "sf" (wrt the thermal paramaters,U)
+!   !  from a sum of the list of unique structure factor derivatives "unique_sf".
+!     sf :: MAT{CPX}
+!     unique_sf :: MAT{CPX}, IN
+!
+!   ENSURE(sf.dim1==n_refl, "wrong size, matrix sf")
+!   ENSURE(unique_sf.dim2==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_sf")
+!
+!     phase :: VEC{CPX}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!
+!     sf = ZERO
+!     parallel do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!       do n = 1,n_refl
+!         sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
+!       end
+!
+!     end
+!
+!     PARALLEL_SUM(sf)
+!     phase.destroy
+!
+!   end
 
-   sum_ft_spin_ints(ft_ints,unique_ft_ints)
-   ! Form the Fourier transform integrals "ft_ints", required for the spin
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
-   ! [.n_refl,n_comp_a,n_comp_b,3,3].
-     ft_ints :: MAT5{CPX}
-     unique_ft_ints :: MAT3{CPX}, IN
-     phase :: VEC{CPX}*
-     q :: MAT{REAL}*
-     ints :: MAT{CPX}*
-     u,uf,n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
-     phase.create(n_refl)
-     q.create(n_refl,3)
-     ints.create(size(ft_ints,2),size(ft_ints,3))
-     .make_k_pts(q)
-     ft_ints = ZERO
-     do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phases_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         ints = phase(n)*unique_ft_ints(uf+n,:,:)
-         ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
-         ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
-         ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions...
-       .make_phases_for_symop(u,phase,.inverted_symop)
-       do n = 1,n_refl
-         ints = phase(n)*conjg(unique_ft_ints(uf+n,:,:))
-         ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
-         ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
-         ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
-         ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
-       end
-     end
-     ints.destroy
-     ! The factor of two for conversion to Bohr magnetons cancels the
-     ! factor of half for the S operator
-     do n = 1,n_refl
-        ft_ints(n,:,:,:,:) = -ft_ints(n,:,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-     end
-     q.destroy
-     phase.destroy
-   end
 
-   sum_ft_r_ints(ft_ints,unique_ft_ints,B)
-   ! Form the Fourier transform dipole integrals "ft_ints", required for the PND
-   ! magnetic structure factors, from a sum of the list of unique structure
-   ! factor intergals "unique_ft_ints".  "B" is the external magnetic field.
-   ! Note: only inversions are allowed as symmetry elements for PND simulations.
-   ! Dimensions of ft are [.n_refl,n_comp_a,n_comp_b,3].
-     ft_ints :: MAT4{CPX}
-     unique_ft_ints :: MAT4{CPX}, IN
-     B :: VEC{REAL}(3)
-     phase :: VEC{CPX}*
-     q :: MAT{REAL}*
-     ints :: MAT3{CPX}*
-     u,uf,n,n_refl :: INT
-     ci :: CPX
-     n_refl = .data.reflections.n_refl
-     ENSURE( size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
-     phase.create(n_refl)
-     q.create(n_refl,3)
-     ints.create(size(ft_ints,2),size(ft_ints,3),3)
-     .make_k_pts(q)
-     ft_ints = ZERO
-     do u = 1,.n_unique_SF_symops
-       uf = n_refl*(u-1)
-       .make_phases_for_symop(u,phase,.translated_symop)
-       do n = 1,n_refl
-         ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
-         ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
-                                             - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
-         ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
-                                             - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
-         ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
-                                             - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
-       end
-       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions ...
-       .make_phases_for_symop(u,phase,.inverted_symop)
-       do n = 1,n_refl
-         ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
-         ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
-                                             - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
-         ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
-                                             - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
-         ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
-                                             - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
-       end
-     end
-     ints.destroy
-     ! The factor of two for conversion to Bohr magnetons cancels the
-     ! factor of half for the S operator
-     ci = (ZERO,ONE)
-     do n = 1,n_refl
-       ft_ints(n,:,:,:) = -ci*ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-     end
-     q.destroy
-     phase.destroy
-   end
+!   make_phased_matrix_for_symop(u,phase,mask) ::: private
+!   ! Return the sum of the "phase" shifts times the seitz matrices for all
+!   ! symops which are equivalent to the "u"-th unique symmetry operation,
+!   ! .spacegroup.unique_SF_symop(u), as determined by the "mask" array, when
+!   ! mask(u)==.spacegroup.unique_SF_symop(u).
+!     u :: INT, IN
+!     phase :: MAT3{CPX}, OUT
+!     mask :: VEC{INT}, IN
+!
+!   ENSURE(.spacegroup.analysed,"no spacegroup")
+!   ENSURE(u<=.spacegroup.n_unique_SF_symops,"symop index out of range")
+!   ENSURE(phase.dim1==.data.reflections.n_refl,"wrong size, dim=1, phase array")
+!   ENSURE(phase.dim2==3,"wrong size, dim=2, phase array")
+!   ENSURE(phase.dim3==3,"wrong size, dim=3, phase array")
+!
+!     pi2,tx,ty,tz,dot :: REAL
+!     s,n,n_refl,h,k,l :: INT
+!     seitz :: MAT{REAL}(4,4)
+!     refl :: VEC{REFLECTION}*
+!
+!     refl => .data.reflections
+!     n_refl = refl.dim
+!     pi2 = TWO*PI
+!
+!     phase = ZERO
+!     do s = 1,.spacegroup.n_seitz
+!
+!       ! Sum only those which match unique symop u
+!       if (mask(s)/=.spacegroup.unique_SF_symop(u)) cycle
+!
+!       ! Get the symop translation vector
+!       seitz = .spacegroup.seitz(:,:,s)
+!       tx = pi2*seitz(1,4)
+!       ty = pi2*seitz(2,4)
+!       tz = pi2*seitz(3,4)
+!
+!       ! Sum the phase here
+!       ! This seems a kludge because we don't know the magnetic symmetry
+!       if (seitz(3,3)>0) then                  ! M points along +z always
+!         do n = 1,n_refl
+!           h = refl(n).h
+!           k = refl(n).k
+!           l = refl(n).l
+!           dot = h*tx+k*ty+l*tz
+!           phase(n,:,:) = phase(n,:,:) + &
+!              seitz(:,:)*exp(cmplx(ZERO,dot,kind=CPX_KIND))
+!         end
+!       else                                    ! M points in -z direction
+!         seitz(3,:3) = -seitz(3,:3)            ! Invert
+!         do n = 1,n_refl
+!           h = refl(n).h
+!           k = refl(n).k
+!           l = refl(n).l
+!           dot = h*tx+k*ty+l*tz
+!           phase(n,:,:) = phase(n,:,:) + &
+!              seitz(:,:)*exp(cmplx(ZERO,dot,kind=CPX_KIND))
+!         end
+!       end
+!
+!     end
+!
+!   end
+!
+!   sum_PND_spin_ints(ft_ints,unique_ft_ints)
+!   ! Form the Fourier transform integrals "ft_ints", required for the spin
+!   ! magnetic structure factors, from a sum of the list of unique structure
+!   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
+!   ! [.n_refl,n_comp_a,n_comp_b,3].
+!     ft_ints :: MAT4{CPX}
+!     unique_ft_ints :: MAT3{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: MAT3{CPX}*
+!     q :: MAT{REAL}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     q.create(n_refl,3)
+!     phase.create(n_refl,3,3)
+!
+!     .make_k_pts(q)
+!
+!     ft_ints = ZERO
+!     do u = 1,.spacegroup.n_unique_SF_symops
+!
+!        uf = n_refl*(u-1)
+!
+!        ! Add up translated symop contribution
+!        .make_phased_matrix_for_symop(u,phase,.spacegroup.translated_symop)
+!        do n = 1,n_refl
+!           ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
+!              - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
+!              unique_ft_ints(uf+n,:,:)
+!           ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
+!              - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
+!              unique_ft_ints(uf+n,:,:)
+!           ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
+!              - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
+!              unique_ft_ints(uf+n,:,:)
+!        end
+!
+!        ! Add up inverted symop contribution, if any
+!        if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions...
+!        .make_phased_matrix_for_symop(u,phase,.spacegroup.inverted_symop)
+!        do n = 1,n_refl
+!           ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,1) + q(n,3)*q(n,2)*phase(n,2,1)     &
+!              - q(n,1)*q(n,1)*phase(n,3,1) - q(n,2)*q(n,2)*phase(n,3,1) ) * &
+!              conjg(unique_ft_ints(uf+n,:,:))
+!           ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,2) + q(n,3)*q(n,2)*phase(n,2,2)     &
+!              - q(n,1)*q(n,1)*phase(n,3,2) - q(n,2)*q(n,2)*phase(n,3,2) ) * &
+!              conjg(unique_ft_ints(uf+n,:,:))
+!           ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + &
+!              ( q(n,3)*q(n,1)*phase(n,1,3) + q(n,3)*q(n,2)*phase(n,2,3)     &
+!              - q(n,1)*q(n,1)*phase(n,3,3) - q(n,2)*q(n,2)*phase(n,3,3) ) * &
+!              conjg(unique_ft_ints(uf+n,:,:))
+!        end
+!
+!     end
+!     phase.destroy
+!
+!     ! The factor of two for conversion to Bohr magnetons cancels the
+!     ! factor of half for the S=sigma/2 operator, and g_e x mu_B = 1.
+!     do n = 1,n_refl
+!       ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+!     end
+!     q.destroy
+!
+!   end
+!
+!   sum_PND_nabla_ints(ft_ints,unique_ft_ints)
+!   ! Form the fourier transform nabla_a_3 integrals "ft_ints", required for the
+!   ! PND magnetic structure factors, from a sum of "unique_ft_ints".
+!   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
+!     ft_ints :: MAT3{CPX}
+!     unique_ft_ints :: MAT4{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: MAT3{CPX}*
+!     q :: MAT{REAL}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     q.create(n_refl,3)
+!     phase.create(n_refl,3,3)
+!
+!     .make_k_pts(q)
+!
+!     ft_ints = ZERO
+!     do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phased_matrix_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         ft_ints(n,:,:) = ft_ints(n,:,:) + &
+!          (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*unique_ft_ints(uf+n,:,:,1) + &
+!          (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*unique_ft_ints(uf+n,:,:,2) + &
+!          (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*unique_ft_ints(uf+n,:,:,3)
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions ...
+!       .make_phased_matrix_for_symop(u,phase,mask=.spacegroup.translated_symop) ! .inverted_symop here ??????????????
+!       do n = 1,n_refl
+!         ft_ints(n,:,:) = ft_ints(n,:,:) + &
+!          (q(n,1)*phase(n,2,1)-q(n,2)*phase(n,1,1))*conjg(unique_ft_ints(uf+n,:,:,1)) + &
+!          (q(n,1)*phase(n,2,2)-q(n,2)*phase(n,1,2))*conjg(unique_ft_ints(uf+n,:,:,2)) + &
+!          (q(n,1)*phase(n,2,3)-q(n,2)*phase(n,1,3))*conjg(unique_ft_ints(uf+n,:,:,3))
+!       end
+!     end
+!     phase.destroy
+!
+!     ! The factor of 2 to convert to Bohr magnetons cancels the factor
+!     ! of 1/2 for the Bohr magneton.
+!     do n = 1,n_refl
+!       ft_ints(n,:,:) = ft_ints(n,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+!     end
+!     q.destroy
+!
+!   end
+!
+!   sum_ft_spin_ints(ft_ints,unique_ft_ints)
+!   ! Form the Fourier transform integrals "ft_ints", required for the spin
+!   ! magnetic structure factors, from a sum of the list of unique structure
+!   ! factor intergals "unique_ft_ints".  Dimensions of ft_ints are
+!   ! [.n_refl,n_comp_a,n_comp_b,3,3].
+!     ft_ints :: MAT5{CPX}
+!     unique_ft_ints :: MAT3{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: VEC{CPX}*
+!     q :: MAT{REAL}*
+!     ints :: MAT{CPX}*
+!     u,uf,n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!     q.create(n_refl,3)
+!     ints.create(ft_ints.dim2,ft_ints.dim3,3)
+!
+!     .make_k_pts(q)
+!
+!     ft_ints = ZERO
+!     do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         ints = phase(n)*unique_ft_ints(uf+n,:,:)
+!         ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
+!         ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
+!         ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions...
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!       do n = 1,n_refl
+!         ints = phase(n)*conjg(unique_ft_ints(uf+n,:,:))
+!         ft_ints(n,:,:,1,1) = ft_ints(n,:,:,1,1) + q(n,1)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,2,1) = ft_ints(n,:,:,2,1) + q(n,2)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,2,2) = ft_ints(n,:,:,2,2) + q(n,2)*q(n,2)*ints(:,:)
+!         ft_ints(n,:,:,3,1) = ft_ints(n,:,:,3,1) + q(n,3)*q(n,1)*ints(:,:)
+!         ft_ints(n,:,:,3,2) = ft_ints(n,:,:,3,2) + q(n,3)*q(n,2)*ints(:,:)
+!         ft_ints(n,:,:,3,3) = ft_ints(n,:,:,3,3) + q(n,3)*q(n,3)*ints(:,:)
+!       end
+!     end
+!     ints.destroy
+!
+!     ! The factor of two for conversion to Bohr magnetons cancels the
+!     ! factor of half for the S operator
+!     do n = 1,n_refl
+!        ft_ints(n,:,:,:,:) = -ft_ints(n,:,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+!     end
+!     q.destroy
+!     phase.destroy
+!
+!   end
+!
+!   sum_ft_r_ints(ft_ints,unique_ft_ints,B)
+!   ! Form the Fourier transform dipole integrals "ft_ints", required for the PND
+!   ! magnetic structure factors, from a sum of the list of unique structure
+!   ! factor intergals "unique_ft_ints".  "B" is the external magnetic field.
+!   ! Note: only inversions are allowed as symmetry elements for PND simulations.
+!   ! Dimensions of ft are [.n_refl,n_comp_a,n_comp_b,3].
+!     ft_ints :: MAT4{CPX}
+!     unique_ft_ints :: MAT4{CPX}, IN
+!     B :: VEC{REAL}(3)
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: VEC{CPX}*
+!     q :: MAT{REAL}*
+!     ints :: MAT3{CPX}*
+!     u,uf,n,n_refl :: INT
+!     ci :: CPX
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!     q.create(n_refl,3)
+!     ints.create(ft_ints.dim2,ft_ints.dim3,3)
+!
+!     .make_k_pts(q)
+!
+!     ft_ints = ZERO
+!     do u = 1,.spacegroup.n_unique_SF_symops
+!
+!       uf = n_refl*(u-1)
+!
+!       ! Add up translated symop contribution
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!       do n = 1,n_refl
+!         ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
+!         ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
+!                                             - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
+!         ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
+!                                             - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
+!         ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
+!                                             - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
+!       end
+!
+!       ! Add up inverted symop contribution, if any
+!       if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions ...
+!       .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!       do n = 1,n_refl
+!         ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
+!         ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1)) &
+!                                             - q(n,3)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3))
+!         ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2)) &
+!                                             - q(n,1)*(B(1)*ints(:,:,2)-B(2)*ints(:,:,1))
+!         ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*(B(3)*ints(:,:,1)-B(1)*ints(:,:,3)) &
+!                                             - q(n,2)*(B(2)*ints(:,:,3)-B(3)*ints(:,:,2))
+!       end
+!     end
+!     ints.destroy
+!
+!     ! The factor of two for conversion to Bohr magnetons cancels the
+!     ! factor of half for the S operator
+!     ci = (ZERO,ONE)
+!     do n = 1,n_refl
+!       ft_ints(n,:,:,:) = -ci*ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+!     end
+!     q.destroy
+!     phase.destroy
+!
+!   end
+!
+!   sum_ft_nabla_ints(ft_ints,unique_ft_ints)
+!   ! Form the fourier transform nabla_a integrals "ft_ints", required for the
+!   ! PND magnetic striucture factors, from a sum of "unique_ft_ints".
+!   ! Note: only inversions are allowed as symmetry elements for PND simulations.
+!   ! Note: the complex conjugate nabla_b integrals are not included.
+!   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
+!      ft_ints :: MAT4{CPX}
+!      unique_ft_ints :: MAT4{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!      phase :: VEC{CPX}*
+!      q :: MAT{REAL}*
+!      ints :: MAT3{CPX}*
+!      u,uf,n,n_refl :: INT
+!
+!      n_refl = .data.reflections.n_refl
+!      phase.create(n_refl)
+!      q.create(n_refl,3)
+!      ints.create(ft_ints.dim2,ft_ints.dim3,3)
+!
+!      .make_k_pts(q)
+!
+!      ft_ints = ZERO
+!      do u = 1,.spacegroup.n_unique_SF_symops
+!
+!         uf = n_refl*(u-1)
+!
+!         ! Add up translated symop contribution
+!         .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!         do n = 1,n_refl
+!            ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
+!            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
+!            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
+!            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*ints(:,:,2)-q(n,2)*ints(:,:,1)
+!         end
+!
+!         ! Add up inverted symop contribution, if any
+!         if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions ...
+!         .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!         do n = 1,n_refl
+!            ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
+!            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
+!            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
+!            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*ints(:,:,2)-q(n,2)*ints(:,:,1)
+!         end
+!
+!      end
+!      ints.destroy
+!
+!      ! The factor of 2 to convert to Bohr magnetons cancels the factor
+!      ! of 1/2 for the Bohr magneton
+!      ! Extra minus sign introduced, but not sure why ...
+!      ! Reversed minus sign introduced ...
+!      do n = 1,n_refl
+!          ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
+!      end
+!      q.destroy
+!      phase.destroy
+!
+!   end
+!
+!   sum_ft_j_ints(ft_ints,unique_ft_ints)
+!   ! Form the fourier transform j integrals "ft_ints", required for the PND
+!   ! magnetic striucture factors, from a sum of "unique_ft_ints".
+!   ! Note: only inversions are allowed as symmetry elements for PND simulations.
+!   ! Note: the complex conjugate nabla_b integrals are not included.
+!   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
+!     ft_ints :: MAT4{CPX}
+!     unique_ft_ints :: MAT4{CPX}, IN
+!
+!   ENSURE(.data.created,"no data")
+!   ENSURE(.data.reflections.created,"no reflection data")
+!   ENSURE(ft_ints.dim1==.data.reflections.n_refl,"wrong size, array ft_ints")
+!   ENSURE(unique_ft_ints.dim1==.spacegroup.n_unique_SF_symops*.data.reflections.n_refl,"wrong size, array unique_ft_ints")
+!
+!     phase :: VEC{CPX}*
+!     u,uf, n,n_refl :: INT
+!
+!     n_refl = .data.reflections.n_refl
+!     phase.create(n_refl)
+!
+!     ft_ints = ZERO
+!     do u = 1,.spacegroup.n_unique_SF_symops
+!
+!        uf = n_refl*(u-1)
+!
+!        ! Add up translated symop contribution
+!        .make_phases_for_symop(u,phase,mask=.spacegroup.translated_symop)
+!        do n = 1,n_refl
+!          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) + phase(n)*unique_ft_ints(uf+n,:,:,:)
+!        end
+!
+!        ! Add up inverted symop contribution, if any
+!        if ( all(.spacegroup.inverted_symop/=.spacegroup.unique_SF_symop(u)) ) cycle ! for inversions...
+!        .make_phases_for_symop(u,phase,mask=.spacegroup.inverted_symop)
+!        do n = 1,n_refl
+!          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) - phase(n)*conjg(unique_ft_ints(uf+n,:,:,:))
+!        end
+!
+!     end
+!     phase.destroy
+!
+!   end
 
-   sum_ft_nabla_ints(ft_ints,unique_ft_ints)
-   ! Form the fourier transform nabla_a integrals "ft_ints", required for the
-   ! PND magnetic striucture factors, from a sum of "unique_ft_ints".
-   ! Note: only inversions are allowed as symmetry elements for PND simulations.
-   ! Note: the complex conjugate nabla_b integrals are not included.
-   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
-      ft_ints :: MAT4{CPX}
-      unique_ft_ints :: MAT4{CPX}, IN
-      phase :: VEC{CPX}*
-      q :: MAT{REAL}*
-      ints :: MAT3{CPX}*
-      u,uf,n,n_refl :: INT
-      n_refl = .data.reflections.n_refl
-      ENSURE(size(ft_ints,1)==n_refl,"wrong size for ft_ints!")
-      phase.create(n_refl)
-      q.create(n_refl,3)
-      ints.create(size(ft_ints,2),size(ft_ints,3),3)
-      .make_k_pts(q)
-      ft_ints = ZERO
-      do u = 1,.n_unique_SF_symops
-         uf = n_refl*(u-1)
-         .make_phases_for_symop(u,phase,.translated_symop)
-         do n = 1,n_refl
-            ints = phase(n)*unique_ft_ints(uf+n,:,:,:)
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*ints(:,:,2)-q(n,2)*ints(:,:,1)
-         end
-         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions ...
-         .make_phases_for_symop(u,phase,.inverted_symop)
-         do n = 1,n_refl
-            ints = -phase(n)*conjg(unique_ft_ints(uf+n,:,:,:)) ! note minus sign
-            ft_ints(n,:,:,1) = ft_ints(n,:,:,1) + q(n,2)*ints(:,:,3)-q(n,3)*ints(:,:,2)
-            ft_ints(n,:,:,2) = ft_ints(n,:,:,2) + q(n,3)*ints(:,:,1)-q(n,1)*ints(:,:,3)
-            ft_ints(n,:,:,3) = ft_ints(n,:,:,3) + q(n,1)*ints(:,:,2)-q(n,2)*ints(:,:,1)
-         end
-      end
-      ints.destroy
-      ! The factor of 2 to convert to Bohr magnetons cancels the factor
-      ! of 1/2 for the Bohr magneton
-      ! Extra minus sign introduced, but not sure why ...
-      ! Reversed minus sign introduced ...
-      do n = 1,n_refl
-          ft_ints(n,:,:,:) = ft_ints(n,:,:,:)/(q(n,1)*q(n,1)+q(n,2)*q(n,2))
-      end
-      q.destroy
-      phase.destroy
-   end
-
-   sum_ft_j_ints(ft_ints,unique_ft_ints)
-   ! Form the fourier transform j integrals "ft_ints", required for the PND
-   ! magnetic striucture factors, from a sum of "unique_ft_ints".
-   ! Note: only inversions are allowed as symmetry elements for PND simulations.
-   ! Note: the complex conjugate nabla_b integrals are not included.
-   ! Dimensions of ft_ints are [.n_refl,n_comp_a,n_comp_b,3].
-     ft_ints :: MAT4{CPX}
-     unique_ft_ints :: MAT4{CPX}, IN
-     phase :: VEC{CPX}*
-     u,uf, n,n_refl :: INT
-     n_refl = .data.reflections.n_refl
-     ENSURE(size(ft_ints,1)==n_refl,"incorrect size for array ft_ints")
-     phase.create(n_refl)
-     ft_ints = ZERO
-     do u = 1,.n_unique_SF_symops
-        uf = n_refl*(u-1)
-        .make_phases_for_symop(u,phase,.translated_symop)
-        do n = 1,n_refl
-          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) + phase(n)*unique_ft_ints(uf+n,:,:,:)
-        end
-        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle ! for inversions...
-        .make_phases_for_symop(u,phase,.inverted_symop)
-        do n = 1,n_refl
-          ft_ints(n,:,:,:) = ft_ints(n,:,:,:) - phase(n)*conjg(unique_ft_ints(uf+n,:,:,:))
-        end
-     end
-     phase.destroy
-   end
 
 !  *****************************************
 !  Reduced group, Unique operators, Z number
@@ -1146,14 +1392,12 @@ contains
       atom.get_geometry(.fragment_geometry)
       .unit_cell.change_into_fractional(.fragment_geometry)
 
+   !  ! Find connected atoms in the unit cell
+   !  .make_unit_cell_connections
+
       ! Symops which are unique
       .make_stabilizer_symops 
       .make_stabilizer_xyz_matrices 
-
-      ! These are used to save time in SF calcs
-      .make_inverted_symops        
-      .make_translated_symops
-      .make_unique_SF_symops
 
       ! See if we have an asymmetric fragment
       .make_unique_frag_atoms      
@@ -1178,6 +1422,120 @@ contains
       .fragment_info_made = TRUE
 
    end
+
+!   make_unit_cell_connections ::: leaky
+!   ! Make the ".unit_cell_connection" table for the crystal unit cell geometry.
+!   ! Also make the ".unit_cell_mol_for_atom" list which has the list of distinct
+!   ! molecules in the unit cell i.e. those groups of unit cell atoms which are
+!   ! connected to each other (ignoring translational symmetry).
+!   ! NOTE: atoms for which there are no connection are not created.
+!   ! NOTE: .unit_cell_mol_for_atom may not be required any more
+!   ENSURE(.crystal.created,"no crystal")
+!   ENSURE(.crystal.unit_cell_geometry.created,"no unit_cell in the crystal")
+!   ENSURE(.asymmetric_cell_atom.created,"no asymmetric_cell_atom info")
+!     new :: VEC{VEC_{INT}}*
+!     unit_cell_mol_for_atom,unique :: VEC{INT}*
+!     geom0,geom1 :: MAT{REAL}*
+!     rcm :: MAT{REAL}(3,3)
+!     atom_i,atom_j :: ATOM
+!     pos_i,pos_j,offset :: VEC{REAL}(3)
+!     n_unit_cell_atoms,i,j,parent_i,parent_j, h1,h2,h3, mi,mj :: INT
+!     n_unit_cell_atoms = .crystal.n_unit_cell_atoms
+!     .unit_cell_connection.destroy
+!     .unit_cell_connection.create(n_unit_cell_atoms)
+!     .unit_cell_mol_for_atom.destroy
+!     .unit_cell_mol_for_atom.create(n_unit_cell_atoms)
+!     unit_cell_mol_for_atom.create(n_unit_cell_atoms)
+!     do i = 1,n_unit_cell_atoms         ! worst case: all atoms on different mols
+!        unit_cell_mol_for_atom(i) = i
+!     end
+!     new.create(1)
+!     new(1).element.create(4)           ! A connected atom: its index and 3-element shift
+!     rcm = .crystal.unit_cell.direct_matrix
+!     geom0.create(3,n_unit_cell_atoms)  ! Get cartesian geometry
+!     geom0 = matmul(rcm,.crystal.unit_cell_geometry)
+!     h1 = 0                             ! <<< First make connections in the unit cell
+!     h2 = 0                             ! <<< and the distinct mols
+!     h3 = 0
+!        do i = 1,n_unit_cell_atoms      ! Loop over the (0,0,0) unit cell atoms
+!           pos_i = geom0(:,i)
+!           parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
+!           atom_i.atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+!           atom_i.pos = pos_i
+!           mi = unit_cell_mol_for_atom(i) ! Atom i belongs to mol "mi"
+!           do j = i+1,n_unit_cell_atoms ! Loop over the (0,0,0) unit cell atoms 
+!              pos_j = geom0(:,j)        ! Gross test for closeness
+!              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
+!              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
+!              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
+!              parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
+!              atom_j.atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+!              atom_j.pos = pos_j
+!              if (atom_i.is_bonded_to(atom_j)) then
+!                 new(1)[:] = [h1,h2,h3,j]; .unit_cell_connection(i).element.append(new)
+!                 new(1)[4] = i;            .unit_cell_connection(j).element.append(new)
+!                 mj = unit_cell_mol_for_atom(j)
+!                 if (mj<mi) then        ! replace all previous by the lowest mol
+!                    where (unit_cell_mol_for_atom==mi) unit_cell_mol_for_atom = mj
+!                    mi = mj             ! replace mol for atom i too
+!                 else if (mj>mi) then
+!                    where (unit_cell_mol_for_atom==mj) unit_cell_mol_for_atom = mi
+!                 end
+!              end
+!           end
+!        end
+!     geom1.create(3,n_unit_cell_atoms) 
+!     do h1 = -1,1                       ! <<< Now make connections to neighbouring cells
+!     do h2 = -1,1
+!     do h3 = -1,1
+!        if (h1==0 AND h2==0 AND h3==0) cycle
+!        offset = matmul(rcm,[h1,h2,h3])
+!        geom1 = geom0 + spread(offset,2,n_unit_cell_atoms)
+!        do i = 1,n_unit_cell_atoms      ! (0,0,0) unit cell atoms
+!           pos_i = geom0(:,i)
+!           parent_i = .crystal.asym_atom_for_unit_cell_atom(i) 
+!           atom_i.atomic_number = .asymmetric_cell_atom(parent_i).atomic_number
+!           atom_i.pos = pos_i
+!           mi = unit_cell_mol_for_atom(i) ! Atom i belongs to mol "mi"
+!           do j = 1,n_unit_cell_atoms   ! (h1,h2,h3) unit cell atoms 
+!              pos_j = geom1(:,j)        ! Gross test for closeness
+!              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
+!              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
+!              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
+!              parent_j = .crystal.asym_atom_for_unit_cell_atom(j) 
+!              atom_j.atomic_number = .asymmetric_cell_atom(parent_j).atomic_number
+!              atom_j.pos = pos_j
+!              if (atom_i.is_bonded_to(atom_j)) then
+!                 new(1)[:] = [h1,h2,h3,j]
+!                 .unit_cell_connection(i).element.append(new)
+!                 mj = unit_cell_mol_for_atom(j)
+!                 if (mj<mi) then        ! replace all previous by the lowest mol
+!                    where (unit_cell_mol_for_atom==mi) unit_cell_mol_for_atom = mj
+!                    mi = mj             ! replace mol for atom i too
+!                 else if (mj>mi) then
+!                    where (unit_cell_mol_for_atom==mj) unit_cell_mol_for_atom = mi
+!                 end
+!              end
+!           end
+!        end
+!     end
+!     end
+!     end
+!     geom1.destroy; geom0.destroy
+!     new.destroy
+!     ! Now make the .unit_cell_mol_for_atom list consecutive
+!     .unit_cell_mol_for_atom = unit_cell_mol_for_atom
+!     unique => unit_cell_mol_for_atom.unique_elements
+!     unique.sort
+!     .n_unit_cell_mols = unique.dim
+!     do mi = 1,.n_unit_cell_mols
+!        mj = unique(mi)
+!        if (mj==mi) cycle
+!        where (unit_cell_mol_for_atom==mj) .unit_cell_mol_for_atom = mi
+!     end
+!     unique.destroy
+!     unit_cell_mol_for_atom.destroy
+!   end
 
    z_factor(atom) result (res)
    ! The Z crystallographic factor for ".fragment_geometry", defined as the
@@ -1302,81 +1660,81 @@ contains
 !      gi.destroy
 !   end
 
-   make_inverted_symops ::: leaky, private
-   ! Determine which of the Seitz symops generate geometries which are related
-   ! by inversion. Really, we should check the cartesian seitz matrices, but and
-   ! inversion is just -1 times the identity, to the cartesian inversion
-   ! operator is just the same as the crystal-axis inversion operator, with -1
-   ! down the diagonal.
-   ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
-      n,i,j :: INT
-      inverted :: BIN
-      .inverted_symop.create(.spacegroup.n_seitz)
-      .inverted_symop = 0
-      n = 0
-      do i = 2,.spacegroup.n_seitz
-         do j = 1,i-1
-            inverted = .spacegroup.seitz(1:3,1:3,i).equals( &
-                      -.spacegroup.seitz(1:3,1:3,j))
-            if (inverted) then
-               n = n + 1
-               .inverted_symop(i) = j
-               exit
-            end
-         end
-      end
-      .n_inverted_symops = n
-   end
-
-   make_translated_symops ::: leaky, private
-   ! Determine which of the Seitz symops generate geometries which are related
-   ! by translation, (including translation by the zero vector), but not
-   ! inversion. Really we should check the cartesian seitz operators, but the
-   ! identity oprator has the same representation in either the crystal or
-   ! cartesian axis systems.
-   ENSURE(.inverted_symop.created,"no inverted_symop array")
-   ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
-      i,j :: INT
-      translated :: BIN
-      .translated_symop.create(.spacegroup.n_seitz)
-      .translated_symop = 0
-      do i = 1,.spacegroup.n_seitz
-         .translated_symop(i) = i
-         if (.inverted_symop(i)>0) cycle
-         do j = 1,i-1
-            translated = .spacegroup.seitz(1:3,1:3,i).equals( &
-                         .spacegroup.seitz(1:3,1:3,j) )
-            if (translated) then
-               .translated_symop(i) = j
-               exit
-            end
-         end
-      end
-   end
-
-   make_unique_SF_symops ::: leaky, private
-   ! Determine which are the structure-factor unique symops, i.e. those which
-   ! generate fragment geometries which are different than a translation or
-   ! inversion. This list should be a superset of the reduced symops.
-   ENSURE(.inverted_symop.created,  "no inverted_symop array")
-   ENSURE(.translated_symop.created,"no translated_symop array")
-      n,i :: INT
-      n = 0
-      do i = 1,.spacegroup.n_seitz
-         if (.inverted_symop(i)>0) cycle
-         if (.translated_symop(i)<i) cycle ! Only true translations count
-         n = n + 1
-      end
-      .n_unique_SF_symops = n
-      .unique_SF_symop.create(n)
-      n = 0
-      do i = 1,.spacegroup.n_seitz
-         if (.inverted_symop(i)>0) cycle
-         if (.translated_symop(i)<i) cycle
-         n = n + 1
-         .unique_SF_symop(n) = i
-      end
-   end
+!   make_inverted_symops ::: leaky, private
+!   ! Determine which of the Seitz symops generate geometries which are related
+!   ! by inversion. Really, we should check the cartesian seitz matrices, but and
+!   ! inversion is just -1 times the identity, to the cartesian inversion
+!   ! operator is just the same as the crystal-axis inversion operator, with -1
+!   ! down the diagonal.
+!   ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
+!      n,i,j :: INT
+!      inverted :: BIN
+!      .inverted_symop.create(.spacegroup.n_seitz)
+!      .inverted_symop = 0
+!      n = 0
+!      do i = 2,.spacegroup.n_seitz
+!         do j = 1,i-1
+!            inverted = .spacegroup.seitz(1:3,1:3,i).equals( &
+!                      -.spacegroup.seitz(1:3,1:3,j))
+!            if (inverted) then
+!               n = n + 1
+!               .inverted_symop(i) = j
+!               exit
+!            end
+!         end
+!      end
+!      .n_inverted_symops = n
+!   end
+!
+!   make_translated_symops ::: leaky, private
+!   ! Determine which of the Seitz symops generate geometries which are related
+!   ! by translation, (including translation by the zero vector), but not
+!   ! inversion. Really we should check the cartesian seitz operators, but the
+!   ! identity oprator has the same representation in either the crystal or
+!   ! cartesian axis systems.
+!   ENSURE(.inverted_symop.created,"no inverted_symop array")
+!   ENSURE(.spacegroup.seitz.created,"Seitz matrices not initialised")
+!      i,j :: INT
+!      translated :: BIN
+!      .translated_symop.create(.spacegroup.n_seitz)
+!      .translated_symop = 0
+!      do i = 1,.spacegroup.n_seitz
+!         .translated_symop(i) = i
+!         if (.inverted_symop(i)>0) cycle
+!         do j = 1,i-1
+!            translated = .spacegroup.seitz(1:3,1:3,i).equals( &
+!                         .spacegroup.seitz(1:3,1:3,j) )
+!            if (translated) then
+!               .translated_symop(i) = j
+!               exit
+!            end
+!         end
+!      end
+!   end
+!
+!   make_unique_SF_symops ::: leaky, private
+!   ! Determine which are the structure-factor unique symops, i.e. those which
+!   ! generate fragment geometries which are different than a translation or
+!   ! inversion. This list should be a superset of the reduced symops.
+!   ENSURE(.inverted_symop.created,  "no inverted_symop array")
+!   ENSURE(.translated_symop.created,"no translated_symop array")
+!      n,i :: INT
+!      n = 0
+!      do i = 1,.spacegroup.n_seitz
+!         if (.inverted_symop(i)>0) cycle
+!         if (.translated_symop(i)<i) cycle ! Only true translations count
+!         n = n + 1
+!      end
+!      .n_unique_SF_symops = n
+!      .unique_SF_symop.create(n)
+!      n = 0
+!      do i = 1,.spacegroup.n_seitz
+!         if (.inverted_symop(i)>0) cycle
+!         if (.translated_symop(i)<i) cycle
+!         n = n + 1
+!         .unique_SF_symop(n) = i
+!      end
+!   end
 
    is_same_geometry(geom_i,geom_j) result(res) ::: private
    ! Return TRUE if the geometries "geom_i" and "geom_j" in fractional
@@ -1920,19 +2278,19 @@ contains
 !      res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
 !   end
 
-   unique_SF_symop_mat(u) result (res) ::: private
-   ! Return the "u"-th reduced symop matrix in the unique list made by routine
-   ! ".make_reduced_symops".
-      u :: INT
-      res :: MAT{REAL}(3,3)
-   ENSURE(.unique_SF_symop.created,"no unique_SF_symops!")
-   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
-   ENSURE(u>0,"symop index out of range")
-      r :: INT
-      r = .unique_SF_symop(u)
-      res = .spacegroup.seitz(1:3,1:3,r)
-   !  res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
-   end
+!   unique_SF_symop_mat(u) result (res) ::: private
+!   ! Return the "u"-th reduced symop matrix in the unique list made by routine
+!   ! ".make_reduced_symops".
+!      u :: INT
+!      res :: MAT{REAL}(3,3)
+!   ENSURE(.unique_SF_symop.created,"no unique_SF_symops!")
+!   ENSURE(u<=.n_unique_SF_symops,"symop index out of range")
+!   ENSURE(u>0,"symop index out of range")
+!      r :: INT
+!      r = .unique_SF_symop(u)
+!      res = .spacegroup.seitz(1:3,1:3,r)
+!   !  res = .spacegroup.seitz(1:3,1:3,.reduced_symop(r))
+!   end
 
 !   get_unique_SF_symop_mat(u,res) ::: private
 !   ! Return the "u"-th reduced symop matrix in the unique list made by routine
@@ -2525,7 +2883,7 @@ contains
       stdout.show("Thermal smearing model       = ",.thermal_smearing_model)
     ! .put_reduced_symop_data
     ! .put_stabilizer_symops 
-      .put_inv_trans_symop_data
+    ! .put_inv_trans_symop_data
       .put_fragment_geometry(atom)
       .put_unique_fragment_geometry(atom)
       .put_fragment_cell_geometry(atom)
@@ -2574,6 +2932,44 @@ contains
 !      stdout.dash(int_fields=5)
 !   end
 
+!   put_inv_trans_symop_data ::: private
+!   ! Put out the inverted translated symop data
+!   ENSURE(.inverted_symop.created,"no inverted_symop")
+!   ENSURE(.translated_symop.created,"no translated_symop")
+!      n :: INT
+!      inverted,translated :: BIN
+!      stdout.flush
+!      stdout.text("Crystal Inversion/Translation related symop information:")
+!      stdout.flush
+!      stdout.text("NOTE: this table IS used in structure factor calculations")
+!      stdout.flush
+!      stdout.dash(int_fields=4)
+!      stdout.put("Seitz",int_width=TRUE)
+!      stdout.put("Inv.",int_width=TRUE)
+!      stdout.put("Trans.",int_width=TRUE)
+!      stdout.flush
+!      stdout.put("Symop",int_width=TRUE)
+!      stdout.put("of?",int_width=TRUE)
+!      stdout.put("of?",int_width=TRUE)
+!      stdout.put("Unique?",int_width=TRUE)
+!      stdout.flush
+!      stdout.dash(int_fields=4)
+!      do n = 1,.spacegroup.n_seitz
+!         stdout.put(n)
+!         inverted = .inverted_symop(n)>0
+!         if (inverted) then;   stdout.put(.inverted_symop(n))
+!         else;                 stdout.tab(int_fields=1)
+!         end
+!         translated = .translated_symop(n)<n
+!         stdout.put(.translated_symop(n))
+!         if (inverted OR translated) then; stdout.put("No",int_width=TRUE)
+!         else;                             stdout.put("Yes",int_width=TRUE)
+!         end
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=4)
+!   end
+
    put_stabilizer_symops ::: private
    ! Put out the stabilizer symop data
    ENSURE(.stabilizer_symop.created,"no stabilizer_symop")
@@ -2583,44 +2979,6 @@ contains
       stdout.show("n_stabilizer_symops = ",.n_stabilizer_symops)
       stdout.flush
       stdout.put(.stabilizer_symop,"column")
-   end
-
-   put_inv_trans_symop_data ::: private
-   ! Put out the inverted translated symop data
-   ENSURE(.inverted_symop.created,"no inverted_symop")
-   ENSURE(.translated_symop.created,"no translated_symop")
-      n :: INT
-      inverted,translated :: BIN
-      stdout.flush
-      stdout.text("Crystal Inversion/Translation related symop information:")
-      stdout.flush
-      stdout.text("NOTE: this table IS used in structure factor calculations")
-      stdout.flush
-      stdout.dash(int_fields=4)
-      stdout.put("Seitz",int_width=TRUE)
-      stdout.put("Inv.",int_width=TRUE)
-      stdout.put("Trans.",int_width=TRUE)
-      stdout.flush
-      stdout.put("Symop",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("Unique?",int_width=TRUE)
-      stdout.flush
-      stdout.dash(int_fields=4)
-      do n = 1,.spacegroup.n_seitz
-         stdout.put(n)
-         inverted = .inverted_symop(n)>0
-         if (inverted) then;   stdout.put(.inverted_symop(n))
-         else;                 stdout.tab(int_fields=1)
-         end
-         translated = .translated_symop(n)<n
-         stdout.put(.translated_symop(n))
-         if (inverted OR translated) then; stdout.put("No",int_width=TRUE)
-         else;                             stdout.put("Yes",int_width=TRUE)
-         end
-         stdout.flush
-      end
-      stdout.dash(int_fields=4)
    end
 
    put_fragment_geometry(atom) ::: private
