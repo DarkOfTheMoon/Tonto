@@ -93,8 +93,13 @@ contains
       if (b.d2_interpolator.created) .d2_interpolator.create_copy(b.d2_interpolator)
    end
 
-   set_defaults ::: get_from(BASIS)
+   set_defaults
    ! Create and set up a default basis set
+      .label   = " "
+      .n_shell = 0
+      .n_bf    = 0
+      .n_prim  = 0
+      .use_r2_interpolation = TRUE 
    end
 
    update ::: get_from(BASIS)
@@ -143,6 +148,7 @@ contains
        case ("shells=                 "); .read_shell
        case ("tonto-style=            "); .read_tonto_style
        case ("units=                  "); SLATERBASIS::read_units
+       case ("use_r2_interpolation=   "); .read_use_r2_interpolation
        ! These are only for making custom tables for the list type
        case ("-- Options for tables --")
        case ("flush                   "); stdout.flush
@@ -189,6 +195,11 @@ contains
       the_keys.destroy
       .shell.read_data
       .update
+   end
+
+   read_use_r2_interpolation
+   ! Read in the configuration string
+      stdin.read(.use_r2_interpolation)
    end
 
    analyse_configuration 
@@ -492,31 +503,70 @@ contains
      R.destroy
    end
 
-   make_interpolated_density_grid(density_grid,pt,pos)
-   ! Make the interpolated "density_grid" for the supplied points "pt" from the real
-   ! slater atomic orbitals, as fitted by coppens, assuming the orbitals are at
-   ! position "pos".
+!   make_interpolated_density_grid(density_grid,pt,pos)
+!   ! Make the interpolated "density_grid" for the supplied points "pt" from the real
+!   ! slater atomic orbitals, as fitted by coppens, assuming the orbitals are at
+!   ! position "pos".
+!     self :: IN
+!     density_grid :: VEC{REAL}, OUT
+!     pt :: MAT{REAL}, IN
+!     pos :: VEC{REAL}(3), IN
+!   ENSURE(pt.dim2==3,"wrong dimension for points array")
+!   ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
+!   ENSURE(.interpolator.created,"no interpolator defined!")
+!     R :: VEC{REAL}*
+!     n_pt,n :: INT
+!     x, y, z :: REAL
+!     n_pt = pt.dim1
+!     R.create(n_pt)
+!     do n = 1,n_pt
+!        x = pt(n,1) - pos(1)
+!        y = pt(n,2) - pos(2)
+!        z = pt(n,3) - pos(3)
+!        R(n) = sqrt(x*x + y*y + z*z)
+!     end
+!     ! Now get the interpolated density values
+!     density_grid = .interpolator.values_for(R)
+!     R.destroy
+!   end
+
+   add_interpolated_density(density,pt,pos)
+   ! Make the interpolated "density" for the supplied points "pt" from the real
+   ! slater atomic orbitals assuming the orbitals are at position "pos". This
+   ! fast version skips tests and makes assumptions.
      self :: IN
-     density_grid :: VEC{REAL}, OUT
+     density :: VEC{REAL}, OUT
      pt :: MAT{REAL}, IN
      pos :: VEC{REAL}(3), IN
-   ENSURE(pt.dim2==3,"wrong dimension for points array")
-   ENSURE(density_grid.dim==pt.dim1,"inconsistent number of points")
-   ENSURE(.interpolator.created,"no interpolator defined!")
+
+   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
+   ! ENSURE(.interpolator.created,"no interpolator defined!")
+
      R :: VEC{REAL}*
      n_pt,n :: INT
-     x, y, z :: REAL
+     x,y,z :: REAL
+
      n_pt = pt.dim1
      R.create(n_pt)
+
      do n = 1,n_pt
         x = pt(n,1) - pos(1)
         y = pt(n,2) - pos(2)
         z = pt(n,3) - pos(3)
-        R(n) = sqrt(x*x + y*y + z*z)
+      ! R(n) = sqrt(x*x + y*y + z*z)
+        R(n) = x*x + y*y + z*z
      end
+
      ! Now get the interpolated density values
-     density_grid = .interpolator.values_for(R)
+     if (.use_r2_interpolation) then
+        .interpolator.add_values_for(R,density)
+     else
+        .interpolator.add_values_for_squared(R,density)
+     end
+
      R.destroy
+
    end
 
    fast_interpolated_density(density,pt,pos)
@@ -527,14 +577,18 @@ contains
      density :: VEC{REAL}, OUT
      pt :: MAT{REAL}, IN
      pos :: VEC{REAL}(3), IN
+
    ! ENSURE(pt.dim2==3,"wrong dimension for points array")
    ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
    ! ENSURE(.interpolator.created,"no interpolator defined!")
+
      R :: VEC{REAL}*
      n_pt,n :: INT
      x,y,z :: REAL
+
      n_pt = pt.dim1
      R.create(n_pt)
+
      do n = 1,n_pt
         x = pt(n,1) - pos(1)
         y = pt(n,2) - pos(2)
@@ -542,10 +596,13 @@ contains
       ! R(n) = sqrt(x*x + y*y + z*z)
         R(n) = x*x + y*y + z*z
      end
+
      ! Now get the interpolated density values
-   ! density = .interpolator.fast_values_for(R)
-     density = .interpolator.fast_values_for_squared(R)
+     density = .interpolator.fast_values_for(R)
+   ! density = .interpolator.fast_values_for_squared(R)
+
      R.destroy
+
    end
 
    fast_interpolated_density(density,d_density,pt,pos)
@@ -850,26 +907,33 @@ contains
 !      .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_value_at_radius,tol)
 !   end
 
-   make_interpolator(interpolator,tol) ::: leaky
+   make_interpolator(interpolator) ::: leaky
    ! Make the interpolator for the slater atom density in terms of the radial
    ! distance squared (to avoid square roots). If present, "interpolator" is
    ! used as a template to get the settings needed. If present, "tol" defines
    ! the length of the table, so that the smallest value just exceeds "tol". 
      interpolator :: INTERPOLATOR*, optional
-     tol :: REAL, optional
+
    ENSURE(.shell.created,"no slater orbitals defined!")
+
       if (present(interpolator)) then
       if (interpolator.created) then
          .interpolator.destroy
          .interpolator.create_copy(interpolator)
       end
       end
+
       if (.interpolator.destroyed) then
          .interpolator.create
       end
-      .shell.set_saved_self ! Used by function below
-    ! .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_at_sqrt_radius2,tol)
-      .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_value_at_radius,tol=tol)
+
+      .shell.set_saved_self                    ! Used by function below
+      if (.use_r2_interpolation) then
+         .interpolator.set_table_length(900d0) ! 30 Bohr table
+         .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_at_sqrt_radius2)
+      else
+         .interpolator.set_even_spaced_data(VEC{SLATERSHELL}::density_value_at_radius)
+      end
    end
 
    interpolator_table_length(tol) result (length)

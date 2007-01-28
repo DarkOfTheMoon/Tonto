@@ -5293,31 +5293,41 @@ contains
    ENSURE(.cluster.asymmetric_cell_atom.created,"no cluster asymmetric cell atoms")
    ENSURE(.cluster.crystal.created,"no cluster crystal")
    ENSURE(.atom.created,"no atom list")
+
       fragment_atom :: VEC{ATOM}*
+
       .isosurface.destroy
       .isosurface.create(.atom)
+
       ! This should be created within the cluster !
       ! ... should a .saved molecule exist?
       ! ... does the .saved molecule has the same fragment atom list?
       ! ... was the .saved molecule used as the fragment? then we can eliminate
       ! the leak
       .cluster.create_fragment_atom_list(fragment_atom) ! <-- bad leak here
+
       .isosurface.grid.set_defaults(fragment_atom,destroy_atom=TRUE) ! Make Hirshfeld for fragment
       .isosurface.grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
       .isosurface.grid.set_points_widths_origin
-      .isosurface.iso_kind = "stockholder_weight"  ! WARNING: The above will leak
-    ! .isosurface.interpolator.destroy             ! Creating this interpolator
-    ! .isosurface.interpolator.create              ! implies it will always be used 
-    ! if (.cluster.generation_method=="for_hirshfeld_surface") then
-    !    .isosurface.interpolator.set_table_length(.cluster.radius)
-    ! end             ! The settings in this interpolator may be overridden by user
+
+      .isosurface.iso_kind = "stockholder_weight"  
+
+      ! Creating this interpolator implies it will always be used 
+      if (.isosurface.interpolator.destroyed) then
+         .isosurface.interpolator.create  
+         .isosurface.interpolator.set_table_eps(.cluster.atom_density_cutoff)
+      end
+
       !!!!!!!!!!!!!!!!!!!!!!!!!
       .isosurface.read_keywords
       !!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Use unit cell as bbox if requested
       if (.isosurface.grid.use_unit_cell_as_bbox) then
          WARN("resetting plot axes, plot widths from unit cell")
          .isosurface.grid.set_bbox_from_unit_cell(.cluster.crystal.unit_cell)
       end
+
    end
 
    read_dftgrid ::: leaky
@@ -20882,6 +20892,62 @@ contains
 ! Stockholder/promolecule density
 ! *******************************
 
+!   make_Hirshfeld_density_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_Hirshfeld_density_grid, LABEL=>"stockholder_density_grid")
+!   ! Work out the property density on ".grid" using ".natural orbitals" and the
+!   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+!   end
+
+   make_Hirshfeld_density_grid(density_grid,pt)
+   ! WARNING: this version calls directly the interpolated slaterbasis routine.
+   ! Make the Hirschfeld stockholder "density_grid" for the supplied points
+   ! "pt". The promolecule electron density used to define the Hirshfeld surface
+   ! is calculated as follows: if a slater basis set is available, then that is
+   ! used to calculate the promolecule electron density; if a coppens basis set
+   ! is available, then that is used to get the promolecule density; otherwise,
+   ! if restricted real natural orbitals are available for all atoms (in terms
+   ! of gaussian basis functions), then those are used to calculate the
+   ! promolecule densisties. In principle, we can caculate Hirshfeld surfaces
+   ! for *molecular* fragment densities, rather than promolecule densities as
+   ! done here. That would require a different keyword and different code.
+     self :: IN
+     density_grid :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+
+!  ENSURE(.cluster.created, "no cluster data")
+!  ENSURE(.cluster.info_made, "no cluster info")
+!  ENSURE(.cluster.radius>ZERO, "cluster radius is zero")
+!  ENSURE(.atom.created,"no atoms")
+!  ENSURE(.atom.has_all_slater_bases,"no slater bases")
+
+     rho_fragment :: VEC{REAL}*
+     n_pt, a :: INT
+
+     n_pt = density_grid.dim
+     rho_fragment.create(n_pt)
+     rho_fragment = ZERO
+
+     do a = 1,.cluster.n_atoms
+        if (NOT .cluster.is_fragment_atom(a)) cycle
+        .atom(a).slaterbasis.add_interpolated_density(rho_fragment,pt,.atom(a).pos)
+     end
+     density_grid = rho_fragment
+
+     do a = 1,.cluster.n_atoms
+        if (.cluster.is_fragment_atom(a)) cycle
+        .atom(a).slaterbasis.add_interpolated_density(density_grid,pt,.atom(a).pos)
+     end
+
+     where (density_grid>ZERO)
+        density_grid = rho_fragment/density_grid
+     elsewhere
+        density_grid = ZERO
+     end
+
+     rho_fragment.destroy
+
+   end
+
+
    make_stockholder_density_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_stockholder_density_grid, LABEL=>"stockholder_density_grid")
    ! Work out the property density on ".grid" using ".natural orbitals" and the
    ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
@@ -22089,7 +22155,7 @@ contains
         case("promolecule_density              "); .isosurface.cubify(MOLECULE::promolecule_density_grid)
         case("spin_density                     "); .isosurface.cubify(MOLECULE::spin_density_grid)
         case("stockholder_density              "); .isosurface.cubify(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight               "); .isosurface.cubify(MOLECULE::stockholder_density_grid)
+        case("stockholder_weight               "); .isosurface.cubify(MOLECULE::Hirshfeld_density_grid)
         case("true_fermi_mobility              "); .isosurface.cubify(MOLECULE::true_fermi_mobility_grid)
         case("tsirelson_elf                    "); .isosurface.cubify(MOLECULE::Tsirelson_ELF_grid)
         case default;                UNKNOWN(.isosurface.iso_kind)
@@ -22135,7 +22201,7 @@ contains
         case("promolecule_density             "); .isosurface.plot_function(MOLECULE::promolecule_density_grid)
         case("spin_density                    "); .isosurface.plot_function(MOLECULE::spin_density_grid)
         case("stockholder_density             "); .isosurface.plot_function(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::stockholder_density_grid)
+        case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::Hirshfeld_density_grid)
         case("true_fermi_mobility             "); .isosurface.plot_function(MOLECULE::true_fermi_mobility_grid)
         case("tsirelson_elf                   "); .isosurface.plot_function(MOLECULE::Tsirelson_ELF_grid)
         case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
@@ -22186,7 +22252,7 @@ contains
         case("promolecule_density             "); .isosurface.cubify(MOLECULE::promolecule_density_grid)
         case("spin_density                    "); .isosurface.cubify(MOLECULE::spin_density_grid)
         case("stockholder_density             "); .isosurface.cubify(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight              "); .isosurface.cubify(MOLECULE::stockholder_density_grid)
+        case("stockholder_weight              "); .isosurface.cubify(MOLECULE::Hirshfeld_density_grid)
         case("true_fermi_mobility             "); .isosurface.cubify(MOLECULE::true_fermi_mobility_grid)
         case("tsirelson_elf                   "); .isosurface.cubify(MOLECULE::Tsirelson_ELF_grid)
         case("grad_rho_on_rho                 "); .isosurface.cubify(MOLECULE::grad_rho_on_rho_grid)
@@ -22238,7 +22304,7 @@ contains
         case("promolecule_density             "); .isosurface.plot_function(MOLECULE::promolecule_density_grid)
         case("spin_density                    "); .isosurface.plot_function(MOLECULE::spin_density_grid)
         case("stockholder_density             "); .isosurface.plot_function(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::stockholder_density_grid)
+        case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::Hirshfeld_density_grid)
         case("true_fermi_mobility             "); .isosurface.plot_function(MOLECULE::true_fermi_mobility_grid)
         case("tsirelson_elf                   "); .isosurface.plot_function(MOLECULE::Tsirelson_ELF_grid)
         case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
@@ -22253,38 +22319,39 @@ contains
    ! prior to doing the plot to take advantage of speed-ups.
       plot_kind :: STR
       interpolator :: INTERPOLATOR*
+
    ENSURE(.atom.created,"no atoms")
+
       do_interpolator :: BIN
-      do_interpolator = plot_kind=="stockholder_density" OR &
-                        plot_kind=="stockholder_weight"  OR &
-                        plot_kind=="promolecule_density" OR &
-                        plot_kind=="unit_cell_promolecule_density"
+
+      do_interpolator = plot_kind=="stockholder_density" &
+                     OR plot_kind=="stockholder_weight"  &
+                     OR plot_kind=="promolecule_density" &
+                     OR plot_kind=="unit_cell_promolecule_density"
+
       if (NOT do_interpolator) return
-      ! If we get here, the interpolator information will be used
-      if (interpolator.created) then  ! Only if the user enters it
-         if (.slaterbasis.created)  .make_slater_interpolators(interpolator)
-         if (.coppensbasis.created) .make_coppens_interpolators(interpolator)
-      else if (.cluster.created) then ! Default: use cluster atom density cutoff
-         if (.slaterbasis.created)  .make_slater_interpolators(tol=.cluster.atom_density_cutoff)
-         if (.coppensbasis.created) .make_coppens_interpolators(tol=.cluster.atom_density_cutoff)
-      else                            ! Use global default
-         if (.slaterbasis.created)  .make_slater_interpolators
-         if (.coppensbasis.created) .make_coppens_interpolators
-      end
+
+      WARN_IF(interpolator.destroyed,"using default interpolators")
+
+      if (.slaterbasis.created)  .make_slater_interpolators(interpolator)
+      if (.coppensbasis.created) .make_coppens_interpolators(interpolator)
+
    end
 
-   make_slater_interpolators(interpolator,tol) ::: leaky
+   make_slater_interpolators(interpolator) ::: leaky
    ! Make the slaterbasis orbital density interpolators.
    ! Make them using the defaults set in a give "interpolator".
-   ! Otherwise use an atom density cutoff "tol".
    ! NOTE: any existing interpolators are destroyed first
       interpolator :: INTERPOLATOR*, optional
-      tol :: REAL, optional
+
    ENSURE(.slaterbasis.created,"no slaterbasis")
+
       i :: INT
-      do i = 1,.slaterbasis.dim   ! Make the interpolators
-        .slaterbasis(i).make_interpolator(interpolator,tol)
-      end                         ! If the atom bases are resolved, they now have interpolators
+
+      do i = 1,.slaterbasis.dim   
+        .slaterbasis(i).make_interpolator(interpolator)
+      end                         
+
    end
 
    make_coppens_interpolators(interpolator,tol) ::: leaky
@@ -22637,6 +22704,15 @@ contains
       pt :: MAT{REAL}, IN
       self :: MOLECULE*; self => saved_self
       .make_stockholder_density_grid(g,pt)
+   end
+
+   Hirshfeld_density_grid(g,pt) ::: selfless
+   ! Work out the Hirshfeld density grid "g" for a series of points.
+   ! WARNING: this version cuts corners.
+      g  :: VEC{REAL}, OUT
+      pt :: MAT{REAL}, IN
+      self :: MOLECULE*; self => saved_self
+      .make_Hirshfeld_density_grid(g,pt)
    end
 
    promolecule_density_grid(g,pt) ::: selfless
