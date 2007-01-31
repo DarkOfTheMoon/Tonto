@@ -5332,31 +5332,24 @@ contains
    end
 
    read_CX_isosurface ::: leaky
-   ! Read in special crystalexplorer isosurface data. This only works if a
-   ! previous cluster has ben defined. This CX isosurface differs from a normal
+   ! Read in special crystalexplorer isosurface data. This only works
+   ! if there is a .saved.cluster created . This CX isosurface differs from a normal
    ! isosurface in that the default box sizes for the isosurface are set from
    ! the cluster fragment (as opposed to the .atom list for normal isosurfaces),
    ! and there is a default isosurface kind, which is the "stockholder_density".
    ! NOTE: the isosurface has its own plotgrid, different from that used in 
    ! normal density plots. 
-   ENSURE(.cluster.created,"no cluster data, use cluster= keyword")
-   ENSURE(.cluster.asymmetric_cell_atom.created,"no cluster asymmetric cell atoms")
-   ENSURE(.cluster.crystal.created,"no cluster crystal")
-   ENSURE(.atom.created,"no atom list")
 
-      fragment_atom :: VEC{ATOM}*
+   ENSURE(.saved.created,"no saved molecule")
+   ENSURE(.saved.cluster.created,"no saved cluster data")
+   ENSURE(.saved.cluster.info_made, "no saved cluster info")
+   ENSURE(.saved.atom.created,"no saved atom list")
+   ENSURE(.atom.created,"no atom list")
 
       .isosurface.destroy
       .isosurface.create(.atom)
 
-      ! This should be created within the cluster !
-      ! ... should a .saved molecule exist?
-      ! ... does the .saved molecule has the same fragment atom list?
-      ! ... was the .saved molecule used as the fragment? then we can eliminate
-      ! the leak
-      .cluster.create_fragment_atom_list(fragment_atom) ! <-- bad leak here
-
-      .isosurface.grid.set_defaults(fragment_atom,destroy_atom=TRUE) ! Make Hirshfeld for fragment
+      .isosurface.grid.set_defaults(.saved.atom)
       .isosurface.grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
       .isosurface.grid.set_points_widths_origin
 
@@ -5365,7 +5358,7 @@ contains
       ! Creating this interpolator implies it will always be used 
       if (.isosurface.interpolator.destroyed) then
          .isosurface.interpolator.create  
-         .isosurface.interpolator.set_table_eps(.cluster.atom_density_cutoff)
+         .isosurface.interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
       end
 
       !!!!!!!!!!!!!!!!!!!!!!!!!
@@ -5375,7 +5368,7 @@ contains
       ! Use unit cell as bbox if requested
       if (.isosurface.grid.use_unit_cell_as_bbox) then
          WARN("resetting plot axes, plot widths from unit cell")
-         .isosurface.grid.set_bbox_from_unit_cell(.cluster.crystal.unit_cell)
+         .isosurface.grid.set_bbox_from_unit_cell(.saved.cluster.crystal.unit_cell)
       end
 
    end
@@ -6499,9 +6492,7 @@ contains
 
    put_crystal
    ! Output the current crystal
-      if (.atom.created) then; .crystal.put(.atom)
-      else;                    .crystal.put
-      end
+      .crystal.put
    end
 
    put_cluster
@@ -20945,27 +20936,33 @@ contains
      density_grid :: VEC{REAL}, OUT
      pt :: MAT{REAL}, IN
 
-!  ENSURE(.cluster.created, "no cluster data")
-!  ENSURE(.cluster.info_made, "no cluster info")
-!  ENSURE(.cluster.radius>ZERO, "cluster radius is zero")
+!  ENSURE(.saved.created, "no saved molecule")
+!  ENSURE(.saved.cluster.created, "no saved cluster data")
+!  ENSURE(.saved.cluster.info_made, "no saved cluster info")
+!  ENSURE(.saved.cluster.radius>ZERO, "saved cluster radius is zero")
+!  ENSURE(.saved.cluster.n_atoms==.atom.dim,"inconsistent saved cluster and atom list")
 !  ENSURE(.atom.created,"no atoms")
-!  ENSURE(.atom.has_all_slater_bases,"no slater bases")
+!  ENSURE(.atom.has_all_density_data,"no atomic orbitals")
 
      rho_fragment :: VEC{REAL}*
-     n_pt, a :: INT
+     is_fragment_atom :: VEC{BIN}*
+     n_atoms,n_pt,a :: INT
 
      n_pt = density_grid.dim
      rho_fragment.create(n_pt)
      rho_fragment = ZERO
 
-     do a = 1,.cluster.n_atoms
-        if (NOT .cluster.is_fragment_atom(a)) cycle
+     n_atoms = .atom.dim
+     is_fragment_atom => .saved.cluster.is_fragment_atom
+
+     do a = 1,n_atoms
+        if (NOT is_fragment_atom(a)) cycle
         .atom(a).slaterbasis.add_interpolated_density(rho_fragment,pt,.atom(a).pos)
      end
      density_grid = rho_fragment
 
-     do a = 1,.cluster.n_atoms
-        if (.cluster.is_fragment_atom(a)) cycle
+     do a = 1,n_atoms
+        if (is_fragment_atom(a)) cycle
         .atom(a).slaterbasis.add_interpolated_density(density_grid,pt,.atom(a).pos)
      end
 
@@ -20999,20 +20996,24 @@ contains
      self :: IN
      density_grid :: VEC{REAL}, OUT
      pt :: MAT{REAL}, IN
-   ENSURE(.cluster.created, "no cluster data")
-   ENSURE(.cluster.info_made, "no cluster info")
-   ENSURE(.cluster.radius>ZERO, "cluster radius is zero")
+
+   ENSURE(.saved.created, "no saved molecule")
+   ENSURE(.saved.cluster.created, "no saved cluster data")
+   ENSURE(.saved.cluster.info_made, "no saved cluster info")
+   ENSURE(.saved.cluster.radius>ZERO, "saved cluster radius is zero")
+   ENSURE(.saved.cluster.n_atoms==.atom.dim,"inconsistent saved cluster and atom list")
    ENSURE(.atom.created,"no atoms")
    ENSURE(.atom.has_all_density_data,"no atomic orbitals")
+
      grid,rho_fragment :: VEC{REAL}*
+     is_fragment_atom :: VEC{BIN}*
      !box :: MAT{REAL}(2,3)
      !sphere_pos,diff :: VEC{REAL}(3)
      !sphere_radius,dist,cutoff :: REAL
      !isosurface_skip :: BIN
      !min_exp :: REAL
-     n_pt, a :: INT
-     n_pt = density_grid.dim
-     grid.create(n_pt)
+     n_atoms,n_pt,a :: INT
+
      ! Make the central position and radius of the cluster
      ! pt.make_enclosing_sphere(sphere_pos,sphere_radius)
      ! Make the limits of the enclosing box
@@ -21035,10 +21036,17 @@ contains
      ! sets everything to zero outside the interpolation table range. This range
      ! should be chosen so that a given smallness is achieved for the density of
      ! *all* atoms before their contribution is set to zero.
+
+     n_pt = density_grid.dim
+     grid.create(n_pt)
      rho_fragment.create(n_pt)
      rho_fragment = ZERO
-     do a = 1,.cluster.n_atoms
-        if (NOT .cluster.is_fragment_atom(a)) cycle
+
+     n_atoms = .atom.dim
+     is_fragment_atom => .saved.cluster.is_fragment_atom
+
+     do a = 1,n_atoms
+        if (NOT is_fragment_atom(a)) cycle
         !min_exp = .atom(a).min_basis_exponent
         !if (.atom(a).atomic_number*exp(-min_exp*dist)> cutoff) then
         !if (dist>.atom(a).coppensbasis.interpolator.last_data_point) cycle
@@ -21050,9 +21058,10 @@ contains
         .atom(a).make_density_grid(grid,pt) ! this incorporates a skip step
         rho_fragment = rho_fragment + grid
      end
+
      density_grid = rho_fragment
-     do a = 1,.cluster.n_atoms
-        if (.cluster.is_fragment_atom(a)) cycle
+     do a = 1,n_atoms
+        if (is_fragment_atom(a)) cycle
         !min_exp = .atom(a).min_basis_exponent
         !if (.atom(a).atomic_number*exp(-min_exp*dist)> cutoff) then
         !if (dist>.atom(a).coppensbasis.interpolator.last_data_point) cycle
@@ -21064,6 +21073,7 @@ contains
         .atom(a).make_density_grid(grid,pt) ! this incorporates a skip step
         density_grid = density_grid + grid
      end
+
      ! density_grid = rho_fragment/density_grid
      do a = 1,size(density_grid)
        if (density_grid(a)>epsilon(ONE)) then
@@ -21072,8 +21082,10 @@ contains
          density_grid(a) = ZERO
        end
      end
+
      rho_fragment.destroy
      grid.destroy
+
    end
 
 
@@ -23986,40 +23998,58 @@ contains
    ENSURE(.crystal.created,"no crystal data")
       .cluster.destroy
       .crystal.make_fragment_data(.atom) 
-      DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom<=0),"some asymetric unit atoms were not found")
-      DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom>.atom.dim),"some frag atoms out of range")
-      .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+      DIE_IF(.crystal.asymmetric_unit_atom.destroyed,"atom list does not span asymmetric unit")
+      .cluster.create(.crystal)
       .cluster.read_keywords
    end
 
    create_cluster ::: leaky
    ! Create a new "self" by generating a cluster from information stored in
-   ! .cluster.  The original molecule is stored in .saved and can be recovered
-   ! by the "destroy_cluster" routine.
+   ! .cluster.  The original molecule replaced by the cluster fragent
+   ! and stored in .saved. The new molecule is created from the
+   ! cluster geometry.
      self :: PTR
    ENSURE(.crystal.created,"no crystal data")
    ENSURE(.cluster.created,"no cluster data")
    ENSURE(.cluster.info_made,"no cluster data")
-     fragment_atom :: VEC{ATOM}*
 
-     ! Save the original molecule
+     stdout.flush
+     stdout.text("Reset molecule to cluster fragment")
+     stdout.flush
+
+     ! Reset the .atom list to the cluster fragment
+     .atom.destroy
+     .cluster.create_fragment_atom_list(.atom) 
+     .set_atom_info
+     if (.basis_set_kind/=" ") then;
+        .set_basis_set_kind(.basis_set_kind)
+     else
+        .resolve_basis_info
+     end
+
+     stdout.flush
+     stdout.text("Save old molecule; make new cluster")
+     stdout.flush
+
+     ! Save this molecule & get a clean new molecule
      .save 
 
-     ! Making a new cluster from .saved CIF
+     ! The name for the new cluster
      .name  =  trim(.saved.name) // "_cluster"
+
+     ! If a CIF exists, copy that
      if (.saved.cif.created) .cif.create_copy(.saved.cif)
 
-     ! Create copies so that they can easily be destroyed without leaks
-     .cluster.create_copy(.saved.cluster)
-     .cluster.create_atom_list(.atom)                  ! Make new .atom list
-     .crystal.create_copy(.saved.cluster.crystal)      ! Make from the saved cluster crystal
-     .cluster.create_fragment_atom_list(fragment_atom) ! This uses the info already in .cluster
-     .crystal.make_fragment_data(fragment_atom)
-     fragment_atom.nullify_basis_part                  ! Bases were only pointer assigned
-     fragment_atom.destroy
+     ! We want the saved crystal 
+     ! It should be consistent with the cluster.
+     .crystal.create_copy(.saved.crystal) 
+
+     ! Make the new atom list from saved cluster
+     ! Don't make a new cluster, let the user do it.
+     .saved.cluster.create_atom_list(.atom)  
      .set_atom_info
 
-     ! Make sure basis is OK.
+     ! Set up basis sets
      if (.saved.basis_set_kind/=" ") then
         .set_basis_set_kind(.saved.basis_set_kind)
      else
@@ -24028,19 +24058,6 @@ contains
         if (.saved.coppensbasis.created) .coppensbasis.create_copy(.saved.coppensbasis)
         .resolve_basis_info
      end
-
-   ! *** not tested yet
-   ! if (.saved.density_matrix.created) then
-   ! if (.saved.density_matrix.restricted.created) then
-   !    .density_matrix.create(.n_bf,"restricted")
-   !    .cluster.make_density_matrix(.density_matrix.restricted,.saved.density_matrix.restricted,.atom)
-   ! end
-   ! end
-
-     stdout.flush
-     stdout.text("New molecule created with name: " // trim(.name))
-     stdout.flush
-     stdout.text('To recover the original molecule use the "unsave" or "destroy_cluster" keyword')
 
    end
 
