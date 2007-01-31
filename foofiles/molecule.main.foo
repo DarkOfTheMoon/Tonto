@@ -112,7 +112,7 @@ contains
          if (NOT found) exit                  ! No more crystal data blocks
          .MAIN:read_CIF_atoms(cif)            ! Read in atoms of asymmetric unit
          .MAIN:read_CIF_crystal(cif)          ! Read crystal info
-         .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+         .cluster.create(.crystal)
          .cluster.radius = ZERO       
          .cluster.generation_method = "fragment"
          .cluster.start_with_fragment = TRUE
@@ -228,38 +228,8 @@ contains
 
       ! Only continue if there are some atoms ...
       if (NOT associated(.atom)) return
-
-      ! Change atom positions to cartesian
-      .resolve_axis_system
-
-      ! Reset the hydrogen bond lengths if requested
-      if (cif.apply_CH_bond_length) .atom.set_bond_lengths(6,1,cif.CH_bond_length) 
-      if (cif.apply_NH_bond_length) .atom.set_bond_lengths(7,1,cif.NH_bond_length) 
-      if (cif.apply_OH_bond_length) .atom.set_bond_lengths(8,1,cif.OH_bond_length) 
-
-      .crystal.set_asymmetric_unit_geometry(.atom.coordinates)
-
-      ! The asymmetric unit is sometimes not an asymmetric unit (for
-      ! no good reason; or if there is disorder in the crystal). The
-      ! next part sets the switch to prune the unit cell if there is
-      ! no disorder. In the case of disorder the user must explicitly
-      ! say to prune and face the consequences; it is better if the
-      ! user edits the CIF file manually to get the non-disordered
-      ! structure(s) that he wants displayed.
-      ! -----
-      ! OK, after reconsideration we always prune the cell but we warn
-      ! the user that this is done with a prominent message in the
-      ! case where occupancy information is lost. The pruned atom
-      ! should have an an occupancy equal to its parent.
-
-      .crystal.prune_asymmetric_unit = TRUE
-      if (.atom.has_disorder) then
-         WARN_IF(.atom.has_disorder,"DISORDERED ASYMMETRIC CELL MAY BE PRUNED")
-         WARN_IF(.atom.has_disorder,"SOME ATOM INFORMATION MAY BE LOST")
-      end
-
-      ! Analyse the fragment symmetry information
-      .crystal.make_fragment_data(.atom)
+ 
+      .MAIN:set_atoms_and_crystal(cif) 
 
    end
 
@@ -267,25 +237,88 @@ contains
    ! Read atom information from a Crystallographic Information File, "cif".
    ! NOTE: Any previous atom information in destroyed.
       cif :: CIF
+
    ENSURE(cif.start_of_data>0,"no start of data in CIF")
    ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
+
+      ! Open the CIF
       if (NOT cif.file.is_open) cif.open
+
+      ! Read the atoms from the CIF
       if (.atom.created) then
          .atom.nullify_basis_part
          .atom.destroy
       end
       .atom.read_CIF(cif)
+
+      ! Set defaults and bases
       .mult = .default_multiplicity
       .set_atom_info
       .resolve_basis_info
-      if (associated(.crystal)) then
-         .resolve_axis_system
+
+      ! Resolve axes in crystal is there
+      if (.crystal.destroyed) return
+ 
+      .MAIN:set_atoms_and_crystal(cif) 
+
+   end
+
+   set_atoms_and_crystal(cif) ::: private, leaky
+   ! Set the atom and crystal information when processing the CIF.
+   ! We may have to reset H atom positions.
+      cif :: CIF
+
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.crystal.created,"no crystal")
+ 
+      H_bond_length :: VEC{REAL}*
+      has_Hs,reset :: BIN
+
+      ! Change atom positions to cartesian
+      .resolve_axis_system
+
+      ! If the hydrogen's are all single bonded, reset the simple way.
+      ! If disordered, this code assumes the disordered atoms are
+      ! proximate to their bonded neighbours.
+      if (.atom.has_all_Hs_single_bonded(has_Hs)) then
+
+         if (has_Hs) then
          if (cif.apply_CH_bond_length) .atom.set_bond_lengths(6,1,cif.CH_bond_length) 
          if (cif.apply_NH_bond_length) .atom.set_bond_lengths(7,1,cif.NH_bond_length) 
          if (cif.apply_OH_bond_length) .atom.set_bond_lengths(8,1,cif.OH_bond_length) 
-         .crystal.set_asymmetric_unit_geometry(.atom.coordinates)
+         end
+
          .crystal.make_fragment_data(.atom)
+
+      else ! There are floating hydrogens or multiple bonded H's ...
+
+         ! Analyse the fragment symmetry information
+         .crystal.make_fragment_data(.atom)
+
+         ! Use the crystal to reset the hydrogen bond lengths
+         H_bond_length.create(6,8)
+         H_bond_length(6) =  cif.CH_bond_length
+         H_bond_length(7) =  cif.NH_bond_length
+         H_bond_length(8) =  cif.OH_bond_length
+         .crystal.reset_H_bond_lengths_in(.atom,H_bond_length,reset)
+         H_bond_length.destroy
+
+         ! Return if nothing was done
+         if (NOT reset) return
+
+         ! Otherwise, reset the asymmetric unit
+         .crystal.set_asymmetric_unit_geometry(.atom)
+         if (.atom.has_disorder) then
+            WARN_IF(.atom.has_disorder,"DISORDERED ASYMMETRIC CELL MAY BE PRUNED")
+            WARN_IF(.atom.has_disorder,"SOME ATOM INFORMATION MAY BE LOST")
+         end
+
+         ! Re-analyse the fragment symmetry information
+         ! Maybe not all things in here need doing again ...
+         .crystal.make_fragment_data(.atom,warnings=FALSE)
+
       end
+
    end
 
    read_CIF_ADPs(cif) ::: leaky
@@ -327,17 +360,25 @@ contains
    ! name to be stored in the "cif" object.
      CX_file :: TEXTFILE*
      cif :: CIF*
+
    ENSURE(cif.created,"no CIF object created")
    ENSURE(cif.data_block_name/=" ","no CIF data block name")
+
      save :: TEXTFILE*
-     CX_label,surface_label,formula,spacegroup :: STR
+     done :: BIN
+     CX_label,formula,spacegroup :: STR
+
      CX_label = cif.data_block_name
+
      stdout.flush
      stdout.text("Writing Crystal Explorer data file: " // CX_file.name.trim)
      stdout.flush
-     save   => stdout                      ! Redirect stdout to out
+
+     ! Redirect stdout to out
+     save   => stdout                      
      stdout => CX_file
 
+     ! Reset output format
      stdout.save
      stdout.set_use_fields(FALSE)
      stdout.set_int_width(7)
@@ -355,28 +396,76 @@ contains
      stdout.text("end CIF")
      stdout.flush
 
+     ! Crystal data and cluster/fragment positions
+     ! Try saved cluster first
+     done = FALSE
+     if (.saved.created) then
+     if (.saved.cluster.created) then
+        ENSURE(.saved.cluster.info_made,"no cluster information")
+        ENSURE(.saved.cluster.crystal.created,"no cluster crystal data")
+        ENSURE(.saved.cluster.n_fragment_atoms>0,"no fragment size")
+        formula    = .saved.cluster.crystal.CIF_chemical_formula
+        spacegroup = .saved.cluster.crystal.spacegroup.HM_symbol
+        stdout.show("begin crystal ",CX_label)
+        .saved.cluster.crystal.put_CX(CX_label,formula,spacegroup) 
+        .saved.cluster.put_CX(CX_label,angstrom=.CX_uses_angstrom)
+        stdout.flush
+        stdout.text("end crystal")
+        done = TRUE
+     end
+     end
+
+     ! Try normal cluster
+     if (NOT done) then
      if (.cluster.created) then
         ENSURE(.cluster.info_made,"no cluster information")
         ENSURE(.cluster.crystal.created,"no cluster crystal data")
         ENSURE(.cluster.n_fragment_atoms>0,"no fragment size")
+        formula    = .cluster.crystal.CIF_chemical_formula
+        spacegroup = .cluster.crystal.spacegroup.HM_symbol
         stdout.show("begin crystal ",CX_label)
-        .cluster.crystal.put_CX(CX_label,.cluster.crystal.CIF_chemical_formula,.cluster.crystal.spacegroup.HM_symbol) ! Crystal data
-        .cluster.put_CX(CX_label,angstrom=.CX_uses_angstrom)  ! Cluster/fragment positions
+        .cluster.crystal.put_CX(CX_label,formula,spacegroup) 
+        .cluster.put_CX(CX_label,angstrom=.CX_uses_angstrom)
         stdout.flush
         stdout.text("end crystal")
-     end
-     if (.isosurface.created) then
-     if (.isosurface.atom.created) then ! Isosurface information
-        surface_label = .isosurface.surface_label
-        .isosurface.put_CX(surface_label.trim &
-                           ,.cluster.fragment_atom_indices &
-                           ,.cluster.nonfragment_atom_indices &
-                           ,angstrom=.CX_uses_angstrom)
+        done = TRUE
      end
      end
 
+     ! Isosurface information
+     if (.isosurface.created) then
+     if (.isosurface.atom.created) then 
+
+     ! Try saved cluster first
+     done = FALSE
+     if (.saved.created) then
+     if (.saved.cluster.created) then
+        .isosurface.put_CX(.isosurface.surface_label.trim &
+                           ,.saved.cluster.fragment_atom_indices &
+                           ,.saved.cluster.nonfragment_atom_indices &
+                           ,angstrom=.CX_uses_angstrom)
+        done = TRUE
+     end
+     end
+
+     ! Try normal cluster
+     if (NOT done) then
+     if (.cluster.created) then
+        .isosurface.put_CX(.isosurface.surface_label.trim &
+                           ,.cluster.fragment_atom_indices &
+                           ,.cluster.nonfragment_atom_indices &
+                           ,angstrom=.CX_uses_angstrom)
+        done = TRUE
+     end
+     end
+
+     end
+     end
+
+     ! Put back stdout
      stdout.unsave
-     stdout => save                        ! Put back stdout
+     stdout => save                        
+
    end
 
    read_rotate
@@ -5183,7 +5272,7 @@ contains
 !     stdout.put(bvec*ELECTRIC_POLARISABILITY_SI_PER_AU/ELECTRIC_FIELD_SI_PER_AU)
    end
 
-   put_sos_dipole_polarisability
+   put_sos_dipole_polarisability ::: leaky
    ! Calculate the dipole polarisability using the sum-over-states (SOS) formula.
    ENSURE(.molecular_orbitals.created,"no MO's")
    ENSURE(.molecular_orbitals.restricted.created,"no restricted MO's")
@@ -6011,7 +6100,7 @@ contains
       .cluster.destroy
       .crystal.make_fragment_data(.atom) 
       DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom==0),"some asymetric unit atoms were not found")
-      .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+      .cluster.create(.crystal)
       .cluster.set_generation_method("unit_cell")
       .cluster.defragment = FALSE
       .cluster.radius = ZERO
@@ -6090,7 +6179,7 @@ contains
       .cluster.destroy
       .crystal.make_fragment_data(.atom) 
       DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom==0),"some asymetric unit atoms were not found")
-      .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+      .cluster.create(.crystal)
       .cluster.set_generation_method("unit_cell")
       .cluster.defragment = FALSE
       .cluster.radius = ZERO
@@ -6141,7 +6230,7 @@ contains
 
       .cluster.destroy
       DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom==0),"some asymetric unit atoms were not found")
-      .cluster.create(.crystal,.atom(.crystal.frag_atom_for_asym_unit_atom))
+      .cluster.create(.crystal)
       .cluster.make_info ! leaky here
       .cluster.make_susceptibility2(uc_alpha,chi2_naive,chi2_centroid,chi2_nonH,chi2_nc,chi2_do,chi2)
 
