@@ -101,13 +101,13 @@ contains
       .atom_connection.destroy
    end
 
-   created result(res) ::: get_from(OBJECT), inlined_by_foo
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has been created
       self :: PTR
       res :: BIN
    end
 
-   destroyed result(res) ::: get_from(OBJECT), inlined_by_foo
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has *not* been created
       self :: PTR
       res :: BIN
@@ -150,7 +150,7 @@ contains
    set_defaults(crystal) ::: leaky
    ! Set up defaults. The "crystal" is pointer assigned. The cluster
    ! is essentially a crystal with additional operations based on the
-   ! .fragment_geometry. Thus we must keep the crystal.fragment_geoetry 
+   ! .fragment_geometry. Thus we must keep the crystal.fragment_geometry 
    ! in sync with the cluster.fragment geometry.
      crystal :: CRYSTAL*
 
@@ -161,7 +161,6 @@ contains
      .destroy_ptr_part
 
      .generation_method   = CLUSTER_GENERATION_METHOD
-     .start_with_fragment = FALSE
      .radius              = CLUSTER_RADIUS
      .atom_density_cutoff = CLUSTER_ATOM_DENSITY_CUTOFF
      .defragment          = CLUSTER_DEFRAGMENT
@@ -171,6 +170,7 @@ contains
      .h_max = 0
      .n_fragment_atoms = 0
      .fragment_offset = 0
+     .unit_cell_offset = ZERO
 
      ! Pointer assign these; we use them a lot
      .crystal => crystal
@@ -209,14 +209,23 @@ contains
       .generation_method = method
       .generation_method.to_lower_case
       select case (.generation_method)
-         case("for_hirshfeld_surface  "); .start_with_fragment = TRUE
-         case("fragment               "); .start_with_fragment = TRUE
-         case("unit_cell              "); .start_with_fragment = FALSE
-         case("unit_cell_plus         "); .start_with_fragment = FALSE
-         case("for_unit_cell_densities"); .start_with_fragment = FALSE
-         case("within_radius          "); .start_with_fragment = TRUE
+         case("for_hirshfeld_surface     ")
+         case("fragment                  ")
+         case("unit_cell                 ")
+         case("unit_cell_plus            ")
+         case("for_unit_cell_density     ")
+         case("offset_unit_cell          ")
+         case("offset_unit_cell_density  ")
+         case("within_radius             ")
          case default;   UNKNOWN(.generation_method)
       end
+   end
+
+   set_unit_cell_offset(offset)
+   ! Set the unit_cell_offset to use when making an offset unit cell.
+      offset :: VEC{REAL}(3)
+   DIE_IF(any(offset>HALF) OR any(offset<-HALF),"offset must be between -1/2 and +1/2")
+      .unit_cell_offset = offset
    end
 
 !  *************
@@ -243,6 +252,7 @@ contains
          case ("fragment_geometry=    "); .read_fragment_geometry
          case ("generation_method=    "); .read_generation_method
          case ("make_info             "); .make_info
+         case ("unit_cell_offset=     "); .read_unit_cell_offset
          case ("put                   "); .put
          case ("put_lff_l_tensors     "); .put_centroid_LFF_tensors
          case ("put_lff_l_tensors2    "); .put_centroid_LFF_tensors2
@@ -256,6 +266,15 @@ contains
 
    read_units ::: get_from(OBJECT), selfless, private
    ! Read a string which describes the units to be used
+   end
+
+   read_unit_cell_offset
+   ! Read the add criteria, whether to add atoms by whole clusters within a
+   ! certain radius of the starting fragment, or by individual atoms within a
+   ! certain distance of the starting fragment.
+      offset :: VEC{REAL}(3)
+      stdin.read(offset)
+      .set_unit_cell_offset(offset)
    end
 
    read_generation_method
@@ -362,8 +381,12 @@ contains
             .make_radius
             .make_within_radius
             .defragment = FALSE
-         case ("for_unit_cell_densities")
-            .do_defragment
+         case ("for_unit_cell_density")
+          ! .do_defragment
+            .make_radius
+            .make_within_radius
+            .defragment = FALSE
+         case ("offset_unit_cell_density")
             .make_radius
             .make_within_radius
             .defragment = FALSE
@@ -401,10 +424,11 @@ contains
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell")
    ENSURE(.fragment_geometry.created,"no fragment_geometry")
 
-     h   :: VEC{INT}(3)
+     h,h0 :: VEC{INT}(3)
      tol,radius :: REAL
      pos,b,t :: VEC{REAL}(3)
      i,u,u1000 :: INT
+     fragment_geometry :: MAT{REAL}*
 
      tol = TOL(1)/maxval(.crystal.unit_cell.length)
      tol = TOL(3)                        ! <--- getting this number wrong can stuff things
@@ -433,26 +457,37 @@ contains
            end
 
         case("unit_cell             ")
-           .fragment_offset = 0
            .occupation_list.destroy
            .occupation_list.create(.crystal.n_unit_cell_atoms)
+           fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
            h = 5
            do u = 1,.crystal.n_unit_cell_atoms
               .occupation_list(u) = h(1) + h(2)*10 + h(3)*100 + u*1000
+              pos = .crystal.unit_cell_geometry(:,u) 
+              fragment_geometry(:,u) = pos
            end
-
-        case("unit_cell_plus","for_unit_cell_densities")
+           .set_fragment_geometry(fragment_geometry)
            .fragment_offset = 0
+           fragment_geometry.destroy
+
+        case("unit_cell_plus","for_unit_cell_density")
            .occupation_list.destroy
            .occupation_list.create(.crystal.n_unit_cell_atoms)
+           fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
            do u = 1,.crystal.n_unit_cell_atoms
               .occupation_list(u) = 5 + 5*10 + 5*100 + u*1000
+              pos = .crystal.unit_cell_geometry(:,u) 
+              fragment_geometry(:,u) = pos
            end
+           .set_fragment_geometry(fragment_geometry)
+           .fragment_offset = 0
+           fragment_geometry.destroy
            ! Go 2 angstrom from unit cell edges for unit cell densities
            if (.generation_method=="unit_cell_plus") then; radius = .radius
-           else;                                           radius = TWO
+           else;                                           radius = max(TWO,.radius)
            end
            b = radius.from_units("angstrom")/.crystal.unit_cell.length
+           DIE_IF(any(b>ONE),"radius around unit cell exceeds at least one cell dimension")
            t = ONE - b
            u1000 = 0
            do u = 1,.crystal.n_unit_cell_atoms
@@ -489,6 +524,27 @@ contains
               if (pos(1)>t(1) AND pos(2)>t(2) AND pos(3)>t(3)) .occupation_list.append(4+4*10+4*100+u1000)
            end
 
+        case("offset_unit_cell","offset_unit_cell_density")
+           .occupation_list.destroy
+           .occupation_list.create(.crystal.n_unit_cell_atoms)
+           fragment_geometry.create(3,.crystal.n_unit_cell_atoms)
+           h0 = 5
+           do u = 1,.crystal.n_unit_cell_atoms
+              h = h0
+              pos = .crystal.unit_cell_geometry(:,u) 
+              if (pos(1)<    .unit_cell_offset(1)) h(1) = h0(1) + 1
+              if (pos(2)<    .unit_cell_offset(2)) h(2) = h0(2) + 1
+              if (pos(3)<    .unit_cell_offset(3)) h(3) = h0(3) + 1
+              if (pos(1)>ONE+.unit_cell_offset(1)) h(1) = h0(1) - 1
+              if (pos(2)>ONE+.unit_cell_offset(2)) h(2) = h0(2) - 1
+              if (pos(3)>ONE+.unit_cell_offset(3)) h(3) = h0(3) - 1
+              .occupation_list(u) = h(1) + h(2)*10 + h(3)*100 + u*1000
+              fragment_geometry(:,u) = pos + h - h0
+           end
+           .set_fragment_geometry(fragment_geometry)
+           .fragment_offset = 0
+           fragment_geometry.destroy
+
         case default
            UNKNOWN(.generation_method)
 
@@ -507,7 +563,6 @@ contains
    ! the atom density equals the desired cutoff; that seems like too much
    ! effort.
 
-   ENSURE(.generation_method=="for_hirshfeld_surface","generation_method is not 'for_hirshfeld_surface'")
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric cell atoms")
    ENSURE(.asymmetric_unit_atom.has_all_slater_bases OR .asymmetric_unit_atom.has_all_coppens_bases,"no slater or coppens bases")
    ENSURE(.atom_density_cutoff>ZERO,"atom density cutoff must be positve")
@@ -525,7 +580,6 @@ contains
    ! certain radius of the fragment geometry.
 
    ENSURE(.occupation_list.created,"no occupation_list")
-   ENSURE(.generation_method.is_one_of(["for_hirshfeld_surface","within_radius        "]),"wrong generation method")
    ENSURE(.fragment_geometry.created,"no fragment_geometry")
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit_cell_geometry")
@@ -1176,7 +1230,7 @@ contains
      .crystal.unit_cell.change_from_fractional(.geometry)
    end
 
-   cluster_width result(res)
+   cluster_width result (res)
    ! Return the width "res" of the cluster in each of the 3 axis directions.
    ! NOTE: using crystal axis system.
       res :: VEC{REAL}(3)
