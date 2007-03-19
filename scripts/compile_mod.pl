@@ -55,25 +55,56 @@ $mod_ext = "mod";
 #*******************************************************************************
 # command line parsing
 #
-$argerr=0;
-$argerr=1 if ($#ARGV+1==0);
+$argerr = 0;
+$argerr = 1 if ($#ARGV+1==0);
 
-while (@ARGV) {
-  $arg=shift;
+ARG: while (@ARGV) {
+
+  $arg = shift;
+
   for ($arg) {
-    /^-cmp/      && do {$cmp=shift; last; };
-    /^-fc/       && do {$fc=shift; last; };
-    /^-provides/ && do {$provides=shift; last; };
-    /^-requires/ && do {$requires=shift; last; };
-    /^-mod_ext/  && do {$mod_ext=shift; last; };
+
+    /^-cmp/      && do {$cmp=shift; next ARG; };
+
+    /^-fc/       && do {$fc=shift; next ARG; };
+
+    /^-mod_ext/  && do {$mod_ext=shift; next ARG; };
+
+    /^-provides/ && do { while (@ARGV) {
+                            $provides = shift; 
+                            if ($provides =~ /^-/) {
+                               unshift(@ARGV,$provides);
+                               next ARG; 
+                            }                              
+                            else {
+                               push(@provides,$provides);
+                            }
+                         };
+                         last ARG;
+                       };
+
+    /^-requires/ && do { while (@ARGV) {
+                            $requires = shift; 
+                            if ($requires =~ /^-/) {
+                               unshift(@ARGV,$requires);
+                               last; 
+                            }                              
+                            else {
+                               push(@requires,$requires);
+                            }
+                         };
+                         last ARG;
+                       };
+
     warn "Error : unexpected argument $arg\n";
     $argerr=1;
+
   }
 }
 defined $cmp      || do {$argerr=1; warn "Error : -cmp flag not supplied.\n"};
 defined $fc       || do {$argerr=1; warn "Error : -fc flag not supplied.\n"};
-defined $provides || do {$argerr=1; warn "Error : -provides flag not supplied.\n"};
-defined $requires || do {$argerr=1; warn "Error : -requires flag not supplied.\n"};
+defined @provides || do {$argerr=1; warn "Error : -provides flag not supplied.\n"};
+defined @requires || do {$argerr=1; warn "Error : -requires flag not supplied.\n"};
 
 if ($argerr==1) {
   die(
@@ -104,8 +135,8 @@ if ($argerr==1) {
     "\n");
 }
 
-@provides = split / /,$provides;
-@requires = split / /,$requires;
+# @provides = split / /,$provides;
+# @requires = split / /,$requires;
 
 #*******************************************************************************
 # The main part of the program.
