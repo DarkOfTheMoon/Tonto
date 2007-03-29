@@ -39,6 +39,14 @@ module REAL
  ! gill_m   :: INT, private   DEFAULT(0)
  ! gill_eps :: REAL, private  DEFAULT(ZERO)
 
+   interface erf
+      error_function 
+   end
+
+   interface erfc
+      complementary_error_function 
+   end
+
 contains
 
    plus(val) ::: pure
@@ -418,6 +426,142 @@ contains
      end
    end
 
+   cumulative_poisson(x,k) result (res) ::: selfless
+   ! The cumulative poisson probability distribution, P_x(<k).
+   ! The probability that the number of poisson events occuring
+   ! will be between 0 and k-1 inclusive.  From numerical recipes.
+     x :: REAL, IN
+     k :: INT, IN
+     res :: REAL
+     res = ONE - REAL::incomplete_gamma(ONE*k,x)
+   end
+
+   chi2(x2,nu) result (res) ::: selfless
+   ! The chi2 probability distribution, P(chi^2,nu).
+   ! The probability that the number of poisson events occuring
+   ! will be between 0 and k-1 inclusive.  From numerical recipes.
+     x2 :: REAL, IN
+     nu :: INT, IN
+     res :: REAL
+     res = REAL::incomplete_gamma(HALF*nu,HALF*x2)
+   end
+
+   error_function result (res) 
+   ! The error function.
+   ! From numerical recipes.
+     self :: IN
+     res :: REAL
+#ifdef NO_ERF
+     res = REAL::incomplete_gamma_series(HALF,self*self)
+     if (self<ONE) res = -res
+#else
+     res = erf(self)
+#endif
+   end
+
+   complementary_error_function result (res) 
+   ! The complementary error function.
+   ! From numerical recipes.
+     self :: IN
+     res :: REAL
+#ifdef NO_ERF
+     res = ONE - .erf
+#else
+     res = erfc(self)
+#endif
+   end
+
+   incomplete_gamma(a,x) result (res) ::: selfless
+   ! The incomplete gamma function P(a,x).
+   ! From numerical recipes.
+     a,x :: REAL, IN
+     res :: REAL
+   ENSURE(self>0,"argument must be positive")
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+     if (x<a+ONE) then
+        res = REAL::incomplete_gamma_series(a,x)
+     else
+        res = ONE - REAL::incomplete_gamma_cfrac(a,x)
+     end
+   end
+
+   incomplete_gamma_series(a,x) result (res) ::: selfless
+   ! The incomplete gamma function P(a,x), series form.
+   ! From numerical recipes.
+     a,x :: REAL, IN
+     res :: REAL
+   ENSURE(self>0,"argument must be positive")
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+     itmax :: INT = 1000      ! Max. number of terms in series
+     eps   :: REAL = 1.0d-11  ! Desired relative accuracy
+     n :: INT
+     ap,del,ser,gln :: REAL
+
+     if (x==ZERO) then
+        res = ZERO
+        return
+     end
+
+     ap = a
+     ser = ONE/a
+     del = ser
+     n = 0
+     do
+        n = n + 1
+        ap = ap + ONE
+        del = del*x/ap
+        ser = ser + del
+        if (abs(del)<abs(ser)*eps) exit
+        DIE_IF(n==itmax,"too many iterations")
+     end
+
+     gln = a.ln_gamma
+     res = ser * exp(-x + a*log(x) - gln)
+
+   end
+
+   incomplete_gamma_cfrac(a,x) result (res) ::: selfless
+   ! The *complementary* incomplete gamma function 
+   ! Q(a,x) = 1 - P(a,x), continued fraction form.  
+   ! From numerical recipes.
+     a,x :: REAL, IN
+     res :: REAL
+   ENSURE(self>0,"argument must be positive")
+   ENSURE(a>0,"a must be positive")
+   ENSURE(x>=0,"x must be non-negative")
+     itmax :: INT = 1000      ! Max. number of terms in series
+     eps   :: REAL = 1.0d-11  ! Desired relative accuracy
+     fpmin :: REAL = tiny(ONE)
+     i :: INT
+     an,b,c,d,del,h,gln :: REAL
+
+     b = x + ONE - a
+     c = ONE/fpmin
+     d = ONE/b
+     h = d
+     i = 0
+     do
+        i = i + 1
+        an = -i*(i-a)
+        b = b + TWO
+        d = an*d + b
+        c = b + an/c
+        if (abs(d)<fpmin) d = fpmin
+        if (abs(c)<fpmin) c = fpmin
+        d = ONE/d
+        del = d*c
+        h = h*del
+        if (abs(del-ONE)<eps) exit
+        DIE_IF(i==itmax,"too many iterations")
+     end
+
+     gln = a.ln_gamma
+     res = exp(-x + a*log(x) - gln) * h
+
+   end
+
    ln_gamma result (res) 
    ! The log of the gamma function. From Numerical Recipes, p. 207.
    ! This formula is accurate to 2 x 10^-10. Furthermore, the same
@@ -490,6 +634,51 @@ contains
       res = y
     end
 
+   gamma result (res) ::: recursive
+   ! Computes the gamma function using Hastings's approximation. This code was
+   ! taken from the net from a routine called "quadrule.f90".
+   ! Reference:
+   !    Arthur Stroud and Don Secrest,
+   !    Gaussian Quadrature Formulas,
+   !    Prentice Hall, 1966.
+      res :: REAL
+   ENSURE(self>ZERO,"argument must be non-negative")
+   ENSURE(self<70.0d0,"argument must be less than 70")
+      gam :: REAL
+      x,y,z,za :: REAL
+      gam(y) = ((((((( &
+              0.035868343D+00   * y &
+            - 0.193527818D+00 ) * y &
+            + 0.482199394D+00 ) * y &
+            - 0.756704078D+00 ) * y &
+            + 0.918206857D+00 ) * y &
+            - 0.897056937D+00 ) * y &
+            + 0.988205891D+00 ) * y &
+            - 0.577191652D+00 ) * y + ONE
+      self = x
+      if (x==ONE) then
+        res = ONE
+        return
+      end if
+      if (x<=ONE) then
+        res = gam(x)/x
+        return
+      end if
+      z = x
+      za = ONE
+      do
+        z = z - ONE
+        if (z<ONE) then
+          res = za*gam(z)
+          exit
+        else if (z==ONE) then
+          res = za
+          exit
+        end if
+        za = za * z
+      end
+   end
+
 !   s_from_p(p,mean)
 !   ! Calculate the Poisson upper limit of cumulation "s" from the cumulation "p".
 !   ! self is p, function returns s.
@@ -534,51 +723,6 @@ contains
 !               bound = 0.0
 !             end
 !           end
-!   end
-
-!   gamma result (res) ::: recursive
-!   ! Computes the gamma function using Hastings's approximation. This code was
-!   ! taken from the net from a routine called "quadrule.f90".
-!   ! Reference:
-!   !    Arthur Stroud and Don Secrest,
-!   !    Gaussian Quadrature Formulas,
-!   !    Prentice Hall, 1966.
-!      res :: REAL
-!   ENSURE(self>ZERO,"argument must be non-negative")
-!   ENSURE(self<70.0d0,"argument must be less than 70")
-!      gam :: REAL
-!      x,y,z,za :: REAL
-!      gam(y) = ((((((( &
-!              0.035868343D+00   * y &
-!            - 0.193527818D+00 ) * y &
-!            + 0.482199394D+00 ) * y &
-!            - 0.756704078D+00 ) * y &
-!            + 0.918206857D+00 ) * y &
-!            - 0.897056937D+00 ) * y &
-!            + 0.988205891D+00 ) * y &
-!            - 0.577191652D+00 ) * y + ONE
-!      self = x
-!      if (x==ONE) then
-!        res = ONE
-!        return
-!      end if
-!      if (x<=ONE) then
-!        res = gam(x)/x
-!        return
-!      end if
-!      z = x
-!      za = ONE
-!      do
-!        z = z - ONE
-!        if (z<ONE) then
-!          res = za*gam(z)
-!          exit
-!        else if (z==ONE) then
-!          res = za
-!          exit
-!        end if
-!        za = za * z
-!      end
 !   end
 
    hermite_polynomial(n,normalise) result (res)
