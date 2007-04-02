@@ -346,8 +346,8 @@ if exists("fortran_fold")
   syn region fortranProgram transparent fold keepend start="^program\s\+\z(\a\w*\)" excludenl end="\<end\s*\(program\(\s\+\z1\>\)\=\|$\)" contains=ALLBUT,fortranModule
   syn region fortranModule transparent fold keepend start="^module\s\+\z(\a\w*\) *$" excludenl end="^end\s*\(module\(\s\+\z1\>\)\=\|$\)" contains=ALLBUT,fortranProgram
 
-  syn region fortranFunction transparent fold keepend extend start="^\s*\(PURE\|pure\|recursive\)\?\s*function\s\+\z(\a\w*\)" excludenl end="^\s*\<end\s*\($\|function\(\s\+\z1\>\)\=\)" contains=ALLBUT,fortranProgram,fortranModule
-  syn region fortranSubroutine transparent fold keepend extend start="^\s*\(PURE\|pure\|recursive\)\?\s*subroutine\s\+\z(\a\w*\)" excludenl end="^\s*\<end\s*\($\|subroutine\(\s\+\z1\>\)\=\)" contains=ALLBUT,fortranProgram,fortranModule
+  syn region fortranFunction transparent fold keepend extend start="^\(PURE\)\?\s*\(recursive\)\?\s*function\s\+\z(\a\w*\)" excludenl end="\<end\s*\($\|function\(\s\+\z1\>\)\=\)" contains=ALLBUT,fortranProgram,fortranModule
+  syn region fortranSubroutine transparent fold keepend extend start="^\(PURE\)\?\s*\(recursive\)\?\s*subroutine\s\+\z(\a\w*\)" excludenl end="\<end\s*\($\|subroutine\(\s\+\z1\>\)\=\)" contains=ALLBUT,fortranProgram,fortranModule
   syn region fortranBlockData transparent fold keepend start="\<block\s*data\s\+\z(\a\w*\)" excludenl end="\<end\s*\($\|block\s*data\(\s\+\z1\>\)\=\)" contains=ALLBUT,fortranProgram,fortranModule,fortranSubroutine,fortranFunction,fortran77Loop,fortranCase,fortran90Loop
   syn region fortranInterface transparent fold keepend extend start="(^|^[;]*;)\s+interface\s\+\a\w*" excludenl end="\<end\s+\($\|interface\)" contains=ALLBUT,fortranProgram,fortranModule
 
