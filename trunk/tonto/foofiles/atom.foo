@@ -308,6 +308,8 @@ module ATOM
     ( -2.0847,  8.3112), ( -2.4129,  8.6839), ( -2.8081,  9.0614), ( -3.2784,  9.4502), ( -3.8533,  9.8403),  &
     ( -4.6067, 10.2413), ( -5.7225, 10.6428)/
 
+   saved_self :: ATOM*, private  DEFAULT_NULL
+
 contains
 
 !  ******************
@@ -332,6 +334,7 @@ contains
       nullify(.density_matrix)
       nullify(.natural_orbitals)
       nullify(.occupation_numbers)
+      nullify(.interpolator)
       nullify(.first_basis_fn_for_shell)
       nullify(.last_basis_fn_for_shell)
       nullify(.precomputed_basis_shellpair)
@@ -410,6 +413,7 @@ contains
       .coppensbasis_label = " "
       .axis_system = "cartesian"
       .thermal_axis_system = "cartesian"
+      .use_r2_interpolation = FALSE
       .energy = ZERO
       .group  = 0
       ! MM/protien defaults
@@ -480,6 +484,10 @@ contains
       covalent_radii_ccdc(an) = new_radius
    end
 
+   set_saved_self ::: get_from(OBJECT)
+   ! Set saved_self. This version has self a target.
+   end
+
 !  ************
 !  I/O Routines
 !  ************
@@ -505,7 +513,6 @@ contains
        case ("group=                       "); .read_group
        case ("junk=                        "); ATOM::read_junk
        case ("label=                       "); .read_label
-       case ("make_slater_interpolator     "); .make_slater_interpolator
        case ("mm_atom_type=                "); .read_mm_atom_type
        case ("mm_charge=                   "); .read_mm_charge
        case ("mm_forcefield_name=          "); .read_mm_forcefield_name
@@ -2000,11 +2007,11 @@ contains
    ! Work out the electron at radius "R".
       R,res :: REAL
       density_grid :: VEC{REAL}(1)
-      pt :: MAT{REAL}(3,1)
+      pt :: MAT{REAL}(1,3)
       select case (.basis_kind)
          case ("gaussian")
             ENSURE(.basis.created,"no basis")
-            pt(:,1) = .pos + [R,ZERO,ZERO]
+            pt(1,:) = .pos + [R,ZERO,ZERO]
             if (.natural_orbitals.number_kind == "real") then; .make_density_grid_r(density_grid,pt)
             else;                                              .make_density_grid_c(density_grid,pt)
             end
@@ -2022,10 +2029,125 @@ contains
       end
    end
 
-   make_slater_interpolator ::: leaky
-   ! Make a the slaterbasis interpolator.
-   ENSURE(.slaterbasis.created,"no slater basis")
-      .slaterbasis.make_interpolator
+   density_value_at_radius(R) result (res) ::: selfless, public
+   ! Return the density values at the radial value "R".
+   ! This assumes that the atomic density is spherical!
+     R,res :: REAL
+     n :: INT
+     self :: ATOM*
+     self => saved_self
+     res = .density_at_radius(R)
+   end
+
+   density_at_sqrt_radius2(R2) result (res) ::: selfless, public
+   ! Return the density values at the square root of radial value "R2".
+   ! This assumes that the atomic density is spherical!
+     R2,res :: REAL
+     R :: REAL
+     n :: INT
+     self :: ATOM*
+     self => saved_self
+     R = sqrt(R2)
+     res = .density_at_radius(R)
+   end
+
+   make_interpolator(interpolator) ::: leaky
+   ! Make the interpolator for the slater atom density in terms of the radial
+   ! distance squared (to avoid square roots). If present, "interpolator" is
+   ! used as a template to get the settings needed. If present, "tol" defines
+   ! the length of the table, so that the smallest value just exceeds "tol". 
+     interpolator :: INTERPOLATOR*, optional
+
+      if (present(interpolator)) then
+      if (interpolator.created) then
+         .interpolator.destroy
+         .interpolator.create_copy(interpolator)
+      end
+      end
+
+      if (.interpolator.destroyed) then
+         .interpolator.create
+      end
+
+      .set_saved_self                          ! Used by function below
+      if (.use_r2_interpolation) then
+         .interpolator.set_table_length(900d0) ! 30 Bohr table
+         .interpolator.set_even_spaced_data(ATOM::density_at_sqrt_radius2)
+      else
+         .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
+      end
+   end
+
+   add_interpolated_density(density,pt)
+   ! Add the spherical atomic "density" for the supplied points "pt"
+   ! using a precalculated interpolator.
+     self :: IN
+     density :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+
+   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
+   ! ENSURE(.interpolator.created,"no interpolator defined!")
+
+     R :: VEC{REAL}*
+     n_pt,n :: INT
+     x,y,z :: REAL
+
+     n_pt = pt.dim1
+     R.create(n_pt)
+
+     do n = 1,n_pt
+        x = pt(n,1) - .pos(1)
+        y = pt(n,2) - .pos(2)
+        z = pt(n,3) - .pos(3)
+        R(n) = x*x + y*y + z*z
+     end
+
+     ! Now get the interpolated density values
+     if (.use_r2_interpolation) then
+        .interpolator.add_values_for(R,density)
+     else
+        .interpolator.add_values_for_squared(R,density)
+     end
+
+     R.destroy
+
+   end
+
+   fast_interpolated_density(density,pt)
+   ! Make the spherical atomic "density" for the supplied points "pt"
+   ! using a precalculated interpolator.
+     self :: IN
+     density :: VEC{REAL}, OUT
+     pt :: MAT{REAL}, IN
+
+   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
+   ! ENSURE(.interpolator.created,"no interpolator defined!")
+
+     R :: VEC{REAL}*
+     n_pt,n :: INT
+     x,y,z :: REAL
+
+     n_pt = pt.dim1
+     R.create(n_pt)
+
+     do n = 1,n_pt
+        x = pt(n,1) - .pos(1)
+        y = pt(n,2) - .pos(2)
+        z = pt(n,3) - .pos(3)
+        R(n) = x*x + y*y + z*z
+     end
+
+     ! Now get the interpolated density values
+     if (.use_r2_interpolation) then
+        density = .interpolator.fast_values_for(R)
+     else
+        density = .interpolator.fast_values_for_squared(R)
+     end
+
+     R.destroy
+
    end
 
 !  ***************************
@@ -3388,17 +3510,5 @@ contains
             DIE("no interpolator for basis "//trim(.basis_kind)) 
       end
    end
-
-!   put_interpolator(out)
-!   ! Put out the atom information to file "out" in gnuplot format.
-!      out :: TEXTFILE*, optional
-!      select case (.basis_kind)
-!         case ("slater")
-!            ENSURE(.slaterbasis.created,"no slaterbasis")
-!            .slaterbasis.interpolator.put_gnu(out)
-!         case default
-!            DIE("no interpolator for basis "//trim(.basis_kind)) 
-!      end
-!   end
 
 end

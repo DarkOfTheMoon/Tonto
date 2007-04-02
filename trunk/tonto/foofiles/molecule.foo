@@ -7558,24 +7558,34 @@ contains
    make_molecule_from_atom(n,mol,use_ks) ::: leaky
    ! Make a fully fledged molecule "mol" from a single atom "n" in self
    ! The new molecule is ready for an SCF calculation.
+   ! DANGER: see warnings below
       n :: INT
       mol :: MOLECULE
       use_ks :: BIN, optional
 
    ENSURE(n<=.n_atom,"atom number n too big")
 
+      ! Clear the mo pointer part
       mol.nullify_ptr_part
+      
+      ! Create the single atom and copy its pointers
+      ! WARNING: dont destroy ptr parts of mol.atom 
       mol.atom.create(1)
-      mol.atom = .atom(n)   ! WARNING: dont destroy ptr parts of mol.atom !
-      mol.atom(1).group = 0 ! does not belong to a group
+      mol.atom = .atom(n)                   
+      mol.atom(1).group = 0                 ! does not belong to a group
       mol.atom(1).pos = (/ZERO,ZERO,ZERO/)
-      mol.set_defaults      ! Sets default name
 
-      mol.basis => .basis ! WARNING: dont destroy basis of mol !
-      mol.slaterbasis => .slaterbasis
+      ! Set default molecule e.g. the name
+      mol.set_defaults                      
+
+      ! Copy the basis set and set the basis info
+      ! WARNING: dont destroy basis of mol 
+      mol.basis        => .basis                   
+      mol.slaterbasis  => .slaterbasis
       mol.coppensbasis => .coppensbasis
       mol.set_basis_info
 
+      ! Set the SCF defaults
       mol.set_scf_defaults(use_ks)
       mol.scfdata.output = .scfdata.guess_output ! assume this is a guess
       mol.scfdata.convergence = .scfdata.convergence
@@ -9834,12 +9844,6 @@ contains
       archive.set(.name,"orbital_energies");   archive.delete_all_genres
    end
 
-   delete_scf_fock_archive
-   ! Delete the SCF fock matrix archives
-      archive :: ARCHIVE
-      archive.set(.name,"fock_matrix");        archive.delete_all_genres
-   end
-
    delete_old_scf_archives
    ! Delete any old matrices stored on disk.
       archive :: ARCHIVE
@@ -9847,12 +9851,6 @@ contains
       archive.set(.name,"old_density_matrix");     archive.delete_all_genres
       archive.set(.name,"old_molecular_orbitals"); archive.delete_all_genres
       archive.set(.name,"old_orbital_energies");   archive.delete_all_genres
-   end
-
-   delete_old_scf_matrices
-   ! Delete any old matrices stored in memory.
-     .old_density_matrix.destroy
-     .old_fock_matrix.destroy
    end
 
    delete_scf_integrals
@@ -9887,6 +9885,23 @@ contains
       archive.set(.name,"octupole_zzx_matrix"); archive.delete_all_genres
       archive.set(.name,"octupole_zzy_matrix"); archive.delete_all_genres
       archive.set(.name,"octupole_xyz_matrix"); archive.delete_all_genres
+      archive.set(.name,"old_fock_matrix");        archive.delete_all_genres
+      archive.set(.name,"old_density_matrix");     archive.delete_all_genres
+      archive.set(.name,"old_molecular_orbitals"); archive.delete_all_genres
+      archive.set(.name,"old_orbital_energies");   archive.delete_all_genres
+   end
+
+   delete_archive(name)
+   ! Delete the archive called "name"
+      name :: STR, IN
+      archive :: ARCHIVE
+      archive.set(.name,name); archive.delete_all_genres
+   end
+
+   delete_old_scf_matrices
+   ! Delete any old matrices stored in memory.
+     .old_density_matrix.destroy
+     .old_fock_matrix.destroy
    end
 
 ! *************************
@@ -21271,7 +21286,7 @@ contains
    ENSURE(.atom.created,"no atoms")
    ENSURE(.atom.has_all_ANO_data,"no atomic natural orbitals")
    ENSURE(grid.dim==pt.dim1,"no atomic natural orbitals")
-     rho_i,rho_a :: VEC{REAL}*
+     rho_a :: VEC{REAL}*
      n_pt,i :: INT
 
      ! Allocate temporary densities
@@ -21279,17 +21294,17 @@ contains
      rho_a.create(n_pt)
 
      ! Make density for atom "a"
-     .atom(a).make_density_grid(rho_a,pt)
+     ! Fast density?
+   ! .atom(a).make_density_grid(rho_a,pt)
+     .atom(a).fast_interpolated_density(rho_a,pt)
 
      ! Make total density in "grid"
      grid = rho_a
-     rho_i.create(n_pt)
      do i = 1,.n_atom
         if (i==a) cycle
-        .atom(i).make_density_grid(rho_i,pt)
-        grid = grid + rho_i
+      ! .atom(i).make_density_grid(rho_i,pt)
+        .atom(i).add_interpolated_density(grid,pt)
      end
-     rho_i.destroy
 
      ! Make the stockholder weight
      do i = 1,n_pt
@@ -23491,85 +23506,155 @@ contains
       .destroy_ANO_data
       do k = 1,.n_atom_kind ! Get ANO data only for unique atoms
         u = .unique_atom(k)
-        .get_ANO_data_for_atom(u,use_ks)
+        .make_ANO_data_for_atom(u,use_ks)
         do j = u+1,.n_atom
            if (.atom_kind(j)/=k) cycle
            .atom(j).density_matrix     => .atom(u).density_matrix
            .atom(j).natural_orbitals   => .atom(u).natural_orbitals
            .atom(j).occupation_numbers => .atom(u).occupation_numbers
            .atom(j).energy             =  .atom(u).energy
+           .atom(j).interpolator       => .atom(u).interpolator
         end
       end
    end
 
-   get_ANO_data_for_atom(a,use_ks) ::: leaky
-   ! Get the restricted atomic natural orbitals (ANO) data for atom "a" from an
-   ! archive. If the archive is not there then make it.
+!   get_ANO_data_for_atom(a,use_ks) ::: leaky
+!   ! Get the restricted atomic natural orbitals (ANO) data for atom "a" from an
+!   ! archive. If the archive is not there then make it.
+!     a :: INT
+!     use_ks :: BIN, optional
+!   ENSURE(.atom(a).natural_orbitals.destroyed,"NO's exist, atom "//trim(a.to_str))
+!   ENSURE(.atom(a).occupation_numbers.destroyed,"occupations exist, atom "//trim(a.to_str))
+!   ENSURE(.atom(a).density_matrix.destroyed,"density exists, atom "//trim(a.to_str))
+!     mol :: MOLECULE*
+!     n_no :: INT
+!     energy :: REAL
+!     output :: BIN
+!     mol.create
+!     .make_molecule_from_atom(a,mol)
+!     if (mol.archive_doesnt_exist("natural_orbitals","restricted")) &
+!       .make_ANO_data_for_atom(a,use_ks)
+!     mol.unarchive_natural_orbitals(genre="restricted")
+!     mol.unarchive_occupation_numbers(genre="restricted")
+!     mol.unarchive_density_matrix(genre="restricted")
+!     mol.unarchive(energy,"energy",genre="restricted")
+!     .atom(a).interpolator.destroy
+!     .atom(a).density_matrix.destroy
+!     .atom(a).occupation_numbers.destroy
+!     .atom(a).natural_orbitals.destroy
+!     .atom(a).natural_orbitals   => mol.natural_orbitals
+!     .atom(a).occupation_numbers => mol.occupation_numbers
+!     .atom(a).density_matrix     => mol.density_matrix
+!     .atom(a).energy             =  energy
+!     .atom(a).make_interpolator
+!     mol.atom.nullify_ptr_part       ! do not destroy basis part
+!     nullify(mol.natural_orbitals)   ! do not destroy this
+!     nullify(mol.occupation_numbers) ! do not destroy this
+!     nullify(mol.density_matrix)     ! do not destroy this
+!     nullify(mol.basis)              ! do not destroy this
+!     nullify(mol.slaterbasis)        ! do not destroy this
+!     nullify(mol.coppensbasis)       ! do not destroy this
+!     mol.destroy
+!     output = FALSE
+!     if (NOT output) return
+!     n_no = .atom(a).no_of_occupied_NOs(tol=0.05d0)
+!     stdout.show("n_no=",n_no)
+!     .atom(a).put_natural_orbitals
+!   end
+
+   make_ANO_data_for_atom(a,use_ks)
+   ! Make the spherically averaged restricted atomic natural orbitals
+   ! (ANO) and density matrix data and interpolator for atom "a".
      a :: INT
      use_ks :: BIN, optional
    ENSURE(.atom(a).natural_orbitals.destroyed,"NO's exist, atom "//trim(a.to_str))
    ENSURE(.atom(a).occupation_numbers.destroyed,"occupations exist, atom "//trim(a.to_str))
    ENSURE(.atom(a).density_matrix.destroyed,"density exists, atom "//trim(a.to_str))
+
      mol :: MOLECULE*
-     n_no :: INT
-     energy :: REAL
-     output :: BIN
+
+     ! Create the molecule
      mol.create
-     .make_molecule_from_atom(a,mol)
-     if (mol.archive_doesnt_exist("natural_orbitals","restricted")) &
-       .make_ANO_data_for_atom(a,use_ks)
-     mol.unarchive_natural_orbitals(genre="restricted")
-     mol.unarchive_occupation_numbers(genre="restricted")
-     mol.unarchive_density_matrix(genre="restricted")
-     mol.unarchive(energy,"energy",genre="restricted")
+     .make_molecule_from_atom(a,mol,use_ks)
+
+     ! Do the atomic SCF
+     mol.scfdata.using_direct_scf = TRUE
+     mol.scfdata.using_rough_convergence = FALSE
+   ! mol.scfdata.output = FALSE
+     mol.scf
+
+     ! Spherically average the AO density
+     mol.make_ao_density_matrix
+     mol.pointgroup.create("oh")
+     mol.symmetrise(mol.density_matrix)
+
+     ! Make the natural orbitals
+     mol.make_natural_orbitals 
+
+     ! Clean up the SCF files
+     mol.delete_scf_archives
+     mol.delete_scf_integrals
+     mol.delete_archive("natural_orbitals")
+     mol.delete_archive("occupation_numbers")
+
+     ! Destroy the atoms's NO and interpolator info
+     .atom(a).interpolator.destroy
+     .atom(a).density_matrix.destroy
+     .atom(a).occupation_numbers.destroy
+     .atom(a).natural_orbitals.destroy
+
+     ! Copy the results
      .atom(a).natural_orbitals   => mol.natural_orbitals
      .atom(a).occupation_numbers => mol.occupation_numbers
      .atom(a).density_matrix     => mol.density_matrix
-     .atom(a).energy             =  energy
-     mol.atom.nullify_ptr_part       ! do not destroy basis part
+     .atom(a).energy             =  mol.scfdata.energy
+
+     ! Make the interpolator
+     .atom(a).make_interpolator
+
+     ! Nullify parts we just copied or can't destroy
+     mol.atom.nullify_ptr_part       ! do not destroy ptr part
      nullify(mol.natural_orbitals)   ! do not destroy this
      nullify(mol.occupation_numbers) ! do not destroy this
      nullify(mol.density_matrix)     ! do not destroy this
      nullify(mol.basis)              ! do not destroy this
      nullify(mol.slaterbasis)        ! do not destroy this
      nullify(mol.coppensbasis)       ! do not destroy this
+
+     ! Safe to destroy
      mol.destroy
-     output = FALSE
-     if (NOT output) return
-     n_no = .atom(a).no_of_occupied_NOs(tol=0.05d0)
-     stdout.show("n_no=",n_no)
-     .atom(a).put_natural_orbitals
+
    end
 
-   make_ANO_data_for_atom(a,use_ks)
-   ! Make and *archive* the spherically averaged restricted atomic natural
-   ! orbitals (ANO) and density matrix data for atom "a".
-     a :: INT
-     use_ks :: BIN, optional
-     mol :: MOLECULE*
-     mol.create
-     .make_molecule_from_atom(a,mol,use_ks)
-   ! mol.scfdata.output = FALSE
-     mol.scfdata.using_direct_scf = TRUE
-     mol.scfdata.using_rough_convergence = FALSE
-     mol.scf
-     mol.delete_scf_MO_archive
-     mol.delete_scf_fock_archive
-     mol.delete_old_scf_archives
-     mol.delete_scf_integrals
-     mol.make_ao_density_matrix
-     mol.pointgroup.create("oh")
-     mol.symmetrise(mol.density_matrix)
-     mol.archive_density_matrix
-     mol.archive_energy(genre=.density_matrix.spinorbital_kind)
-     mol.make_natural_orbitals       ! ... and archive them
-     mol.atom.nullify_basis_part     ! do not destroy basis part
-     mol.atom.destroy_ptr_part       ! do not destroy basis part
-     nullify(mol.basis)              ! do not destroy basis part
-     nullify(mol.slaterbasis)        ! do not destroy this
-     nullify(mol.coppensbasis)       ! do not destroy this
-     mol.destroy
-   end
+!   make_ANO_data_for_atom(a,use_ks)
+!   ! Make and *archive* the spherically averaged restricted atomic natural
+!   ! orbitals (ANO) and density matrix data for atom "a".
+!     a :: INT
+!     use_ks :: BIN, optional
+!     mol :: MOLECULE*
+!     mol.create
+!     .make_molecule_from_atom(a,mol,use_ks)
+!   ! mol.scfdata.output = FALSE
+!     mol.scfdata.using_direct_scf = TRUE
+!     mol.scfdata.using_rough_convergence = FALSE
+!     mol.scf
+!     mol.delete_scf_MO_archive
+!     mol.delete_scf_fock_archive
+!     mol.delete_old_scf_archives
+!     mol.delete_scf_integrals
+!     mol.make_ao_density_matrix
+!     mol.pointgroup.create("oh")
+!     mol.symmetrise(mol.density_matrix)
+!     mol.archive_density_matrix
+!     mol.archive_energy(genre=.density_matrix.spinorbital_kind)
+!     mol.make_natural_orbitals       ! ... and archive them
+!     mol.atom.nullify_basis_part     ! do not destroy basis part
+!     mol.atom.destroy_ptr_part       ! do not destroy basis part
+!     nullify(mol.basis)              ! do not destroy basis part
+!     nullify(mol.slaterbasis)        ! do not destroy this
+!     nullify(mol.coppensbasis)       ! do not destroy this
+!     mol.destroy
+!   end
 
    destroy_ANO_data ::: leaky
    ! Destroy the restricted atomic natural orbitals (ANO) data for
@@ -23585,9 +23670,11 @@ contains
         .atom(u).natural_orbitals.destroy
         .atom(u).occupation_numbers.destroy
         .atom(u).density_matrix.destroy
+        .atom(u).interpolator.destroy
         nullify(.atom(u).natural_orbitals)
         nullify(.atom(u).occupation_numbers)
         nullify(.atom(u).density_matrix)
+        nullify(.atom(u).interpolator)
         .atom(u).energy = ZERO
 
         do j = u+1,.n_atom
@@ -23595,12 +23682,12 @@ contains
            nullify(.atom(j).natural_orbitals)
            nullify(.atom(j).occupation_numbers)
            nullify(.atom(j).density_matrix)
+           nullify(.atom(j).interpolator)
            .atom(j).energy = ZERO
         end
 
       end
    end
-
 
    set_atom_shell_info ::: leaky
    ! Get the atom shell info for all atoms in the molecule. We make it only for
