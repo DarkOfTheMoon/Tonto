@@ -343,8 +343,10 @@ contains
       .mult = 1
       .optimise_thermals = FALSE
       .n_bf = 0
+      .atom_info_made = FALSE
       .basis_set_kind = " "
       .basis_info_made = FALSE
+      .ANO_data_made = FALSE
       .Hirshfeld_atom_info_made = FALSE
       .atomic_polarisabilities_made = FALSE
     ! .CIF_file_name = " "
@@ -384,6 +386,7 @@ contains
       .unique_atom.create(.n_atom_kind)
       .atom.make_unique_atom_list(.unique_atom)
       if (.atom.groups_defined) .make_atom_groups
+      .atom_info_made = TRUE
    end
 
    resolve_basis_info ::: leaky
@@ -514,7 +517,6 @@ contains
    ENSURE(.atom.created,"no atom info")
    ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
       if (.basis.destroyed) return
-      .basis_info_made = TRUE
       .n_basis = size(.basis)
       .n_bf = .atom.n_bf
       .n_prim = .atom.n_prim
@@ -534,6 +536,7 @@ contains
     ! .occupation_numbers.create(.n_bf)
     ! .fock_matrix.destroy
     ! .fock_matrix.create(.n_bf)
+      .basis_info_made = TRUE
    end
 
    set_basis_set_kind(kind) ::: leaky
@@ -2171,8 +2174,8 @@ contains
    no_of_shell_pairs result (res)
    ! Return the number of shell pairs in the basis set for the molecule
       res :: INT
-   ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
+   ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
       n_shell :: INT
       n_shell = .atom.n_shell
       res = n_shell*(n_shell+1)/2
@@ -7610,9 +7613,11 @@ contains
 
       mol.atom.create(size(.atom_group(n).element))
       mol.atom = .atom(.atom_group(n).element) ! WARNING: dont destroy ptr parts of mol.atom !
-      mol.atom.group = 0                       ! No group for these atoms
+
       mol.set_defaults
+      mol.atom.group = 0                       ! No group for these atoms
       if (.group_charges.created) mol.charge = .group_charges(n)
+      mol.ANO_data_made = .ANO_data_made       ! Don't remake ANO data if there
       mol.mult = mol.default_multiplicity
       mol.set_atom_info                        ! Set .name after .set_defaults
       mol.name  =  trim(.name) // "_group_" // trim(n.to_str)
@@ -10126,33 +10131,76 @@ contains
    end
 
    get_promolecule_density ::: leaky
-   ! Reads ".density_matrix" from the archive, otherwise makes it and
-   ! writes to the arch.
+   ! Make the ANO densities and add them together.
       archive :: ARCHIVE
-      archive.set(.name,"promolecule_density_matrix",genre="restricted")
-      if (.scfdata.destroyed) then
-         .make_promolecule_density
-         archive.write(.density_matrix)
-      else if (NOT .scfdata.using_direct_scf AND archive.exists) then
-         .density_matrix.destroy
-         .density_matrix.create(.n_bf,"restricted")
-         archive.read(.density_matrix)
-      else
-         if (.scfdata.guess_output) then
-         stdout.flush
-         stdout.text("*******************************")
-         stdout.text("Calculating Promolecule density")
-         stdout.text("*******************************")
-         end 
-         .make_promolecule_density
-         if (NOT .scfdata.using_direct_scf) archive.write(.density_matrix)
-      end
+      .get_ANO_data
+      .add_ANO_densities
      .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
    end
 
+   add_ANO_densities ::: leaky
+   ! Add the ANO densities to make the total density matrix
+   ENSURE(.ANO_data_made,"no ANO data")
+
+     k,j,u,a,b :: INT
+     asym :: REAL
+     D,Du :: MAT{REAL}*
+
+     ! Recreate the density
+     .density_matrix.destroy
+     .density_matrix.create(.n_bf,"restricted")
+     D => .density_matrix.restricted      
+     D = ZERO
+
+     ! Add 'em up
+     do k = 1,.n_atom_kind
+        u = .unique_atom(k)
+        Du => .atom(u).density_matrix.restricted
+        do j = u,.n_atom
+           if (.atom_kind(j)/=k) cycle
+           a = .first_basis_fn_for_atom(j)
+           b =  .last_basis_fn_for_atom(j)
+           D(a:b,a:b) =  Du
+        end
+     end
+
+     ! Check for asymmetry
+     if (NOT D.is_symmetric) then
+        asym = maxval(abs(D-transpose(D)))
+        WARN("promolecule density is not symmetric")
+        WARN("Maximum asymmetry = "//trim(asym.to_str("e10.3")))
+     end      
+     D.symmetric_reflect
+
+   end
+
+!   get_promolecule_density ::: leaky
+!   ! Reads ".density_matrix" from the archive, otherwise makes it and
+!   ! writes to the arch.
+!      archive :: ARCHIVE
+!      archive.set(.name,"promolecule_density_matrix",genre="restricted")
+!      if (.scfdata.destroyed) then
+!         .make_promolecule_density
+!         archive.write(.density_matrix)
+!      else if (NOT .scfdata.using_direct_scf AND archive.exists) then
+!         .density_matrix.destroy
+!         .density_matrix.create(.n_bf,"restricted")
+!         archive.read(.density_matrix)
+!      else
+!         if (.scfdata.guess_output) then
+!         stdout.flush
+!         stdout.text("*******************************")
+!         stdout.text("Calculating Promolecule density")
+!         stdout.text("*******************************")
+!         end 
+!         .make_promolecule_density
+!         if (NOT .scfdata.using_direct_scf) archive.write(.density_matrix)
+!      end
+!     .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
+!   end
+
    make_promolecule_density ::: leaky
    ! Make a ".density matrix" from the sum of atomic densities
-   ! if output is present and FALSE the density matrix is not archived
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.basis.created,"no basis info")
    ENSURE(.atom.created,"no atom info")
@@ -23494,16 +23542,22 @@ contains
 !  ********************
 
    get_ANO_data(use_ks) ::: leaky
-   ! Get the restricted atomic natural orbitals (ANO) data for all atoms in the
-   ! molecule, from an archive. If it is not there, then make it and archive it.
+   ! Get the restricted atomic natural orbitals (ANO) data for all
+   ! atoms in the molecule.
       use_ks :: BIN, optional
    ENSURE(.atom.created,"no atoms")
-   ENSURE(.basis_info_made,"no basis_set info")
+   ENSURE(.atom_info_made,"no atom info")
    ENSURE(.basis.created,"no basis set")
+   ENSURE(.basis_info_made,"no basis_set info")
    ENSURE(.unique_atom.created,"no unique atom list")
    ENSURE(.atom_kind.created,"no atom kind list")
+
       k,u,j :: INT
+
+      if (.ANO_data_made) return
+
       .destroy_ANO_data
+
       do k = 1,.n_atom_kind ! Get ANO data only for unique atoms
         u = .unique_atom(k)
         .make_ANO_data_for_atom(u,use_ks)
@@ -23516,6 +23570,9 @@ contains
            .atom(j).interpolator       => .atom(u).interpolator
         end
       end
+
+      .ANO_data_made = TRUE
+
    end
 
 !   get_ANO_data_for_atom(a,use_ks) ::: leaky
@@ -23562,7 +23619,7 @@ contains
 !     .atom(a).put_natural_orbitals
 !   end
 
-   make_ANO_data_for_atom(a,use_ks)
+   make_ANO_data_for_atom(a,use_ks) ::: leaky, private
    ! Make the spherically averaged restricted atomic natural orbitals
    ! (ANO) and density matrix data and interpolator for atom "a".
      a :: INT
@@ -23592,8 +23649,10 @@ contains
      mol.make_natural_orbitals 
 
      ! Clean up the SCF files
-     mol.delete_scf_archives
+     mol.delete_scf_MO_archive
+     mol.delete_old_scf_archives
      mol.delete_scf_integrals
+     mol.delete_archive("fock_matrix")
      mol.delete_archive("natural_orbitals")
      mol.delete_archive("occupation_numbers")
 
@@ -23661,6 +23720,8 @@ contains
    ! all atoms in the molecule.
       k,u,j :: INT
 
+      if (NOT .ANO_data_made) return
+
       if (.unique_atom.destroyed) return
 
       do k = 1,.n_atom_kind 
@@ -23687,6 +23748,9 @@ contains
         end
 
       end
+
+      .ANO_data_made = FALSE
+
    end
 
    set_atom_shell_info ::: leaky
