@@ -693,6 +693,7 @@ contains
             pt :: MAT{REAL}, IN
          end
       end
+
       vol :: REAL
       x,y,z :: INT
       cube :: MARCHINGCUBE
@@ -700,57 +701,96 @@ contains
       p    :: MAT4{REAL}*
       info :: MAT3{VEC_{INT}}*
       oblique :: BIN
-      .set_isosurface_info_arrays               ! Set isosurface info defaults
+
+      ! Set isosurface info defaults
+      .set_isosurface_info_arrays               
       cube = .cube
       oblique = .grid.use_unit_cell_as_bbox
       if (oblique) cube.set_axes(.grid.box_axes)
       .volume_min = ZERO
       .volume_max = ZERO
       vol = .grid.del_x*.grid.del_y*.grid.del_z
+
       ! Make the 4-slab of data
       p.create(3,.grid.n_x,.grid.n_y,4)         ! slab of points
       f.create(.grid.n_x,.grid.n_y,4)           ! function values
-      info.create(.grid.n_x,.grid.n_y,2,[0,11]) ! unique vertex index information
+      info.create(.grid.n_x,.grid.n_y,2,[0,11]) ! Saved vertex index info
       info.zero
-      ! Find all the marching cubes. The grid points on the end
-      ! are not looped over, they are only there to evaluate normals
-      do z = 2,.grid.n_z-2                      ! Loop bottom to top
-         .update_4_slab(p,f,z,func)             ! Get a new z-slab of function values
-         info(:,:,1:1).set_to(info(:,:,2:2))    ! Set previously saved edge info
-         info(:,:,2:2).zero                     ! zero current edge info
-         do y = 2,.grid.n_y-2                   ! Loop over the slab
-         do x = 2,.grid.n_x-2                   ! ... left, right; then front, back
+
+      ! Find all the marching cubes. Loop bottom to top.
+      ! Do two layers at a time. End points are not looped, 
+      ! they are only to get the normals and curvatures.
+      do z = 2,.grid.n_z-2                      
+
+         ! Get a new z-slab of function values
+         .update_4_slab(p,f,z,func)             
+
+         ! Save previous edge info; zero current
+         info(:,:,1:1).set_to(info(:,:,2:2))    
+         info(:,:,2:2).zero     
+
+         ! Loop over the slab; 
+         ! x = left,  right
+         ! y = front, back
+         do y = 2,.grid.n_y-2                   
+         do x = 2,.grid.n_x-2                   
+
+            ! Set cube points and function values
             cube.set_vertex_info(p(:,x:x+1,y:y+1,2:3),f(x:x+1,y:y+1,2:3))
+
+            ! Set cube edge intersections
             cube.set_case_info
+
             if (cube.is_inside_surface)      .volume_min = .volume_min + vol
             if (NOT cube.is_outside_surface) .volume_max = .volume_max + vol
-            if (NOT cube.is_on_surface) cycle ! <<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+            ! If not on surface, next cube
+            if (NOT cube.is_on_surface) cycle 
+
+            ! Set up cube edge triangulation
             cube.set_triangulation_info
+
             ! Use previous edge info, if available. 
             if (x>2) cube.set_left_info(left=info(x-1,y,2).element)
             if (y>2) cube.set_front_info(front=info(x,y-1,2).element)
             if (z>2) cube.set_below_info(below=info(x,y,1).element)
+
+            ! Get curvatures
             cube.set_hessian_info(f(x-1:x+2,y-1:y+2,1:4))
+
+            ! Now do the interpolation
             if (oblique) then; cube.interpolate_oblique_faces
             else;              cube.interpolate_faces
             end
+
+            ! Store surface info
             .append_new_face_info(cube)
-            info(x,y,2).element.set_to(cube.edge_vertex_index) ! current slice edge info
+
+            ! Keep interpolated vertex indices
+            info(x,y,2).element.set_to(cube.edge_vertex_index) 
+
+            ! Reset cube, reset # of points
             cube.reset
             cube.set_n_pt(.n_pt)
+
          end
          end
+
       end
+
       info.destroy
       f.destroy
+
       .point.shrink_columns(.n_pt)
       .point_gradient.shrink_columns(.n_pt)
       .point_mean_curvature.shrink(.n_pt)
       .point_gaussian_curvature.shrink(.n_pt)
       .face.shrink_columns(.n_face)
+
       .rotate_gradients
       .set_area
       .set_volume
+
    end 
 
    cubify_recursively(func) ::: leaky, private
@@ -1533,9 +1573,13 @@ contains
    ENSURE(f.dim1==.grid.n_x,"wrong size, f")
    ENSURE(f.dim2==.grid.n_y,"wrong size, f")
    ENSURE(f.dim3==4,"f must have 4 slabs")
-      fz,lz,n_pt, i,x,y,z :: INT
+
+      fac,sgn,siso,fiso :: REAL
+      fz,lz,n_pt, i,x,y,z, a,b,c,d :: INT
       values :: VEC{REAL}*
       pt :: MAT{REAL}*
+
+      ! Get slab ranges
       if (slice == 2) then 
          ! These are the first 4 slices
          fz = 1; lz = 4
@@ -1545,6 +1589,7 @@ contains
          f(:,:,1:3) = f(:,:,2:4)
          fz = 4; lz = 4
       end
+
       ! Now calculate the slab between the right limits
       n_pt = .grid.n_x*.grid.n_y*(lz-fz+1)
       values.create(n_pt)
@@ -1552,18 +1597,53 @@ contains
       .grid.make_points(pt,1,.grid.n_x,1,.grid.n_y,slice-2+fz,slice-2+lz)
       call func(values,pt)
       f(:,:,fz:lz).set_to(values)
+
+      ! Cap ends
+      if (.cap_ends/=0) then
+
+         if (.cap_ends>ZERO) then; fac = ONE-TOL(3); sgn =  ONE
+         else;                     fac = ONE+TOL(3); sgn = -ONE
+         end
+         siso = sgn*.iso_value
+         fiso = fac*.iso_value
+
+         b = .grid.n_x; a = b - 1
+         d = .grid.n_y; c = d - 1
+         if (slice==2) then
+            where (sgn*f( : , : ,1:2)>siso) f( : , : ,1:2) = fiso
+            where (sgn*f(1:2, : , : )>siso) f(1:2, : , : ) = fiso
+            where (sgn*f(a:b, : , : )>siso) f(a:b, : , : ) = fiso
+            where (sgn*f( : ,1:2, : )>siso) f( : ,1:2, : ) = fiso
+            where (sgn*f( : ,c:d, : )>siso) f( : ,c:d, : ) = fiso
+         else if (slice>=.grid.n_z-3) then
+            where (sgn*f( : , : , 4 )>siso) f( : , : , 4 ) = fiso
+            where (sgn*f(1:2, : , 4 )>siso) f(1:2, : , 4 ) = fiso
+            where (sgn*f(a:b, : , 4 )>siso) f(a:b, : , 4 ) = fiso
+            where (sgn*f( : ,1:2, 4 )>siso) f( : ,1:2, 4 ) = fiso
+            where (sgn*f( : ,c:d, 4 )>siso) f( : ,c:d, 4 ) = fiso
+         else 
+            where (sgn*f(1:2, : , 4 )>siso) f(1:2, : , 4 ) = fiso
+            where (sgn*f(a:b, : , 4 )>siso) f(a:b, : , 4 ) = fiso
+            where (sgn*f( : ,1:2, 4 )>siso) f( : ,1:2, 4 ) = fiso
+            where (sgn*f( : ,c:d, 4 )>siso) f( : ,c:d, 4 ) = fiso
+         end
+
+      end
+
+      ! Copy the points
       i = 0
       do z = fz,lz
       do y = 1,.grid.n_y
       do x = 1,.grid.n_x
          i = i + 1
          p(:,x,y,z) = pt(i,:)
-       ! write(*,*) "i =",i,"pt =",pt(i,:),"val=",values(i)
       end
       end
       end
+
       pt.destroy
       values.destroy
+
    end
 
    append_new_face_info(cube) ::: leaky, private
