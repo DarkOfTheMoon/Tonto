@@ -3084,29 +3084,27 @@ contains
      end
    end
 
-   get_core_matrix(H,nuclei)
-   ! Get the core hamiltonian matrix. If already in memory, do nothing. Else if
-   ! the archive file exists, read it. Otherwise make it.
-   ! If the nuclei are given make it regardless, since the stored one is
-   ! likely to be different
-      H :: MAT{REAL}
+   get_core_matrix(nuclei) ::: leaky
+   ! Get the core hamiltonian matrix. If already in memory, do nothing.
+   ! Otherwise make it.
       nuclei :: VEC{INT}, optional
-      arch :: ARCHIVE
-      write_archive,calc_it :: BIN
-      arch.set(.name,"core_matrix")
-      calc_it = .scfdata.using_direct_scf OR present(nuclei)
-      write_archive = NOT .scfdata.using_direct_scf
-      if (NOT calc_it) then
-        if (arch.exists) then
-          arch.read(H)
-          calc_it = FALSE
-          write_archive = FALSE
-        else
-          calc_it = TRUE
-        end
+
+      Z :: MAT{REAL}*
+
+      if (.core_matrix.destroyed) then
+         .core_matrix.create(.n_bf,.n_bf)
+         .make_core_matrix(.core_matrix,nuclei)
       end
-      if (calc_it) .make_core_matrix(H,nuclei)
-      if (write_archive) arch.write(H)
+
+      if (.scfdata.destroyed) return
+      if (.scfdata.is_guess) return
+      if (NOT .scfdata.using_cluster_charges) return
+
+      Z.create(.n_bf,.n_bf)
+      .make_pt_charge_matrix(Z)
+      .core_matrix = .core_matrix + Z
+      Z.destroy
+
    end
 
    make_core_matrix(H,nuclei)
@@ -3130,6 +3128,82 @@ contains
       H = H + Z
       Z.destroy
      .put_debug(H,"core matrix")
+   end
+
+   make_pt_charge_matrix(Z)
+   ! Make the point charge matrix "H" from the point charges in
+   ! ".scfdata" and positions from those in cluster.
+      Z :: MAT{REAL}
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created,"no crystal data")
+   ENSURE(.scfdata.created,"no scfdata")
+
+      charge  :: VEC{REAL}*
+      Z_c,pos :: MAT{REAL}*
+      n_charges,q,c,fa,la,fb,lb :: INT
+      q_c :: REAL
+      sh :: SHELL2
+
+      ! Make (force) the Hirshfeld atom charges and dipoles
+      .Hirshfeld_atom_info_made = FALSE
+      .make_Hirshfeld_atom_info 
+    ! .put_Hirshfeld_atom_info 
+
+      ! Make the asymmetric unit with new charges/dipole
+      .crystal.destroy_asymmetric_unit
+      .crystal.make_fragment_data(.atom) 
+      DIE_IF(.crystal.asymmetric_unit_atom.destroyed,"atom list does not span asymmetric unit")
+    ! .crystal.put
+
+      ! Set up the cluster
+      .scfdata.cluster.destroy
+      .scfdata.cluster.create(.crystal)
+      .scfdata.cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
+      .scfdata.cluster.set_generation_method("within_radius")
+      .scfdata.cluster.defragment= TRUE
+      .scfdata.cluster.radius = .scfdata.cluster_radius
+      .scfdata.cluster.make_info
+   !  .scfdata.cluster.put
+
+
+      ! Make the cluster charges
+      n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
+      n_charges = 3*n_charges
+      charge.create(n_charges)
+      pos.create(3,n_charges)
+      .scfdata.cluster.make_non_fragment_positions(pos,charge)
+   ! stdout.text("charge:")
+   ! stdout.put(charge,"column")
+   ! stdout.text("pos:")
+   ! stdout.put(transpose(pos))
+   ! stdout.text("=============")
+
+      ! Make the charge contribution to one electron Hamiltonian
+      Z = ZERO
+      parallel do q = 1,.n_shell_pairs
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+         Z_c.create(sh.a.n_comp,sh.b.n_comp)
+         do c = 1,charge.dim
+            q_c = charge(c)
+            if (q_c.equals(ZERO)) cycle
+            sh.get_nuc(Z_c,ZERO,pos(:,c))
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - q_c*Z_c
+         end
+         Z_c.destroy
+         sh.destroy_ptr_part
+      end
+      if (DO_IN_PARALLEL) then
+        PARALLEL_SYMMETRIC_SUM(Z)
+      else
+         Z.symmetric_reflect
+      end
+      .put_debug(Z,"pt charge matrix")
+
+      pos.destroy
+      charge.destroy
+
    end
 
    get_dipole_matrices(Dx,Dy,Dz)
@@ -10169,17 +10243,26 @@ contains
      S,R,H :: MAT{REAL}* DEFAULT_NULL
      !  H~ = S^-1/2 H S^-1/2
      !  c  = S^-1/2 c~
-     S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
-     R.create(.n_bf,.n_bf); R.to_inverse_sqrt_of(S)
-     H.create(.n_bf,.n_bf); .get_core_matrix(H)
-     S.to_product_of(R,H)
-     H.to_product_of(S,R)
+
+     .get_core_matrix
+
+     H.create(.n_bf,.n_bf)
+     R.create(.n_bf,.n_bf) 
+     S.create(.n_bf,.n_bf)
+
+     .get_overlap_matrix(S)
+     R.to_inverse_sqrt_of(S)
+     S.destroy
+
+     .core_matrix.change_basis_to(H,R)
+
      H.solve_eigenproblem(MO_energies,MO)
      H.to_product_of(R,MO)
      MO = H
-     H.destroy
+
      R.destroy
-     S.destroy
+     H.destroy
+
    end
 
    make_promolecule_guess ::: leaky
@@ -10893,22 +10976,16 @@ contains
    ! only the nuclei specified
       F :: MAT{REAL}
       nuclei :: VEC{INT}, optional
-      H :: MAT{REAL}*
-      H.create(.n_bf, .n_bf)
-      .get_core_matrix(H,nuclei)
-      F = F + H
-      H.destroy
+      .get_core_matrix(nuclei)
+      F = F + .core_matrix
    end
 
    add_core_hamiltonian(Fa,Fb)
    ! Add the core hamiltonain to "Fa" and "Fb"
       Fa,Fb :: MAT{REAL}
-      H :: MAT{REAL}*
-      H.create(.n_bf, .n_bf)
-      .get_core_matrix(H)
-      Fa = Fa + H
-      Fb = Fb + H
-      H.destroy
+      .get_core_matrix
+      Fa = Fa + .core_matrix
+      Fb = Fb + .core_matrix
    end
 
    add_core_hamiltonian(F,nuclei)
@@ -10916,17 +10993,17 @@ contains
       F :: MAT{CPX}
       nuclei :: VEC{INT}, optional
       HH :: MAT{CPX}*
-      H,S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
+      S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
       BB :: MAT{REAL}(3,3)
       k,l :: INT
       fac :: REAL
       I :: CPX
+
       HH.create(2*.n_bf, 2*.n_bf); HH = ZERO
-      H.create(.n_bf, .n_bf)
-      .get_core_matrix(H,nuclei)
-      HH.alpha_alpha_plus(H)
-      HH.beta_beta_plus(H)
-      H.destroy
+      .get_core_matrix(nuclei)
+      HH.alpha_alpha_plus(.core_matrix)
+      HH.beta_beta_plus(.core_matrix)
+
       I = (ZERO,ONE)
       if (.scfdata.using_1e_sl_term) then
             Lx.create(.n_bf,.n_bf)
@@ -21192,15 +21269,32 @@ contains
      n_atoms = .atom.dim
      is_fragment_atom => .saved.cluster.is_fragment_atom
 
-     do a = 1,n_atoms
-        if (NOT is_fragment_atom(a)) cycle
-        .atom(a).slaterbasis.add_interpolated_density(rho_fragment,pt,.atom(a).pos)
-     end
-     density_grid = rho_fragment
+     if (NOT .atom.has_disorder) then
+   
+        do a = 1,n_atoms
+           if (NOT is_fragment_atom(a)) cycle
+           .atom(a).slaterbasis.add_interpolated_density(rho_fragment,pt,.atom(a).pos)
+        end
+        density_grid = rho_fragment
+   
+        do a = 1,n_atoms
+           if (is_fragment_atom(a)) cycle
+           .atom(a).slaterbasis.add_interpolated_density(density_grid,pt,.atom(a).pos)
+        end
 
-     do a = 1,n_atoms
-        if (is_fragment_atom(a)) cycle
-        .atom(a).slaterbasis.add_interpolated_density(density_grid,pt,.atom(a).pos)
+     else
+   
+        do a = 1,n_atoms
+           if (NOT is_fragment_atom(a)) cycle
+           .atom(a).slaterbasis.add_interpolated_density(rho_fragment,pt,.atom(a).pos,.atom(a).site_occupancy)
+        end
+        density_grid = rho_fragment
+   
+        do a = 1,n_atoms
+           if (is_fragment_atom(a)) cycle
+           .atom(a).slaterbasis.add_interpolated_density(density_grid,pt,.atom(a).pos,.atom(a).site_occupancy)
+        end
+
      end
 
      where (density_grid>ZERO)
@@ -23748,6 +23842,7 @@ contains
      mol.scfdata.using_direct_scf = TRUE
      mol.scfdata.using_rough_convergence = FALSE
    ! mol.scfdata.output = FALSE
+     mol.scfdata.is_guess = TRUE
      mol.scf
 
      ! Spherically average the AO density
