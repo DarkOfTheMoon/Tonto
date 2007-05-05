@@ -8029,18 +8029,18 @@ stdout.flush
    ! Uses a line search method.
    ENSURE(.atom.created, "no atoms to fit")
    ENSURE(.crystal.created, "no crystal")
-   ENSURE(.crystal.data.thermal_smearing_model=="stewart","thermal smearing model must be stewart, so far")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data")
    ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
 
       chi2,chi2_old,max_shift :: REAL
       X,X_old,dX :: VEC{REAL}*
       sf_n :: MAT{CPX}*
-      n_k,n_p,n_atom,iter :: INT
+      n_k,n_p,n_atom,n_0,n_near_0 :: INT
       arch,keep :: TEXTFILE*
-      debug :: BIN
+      chi2_increased,debug :: BIN
 
-
-      ! Set up grids, atomic densities, and NO's
+      ! Set up grids, atomic densities, and NO's (leaky)
       .set_up_Hirshfeld_info
 
       ! Constants
@@ -8052,6 +8052,10 @@ stdout.flush
       X.create(n_p)
       X_old.create(n_p)
       dX.create(n_p)
+
+      ! Parameter uncertainties, correlations (leaky)
+      .crystal.data.delta_p.create(n_p)
+      .crystal.data.correlation_matrix.create(n_p,n_p)
  
       ! Get the initial parameters
       .MAIN:get_asym_atom_params_into(X)
@@ -8071,76 +8075,45 @@ stdout.flush
       .atom.put_thermal_tensors
       stdout => keep
 
-      ! Banner
-      stdout.flush
-      stdout.text("Refining atom positions and ADP's")
-      stdout.text("---------------------------------")
-      stdout.flush
-      stdout.show("Shift convergence criteria  =",TOL(3))
-      stdout.show("Max allowed parameter shift =",TOL(2))
-      stdout.show("Max iterations              =",100)
-      stdout.show("Min iterations              =",7)
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=2)
-      stdout.put("Iter",int_width=TRUE)
-      stdout.put("chi2")
-      stdout.put("Max Shft")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=2)
+      ! Banner and initialise refinement
+      .crystal.data.initialise_refinement
+      .crystal.data.n_param = n_p
  
-      ! Begin the least squares 
- 
-      chi2_old = huge(ONE)
-      iter = 0
-
+      ! Begin refinement loop
       do
  
-         iter = iter + 1
- 
          ! Get the shifts
-       ! .MAIN:get_asym_atom_param_shifts(X,dX,chi2,n_e,max_shift,max_allowed_shift=TOL(2)) 
-         .MAIN:get_asym_atom_param_shifts(dX,X,sf_n,chi2,TOL(5),TOL(2),max_shift)
+         .MAIN:get_asym_atom_param_shifts(dX,X,sf_n)
 
-         ! Iteration results
-         stdout.put(iter)
-         stdout.put(chi2)
-         stdout.put(max_shift)
-         stdout.flush
+         ! Put the results
+         .crystal.data.put_iteration_results
  
          ! Archive parameters
          keep   => stdout
          stdout => arch
-         stdout.show("Iteration = ",iter)
+         stdout.show("Iteration = ",.crystal.data.iteration)
          .atom.put_coordinates
          .atom.put_thermal_tensors
          stdout => keep
  
          ! Finished?
-         if (max_shift<TOL(3)) then
-            stdout.dash(int_fields=1,real_fields=2)
-            stdout.text("Converged.")
-            exit
-         end
-         if (chi2_old<chi2 AND iter>7) then
-            X = X_old
-            chi2 = chi2_old
-            stdout.dash(int_fields=1,real_fields=3)
-            stdout.text("Chi2 has increased.")
-            exit
-         end
-         if (iter>100) then
-            stdout.dash(int_fields=1,real_fields=3)
-            stdout.text("Exceeded maximum iterations.")
-            exit
-         end
- 
+         if (.crystal.data.refinement_finished(chi2_increased)) exit
+
          ! Store parameters, add shift
-         chi2_old = chi2
+         .crystal.data.chi2_old = .crystal.data.chi2
          X_old = X
          X = X + dX
  
       end
- 
+
+      ! If chi2 incrases roll back the parameters
+      if (chi2_increased) then
+         X = X_old
+         .crystal.data.chi2 = .crystal.data.chi2_old
+      end
+
+      .crystal.data.finalise_refinement
+
       .MAIN:set_from_asym_atom_params(X)
  
       arch.destroy
@@ -8219,21 +8192,18 @@ stdout.flush
 
    end
 
-   get_asym_atom_param_shifts(dX,X,sf_n,chi2,tol,max_allowed_shift,max_shift,debug) ::: private
+   get_asym_atom_param_shifts(dX,X,sf_n,debug) ::: private
    ! Given a set of atom parameters "X" (positions and ADP's), and
    ! unique atom structure factors "sf_n" for the symmetry related K
    ! points, evaluate the shifts "dX" by solving the normal equations.
    ! "sf_n" is updated at the end. Also return the "chi2", and the
-   ! "max_shift", renormalised to the provided "max_allowed_shift". 
-   ! "tol" is the tolerance for the smallest acceptable eigenvalue of
-   ! the least squares matrix.
+   ! maximum shift "max_shift" in any parameter values (before
+   ! rescaling), and "n_0" and "n_near_0", the number of exactly zero
+   ! eigenvalues and nearly zero eigenvalues when solving thenormal
+   ! equations.
       dX :: VEC{REAL}, OUT
       X  :: VEC{REAL}, IN
       sf_n :: MAT{CPX}, target, INOUT
-      chi2 :: REAL, OUT
-      tol  :: REAL, IN
-      max_allowed_shift :: REAL, optional, IN
-      max_shift :: REAL, optional, OUT
       debug :: BIN, optional, IN
 
    ENSURE(.basis_info_made,"no basis info")
@@ -8252,7 +8222,6 @@ stdout.flush
    ENSURE(X.dim==9*.crystal.asymmetric_unit_atom.dim, "wrong size, X")
    ENSURE(sf_n.dim1==.crystal.n_unique_SF_k_pts, "wrong dim1, sf_n")
    ENSURE(sf_n.dim2==.crystal.asymmetric_unit_atom.dim, "wrong dim2, sf_n")
-   ENSURE(present(max_shift) EQV present(max_allowed_shift),"max_shift, max_allowed_shift not both present")
 
       sf_d,dF :: MAT{CPX}*
       k_pt,kU :: MAT{REAL}*
@@ -8326,15 +8295,17 @@ stdout.flush
 
       ! Make chi2
       .crystal.make_F_predicted
-      chi2 = .crystal.F_chi2
     
       ! Get the derivative SF's, unique atoms only
       .crystal.sum_unique_sf_derivs_t(dF,sf_d)
       sf_d.destroy
  
       ! Get the unique atom shifts, dX
-      .crystal.solve_normal_equations(dX,dF,tol,max_allowed_shift,max_shift,debug)
+      .crystal.solve_normal_equations(dX,dF,debug)
       dF.destroy
+
+      ! Update # of params and chi2
+      .crystal.update_n_param_and_chi2
 
       ! Eliminate symmetry breaking in dX
       .MAIN:stabilize_uniq_atom_shifts(dX)

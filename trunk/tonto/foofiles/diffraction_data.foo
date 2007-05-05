@@ -49,11 +49,17 @@ contains
    ! Nullify the pointer parts of the diffraction data object
      nullify(.reflections)
      nullify(.scale_factors)
+     nullify(.delta_p)
+     nullify(.correlation_matrix)
+     nullify(.refine_atom_parameters)
    end
 
    destroy_ptr_part ::: leaky
    ! Erase all pointer information
     .destroy_reflection_data
+     .delta_p.destroy
+     .correlation_matrix.destroy
+     .refine_atom_parameters.destroy
    end
 
    destroy_reflection_data ::: leaky
@@ -92,6 +98,12 @@ contains
         .reflections.create_copy(diffraction_data.reflections)
      if (diffraction_data.scale_factors.created) &
         .scale_factors.create_copy(diffraction_data.scale_factors)
+     if (diffraction_data.delta_p.created) &
+        .delta_p.create_copy(diffraction_data.delta_p)
+     if (diffraction_data.correlation_matrix.created) &
+        .correlation_matrix.create_copy(diffraction_data.correlation_matrix)
+     if (diffraction_data.refine_atom_parameters.created) &
+        .refine_atom_parameters.create_copy(diffraction_data.refine_atom_parameters)
    end
 
    set_defaults ::: leaky
@@ -112,6 +124,24 @@ contains
       .F_exp_min              = DIFFRACTION_DATA_F_EXP_MIN
       .F_sigma_min            = DIFFRACTION_DATA_F_SIGMA_MIN
       .F_sigma_max            = DIFFRACTION_DATA_F_SIGMA_MAX
+
+      .refine_structure         = FALSE
+      .refine_coordinates_only  = FALSE
+      .refine_ADPs_only         = FALSE
+      .refine_H_ADPs            = TRUE
+      .refine_H_U_iso           = FALSE
+      .iteration                = ZERO
+      .chi2                     = ZERO
+      .chi2_old                 = ZERO
+      .max_iterations           = DIFFRACTION_DATA_MAX_ITER
+      .min_iterations           = DIFFRACTION_DATA_MIN_ITER  
+      .tol_shift_convergence    = DIFFRACTION_DATA_TOL_SHIFT_CONV
+      .max_allowed_shift        = DIFFRACTION_DATA_MAX_SHIFT
+      .tol_0                    = DIFFRACTION_DATA_TOL_0
+      .n_0                      = 0
+      .tol_near_0               = DIFFRACTION_DATA_TOL_NEAR_0
+      .n_near_0                 = 0
+
    end
 
    update(unit_cell,spacegroup)
@@ -209,6 +239,7 @@ contains
      select case (word)
         case ("}                           ")  ! exit read_loop
         case ("correct_dispersion=         "); .read_correct_dispersion
+        case ("convergence_tolerance=      "); .read_convergence_tolerance
         case ("destroy_reflection_data     "); .destroy_reflection_data
         case ("erase_reflection_data       "); .destroy_reflection_data
         case ("exp_scale_factor=           "); .read_exp_scale_factor
@@ -218,6 +249,9 @@ contains
         case ("junk=                       "); DIFFRACTION_DATA::read_junk
         case ("kind=                       "); .read_data_kind
         case ("make_f_predicted            "); .make_F_predicted
+        case ("max_allowed_shift=          "); .read_max_allowed_shift
+        case ("max_iterations=             "); .read_max_iterations
+        case ("min_iterations=             "); .read_min_iterations
         case ("optimise_extinction=        "); .read_optimise_extinction
         case ("optimize_extinction=        "); .read_optimise_extinction
         case ("optimise_scale_factor=      "); .read_optimise_scale
@@ -225,14 +259,22 @@ contains
         case ("optimise_scale_factors=     "); .read_optimise_scale
         case ("optimize_scale_factors=     "); .read_optimise_scale
         case ("partition_model=            "); .read_partition_model
+        case ("refine_adps_only=           "); .read_refine_ADPs_only
+        case ("refine_h_adps=              "); .read_refine_H_ADPs
+        case ("refine_h_u_iso=             "); .read_refine_H_U_iso
+        case ("refine_positions_only=      "); .read_refine_positions_only
         case ("reflection_data=            "); .read_reflection_data
         case ("sf_mixing_parameter=        "); .read_SF_mixing_parameter
         case ("synthesize_sigma_i=         "); .read_synthesize_sigma_I
         case ("thermal_smearing_model=     "); .read_thermal_smearing_model
+        case ("tolerance_0=                "); .read_tol_0
+        case ("tolerance_near_0=           "); .read_tol_near_0
         case ("wavelength=                 "); .read_wavelength
         case ("prune_bad_reflections       "); .prune_bad_reflections
+        case ("prune_bad_sigmas            "); .prune_bad_sigmas
         case ("prune_high_angle_reflections"); .prune_high_angle_reflections
         case ("prune_low_angle_reflections "); .prune_low_angle_reflections
+        case ("prune_weak_reflections      "); .prune_weak_reflections
         case ("zero_negative_f_exp         "); .zero_negative_F_exp       
         case ("put                         "); .put
         case ("put_sin_theta_on_lambda     "); .put_sin_theta_on_lambda
@@ -268,11 +310,6 @@ contains
          case("pnd  ")
          case default; UNKNOWN(.data_kind)
       end
-   end
-
-   read_reflection_data ::: leaky, private
-   ! Read in reflection data in the standard order from "stdin".
-      .reflections.read_list_keywords
    end
 
    read_f_exp_min ::: private
@@ -426,7 +463,7 @@ contains
 
    prune_bad_reflections ::: leaky
    ! This routine eliminates all the reflections which have a F_z
-   ! value greater than "val".
+   ! value greater than "val" read from input.
      self :: PTR
    DIE_IF(NOT .reflections.created,"no reflection data")
    DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
@@ -457,6 +494,60 @@ contains
      list.destroy
    end
 
+   prune_bad_sigmas ::: leaky
+   ! This routine will prune away all reflections with sigmas not
+   ! between .F_sigma_min to .F_sigma_max
+   DIE_IF(NOT .reflections.created,"no reflection data")
+   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
+     low,high,val :: REAL
+     i,dim :: INT
+     i = 0
+     loop: do 
+        i = i + 1
+        dim = .reflections.dim
+        if (i>dim) exit
+        low  = .F_sigma_min 
+        high = .F_sigma_max
+        val  = .reflections(i).F_sigma
+        if (val>=low AND val<=high) cycle
+        .reflections(i:dim-1) = .reflections(i+1:dim)
+        .reflections.shrink(dim-1)
+     end do loop
+   end
+
+   prune_weak_reflections ::: leaky
+   ! This routine eliminates all the reflections which have 
+   ! F_exp/F_sigma less than value "val" read from the input.
+     self :: PTR
+   DIE_IF(NOT .reflections.created,"no reflection data")
+   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
+   DIE_IF(NOT .reflections.have_F_calc,"no experimental data")
+   DIE_IF(NOT .reflections.have_F_pred,"no predicted data")
+     reflections :: VEC{REFLECTION}*
+     list :: VEC{INT}*
+     n,i :: INT
+     val :: REAL
+     stdin.read(val)
+     n = 0
+     do i = 1,.reflections.n_refl
+        if (abs(.reflections(i).F_exp/reflections(i).F_sigma)>val) cycle
+        n = n + 1
+     end
+     DIE_IF(n==0,"There are no elements less than "//val.to_str.trim)
+     list.create(n)
+     n = 0
+     do i = 1,.reflections.n_refl
+        if (abs(.reflections(i).F_z)>val) cycle
+        n = n + 1
+        list(n) = i
+     end
+     reflections => .reflections
+     .reflections.create(n)
+     .reflections.copy(reflections(list))
+     reflections.destroy
+     list.destroy
+   end
+
    zero_negative_F_exp ::: leaky
    ! This routine zero negative F_exp value 
      self :: PTR
@@ -469,6 +560,76 @@ contains
            .reflections(i).F_sigma = .reflections(i).F_sigma + abs(.reflections(i).F_exp)
         end
      end
+   end
+
+!  Refinement options
+
+   read_convergence_tolerance
+   ! Read the convergence tolerance for the shifts in a structure
+   ! refinement
+      stdin.read(.tol_shift_convergence)
+      ENSURE(.tol_shift_convergence>ZERO,"convergence_tolerance is positive")
+   end
+
+   read_max_allowed_shift
+   ! Read the maximum alllowed shift in a structure refinement
+      stdin.read(.max_allowed_shift)
+      ENSURE(.max_allowed_shift>ZERO,"convergence_tolerance is positive")
+   end
+
+   read_max_iterations
+   ! Read the maximum number of iterations
+      stdin.read(.max_iterations)
+      ENSURE(.max_iterations>-1,"max_iterations must be non-negative")
+      ENSURE(.max_iterations>.min_iterations,"max_iterations must be greater than min_iterations")
+   end
+
+   read_min_iterations
+   ! Read the minimum number of iterations
+      stdin.read(.min_iterations)
+      ENSURE(.min_iterations>-1,"min_iterations must be non-negative")
+      ENSURE(.max_iterations>.min_iterations,"min_iterations must be smaller than max_iterations")
+   end
+
+   read_reflection_data ::: leaky, private
+   ! Read in reflection data in the standard order from "stdin".
+      .reflections.read_list_keywords
+   end
+
+   read_refine_ADPs_only
+   ! Read whether to refine only the ADP's
+      stdin.read(.refine_ADPs_only)
+   end
+
+   read_refine_H_ADPs
+   ! Read whether to refine only the H atom ADP's
+      stdin.read(.refine_H_ADPs)
+   end
+
+   read_refine_H_U_iso
+   ! Read whether to refine only the H atom U_iso's
+      stdin.read(.refine_H_U_iso)
+   end
+
+   read_refine_positions_only
+   ! Read whether to refine only the atom positions
+      stdin.read(.refine_H_U_iso)
+   end
+
+   read_tol_0
+   ! Read the tolerance for deciding on zero eigenvalues in solving
+   ! the normal equations.
+      stdin.read(.tol_0)
+      ENSURE(.tol_0>ZERO,"tol_0 must be positive")
+      ENSURE(.tol_0<tol_near_0,"tol_0 must be smaller than tol_near_0")
+   end
+
+   read_tol_near_0
+   ! Read the tolerance for deciding on *near* zero eigenvalues in
+   ! solving the normal equations.
+      stdin.read(.tol_near_0)
+      ENSURE(.tol_near_0>ZERO,"tol_near_0 must be positive")
+      ENSURE(.tol_0<tol_near_0,"tol_near_0 must be bigger than tol_0")
    end
 
 
@@ -586,13 +747,17 @@ contains
    end
 
    make_F_predicted
-   ! Make the predicted magnitude of the structure factors, including possibly
-   ! an overall scale factor and extinction correction.
+   ! Make the predicted magnitude of the structure factors, including
+   ! possibly an overall scale factor and extinction correction.
      self :: INOUT
    DIE_IF(NOT .reflections.created,"no reflection data")
      F_pred :: VEC{REAL}*
+     n_r,n_p :: INT
 
-     .n_param = 0
+     ! The number of parameters is assumed set before the refinement
+     if (NOT .refine_structure) then
+        .n_param = 0
+     end
 
      if (.optimise_extinction OR .optimise_scale) .get_optimum_parameters
 
@@ -612,6 +777,37 @@ contains
 
      .reflections.set_F_pred(F_pred)
      F_pred.destroy
+
+     n_r = .reflections.dim - 1
+     n_p = .reflections.dim - .n_param
+     .chi2_old = .chi2
+     .chi2     = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
+
+   end
+
+   update_n_param_and_chi2
+   ! Update the number of parameters and recalculate the chi2
+     n_r,n_p :: INT
+
+     if (NOT .refine_structure) then
+        .n_param = 0
+     end
+
+     if (.optimise_extinction) then
+       DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
+       .n_param = .n_param + 2
+     else if (.optimise_scale) then
+       if (.use_multiple_scale_factors) then
+          .n_param = .n_param + maxval(.reflections.group)
+       else
+          .n_param = .n_param + 1
+       end
+     end
+
+     n_r = .reflections.dim - 1
+     n_p = .reflections.dim - .n_param
+     .chi2_old = .chi2
+     .chi2     = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
 
    end
 
@@ -746,7 +942,7 @@ contains
        bot = bot + F_pred * F_pred * sg2
      end
      .scale_factor = top/bot
-     .n_param = 1
+     .n_param = .n_param + 1
    end
 
    optimise_scale_factors ::: leaky
@@ -781,7 +977,7 @@ contains
         end
         .scale_factors(g) = top/bot
      end
-     .n_param = n_group
+     .n_param = .n_param + n_group
    end
 
    optimise_extinction_factor
@@ -799,11 +995,12 @@ contains
       p(2) = ZERO          ! This is the .extinction_factor
     ! saved_self.copy(self)
       saved_self => self
-      VEC{REAL}:minimise_BFGS(DIFFRACTION_DATA::chi2,DIFFRACTION_DATA::d_chi2,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
+      VEC{REAL}:minimise_BFGS(DIFFRACTION_DATA::chi2,DIFFRACTION_DATA::d_chi2 & 
+                              ,p,chi2_min,tol=TOL(7),gtol=TOL(7),step=TOL(4))
     ! saved_self.destroy_ptr_part
       .scale_factor = p(1)
       .extinction_factor = p(2)
-      .n_param = 2
+      .n_param = .n_param + 2
    end
 
    chi2(p) result (res) ::: selfless
@@ -992,6 +1189,10 @@ contains
 !     ext.destroy
 !     angle_bit.destroy
 !   end
+
+!  ****************************
+!  Structure refinement methods
+!  ****************************
 
    d_chi2_dX(res,dFdX)
    ! Evaluate "res", the derivative of the chi^2 with respect to some
@@ -1303,21 +1504,17 @@ contains
 
    end
 
-   solve_normal_equations(shifts,dFdX,tol,max_allowed_shift,max_shift,debug)
+   solve_normal_equations(shifts,dFdX,debug)
    ! Get the "shifts" in the parameters by solving the normal
    ! equations, given "F" and "dFdX", the derivatives of the complex
-   ! structure factors w.r.t. those parameters. "tol" is the minimum
-   ! size for the eigenvalues of the Normal matrix. If present,
-   ! "max_allowed_shift" is used to reset large shifts. "max_shift" is
-   ! returned to see the maximum shift before renormalisation.
+   ! structure factors w.r.t. those parameters. "n_0" is the number of
+   ! eigenvalues equal to zero (as determined by .tol_0) and
+   ! "n_near_0" is the number of eigenvalues nearly equal to zero (as
+   ! determined by .tol_near_0).
       shifts :: VEC{REAL}, OUT
       dFdX :: MAT{CPX}, IN
-      tol  :: REAL, optional, IN
-      max_allowed_shift :: REAL, optional, IN
-      max_shift :: REAL, optional, OUT
       debug :: BIN, optional, IN
 
-   ENSURE(present(max_shift) EQV present(max_allowed_shift),"max_shift, max_allowed_shift not both present")
    ENSURE(.reflections.created,"no reflection data")
    ENSURE(.reflections.have_F_pred, "no predicted structure factors")
    ENSURE(.reflections.have_F_exp, "no experimental structure factors")
@@ -1372,8 +1569,14 @@ contains
       del.destroy
 
       ! Solve for the shifts
-    ! A.solve_linear_equation(rhs,shifts)
-      A.solve_ill_linear_equations(rhs,shifts,tol=tol,smallest_eigenvalue=small)
+      A.solve_ill_linear_equations(rhs,shifts,.tol_0,.n_0,.tol_near_0,.n_near_0 &
+                                  ,.delta_p,.correlation_matrix,small)
+
+      ! Get the maximum shift
+      .max_shift = maxval(abs(shifts))
+
+      ! Set the number of parameters
+      .n_param = n_p - .n_near_0 
 
       if (debg) then
       stdout.text("A:")
@@ -1384,26 +1587,142 @@ contains
       stdout.put(shifts,"column")
       stdout.show("Normal equations check = ",maxval(abs(matmul(A,shifts)-rhs)))
       stdout.show("Smallest eigenvalue    = ",small)
+      stdout.show("tol_0                  = ",.tol_0)
+      stdout.show("n_0                    = ",.n_0)
+      stdout.show("tol_near_0             = ",.tol_near_0)
+      stdout.show("n_near_0               = ",.n_near_0)
       end
 
       rhs.destroy
       A.destroy
 
       ! Renormalise shift if too big
-      if (present(max_allowed_shift)) then
-         max_shift = maxval(abs(shifts))
-         if (max_shift>max_allowed_shift) then
-            fac = max_allowed_shift/max_shift
-            shifts = fac * shifts
-         end
+      if (.max_shift>.max_allowed_shift) then
+         fac = .max_allowed_shift/.max_shift
+         shifts = fac * shifts
+      end
 
-         if (debg) then 
-         stdout.text("shifts after renormalisation:")
-         stdout.put(shifts,"column")
+      if (debg) then 
+      stdout.text("shifts after renormalisation:")
+      stdout.put(shifts,"column")
+      end
+
+   end
+
+   initialise_refinement
+   ! Put out the normal equations banner
+      stdout.flush
+      stdout.text("Refining atom positions and ADP's")
+      stdout.text("---------------------------------")
+      stdout.flush
+      stdout.show("Shift convergence criteria  =",.tol_shift_convergence)
+      stdout.show("Max allowed parameter shift =",.max_allowed_shift)
+      stdout.show("Zero eigenvalue tolerance   =",.tol_0)
+      stdout.show("Nearly zero tolerance       =",.tol_near_0)
+      stdout.show("Max iterations              =",.max_iterations)
+      stdout.show("Min iterations              =",.min_iterations)
+
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=2)
+      stdout.put("Iter",int_width=TRUE)
+      stdout.put("chi2")
+      stdout.put("Max Shft")
+      stdout.put("n_param",int_width=TRUE)
+      stdout.put("n_near_0",int_width=TRUE)
+      stdout.flush
+      stdout.dash(int_fields=3,real_fields=2)
+
+      .refine_structure = TRUE
+      .chi2_old = huge(ONE)
+      .iteration = 0
+
+   end
+
+   put_iteration_results
+   ! Print out the current iterations results
+   ! WARNING: it increments the iteration count
+
+      .iteration = .iteration + 1
+
+      ! Iteration results
+      stdout.put(.iteration)
+      stdout.put(.chi2)
+      stdout.put(.max_shift)
+      stdout.put(.n_param)
+      stdout.put(.n_near_0)
+      stdout.flush
+
+   end
+
+   finalise_refinement
+   ! Finalise refinement
+
+      chi2_increased :: BIN
+      finished,converged,too_many_iters :: BIN
+      i,j,n_p,n_prob :: INT
+      max_corr :: REAL
+
+      finished = .refinement_finished(converged,chi2_increased,too_many_iters)
+
+      DIE_IF(NOT finished,"Structure refinement seems not finished?")
+
+      stdout.dash(int_fields=3,real_fields=2)
+      if (converged) then
+         stdout.text("Structure refinement converged.")
+      else if (chi2_increased) then
+         stdout.text("Structure refinement stopped; chi2 has increased.")
+      else if (too_many_iters) then
+         stdout.text("Structure refinement stopped; exceeded maximum no. of iterations.")
+      end
+
+      .refine_structure = FALSE
+      .delta_p = sqrt(abs(.chi2*.delta_p))
+
+      stdout.save
+      stdout.set_n_fields(9)
+
+      stdout.flush
+      stdout.text("Parameter errors:")
+      stdout.put(.delta_p)
+
+      stdout.flush
+      stdout.text("Big correlation matrix elements:")
+      max_corr = 0.8d0
+      n_prob = count(abs(.correlation_matrix)>=max_corr)
+
+      if (n_prob>0) then
+
+         n_p = .correlation_matrix.dim1
+         do i = 1,n_p
+         do j = 1,n_p
+            if (.correlation_matrix(i,j)<max_corr) cycle
+            stdout.put(i)
+            stdout.put(j)
+            stdout.put(.correlation_matrix(i,j))
+            stdout.flush
+         end
          end
 
       end
 
+      stdout.unsave
+
+   end
+ 
+   refinement_finished(converged,chi2_increased,too_many) result (res)
+   ! Return whether the refinement has finished
+      converged,chi2_increased,too_many :: BIN, OUT, optional
+      res :: BIN
+      tmp :: BIN
+      tmp = .max_shift<.max_allowed_shift
+      if (present(converged)) converged = tmp
+      res = tmp
+      tmp = .chi2>.chi2_old AND .iteration>.min_iterations
+      if (present(chi2_increased)) chi2_increased = tmp
+      res = res OR tmp
+      tmp = .iteration>.max_iterations
+      if (present(too_many)) too_many = tmp
+      res = res OR tmp
    end
 
 !  **************
