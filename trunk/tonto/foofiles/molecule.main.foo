@@ -4298,6 +4298,7 @@ contains
       ! case ("put_cluster_input             "); .put_cluster_input
         case ("put_coppens_interpolators     "); .MAIN:put_coppens_interpolators
         case ("put_crystal                   "); .put_crystal
+        case ("put_crystal_f_statistics      "); .put_crystal_F_statistics
         case ("put_crystal_reflection_data   "); .put_crystal_reflection_data
         case ("put_current_time              "); .put_current_time(timer)
         case ("put_density_matrix            "); .put_density_matrix
@@ -8076,17 +8077,16 @@ stdout.flush
       stdout => keep
 
       ! Banner and initialise refinement
-      .crystal.data.initialise_refinement
-      .crystal.data.n_param = n_p
+      .crystal.initialise_refinement
  
       ! Begin refinement loop
       do
  
-         ! Get the shifts
+         ! Set parameters "X", get the shifts "dX"
          .MAIN:get_asym_atom_param_shifts(dX,X,sf_n)
 
          ! Put the results
-         .crystal.data.put_iteration_results
+         .crystal.put_iteration_results
  
          ! Archive parameters
          keep   => stdout
@@ -8097,7 +8097,7 @@ stdout.flush
          stdout => keep
  
          ! Finished?
-         if (.crystal.data.refinement_finished(chi2_increased)) exit
+         if (.crystal.refinement_finished(chi2_increased)) exit
 
          ! Store parameters, add shift
          .crystal.data.chi2_old = .crystal.data.chi2
@@ -8106,19 +8106,27 @@ stdout.flush
  
       end
 
-      ! If chi2 incrases roll back the parameters
+      ! If chi2 increases roll back the parameters
       if (chi2_increased) then
          X = X_old
          .crystal.data.chi2 = .crystal.data.chi2_old
       end
 
-      .crystal.data.finalise_refinement
+      ! Print the results
+      .crystal.finalise_refinement
 
+      ! Set the final geometry and ADP's
       .MAIN:set_from_asym_atom_params(X)
  
+      ! Clean up
       arch.destroy
       sf_n.destroy
       dX.destroy; X_old.destroy; X.destroy
+
+      ! Delete stored matrices
+      .core_matrix.destroy
+      .delete_scf_integrals
+      .delete_scf_archives(keep_MOs=TRUE)
 
    end
 
@@ -8227,7 +8235,7 @@ stdout.flush
       k_pt,kU :: MAT{REAL}*
       sf_e,sf_u,Fc :: VEC{CPX}*
       u1,u2,u3,k1,k2,k3 :: VEC{REAL}*
-      k1k,k2k,k3k,d1,d2,d3,kr,tf :: REAL
+      k1k,k2k,k3k,d1,d2,d3,kr,tf,val :: REAL
       n_refl,n_atom,n_k,n_p,f,u,k,base :: INT
       sf,sf2,II :: CPX
 
@@ -8259,30 +8267,199 @@ stdout.flush
       sf_e = ZERO
       u = 0
       base = -9
-      do f = 1,.n_atom
-         if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
-         u = u + 1
-         base = base + 9
-         kU = matmul(k_pt,.atom(f).thermal_tensor)
-         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
-         sf_u => sf_n(:,u)
-         do k = 1,n_k
-            k1k = k1(k); k2k = k2(k); k3k = k3(k)
-            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-            sf = sf_u(k) * tf
-            sf_e(k) = sf_e(k) + sf
-            sf_d(k,base+1) = II*k1k*sf
-            sf_d(k,base+2) = II*k2k*sf
-            sf_d(k,base+3) = II*k3k*sf
-            sf2 = HALF*sf
-            sf_d(k,base+4) = -k1k*k1k*sf2
-            sf_d(k,base+5) = -k2k*k2k*sf2
-            sf_d(k,base+6) = -k3k*k3k*sf2
-            sf_d(k,base+7) = -k1k*k2k*sf 
-            sf_d(k,base+8) = -k1k*k3k*sf 
-            sf_d(k,base+9) = -k2k*k3k*sf 
+
+      ! Refine all parameters
+      if (.crystal.refine_all_parameters) then
+
+         ! Refine anisotropic H ADP's
+         if (NOT .crystal.data.refine_H_U_iso) then
+
+            do f = 1,.n_atom
+               if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+               u = u + 1
+               base = base + 9
+               kU = matmul(k_pt,.atom(f).thermal_tensor)
+               u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+               sf_u => sf_n(:,u)
+               do k = 1,n_k
+                  k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                  tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                  sf = sf_u(k) * tf
+                  sf_e(k) = sf_e(k) + sf
+                  sf_d(k,base+1) = II*k1k*sf
+                  sf_d(k,base+2) = II*k2k*sf
+                  sf_d(k,base+3) = II*k3k*sf
+                  sf2 = HALF*sf
+                  sf_d(k,base+4) = -k1k*k1k*sf2
+                  sf_d(k,base+5) = -k2k*k2k*sf2
+                  sf_d(k,base+6) = -k3k*k3k*sf2
+                  sf_d(k,base+7) = -k1k*k2k*sf 
+                  sf_d(k,base+8) = -k1k*k3k*sf 
+                  sf_d(k,base+9) = -k2k*k3k*sf 
+               end
+            end
+
+         ! Refine isotropic H ADP's
+         else if (.crystal.data.refine_H_U_iso) then
+
+            do f = 1,.n_atom
+               if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+               u = u + 1
+               base = base + 9
+               kU = matmul(k_pt,.atom(f).thermal_tensor)
+               u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+               sf_u => sf_n(:,u)
+               if (.atom(f).atomic_number/=1) then
+                  do k = 1,n_k
+                     k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                     tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                     sf = sf_u(k) * tf
+                     sf_e(k) = sf_e(k) + sf
+                     sf_d(k,base+1) = II*k1k*sf
+                     sf_d(k,base+2) = II*k2k*sf
+                     sf_d(k,base+3) = II*k3k*sf
+                     sf2 = HALF*sf
+                     sf_d(k,base+4) = -k1k*k1k*sf2
+                     sf_d(k,base+5) = -k2k*k2k*sf2
+                     sf_d(k,base+6) = -k3k*k3k*sf2
+                     sf_d(k,base+7) = -k1k*k2k*sf 
+                     sf_d(k,base+8) = -k1k*k3k*sf 
+                     sf_d(k,base+9) = -k2k*k3k*sf 
+                  end
+               else
+                  do k = 1,n_k
+                     k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                     tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                     sf = sf_u(k) * tf
+                     sf_e(k) = sf_e(k) + sf
+                     sf_d(k,base+1) = II*k1k*sf
+                     sf_d(k,base+2) = II*k2k*sf
+                     sf_d(k,base+3) = II*k3k*sf
+                     sf2 = HALF*sf
+                     val = -sf2*(k1k*k1k+k2k*k2k+k3k*k3k)
+                     sf_d(k,base+4) = val
+                     sf_d(k,base+5) = val
+                     sf_d(k,base+6) = val
+                     sf_d(k,base+7) = ZERO
+                     sf_d(k,base+8) = ZERO
+                     sf_d(k,base+9) = ZERO
+                  end
+               end
+            end
+
          end
-      end
+
+      ! Refine positions only
+      else if (.crystal.data.refine_positions_only) then
+
+            do f = 1,.n_atom
+               if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+               u = u + 1
+               base = base + 9
+               kU = matmul(k_pt,.atom(f).thermal_tensor)
+               u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+               sf_u => sf_n(:,u)
+               do k = 1,n_k
+                  k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                  tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                  sf = sf_u(k) * tf
+                  sf_e(k) = sf_e(k) + sf
+                  sf_d(k,base+1) = II*k1k*sf
+                  sf_d(k,base+2) = II*k2k*sf
+                  sf_d(k,base+3) = II*k3k*sf
+                  sf_d(k,base+4) = ZERO
+                  sf_d(k,base+5) = ZERO
+                  sf_d(k,base+6) = ZERO
+                  sf_d(k,base+7) = ZERO
+                  sf_d(k,base+8) = ZERO
+                  sf_d(k,base+9) = ZERO
+               end
+            end
+
+      ! Refine ADP's only
+      else if (.crystal.data.refine_ADPs_only) then
+
+         ! Refine ADP's: with anisotropic H ADP's
+         if (NOT .crystal.data.refine_H_U_iso) then
+
+            do f = 1,.n_atom
+               if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+               u = u + 1
+               base = base + 9
+               kU = matmul(k_pt,.atom(f).thermal_tensor)
+               u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+               sf_u => sf_n(:,u)
+               do k = 1,n_k
+                  k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                  tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                  sf = sf_u(k) * tf
+                  sf_e(k) = sf_e(k) + sf
+                  sf_d(k,base+1) = ZERO
+                  sf_d(k,base+2) = ZERO
+                  sf_d(k,base+3) = ZERO
+                  sf2 = HALF*sf
+                  sf_d(k,base+4) = -k1k*k1k*sf2
+                  sf_d(k,base+5) = -k2k*k2k*sf2
+                  sf_d(k,base+6) = -k3k*k3k*sf2
+                  sf_d(k,base+7) = -k1k*k2k*sf 
+                  sf_d(k,base+8) = -k1k*k3k*sf 
+                  sf_d(k,base+9) = -k2k*k3k*sf 
+               end
+            end
+
+         ! Refine ADP's: with isotropic H ADP's
+         else if (.crystal.data.refine_H_U_iso) then
+
+            do f = 1,.n_atom
+               if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+               u = u + 1
+               base = base + 9
+               kU = matmul(k_pt,.atom(f).thermal_tensor)
+               u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+               sf_u => sf_n(:,u)
+               if (.atom(f).atomic_number/=1) then
+                  do k = 1,n_k
+                     k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                     tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                     sf = sf_u(k) * tf
+                     sf_e(k) = sf_e(k) + sf
+                     sf_d(k,base+1) = ZERO
+                     sf_d(k,base+2) = ZERO
+                     sf_d(k,base+3) = ZERO
+                     sf2 = HALF*sf
+                     sf_d(k,base+4) = -k1k*k1k*sf2
+                     sf_d(k,base+5) = -k2k*k2k*sf2
+                     sf_d(k,base+6) = -k3k*k3k*sf2
+                     sf_d(k,base+7) = -k1k*k2k*sf 
+                     sf_d(k,base+8) = -k1k*k3k*sf 
+                     sf_d(k,base+9) = -k2k*k3k*sf 
+                  end
+               else
+                  do k = 1,n_k
+                     k1k = k1(k); k2k = k2(k); k3k = k3(k)
+                     tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+                     sf = sf_u(k) * tf
+                     sf_e(k) = sf_e(k) + sf
+                     sf_d(k,base+1) = ZERO
+                     sf_d(k,base+2) = ZERO
+                     sf_d(k,base+3) = ZERO
+                     sf2 = HALF*sf
+                     val = -sf2*(k1k*k1k+k2k*k2k+k3k*k3k)
+                     sf_d(k,base+4) = val
+                     sf_d(k,base+5) = val
+                     sf_d(k,base+6) = val
+                     sf_d(k,base+7) = ZERO
+                     sf_d(k,base+8) = ZERO
+                     sf_d(k,base+9) = ZERO
+                  end
+               end
+            end
+
+         end 
+
+      end ! different kinds of refinement
+
+      ! Clean
       kU.destroy
 
       ! Sum the symmetry equivalent SF's
@@ -8636,12 +8813,14 @@ stdout.flush
    ENSURE(.crystal.frag_atom_for_asym_unit_atom.created,"no crystal frag_atom_for_asym_unit_atom")
    ENSURE(all(.crystal.frag_atom_for_asym_unit_atom>0),"fragment does not generate unit cell")
    ENSURE(X.dim==9*.crystal.asymmetric_unit_atom.dim, "wrong size, X")
+   ENSURE(.crystal.data.created, "no crystal data")
 
       n_atom,base,f,a,s :: INT
       therm,DM :: MAT{REAL}(3,3)
       seitz :: MAT3{REAL}*
       atom :: VEC{ATOM}*
       pf :: VEC{REAL}(3)
+      val :: REAL
 
       ! Asymmetric unit atoms
       atom => .crystal.asymmetric_unit_atom
@@ -8658,6 +8837,17 @@ stdout.flush
          atom(a).pos = matmul(pf,seitz(:,:,s))
          therm = .atom(f).thermal_tensor                 ! This must be in cartesian axes
          therm.change_basis_using(seitz(:,:,s))          ! Use R to change U tensor basis
+         if (.crystal.data.refine_H_U_iso) then          ! If refining H atom U_iso's ...
+         if (atom(a).atomic_number==1) then              ! Make isotropic
+            val = THIRD*(therm(1,1) + therm(2,2) + therm(3,3))
+            therm(1,1) = val
+            therm(2,2) = val
+            therm(3,3) = val
+            therm(1,2) = ZERO; therm(2,1) = ZERO
+            therm(1,3) = ZERO; therm(3,1) = ZERO
+            therm(2,3) = ZERO; therm(3,2) = ZERO
+         end
+         end
          atom(a).thermal_tensor = therm                  
       end
       seitz.destroy
