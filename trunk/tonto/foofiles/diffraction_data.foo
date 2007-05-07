@@ -49,6 +49,8 @@ contains
    ! Nullify the pointer parts of the diffraction data object
      nullify(.reflections)
      nullify(.scale_factors)
+     nullify(.near_0_eigenvalues)
+     nullify(.near_0_eigenvectors)
      nullify(.delta_p)
      nullify(.correlation_matrix)
      nullify(.refine_atom_parameters)
@@ -56,7 +58,9 @@ contains
 
    destroy_ptr_part ::: leaky
    ! Erase all pointer information
-    .destroy_reflection_data
+     .destroy_reflection_data
+     .near_0_eigenvalues.destroy
+     .near_0_eigenvectors.destroy
      .delta_p.destroy
      .correlation_matrix.destroy
      .refine_atom_parameters.destroy
@@ -98,6 +102,10 @@ contains
         .reflections.create_copy(diffraction_data.reflections)
      if (diffraction_data.scale_factors.created) &
         .scale_factors.create_copy(diffraction_data.scale_factors)
+     if (diffraction_data.near_0_eigenvalues.created) &
+        .near_0_eigenvalues.create_copy(diffraction_data.near_0_eigenvalues)
+     if (diffraction_data.near_0_eigenvectors.created) &
+        .near_0_eigenvectors.create_copy(diffraction_data.near_0_eigenvectors)
      if (diffraction_data.delta_p.created) &
         .delta_p.create_copy(diffraction_data.delta_p)
      if (diffraction_data.correlation_matrix.created) &
@@ -141,6 +149,7 @@ contains
       .n_0                      = 0
       .tol_near_0               = DIFFRACTION_DATA_TOL_NEAR_0
       .n_near_0                 = 0
+      .min_correlation          = DIFFRACTION_DATA_MIN_CORRELATION
 
    end
 
@@ -1522,11 +1531,11 @@ contains
    ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
    ENSURE(dFdX.dim2==shifts.dim, "incompatible shifts and dFdX")
 
-      fac,small :: REAL
       A,dF :: MAT{REAL}*
       rhs,sig,del :: VEC{REAL}*
       n_refl,n_p,i,j :: INT
       debg :: BIN
+      fac :: REAL
  
       debg = FALSE
       if (present(debug)) debg = debug
@@ -1570,7 +1579,7 @@ contains
 
       ! Solve for the shifts
       A.solve_ill_linear_equations(rhs,shifts,.tol_0,.n_0,.tol_near_0,.n_near_0 &
-                                  ,.delta_p,.correlation_matrix,small)
+                                  ,.near_0_eigenvalues,.near_0_eigenvectors,.delta_p,.correlation_matrix)
 
       ! Get the maximum shift
       .max_shift = maxval(abs(shifts))
@@ -1586,7 +1595,7 @@ contains
       stdout.text("shifts:")
       stdout.put(shifts,"column")
       stdout.show("Normal equations check = ",maxval(abs(matmul(A,shifts)-rhs)))
-      stdout.show("Smallest eigenvalue    = ",small)
+      stdout.show("Smallest eigenvalue    = ",minval(abs(.near_0_eigenvalues)))
       stdout.show("tol_0                  = ",.tol_0)
       stdout.show("n_0                    = ",.n_0)
       stdout.show("tol_near_0             = ",.tol_near_0)
@@ -1621,8 +1630,13 @@ contains
       .iteration = 0
 
       stdout.flush
+      stdout.text("****************************")
       stdout.text("Crystal structure refinement")
-      stdout.text("----------------------------")
+      stdout.text("****************************")
+      stdout.flush
+      stdout.show("Refine scale factor         =",.optimise_scale)
+      stdout.show("Refine multiple scales      =",.use_multiple_scale_factors)
+      stdout.show("Refine extinction parameter =",.optimise_extinction)
       stdout.flush
       stdout.show("Refine H ADP's              =",.refine_H_ADPs)
       stdout.show("Refine H U_iso              =",.refine_H_U_iso)
@@ -1637,14 +1651,16 @@ contains
       stdout.show("Min iterations              =",.min_iterations)
 
       stdout.flush
-      stdout.dash(int_fields=3,real_fields=2)
+      stdout.dash(int_fields=3,real_fields=4)
       stdout.put("Iter",int_width=TRUE)
       stdout.put("chi2")
+      stdout.put("R")
+      stdout.put("R_w")
       stdout.put("Max Shft")
       stdout.put("n_param",int_width=TRUE)
       stdout.put("n_near_0",int_width=TRUE)
       stdout.flush
-      stdout.dash(int_fields=3,real_fields=2)
+      stdout.dash(int_fields=3,real_fields=4)
 
    end
 
@@ -1657,6 +1673,8 @@ contains
       ! Iteration results
       stdout.put(.iteration)
       stdout.put(.chi2)
+      stdout.put(.F_r_factor)
+      stdout.put(.F_weighted_r_factor)
       stdout.put(.max_shift)
       stdout.put(.n_param)
       stdout.put(.n_near_0)
@@ -1680,7 +1698,7 @@ contains
       DIE_IF(NOT finished,"Structure refinement seems not finished?")
 
       ! Print table footer
-      stdout.dash(int_fields=3,real_fields=2)
+      stdout.dash(int_fields=3,real_fields=4)
       if (converged) then
          stdout.text("Structure refinement converged.")
       else if (chi2_increased) then
