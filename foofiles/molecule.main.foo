@@ -4227,6 +4227,7 @@ contains
       ! case ("fit_adps_plus_se_ls           "); .MAIN:fit_ADPs_plus_se_ls
         case ("fit_hirshfeld_atoms           "); .MAIN:fit_Hirshfeld_atoms
         case ("fit_hirshfeld_atoms_bfgs      "); .MAIN:fit_Hirshfeld_atoms_BFGS
+        case ("fit_invarioms                 "); .MAIN:fit_invarioms
       ! case ("fit_hirshfeld_atoms_ls        "); .MAIN:fit_Hirshfeld_atoms_ls
         case ("force_thermal_symmetry        "); .MAIN:force_thermal_symmetry
         case ("gauge_origin=                 "); .read_gauge_origin
@@ -4235,6 +4236,7 @@ contains
       ! case ("gradient                      "); .hf_scf_energy_gradient
         case ("group_charges=                "); .read_group_charges
         case ("integrate_density_numerically "); .MAIN:integrate_density_numerically
+        case ("invariom_database_directory=  "); .MAIN:read_invariom_directory
         case ("isosurface=                   "); .read_isosurface
         case ("isosurface_plot               "); .isosurface_plot
       ! case ("integrate_density_functional  "); .integrate_density_functional
@@ -4502,6 +4504,11 @@ contains
       stdin.read_int_quantity(limit) ! Limit is now in default units of words
       ENSURE(limit>0,"limit must be positive")
       tonto.reset_memory_limit(limit)
+   end
+
+   read_invariom_directory
+   ! Read in the directory for the invariom database.
+      stdin.read(.invariom_database_directory) 
    end
 
    locate_memory_leak
@@ -8022,13 +8029,197 @@ stdout.flush
 
    end
 
+!  ****************
+!  Invariom fitting
+!  ****************
+
+   fit_invarioms ::: leaky
+   ! Fit invarioms to the calculated structure factors.
+   ENSURE(.atom.created, "no atoms to fit")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data")
+   ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
+
+      chi2,chi2_old,max_shift :: REAL
+      X,X_old,dX :: VEC{REAL}*
+      sf_n :: MAT{CPX}*
+      n_k,n_p,n_atom,n_0,n_near_0 :: INT
+      arch,keep :: TEXTFILE*
+      chi2_increased,debug :: BIN
+
+      ! Set up grids, atomic densities, and NO's (leaky)
+      .set_up_Hirshfeld_info
+
+      ! Constants
+      n_atom = .crystal.asymmetric_unit_atom.dim
+      n_p = 9*n_atom
+      n_k = .crystal.n_unique_SF_k_pts
+
+      ! Parameter vectors, shifts
+      X.create(n_p)
+      X_old.create(n_p)
+      dX.create(n_p)
+
+      ! Parameter uncertainties, correlations (leaky)
+      .crystal.data.delta_p.create(n_p)
+      .crystal.data.correlation_matrix.create(n_p,n_p)
+ 
+      ! Get the initial parameters
+      .MAIN:get_asym_atom_params_into(X)
+
+      ! Aspherical unique atomic SF's
+      sf_n.create(n_k,n_atom)
+      .MAIN:get_unique_atom_SFs(sf_n)
+
+      ! Archive initial parameters
+      arch.create(trim(.name)//",atom_parameters")
+      arch.open(for="writing")
+      arch.set_real_precision(4)
+      keep   => stdout
+      stdout => arch
+      stdout.show("Iteration = ",0)
+      .atom.put_coordinates
+      .atom.put_thermal_tensors
+      stdout => keep
+
+      ! Banner and initialise refinement
+      .crystal.initialise_refinement
+ 
+      ! Begin refinement loop
+      do
+ 
+         ! Set parameters "X", get the shifts "dX"
+         .MAIN:get_asym_atom_param_shifts(dX,X,sf_n)
+
+         ! Put the results
+         .crystal.put_iteration_results
+ 
+         ! Archive parameters
+         keep   => stdout
+         stdout => arch
+         stdout.show("Iteration = ",.crystal.data.iteration)
+         stdout.show("chi2      = ",.crystal.data.chi2)
+         .atom.put_coordinates
+         .atom.put_thermal_tensors
+         stdout => keep
+ 
+         ! Finished?
+         if (.crystal.refinement_finished(chi2_increased)) exit
+
+         ! Store parameters, add shift
+         .crystal.data.chi2_old = .crystal.data.chi2
+         X_old = X
+         X = X + dX
+ 
+      end
+
+      ! Finalise refinement
+      .crystal.finalise_refinement
+
+      ! If chi2 increases roll back the parameters
+      if (chi2_increased) then
+         X = X_old
+         .crystal.data.chi2 = .crystal.data.chi2_old
+      end
+
+      ! Correct parameter errors
+      .MAIN:uniq_to_asym_atom_shifts(.crystal.data.delta_p)
+
+      ! Put the results
+      .crystal.put_refinement_results
+
+      ! Set the final geometry and ADP's
+      .MAIN:set_from_asym_atom_params(X)
+ 
+      ! Clean up
+      arch.destroy
+      sf_n.destroy
+      dX.destroy; X_old.destroy; X.destroy
+
+      ! Delete stored matrices
+      .core_matrix.destroy
+      .delete_scf_integrals
+      .delete_scf_archives(keep_MOs=TRUE)
+
+   end
+
+   get_unique_invariom_SFs(sf_n) ::: private
+   ! Get "sf_n", the structure factors for the symmetry related 
+   ! K points with *no* thermal smearing, for every unique atom. 
+      sf_n :: MAT{CPX}, target, OUT
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.data.created, "no reflection data")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+   ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
+   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no crystal unique_atom_for_frag_atom")
+   ENSURE(.crystal.asym_unit_atom_for_frag_atom.created,"no crystal asym_unit_atom_for_frag_atom")
+   ENSURE(.density_matrix.created, "no density matrix")
+   ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
+   ENSURE(.molecular_orbitals.created, "no MO's")
+   ENSURE(.molecular_orbitals.restricted.created, "no restricted MO's")
+   ENSURE(sf_n.dim1==.crystal.n_unique_SF_k_pts, "wrong dim1, sf_n")
+   ENSURE(sf_n.dim2==.crystal.asymmetric_unit_atom.dim, "wrong dim2, sf_n")
+
+      k_pt,pt :: MAT{REAL}*
+      wt,rho,Wa, k1,k2,k3,r1,r2,r3 :: VEC{REAL}*
+      k1k,k2k,k3k,kr,rf :: REAL
+      n_k,n_pt,f,a,u,k,i :: INT
+      sf_u :: VEC{CPX}*
+      sf :: CPX
+
+      ! Set up grids, atomic densities, and NO's
+      .set_up_Hirshfeld_info
+
+      ! Make the symmetry generated k's
+      n_k = .crystal.n_unique_SF_k_pts
+      k_pt.create(n_k,3)     
+      .crystal.make_unique_SF_k_pts(k_pt)
+      k1 => k_pt(:,1)
+      k2 => k_pt(:,2)
+      k3 => k_pt(:,3)
+
+      ! Make the structure factors
+      u = 0
+      do f = 1,.n_atom
+         if (f/=.crystal.unique_atom_for_frag_atom(f)) cycle
+         a = .crystal.asym_unit_atom_for_frag_atom(f)
+         u = u + 1
+         .becke_grid.make_grid(pt,wt,[f])
+         n_pt = pt.dim1
+         Wa.create(n_pt)
+         rho.create(n_pt)
+         .make_density_grid(rho,pt)
+         .make_stockholder_atom_grid(Wa,f,pt)
+         Wa = rho*Wa*wt
+         rf = ONE/.crystal.asym_atom_rep_factor(a)
+         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
+         sf_u => sf_n(:,u)
+         do k = 1,n_k
+            k1k = k1(k); k2k = k2(k); k3k = k3(k)
+            sf = ZERO
+            do i = 1,n_pt ! integrate over all space
+               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
+               sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
+            end
+            sf_u(k) = sf * rf
+         end
+         rho.destroy; Wa.destroy
+         wt.destroy; pt.destroy
+      end
+      k_pt.destroy
+
+   end
+
 !  **********************
 !  Hirshfeld atom fitting
 !  **********************
 
    fit_Hirshfeld_atoms ::: leaky
    ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! Uses a line search method.
    ENSURE(.atom.created, "no atoms to fit")
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.data.created,"no crystal data")
