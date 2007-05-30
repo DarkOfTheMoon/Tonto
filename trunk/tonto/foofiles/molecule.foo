@@ -2493,9 +2493,9 @@ contains
      S.symmetric_reflect
    end
 
-!  ****************************
-!  Other one electron integrals
-!  ****************************
+!  *****************
+!  Kinetic integrals
+!  *****************
 
    get_kinetic_matrix(T)
    ! Set "T" to the kinetic matrix
@@ -2626,6 +2626,10 @@ contains
      T.symmetric_reflect
    end
 
+!  *****************************
+!  Kinetic and overlap integrals
+!  *****************************
+
    get_kinetic_overlap(T,S)
    ! Set "S" to the overlap matrix and "T" to the kinetic matrix
    ! If both archives exists, read them; otherwise make them both!
@@ -2739,6 +2743,10 @@ contains
      arch.set(.name,"overlap_matrix")
      arch.write(S)
    end
+
+!  ***************************
+!  Nuclear attracton integrals
+!  ***************************
 
    get_nuclear_matrix(Z)
    ! Set "Z" to the nuclear attraction matrix.
@@ -3083,26 +3091,43 @@ contains
      end
    end
 
+!  ***********
+!  Core matrix
+!  ***********
+
    get_core_matrix(nuclei) ::: leaky
    ! Get the core hamiltonian matrix. If already in memory, do nothing.
    ! Otherwise make it.
       nuclei :: VEC{INT}, optional
 
-      Z :: MAT{REAL}*
+      Z,F :: MAT{REAL}*
 
       if (.core_matrix.created) return
 
       .core_matrix.create(.n_bf,.n_bf)
       .make_core_matrix(.core_matrix,nuclei)
 
-      if (.scfdata.destroyed) return
-      if (.scfdata.is_guess) return
-      if (NOT .scfdata.using_cluster_charges) return
+      if (.scfdata.created) then
+      if (NOT .scfdata.is_guess) then
 
-      Z.create(.n_bf,.n_bf)
-      .make_pt_charge_matrix(Z)
-      .core_matrix = .core_matrix + Z
-      Z.destroy
+         if (.scfdata.using_cluster_charges) then
+            Z.create(.n_bf,.n_bf)
+            .make_pt_charge_matrix(Z)
+            .core_matrix = .core_matrix + Z
+            Z.destroy
+         end
+
+         if (.scfdata.using_local_Lorentz_fields) then
+            Z.create(.n_bf,.n_bf)
+            F.create(.n_bf,.n_bf)
+            .make_local_E_fields_in_core(Z,F)
+            .core_matrix = .core_matrix + Z
+            F.destroy
+            Z.destroy
+         end
+
+      end
+      end
 
 
    end
@@ -3209,6 +3234,86 @@ contains
 
    end
 
+   make_local_E_fields_in_core(Z,F) ::: leaky
+   ! Add the local electric fields "F"  to the core matrix.
+      Z :: MAT{REAL}
+      F :: MAT{REAL}
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.core_matrix.created,"no core matrix")
+
+      pt,a0,b0 :: MAT{REAL}*
+      Wc,mu,wt,V0 :: VEC{REAL}*
+      atom1 :: VEC{INT}(1), target
+      atom2 :: VEC{INT}(2), target
+      atoms :: VEC{INT}*
+      arch  :: ARCHIVE
+      q,atom_a,atom_b,n_pt,fa,la,na,fb,lb,nb,c,i,a,b,aa,bb,ma,mb :: INT
+      same_atoms :: BIN
+
+      ! Set up grids, atomic densities, and NO's
+      .set_up_Hirshfeld_info
+
+      ! Initialise
+      nullify(a0); nullify(b0)
+      Z = ZERO
+
+      ! Loop on atom pairs
+      do q = 1,.no_of_atom_pairs
+
+         if (NOT .overlapping_atoms(q)) cycle
+
+         .get_atom_pair_indices(q,atom_a,atom_b,fa,la,na,fb,lb,nb)
+
+         ! Set atom pair "atoms"
+         same_atoms = atom_a==atom_b
+         if (same_atoms) then; atom1 = [atom_a];        atoms => atom1
+         else;                 atom2 = [atom_a,atom_b]; atoms => atom2
+         end                                    
+         
+         ! Make the grid points and weights for this atom pair
+         .becke_grid.make_grid(pt,wt,atoms,compress=TRUE,weight_is_0=TRUE)
+
+         ! Temporaries
+         n_pt = pt.dim1
+         Wc.create(n_pt)
+         mu.create(n_pt)
+
+         ! Integrate over applied fields
+         do i = 1,atoms.dim
+
+            c  = atoms(i) 
+          ! mu.to_product_of(pt,F(:,c))
+            mu.to_product_of(pt,.E_field)
+            .make_stockholder_atom_grid(Wc,c,pt)
+
+            Wc  = Wc*mu*wt
+
+            do a = 1,na
+            do b = 1,nb
+               aa = fa + a
+               bb = fb + b
+               Z(aa,bb) = sum(Wc*a0(:,a)*b0(:,b))
+            end
+            end
+
+         end
+
+         ! Clean up carefully
+         mu.destroy; Wc.destroy
+         wt.destroy; pt.destroy
+         if (same_atoms) then; a0.destroy; nullify(b0)
+         else;                 b0.destroy; a0.destroy
+         end
+
+      end
+
+   end
+
+!  ***********************
+!  Dipole moment integrals
+!  ***********************
+
    get_dipole_matrices(Dx,Dy,Dz)
    ! Set "Di" to the dipole moment integral matrices.
    ! If archives exist, read them; otherwise make them.
@@ -3271,6 +3376,10 @@ contains
       res :: VEC{REAL}(3)
       res = .atom.nuclear_dipole_moment
    end
+
+!  ***************************
+!  Quadrupole moment integrals
+!  ***************************
 
    get_quadrupole_matrices(Qxx,Qyy,Qzz,Qxy,Qxz,Qyz)
    ! Set "Qij" to the quadrupole moment integral matrices.
@@ -3357,6 +3466,10 @@ contains
       res :: VEC{REAL}(6)
       res = .atom.nuclear_quadrupole_moment
    end
+
+!  *************************
+!  Octupole moment integrals
+!  *************************
 
    get_octupole_matrices(Oxxx,Oyyy,Ozzz,Oxxy,Oxxz,Oyyx,Oyyz,Ozzx,Ozzy,Oxyz)
    ! Set "Oijk" to the quadrupole moment integral matrices.
@@ -3481,6 +3594,10 @@ contains
       res = .atom.nuclear_octupole_moment
    end
 
+!  ************************
+!  Electric field integrals
+!  ************************
+
    make_electric_field_matrices(Ex,Ey,Ez,c)
    ! Make "Ei", the electric fields integral matrices evaluated at
    ! position "c".
@@ -3531,6 +3648,10 @@ contains
       res :: MAT{REAL}(3,.n_atom)
       res = .atom.nuclear_E_field_at_nuclei
    end
+
+!  *********************************
+!  Electric field gradient integrals
+!  *********************************
 
    make_EFG_matrices(Exx,Eyy,Ezz,Exy,Exz,Eyz,c)
    ! Make "Eij", the electric field gradient (EFG) integral matrices evaluated
@@ -3597,6 +3718,52 @@ contains
       res :: MAT{REAL}(6,.n_atom)
       res = .atom.nuclear_EFG_at_nuclei
    end
+
+!  **************************
+!  Angular momentum integrals
+!  **************************
+
+   get_L_matrices(Lx,Ly,Lz)
+   ! Set "Lx", "Ly", and "Lz" to the angular momentum matrices.
+   ! If archives exist, read them; otherwise make them.
+      Lx,Ly,Lz :: MAT{REAL}
+      Lx_archive,Ly_archive,Lz_archive :: ARCHIVE
+      Lx_archive.set(.name,"Lx_matrix")
+      Ly_archive.set(.name,"Ly_matrix")
+      Lz_archive.set(.name,"Lz_matrix")
+      if (Lx_archive.exists AND Ly_archive.exists AND Lz_archive.exists) then
+         Lx_archive.read(Lx)
+         Ly_archive.read(Ly)
+         Lz_archive.read(Lz)
+      else
+         .make_L_matrices(Lx,Ly,Lz)
+      end
+   end
+
+   make_L_matrices(Lx,Ly,Lz)
+   ! Make the angular momentum matrices  "Lx", "Ly", and "Lz".
+      Lx,Ly,Lz :: MAT{REAL}
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+      q,fa,la,fb,lb :: INT
+      sh :: SHELL2
+      arch :: ARCHIVE
+      do q=1,.n_shell_pairs
+         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
+         sh.make_L_ints(Lx(fa:la,fb:lb),Ly(fa:la,fb:lb),Lz(fa:la,fb:lb), .gauge_origin)
+         sh.destroy_ptr_part
+      end
+      Lx.antisymmetric_reflect
+      Ly.antisymmetric_reflect
+      Lz.antisymmetric_reflect
+      arch.set(.name,"Lx_matrix"); arch.write(Lx)
+      arch.set(.name,"Ly_matrix"); arch.write(Ly)
+      arch.set(.name,"Lz_matrix"); arch.write(Lz)
+   end
+
+!  ********************
+!  Spin-orbit integrals
+!  ********************
 
    get_spin_orbit_matrices(SOx,SOy,SOz)
    ! Set "SOx", "SOy", and "SOz" to the one electron spin orbit matrices.
@@ -3772,6 +3939,10 @@ contains
       arch.set(.name,"SO_Qzy_matrix"); arch.write(Qzy)
       arch.set(.name,"SO_Qzz_matrix"); arch.write(Qzz)
    end
+
+!  **************
+!  ZORA integrals
+!  **************
 
    nuclear_potential(values,pts)
    ! Calculate the nuclear potential "values" of a given set of "pts".
@@ -3973,44 +4144,6 @@ contains
       end
       Z.symmetric_reflect
       arch.set(.name,"ENA_matrix"); arch.write(Z)
-   end
-
-   get_L_matrices(Lx,Ly,Lz)
-   ! Set "Lx", "Ly", and "Lz" to the angular momentum matrices.
-   ! If archives exist, read them; otherwise make them.
-      Lx,Ly,Lz :: MAT{REAL}
-      Lx_archive,Ly_archive,Lz_archive :: ARCHIVE
-      Lx_archive.set(.name,"Lx_matrix")
-      Ly_archive.set(.name,"Ly_matrix")
-      Lz_archive.set(.name,"Lz_matrix")
-      if (Lx_archive.exists AND Ly_archive.exists AND Lz_archive.exists) then
-         Lx_archive.read(Lx)
-         Ly_archive.read(Ly)
-         Lz_archive.read(Lz)
-      else
-         .make_L_matrices(Lx,Ly,Lz)
-      end
-   end
-
-   make_L_matrices(Lx,Ly,Lz)
-   ! Make the angular momentum matrices  "Lx", "Ly", and "Lz".
-      Lx,Ly,Lz :: MAT{REAL}
-   ENSURE(.basis_info_made, "no basis info")
-   ENSURE(.atom.created,  "no atom list")
-      q,fa,la,fb,lb :: INT
-      sh :: SHELL2
-      arch :: ARCHIVE
-      do q=1,.n_shell_pairs
-         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
-         sh.make_L_ints(Lx(fa:la,fb:lb),Ly(fa:la,fb:lb),Lz(fa:la,fb:lb), .gauge_origin)
-         sh.destroy_ptr_part
-      end
-      Lx.antisymmetric_reflect
-      Ly.antisymmetric_reflect
-      Lz.antisymmetric_reflect
-      arch.set(.name,"Lx_matrix"); arch.write(Lx)
-      arch.set(.name,"Ly_matrix"); arch.write(Ly)
-      arch.set(.name,"Lz_matrix"); arch.write(Lz)
    end
 
 !  **************************
