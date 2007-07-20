@@ -1419,24 +1419,69 @@ contains
 !  Contraction Coefficients
 !  ************************
 
+!   make_contraction_matrix(cc_mat)
+!   ! Returns the matrix of complete contraction coefficients for each basis set
+!   ! Size of cc_mat is [.n_prim,.n_bf].
+!      cc_mat :: MAT{REAL}, OUT
+!   ENSURE(cc_mat.dim1==.n_prim,"wrong shape, cc_mat")
+!   ENSURE(cc_mat.dim2==.n_bf,  "wrong shape, cc_mat")
+!      a, bf_count, prim_count,a_prim,a_bf :: INT
+!      bf_count = 1
+!      prim_count = 1
+!      cc_mat = ZERO
+!      do a = 1, .n_atom
+!         a_prim = .atom(a).basis.n_prim
+!         a_bf = .atom(a).basis.n_bf
+!         cc_mat(prim_count : prim_count + a_prim - 1, bf_count : bf_count + a_bf - 1) &
+!                  = .atom(a).basis.contraction_matrix
+!         prim_count = prim_count + a_prim
+!         bf_count = bf_count + a_bf
+!      end
+!   end
+
    make_contraction_matrix(cc_mat)
    ! Returns the matrix of complete contraction coefficients for each basis set
    ! Size of cc_mat is [.n_prim,.n_bf].
       cc_mat :: MAT{REAL}, OUT
    ENSURE(cc_mat.dim1==.n_prim,"wrong shape, cc_mat")
    ENSURE(cc_mat.dim2==.n_bf,  "wrong shape, cc_mat")
-      a, bf_count, prim_count,a_prim,a_bf :: INT
-      bf_count = 1
-      prim_count = 1
+
+      a,b,p,ap,ab :: INT
+
+      b = 1
+      p = 1
       cc_mat = ZERO
-      do a = 1, .n_atom
-         a_prim = .atom(a).basis.n_prim
-         a_bf = .atom(a).basis.n_bf
-         cc_mat(prim_count : prim_count + a_prim - 1, bf_count : bf_count + a_bf - 1) &
-                  = .atom(a).basis.contraction_matrix
-         prim_count = prim_count + a_prim
-         bf_count = bf_count + a_bf
+      do a = 1,.n_atom
+         ap = .atom(a).basis.n_prim
+         ab = .atom(a).basis.n_bf
+         .atom(a).basis.make_contraction_matrix(cc_mat(p:p+ap-1,b:b+ab-1))
+         p = p + ap
+         b = b + ab
       end
+
+   end
+
+   make_normalised_contraction_mx(cc_mat)
+   ! Returns the matrix of complete contraction coefficients for each
+   ! basis set. Size of cc_mat is [.n_prim,.n_bf]. Primitive components
+   ! are properly normalised.
+      cc_mat :: MAT{REAL}, OUT
+   ENSURE(cc_mat.dim1==.n_prim,"wrong shape, cc_mat")
+   ENSURE(cc_mat.dim2==.n_bf,  "wrong shape, cc_mat")
+
+      a,b,p,ap,ab :: INT
+
+      b = 1
+      p = 1
+      cc_mat = ZERO
+      do a = 1,.n_atom
+         ap = .atom(a).basis.n_prim
+         ab = .atom(a).basis.n_bf
+         .atom(a).basis.make_normalised_contraction_mx(cc_mat(p:p+ap-1,b:b+ab-1))
+         p = p + ap
+         b = b + ab
+      end
+
    end
 
 !  **********************
@@ -2131,7 +2176,7 @@ contains
    ! Work out and return the number of electrons in the molecule.
       res :: INT
    ENSURE(.atom.created,  "no atom list")
-      res = .atom.n_e - .charge
+      res = .atom.no_of_electrons - .charge
    end
 
    no_of_alpha_electrons result (res)
@@ -2437,20 +2482,24 @@ contains
      S :: MAT{REAL}, target
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.basis_info_made, "no basis info")
+
      q,fa,la,fb,lb :: INT
      sh :: SHELL2
+
      if (DO_IN_PARALLEL) S = ZERO
      parallel do q = 1,.n_shell_pairs
        .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
        sh.make_overlap(S(fa:la,fb:lb))
        sh.destroy_ptr_part
      end
+
      if (DO_IN_PARALLEL) then
         PARALLEL_SYMMETRIC_SUM(S)
      else
         S.symmetric_reflect
      end
      .put_debug(S,"overlap matrix")
+
    end
 
 !   make_rxhf_overlap_matrix(S)
@@ -2493,6 +2542,58 @@ contains
        sh.destroy_ptr_part
      end
      S.symmetric_reflect
+   end
+
+   make_primitive_overlap_matrix(S)
+   ! Calculate the primitive overlap matrix "S"
+     S :: MAT{REAL}
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(S.is_square, "S must be square")
+   ENSURE(S.dim1==.n_prim, "wrong size, S")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     nps,a,b,fa,la,fb,lb :: INT
+     G :: GAUSSIAN2
+   ! ccm,Sb :: MAT{REAL}*
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     ! Calculate the primitive integrals
+     nps = frst.dim
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+           G.make_normalised_overlap_ints(S(fa:la,fb:lb))
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     S.symmetric_reflect
+     .put_debug(S,"primitive overlap matrix")
+
+     ! Test
+   ! ccm.create(.n_prim,.n_bf)
+   ! Sb.create(.n_bf,.n_bf)
+   ! .make_normalised_contraction_mx(ccm)
+   ! S.change_basis_to(Sb,ccm)
+   ! .put_debug(Sb,"basis fn overlap matrix")
+   ! Sb.destroy
+   ! ccm.destroy
+
    end
 
 !  *****************
@@ -2626,6 +2727,58 @@ contains
        sh.destroy_ptr_part
      end
      T.symmetric_reflect
+   end
+
+   make_primitive_kinetic_matrix(T)
+   ! Calculate the primitive kinetic matrix "T"
+     T :: MAT{REAL}
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(T.is_square, "T must be square")
+   ENSURE(T.dim1==.n_prim, "wrong size, T")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     nps,a,b,fa,la,fb,lb :: INT
+     G :: GAUSSIAN2
+   ! ccm,Tb :: MAT{REAL}*
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     ! Calculate the primitive integrals
+     nps = frst.dim
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+           G.make_normalised_kinetic_ints(T(fa:la,fb:lb))
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     T.symmetric_reflect
+     .put_debug(T,"primitive overlap matrix")
+
+     ! Test
+   ! ccm.create(.n_prim,.n_bf)
+   ! Tb.create(.n_bf,.n_bf)
+   ! .make_normalised_contraction_mx(ccm)
+   ! T.change_basis_to(Tb,ccm)
+   ! .put_debug(Tb,"basis fn overlap matrix")
+   ! Tb.destroy
+   ! ccm.destroy
+
    end
 
 !  *****************************
@@ -2810,6 +2963,8 @@ contains
      Z_c :: MAT{REAL}*
      q,c,fa,la,fb,lb :: INT
      sh :: SHELL2
+   ! Zp :: MAT{REAL}*
+
      Z = ZERO
      parallel do q = 1,.n_shell_pairs
        .get_precomputed_shell_pair(sh,q,fa,la,fb,lb)
@@ -2828,6 +2983,12 @@ contains
         Z.symmetric_reflect
      end
      .put_debug(Z,"nuclear attraction matrix")
+
+     ! Test
+   ! Zp.create(.n_prim,.n_prim)
+   ! .make_primitive_nuclear_matrix(Zp)
+   ! Zp.destroy
+
    end
 
    make_nuclear_matrix(Z,nuclei)
@@ -3091,6 +3252,66 @@ contains
      else
         Z.symmetric_reflect
      end
+   end
+
+   make_primitive_nuclear_matrix(Z)
+   ! Calculate the primitive nuclear attraction matrix "Z"
+     Z :: MAT{REAL}
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(Z.is_square, "Z must be square")
+   ENSURE(Z.dim1==.n_prim, "wrong size, Z")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     nps,a,b,fa,la,fb,lb,c :: INT
+     G :: GAUSSIAN2
+     atom :: ATOM*
+     Zc :: MAT{REAL}*
+   ! ccm,Zb :: MAT{REAL}*
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     ! Calculate the primitive integrals
+     nps = frst.dim
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+           Zc.create(G.a.n_comp,G.b.n_comp)
+           do c = 1,.n_atom
+              atom => .atom(c)
+              G.make_normalised_NA_ints(Zc,atom.pos)
+              Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.atomic_number * Zc
+           end
+           Zc.destroy
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     Z.symmetric_reflect
+     .put_debug(Z,"primitive NA matrix")
+
+     ! Test
+   ! ccm.create(.n_prim,.n_bf)
+   ! Zb.create(.n_bf,.n_bf)
+   ! .make_normalised_contraction_mx(ccm)
+   ! Z.change_basis_to(Zb,ccm)
+   ! .put_debug(Zb,"basis fn NA matrix")
+   ! Zb.destroy
+   ! ccm.destroy
+
    end
 
 !  ***********
@@ -4146,6 +4367,79 @@ contains
       end
       Z.symmetric_reflect
       arch.set(.name,"ENA_matrix"); arch.write(Z)
+   end
+
+!  ********************************
+!  Douglas-Kroll-Hess PVP integrals
+!  ********************************
+
+   make_primitive_DKH_matrices(T,SOx,SOy,SOz)
+   ! Calculate the primitive Douglas-Kroll-Hess integrals
+      T,SOx,SOy,SOz :: MAT{REAL}
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(T.is_square, "T must be square")
+   ENSURE(T.dim1==.n_prim, "wrong size, T")
+   ENSURE(SOx.is_same_shape_as(T),"wrong shape, SOx")
+   ENSURE(SOy.is_same_shape_as(T),"wrong shape, SOy")
+   ENSURE(SOz.is_same_shape_as(T),"wrong shape, SOz")
+
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     nps,Z,a,b,fa,la,fb,lb,c :: INT
+     G :: GAUSSIAN2
+     atom :: ATOM*
+     Tc,SOxc,SOyc,SOzc :: MAT{REAL}*
+
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+     ! Calculate the primitive integrals
+     nps = frst.dim
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+             Tc.create(G.a.n_comp,G.b.n_comp)
+           SOxc.create(G.a.n_comp,G.b.n_comp)
+           SOyc.create(G.a.n_comp,G.b.n_comp)
+           SOzc.create(G.a.n_comp,G.b.n_comp)
+           do c = 1,.n_atom
+              atom => .atom(c)
+              G.make_normalised_DKH_ints(Tc,SOxc,SOyc,SOzc,atom.pos)
+              Z = atom.atomic_number 
+                T(fa:la,fb:lb) =   T(fa:la,fb:lb) - Z * Tc
+              SOx(fa:la,fb:lb) = SOx(fa:la,fb:lb) - Z * SOxc
+              SOy(fa:la,fb:lb) = SOy(fa:la,fb:lb) - Z * SOyc
+              SOz(fa:la,fb:lb) = SOz(fa:la,fb:lb) - Z * SOzc
+           end
+           SOzc.destroy; SOyc.destroy; SOxc.destroy
+           Tc.destroy
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     T.symmetric_reflect
+     SOx.symmetric_reflect
+     SOy.symmetric_reflect
+     SOz.symmetric_reflect
+
+     ! Debug, turn on with debug_on "key"
+     .put_debug(T,  "primitive DKH T matrix")
+     .put_debug(SOx,"primitive DKH SOx matrix")
+     .put_debug(SOy,"primitive DKH SOy matrix")
+     .put_debug(SOz,"primitive DKH SOz matrix")
+
    end
 
 !  **************************
@@ -6914,7 +7208,7 @@ contains
       atom_pop.create(.n_atom)
       atom_pop = ZERO
       do a = 1, .n_atom
-         do b = 1, .atom.n_shell_for_atom(a)
+         do b = 1, .atom(a).basis.n_shell
             do c = 1, .atom(a).basis.shell(b).n_comp
                stdout.put(.atom(a).label, int_width = TRUE)
                stdout.put(.atom(a).basis.shell(b).l_chr, int_width = TRUE)
