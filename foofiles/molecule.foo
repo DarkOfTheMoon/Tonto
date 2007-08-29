@@ -343,7 +343,9 @@ contains
       .optimise_thermals = FALSE
       .n_bf = 0
       .atom_info_made = FALSE
-      .basis_set_kind = " "
+      .basis_kind = " "
+      .slaterbasis_kind = " "
+      .coppensbasis_kind = " "
       .basis_info_made = FALSE
       .ANO_data_made = FALSE
       .Hirshfeld_atom_info_made = FALSE
@@ -390,112 +392,308 @@ contains
       .atom_info_made = TRUE
    end
 
+!   resolve_basis_info ::: leaky
+!   ! Match the basis set labels for every atom with the actual atomic basis set.
+!   ! Also perform any finalization procedures to fully define all objects.
+!   ! This version is supposed to work for multiple bases.
+!
+!      do_slaterbasis,do_coppensbasis,do_gaussianbasis :: BIN
+!      library_basis_labels :: VEC{STR}*
+!      n_unique :: INT
+!      library :: STR
+!
+!      if (.atom.destroyed) return
+!
+!      if (.n_atom<1) return
+!
+!      ! This is a hack for Crystal Explorer
+!      if (any(.atom.atomic_number>=55) AND .slaterbasis_kind/=" ") then
+!         WARN("high Z atoms are present, changing to Coppens style bases")
+!         .coppensbasis_kind = "Coppens"
+!         .slaterbasis_kind = " "
+!         .atom.nullify_slaterbasis_part 
+!         .slaterbasis.destroy
+!         .coppensbasis.destroy
+!      end
+!
+!      ! Renormalise basis sets in case we are going to add bases from the library
+!      ! (The library basis sets are in normalised form)
+!      if (.slaterbasis.created)  .slaterbasis.renormalise
+!      if (.coppensbasis.created) .coppensbasis.renormalise
+!      if (.basis.created)        .basis.renormalise
+!
+!      ! Now, add all *library* bases; this may scramble atom.basis ptr's.
+!      ! NOTE: a blank library_bf_kind indicates a non-library basis set
+!      if (.slaterbasis_kind/=" ") then
+!         library = .slaterbasis.library_file(.slaterbasis_kind)
+!         library_basis_labels => .atom.library_basis_labels(.slaterbasis_kind)
+!         .slaterbasis.read_library_data(library,library_basis_labels,n_unique)
+!         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.slaterbasis_kind))
+!         library_basis_labels.destroy
+!      end
+!      if (.coppensbasis_kind/=" ") then
+!         library = .coppensbasis.library_file(.coppensbasis_kind)
+!         library_basis_labels => .atom.library_basis_labels(.coppensbasis_kind)
+!         .coppensbasis.read_library_data(library,library_basis_labels,n_unique)
+!         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.coppensbasis_kind))
+!         library_basis_labels.destroy
+!      end
+!      if (.basis_kind/=" ") then
+!         library = .basis.library_file(.basis_kind)
+!         library_basis_labels => .atom.library_basis_labels(.basis_kind)
+!         .basis.read_library_data(library,library_basis_labels,n_unique)
+!         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.basis_kind))
+!         library_basis_labels.destroy
+!      end
+!
+!      ! Now try to resolve atom bases afresh, and fix up atom.basis pointers.
+!      ! If library .basis_kind is non-blank then library bases are used to
+!      ! resolve the atom bases. If it is blank, then we use the .atom.basis_label.
+!
+!      if (.slaterbasis.created) then
+!      if (NOT .atom.slaterbases_are_resolved) then
+!
+!         .slaterbasis.renormalise
+!
+!         .atom.resolve_bases(.slaterbasis,.slaterbasis_kind)
+!         if (.atom.slaterbases_are_resolved) then; stdout.text("Slater bases all resolved")
+!         else;                                     WARN("not all Slater bases were resolved")
+!         end
+!
+!         .atom.basis_kind = "slater"
+!
+!      end
+!      end
+!
+!      if (.coppensbasis.created) then
+!         .atom.resolve_bases(.coppensbasis,.coppensbasis_kind)
+!         if (.atom.coppensbases_are_resolved) then; stdout.text("Coppens bases all resolved")
+!         else;                                      WARN("not all Coppens bases were resolved")
+!         end
+!         .atom.basis_kind = "coppens"
+!      end
+!      if (.basis.created) then
+!         .atom.resolve_bases(.basis,.basis_kind)
+!         if (.atom.bases_are_resolved) then; stdout.text("Gaussian bases all resolved")
+!         else;                               WARN("not all Gaussian bases were resolved")
+!         end
+!         .atom.basis_kind = "gaussian"
+!      end
+!
+!      ! Unnormalise if completely done
+!      if (.slaterbasis.created) then
+!         .slaterbasis.unnormalise    ! NOTE this
+!      end
+!      if (.coppensbasis.created) then
+!         .coppensbasis.unnormalise   ! NOTE this
+!      end
+!      if (.basis.created) then
+!         .basis.unnormalise          ! NOTE this
+!         .set_basis_info             ! This finalisation is just for gaussians, so far ...
+!      end
+!
+!   end
+
    resolve_basis_info ::: leaky
    ! Match the basis set labels for every atom with the actual atomic basis set.
    ! Also perform any finalization procedures to fully define all objects.
    ! This version is supposed to work for multiple bases.
+      .resolve_gaussianbases
+      .resolve_slaterbases
+      .resolve_coppensbases
+   end
 
-      do_slaterbasis,do_coppensbasis,do_gaussianbasis :: BIN
+   resolve_gaussianbases ::: leaky
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set.
       library_basis_labels :: VEC{STR}*
       n_unique :: INT
-      library_bf_kind :: STR
+      library :: STR
 
       if (.atom.destroyed) return
 
-      if (.n_atom <1) return
+      if (.n_atom<1) return
 
-      library_bf_kind = .basis_function_kind
+      if (.atom.bases_are_resolved) then
+         stdout.text("Gaussian bases all resolved")
+         return
+      end
 
-      if (any(.atom.atomic_number>=55) AND library_bf_kind=="slater") then
-         ! This is a hack for Crystal Explorer
+      ! Resolve from a library .....
+      if (.basis_kind/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.basis.created) .basis.renormalise
+
+         ! Read the basis from the library
+         library = .basis.library_file(.basis_kind)
+         library_basis_labels => .atom.library_basis_labels(.basis_kind)
+         .basis.read_library_data(library,library_basis_labels,n_unique)
+         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.basis_kind))
+         library_basis_labels.destroy
+
+         ! Resolve atom bases afresh i.e. point atom.basis to .basis
+         if (.basis.created) then
+            .atom.resolve_bases(.basis,.basis_kind)
+            .atom.basis_kind = "gaussian"
+
+            ! Unnormalise if completely done
+            .basis.unnormalise        
+            .set_basis_info         
+         end
+
+      ! Resolve from existing .basis .....
+      else if (.basis.created) then
+
+            .atom.resolve_bases(.basis)
+            .atom.basis_kind = "gaussian"
+
+            ! Unnormalise if completely done
+            .set_basis_info          
+      end
+
+      if (.basis.created) then
+      if (.atom.bases_are_resolved) then; stdout.text("Gaussian bases all resolved")
+      else;                               WARN("not all Gaussian bases were resolved")
+      end
+      end
+
+   end
+
+   resolve_slaterbases ::: leaky
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set.
+      library_basis_labels :: VEC{STR}*
+      n_unique :: INT
+      library :: STR
+
+      if (.atom.destroyed) return
+
+      if (.n_atom<1) return
+
+      ! This is a hack for Crystal Explorer
+      if (any(.atom.atomic_number>=55) AND .slaterbasis_kind/=" ") then
          WARN("high Z atoms are present, changing to Coppens style bases")
-       ! .set_basis_set_kind("Coppens")
-         .basis_set_kind = "Coppens"
-         library_bf_kind = "coppens"
-         .atom.nullify_bases ! Destroy previous bases
-         .basis.destroy
+         .slaterbasis_kind = " "
+         .coppensbasis_kind = "Coppens"
+         .atom.nullify_slaterbasis_part 
+         .atom.nullify_coppensbasis_part 
          .slaterbasis.destroy
          .coppensbasis.destroy
+         .resolve_coppensbases
+         return
       end
 
-      ! Renormalise basis sets in case we are going to add bases from the library
-      ! (The library basis sets are in normalised form)
-      if (.slaterbasis.created)  .slaterbasis.renormalise
-      if (.coppensbasis.created) .coppensbasis.renormalise
-      if (.basis.created)        .basis.renormalise
-
-      ! Now, add all *library* bases; this may scramble atom.basis ptr's.
-      ! NOTE: a blank library_bf_kind indicates a non-library basis set
-      select case (library_bf_kind)
-         case ("slater")
-            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-            .slaterbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-            library_basis_labels.destroy
-         case ("coppens")
-            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-            .coppensbasis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-            library_basis_labels.destroy
-         case ("gaussian")
-            library_basis_labels => .atom.library_basis_labels(.basis_set_kind)
-            .basis.read_library_data(.basis_set_library,library_basis_labels,n_unique)
-            stdout.text("Added "//n_unique.to_str.trim//" bases from library: "//.basis_set_kind.trim)
-            library_basis_labels.destroy
+      if (.atom.slaterbases_are_resolved) then
+         stdout.text("Slater bases all resolved")
+         return
       end
 
-      ! Now try to resolve atom bases afresh, and fix up atom.basis pointers.
-      ! If library .basis_set_kind is non-blank then library bases are used to
-      ! resolve the atom bases. If it is blank, then we use the .atom.basis_label.
+      ! Resolve from a library .....
+      if (.slaterbasis_kind/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.slaterbasis.created) .slaterbasis.renormalise
+
+         ! Read the basis from the library
+         library = .slaterbasis.library_file(.slaterbasis_kind)
+         library_basis_labels => .atom.library_basis_labels(.slaterbasis_kind)
+         .slaterbasis.read_library_data(library,library_basis_labels,n_unique)
+         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.slaterbasis_kind))
+         library_basis_labels.destroy
+
+         ! Resolve atom bases afresh i.e. point atom.basis to .basis
+         if (.slaterbasis.created) then
+            .atom.resolve_bases(.slaterbasis,.slaterbasis_kind)
+            .atom.basis_kind = "slater"
+
+            ! Unnormalise if completely done
+            .slaterbasis.unnormalise        
+         end
+
+      ! Resolve from existing .basis .....
+      else if (.slaterbasis.created) then
+
+            .atom.resolve_bases(.slaterbasis)
+            .atom.basis_kind = "slater"
+
+      end
+
       if (.slaterbasis.created) then
-         .atom.resolve_bases(.slaterbasis,.basis_set_kind)
-         if (.atom.slaterbases_are_resolved) then; stdout.text("Slater bases all resolved")
-         else;                                     WARN("not all Slater bases were resolved")
-         end
-         .atom.basis_kind = "slater"
+      if (.atom.slaterbases_are_resolved) then; stdout.text("Slater bases all resolved")
+      else;                                   WARN("not all Slater bases were resolved")
       end
-      if (.coppensbasis.created) then
-         .atom.resolve_bases(.coppensbasis,.basis_set_kind)
-         if (.atom.coppensbases_are_resolved) then; stdout.text("Coppens bases all resolved")
-         else;                                      WARN("not all Coppens bases were resolved")
-         end
-         .atom.basis_kind = "coppens"
-      end
-      if (.basis.created) then
-         .atom.resolve_bases(.basis,.basis_set_kind)
-         if (.atom.bases_are_resolved) then; stdout.text("Gaussian bases all resolved")
-         else;                               WARN("not all Gaussian bases were resolved")
-         end
-         .atom.basis_kind = "gaussian"
-      end
-
-      ! Unnormalise if completely done
-      if (.slaterbasis.created) then
-         .slaterbasis.unnormalise    ! NOTE this
-      end
-      if (.coppensbasis.created) then
-         .coppensbasis.unnormalise   ! NOTE this
-      end
-      if (.basis.created) then
-         .basis.unnormalise          ! NOTE this
-         .set_basis_info             ! This finalisation is just for gaussians, so far ...
       end
 
    end
 
-   basis_set_library(basis_set_kind) result (res)
-   ! Return a string giving the basis set library
-      basis_set_kind :: STR, optional
-      res :: STR
-      basis :: VEC{BASIS}*
-      if (present(basis_set_kind)) then
-         ENSURE( basis_set_kind/=" ","no basis_set_kind specified")
-         res = basis.library_directory(basis_set_kind)
-      else
-         ENSURE(.basis_set_kind/=" ","no basis_set_kind specified")
-         res = basis.library_directory(.basis_set_kind)
+   resolve_coppensbases ::: leaky
+   ! Match the basis set labels for every atom with the actual atomic
+   ! basis set.
+      library_basis_labels :: VEC{STR}*
+      n_unique :: INT
+      library :: STR
+
+      if (.atom.destroyed) return
+
+      if (.n_atom<1) return
+
+      if (.atom.coppensbases_are_resolved) then
+         stdout.text("Coppens bases all resolved")
+         return
       end
+
+      ! Resolve from a library .....
+      if (.coppensbasis_kind/=" ") then
+
+         ! Renormalise basis sets. (The library is in normalised form)
+         if (.coppensbasis.created) .coppensbasis.renormalise
+
+         ! Read the basis from the library
+         library = .coppensbasis.library_file(.coppensbasis_kind)
+         library_basis_labels => .atom.library_basis_labels(.coppensbasis_kind)
+         .coppensbasis.read_library_data(library,library_basis_labels,n_unique)
+         stdout.text("Added "//trim(n_unique.to_str)//" bases from library: "//trim(.coppensbasis_kind))
+         library_basis_labels.destroy
+
+         ! Resolve atom bases afresh i.e. point atom.basis to .basis
+         if (.coppensbasis.created) then
+            .atom.resolve_bases(.coppensbasis,.coppensbasis_kind)
+            .atom.basis_kind = "coppens"
+
+            ! Unnormalise if completely done
+            .coppensbasis.unnormalise        
+         end
+
+      ! Resolve from existing .basis .....
+      else if (.coppensbasis.created) then
+
+            .atom.resolve_bases(.coppensbasis)
+            .atom.basis_kind = "coppens"
+
+      end
+
+      if (.coppensbasis.created) then
+      if (.atom.coppensbases_are_resolved) then; stdout.text("Coppens bases all resolved")
+      else;                                    WARN("not all Coppens bases were resolved")
+      end
+      end
+
    end
+
+!   basis_directory(basis_kind) result (res)
+!   ! Return a string giving the basis set library directory
+!      basis_kind :: STR, optional
+!      res :: STR
+!      basis :: VEC{BASIS}*
+!      if (present(basis_kind)) then
+!         ENSURE( basis_kind/=" ","no basis_kind specified")
+!         res = basis.library_directory(basis_kind)
+!      else
+!         ENSURE(.basis_kind/=" ","no basis_kind specified")
+!         res = basis.library_directory(.basis_kind)
+!      end
+!   end
 
    resolve_axis_system
    ! Change the axis system to crystal coordinates, if required.
@@ -516,65 +714,71 @@ contains
    set_basis_info ::: leaky
    ! Set the molecule basis set information; the atom list must exist.
    ENSURE(.atom.created,"no atom info")
-   ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
+
       if (.basis.destroyed) return
+
       .n_basis = size(.basis)
       .n_bf = .atom.n_bf
       .n_prim = .atom.n_prim
       .n_shell = .atom.n_shell
       .n_shell_pairs = .no_of_shell_pairs
-      .make_shell_info
-    ! This may cause problems
-    ! .molecular_orbitals.destroy
-    ! .molecular_orbitals.create(.n_bf)
-    ! .orbital_energies.destroy
-    ! .orbital_energies.create(.n_bf)
-    ! .density_matrix.destroy
-    ! .density_matrix.create(.n_bf)
-    ! .natural_orbitals.destroy
-    ! .natural_orbitals.create(.n_bf)
-    ! .occupation_numbers.destroy
-    ! .occupation_numbers.create(.n_bf)
-    ! .fock_matrix.destroy
-    ! .fock_matrix.create(.n_bf)
+
+      if (.atom.bases_are_resolved) .make_shell_info
+
       .basis_info_made = TRUE
    end
 
-   set_basis_set_kind(kind) ::: leaky
-   ! Set the *library* basis set kind
+   set_basis_kind(kind) ::: leaky
+   ! Set a gaussian *library* basis set kind
       kind :: STR
-      last,bf_kind,bf_last :: STR
-      last = .basis_set_kind
-      if (last=="Coppens" AND kind=="Clementi-Roetti") then
-         WARN("basis_set_kind was already Coppens, cannot change to Clementi-Roetti")
-      else 
-         .basis_set_kind = kind
-       ! bf_kind = .basis_function_kind(kind)
-       ! bf_last = .basis_function_kind(last)
-       ! if (bf_kind/=bf_last) then                ! Basis function kind has changed
-            if (.atom.created) .atom.nullify_bases ! Destroy previous bases
-            .basis.destroy
-            .slaterbasis.destroy
-            .coppensbasis.destroy
-       ! end
-         .resolve_basis_info                       ! <-- this bit might be leaky
-      end
+   ENSURE(all(kind/=non_gaussian),"basis "//trim(kind)//"is not a gaussian basis")
+      non_gaussian :: VEC{STR}(len=17,4) = ["Clementi-Roetti  ","Thakkar          ","vanLenthe-Barends","Coppens          "]
+
+      ! Set the basis kind
+      .basis_kind = kind
+
+      ! Destroy links to previous bases
+      if (.atom.created) .atom.nullify_basis_part 
+      .basis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .resolve_basis_info
+
    end
 
-   basis_function_kind(basis_set_kind) result (res)
-   ! Return the kind of basis function used given the "basis_set_kind"..
-      basis_set_kind :: STR, optional
-      res :: STR
-      bs_kind :: STR
-      bs_kind = .basis_set_kind
-      if (present(basis_set_kind)) bs_kind = basis_set_kind
-      bs_kind.to_lower_case
-      select case (bs_kind)
-         case (" ");                         res = " "
-         case ("thakkar","clementi-roetti"); res = "slater"
-         case ("coppens");                   res = "coppens"
-         case default;                       res = "gaussian"
-      end
+   set_slaterbasis_kind(kind) ::: leaky
+   ! Set a slater *library* basis set kind
+      kind :: STR
+   ENSURE(any(kind==slater),"basis "//trim(kind)//"is not a known slater basis")
+      slater :: VEC{STR}(len=17,3) = ["Clementi-Roetti  ","Thakkar          ","vanLenthe-Barends"]
+
+      ! Set the basis kind
+      .slaterbasis_kind = kind
+
+      ! Destroy links to previous bases
+      if (.atom.created) .atom.nullify_slaterbasis_part 
+      .basis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .resolve_basis_info
+
+   end
+
+   set_coppensbasis_kind(kind) ::: leaky
+   ! Set a coppens *library* basis set kind
+      kind :: STR
+   ENSURE(kind=="Coppens","basis "//trim(kind)//"is not a known coppens basis")
+
+      ! Set the basis kind
+      .coppensbasis_kind = kind
+
+      ! Destroy links to previous bases
+      if (.atom.created) .atom.nullify_coppensbasis_part 
+      .basis.destroy
+
+      ! Make fresh basis set links (might be leaky)
+      .resolve_basis_info
+
    end
 
    assign_NOs_to_MOs ::: leaky
@@ -1493,6 +1697,7 @@ contains
    ! basis set shell numbers; also define a vector of atom shell numbers
    ! corresponding to the molecule basis set shell number
    ENSURE(.atom.created,"no atom information")
+   ENSURE(.atom.bases_are_resolved,"gaussian bases not all resolved")
    ENSURE(.n_atom>0,"no atoms")
    ENSURE(.basis.created,"no basis set")
      .basis_l_max = .basis.maximum_basis_set_l_value
@@ -6114,46 +6319,99 @@ contains
 
    end
 
-   read_basis_set_kind ::: leaky
-   ! Read in a suffix string representing the basis type to be used
-   ! for the atoms.
-      last,this :: STR
-      last = .basis_set_kind
-      stdin.read(this)
-      .set_basis_set_kind(this)
+   read_basis_directory
+   ! Read in the basis directory (for all kinds of bases)
+      directory :: STR
+      stdin.read(directory)
+      .basis.set_library_directory(directory)
+      .slaterbasis.set_library_directory(directory)
+      .coppensbasis.set_library_directory(directory)
    end
 
-   read_saved_basis_set_kind ::: leaky
-   ! Read in a suffix string representing the basis type to be used
-   ! for the atoms in the *saved* molecule.
-   ENSURE(.saved.created,"there is no saved molecule")
-      last,this :: STR
-      last = .saved.basis_set_kind
+   read_basis_kind ::: leaky
+   ! Read in the *gaussian* basis type to be used for the atoms.
+      this :: STR
       stdin.read(this)
-      .saved.set_basis_set_kind(this)
+      .set_basis_kind(this)
+   end
+
+   read_slaterbasis_kind ::: leaky
+   ! Read in the *slater* basis type to be used for the atoms.
+      this :: STR
+      stdin.read(this)
+      .set_slaterbasis_kind(this)
+   end
+
+   read_coppensbasis_kind ::: leaky
+   ! Read in the *coppens* basis type to be used for the atoms.
+      this :: STR
+      stdin.read(this)
+      .set_coppensbasis_kind(this)
+   end
+
+   read_saved_basis_kind ::: leaky
+   ! Read in the *gaussian* basis type to be used for the atoms in the
+   ! *saved* molecule.
+   ENSURE(.saved.created,"there is no saved molecule")
+      this :: STR
+      stdin.read(this)
+      .saved.set_basis_kind(this)
+   end
+
+   read_saved_slaterbasis_kind ::: leaky
+   ! Read in the *slater* basis type to be used for the atoms in the
+   ! *saved* molecule.
+   ENSURE(.saved.created,"there is no saved molecule")
+      this :: STR
+      stdin.read(this)
+      .saved.set_slaterbasis_kind(this)
+   end
+
+   read_saved_coppensbasis_kind ::: leaky
+   ! Read in the *coppens* basis type to be used for the atoms in the
+   ! *saved* molecule.
+   ENSURE(.saved.created,"there is no saved molecule")
+      this :: STR
+      stdin.read(this)
+      .saved.set_coppensbasis_kind(this)
    end
 
    read_basis_sets ::: leaky
    ! Read in a list of atomic basis sets for the molecule
       WARN_IF(.basis.created,"basis sets already defined!")
+
+      if (.atom.created)  .atom.nullify_basis_part 
+
+      if (.basis.created) .basis.renormalise ! NOTE this
       .basis.read_list_keywords
       if (.basis.created) .basis.unnormalise ! NOTE this
+
       .resolve_basis_info
    end
 
    read_slaterbasis_sets ::: leaky
    ! Read in a list of atomic Coppens basis sets for the molecule
       WARN_IF(.slaterbasis.created,"slaterbasis sets already defined!")
+
+      if (.atom.created)  .atom.nullify_slaterbasis_part 
+
+      if (.slaterbasis.created) .slaterbasis.renormalise
       .slaterbasis.read_list_keywords
       if (.slaterbasis.created) .slaterbasis.unnormalise
+
       .resolve_basis_info
    end
 
    read_coppensbasis_sets ::: leaky
    ! Read in a list of atomic Coppens basis sets for the molecule
       WARN_IF(.coppensbasis.created,"coppensbasis sets already defined!")
+
+      if (.atom.created)  .atom.nullify_coppensbasis_part 
+
+      if (.coppensbasis.created) .coppensbasis.renormalise
       .coppensbasis.read_list_keywords
       if (.coppensbasis.created) .coppensbasis.unnormalise
+
       .resolve_basis_info
    end
 
@@ -6386,7 +6644,6 @@ contains
       ! Read in basic stuff.
       chkfile.create(fchk)
       chkfile.open(for="read")
-      chkfile.read(.name)
       chkfile.look_for("Number of atoms")
       chkfile.move_to_line_item(5); chkfile.read(.n_atom)
       chkfile.look_for("Charge")
@@ -6490,7 +6747,7 @@ contains
       .basis.create(n_basis)
       do a = 1, .n_atom
          basis1.create
-         basis1.label = trim(.atom(a).label) // ":gaussian"
+         basis1.label = trim(.atom(a).chemical_symbol) // ":gaussian"
          n_shell = count(shell_to_atom==a)
          basis1.n_shell = n_shell
          basis1.shell.create(n_shell)
@@ -6537,7 +6794,7 @@ contains
       m1 = .n_bf
       ! .basis.unnormalise ! NOTE this
       .set_atom_info
-      .basis_set_kind = " "
+      .basis_kind = " " ! Reset gaussian basis_kind
       .resolve_basis_info
       ENSURE(m1==.n_bf,"No. of basis functions inconsistent with basis set, did you use 6d/10f?")
 
@@ -7272,7 +7529,7 @@ contains
     ! .put_gaussian_atom_dipoles(charge)
     ! charge.destroy
 
-      .put_GH_atom_charges
+    ! .put_GH_atom_charges
 
       .put_Hirshfeld_atom_info ! leaky
       if (.natural_orbitals.spinorbital_kind=="unrestricted") .put_uHirshfeld_atom_info
@@ -7601,84 +7858,84 @@ contains
 !
 !   end
 
-   put_GH_atom_charges
-   ! Put the gaussian charges
-   ENSURE(.basis_info_made,"no basis info")
-   ENSURE(.atom.created,"no atom list")
-   ENSURE(.density_matrix.created,"no density_matrix")
-   ENSURE(.density_matrix.restricted.created,"no restricted density_matrix")
-      S,Sa,Sb,P :: MAT{REAL}*
-      charge,rho_a,rho_b :: VEC{REAL}*
-      q,fa,la,fb,lb,af,al,bf,bl,a,atom_a,atom_b :: INT
-      sh :: SHELL2
-      arch :: ARCHIVE
-      n_a,n_b :: INT
-      fac :: REAL
-      
-      P => .density_matrix.restricted
-
-      charge.create(.n_atom)
-      charge = ZERO
-
-      do q = 1,.n_shell_pairs
-
-         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
-         n_a = sh.a.n_comp; n_b = sh.b.n_comp
-
-         if (atom_a==atom_b) then
-            fac = TWO
-            if (fa==fb) fac=ONE
-            S.create(n_a,n_b)
-            sh.make_overlap_ints(S)
-            charge(atom_a) = charge(atom_a) + fac*sum(S*P(fa:la,fb:lb))
-            S.destroy
-         else
-            Sa.create(n_a,n_b)
-            Sb.create(n_a,n_b)
-            ! Atomic densities
-            rho_a.create(sh.n_gaussian_pairs)
-            rho_b.create(sh.n_gaussian_pairs)
-            af = .first_basis_fn_for_atom(atom_a)
-            al =  .last_basis_fn_for_atom(atom_a)
-            bf = .first_basis_fn_for_atom(atom_b)
-            bl =  .last_basis_fn_for_atom(atom_b)
-            .atom(atom_a).make_density_grid(rho_a,transpose(sh.pair_center),P(af:al,af:al))
-            .atom(atom_b).make_density_grid(rho_b,transpose(sh.pair_center),P(bf:bl,bf:bl))
-            ! Hirshfeld weight
-            rho_a = rho_a/(rho_a+rho_b)
-            ! Get weighted overlap integrals
-            sh.make_weighted_overlap_ints(Sa,Sb,rho_a)
-            charge(atom_a) = charge(atom_a) + TWO*sum(Sa*P(fa:la,fb:lb))
-            charge(atom_b) = charge(atom_b) + TWO*sum(Sb*P(fa:la,fb:lb))
-            rho_b.destroy; rho_a.destroy
-            Sb.destroy; Sa.destroy
-         end
-
-         sh.destroy_ptr_part
-      end
-
-      stdout.flush
-      stdout.text("Gaussian/Hirshfeld atomic populations: ")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
-      stdout.put("Atom", int_width = TRUE)
-      stdout.put("Population")
-      stdout.put("Charge")
-      stdout.flush
-      stdout.dash(int_fields=1, real_fields=2)
-      do a = 1,.n_atom
-         stdout.put(.atom(a).label,int_width=TRUE)
-         stdout.put(charge(a))
-         charge(a) = .atom(a).atomic_number - charge(a) ! <<< redefine charge
-         stdout.put(charge(a))
-         stdout.flush
-      end
-      stdout.dash(int_fields=1, real_fields=2)
-      stdout.flush
-
-      charge.destroy
-
-   end
+!   put_GH_atom_charges
+!   ! Put the gaussian-Hirshfeld charges
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(.density_matrix.created,"no density_matrix")
+!   ENSURE(.density_matrix.restricted.created,"no restricted density_matrix")
+!      S,Sa,Sb,P :: MAT{REAL}*
+!      charge,rho_a,rho_b :: VEC{REAL}*
+!      q,fa,la,fb,lb,af,al,bf,bl,a,atom_a,atom_b :: INT
+!      sh :: SHELL2
+!      arch :: ARCHIVE
+!      n_a,n_b :: INT
+!      fac :: REAL
+!      
+!      P => .density_matrix.restricted
+!
+!      charge.create(.n_atom)
+!      charge = ZERO
+!
+!      do q = 1,.n_shell_pairs
+!
+!         .get_precomputed_shell_pair(sh,q,fa,la,fb,lb,atom_a,atom_b)
+!         n_a = sh.a.n_comp; n_b = sh.b.n_comp
+!
+!         if (atom_a==atom_b) then
+!            fac = TWO
+!            if (fa==fb) fac=ONE
+!            S.create(n_a,n_b)
+!            sh.make_overlap_ints(S)
+!            charge(atom_a) = charge(atom_a) + fac*sum(S*P(fa:la,fb:lb))
+!            S.destroy
+!         else
+!            Sa.create(n_a,n_b)
+!            Sb.create(n_a,n_b)
+!            ! Atomic densities
+!            rho_a.create(sh.n_gaussian_pairs)
+!            rho_b.create(sh.n_gaussian_pairs)
+!            af = .first_basis_fn_for_atom(atom_a)
+!            al =  .last_basis_fn_for_atom(atom_a)
+!            bf = .first_basis_fn_for_atom(atom_b)
+!            bl =  .last_basis_fn_for_atom(atom_b)
+!            .atom(atom_a).make_density_grid(rho_a,transpose(sh.pair_center),P(af:al,af:al))
+!            .atom(atom_b).make_density_grid(rho_b,transpose(sh.pair_center),P(bf:bl,bf:bl))
+!            ! Hirshfeld weight
+!            rho_a = rho_a/(rho_a+rho_b)
+!            ! Get weighted overlap integrals
+!            sh.make_weighted_overlap_ints(Sa,Sb,rho_a)
+!            charge(atom_a) = charge(atom_a) + TWO*sum(Sa*P(fa:la,fb:lb))
+!            charge(atom_b) = charge(atom_b) + TWO*sum(Sb*P(fa:la,fb:lb))
+!            rho_b.destroy; rho_a.destroy
+!            Sb.destroy; Sa.destroy
+!         end
+!
+!         sh.destroy_ptr_part
+!      end
+!
+!      stdout.flush
+!      stdout.text("Gaussian/Hirshfeld atomic populations: ")
+!      stdout.flush
+!      stdout.dash(int_fields=1, real_fields=2)
+!      stdout.put("Atom", int_width = TRUE)
+!      stdout.put("Population")
+!      stdout.put("Charge")
+!      stdout.flush
+!      stdout.dash(int_fields=1, real_fields=2)
+!      do a = 1,.n_atom
+!         stdout.put(.atom(a).label,int_width=TRUE)
+!         stdout.put(charge(a))
+!         charge(a) = .atom(a).atomic_number - charge(a) ! <<< redefine charge
+!         stdout.put(charge(a))
+!         stdout.flush
+!      end
+!      stdout.dash(int_fields=1, real_fields=2)
+!      stdout.flush
+!
+!      charge.destroy
+!
+!   end
 
 !   make_Hirshfeld_atom_info ::: leaky
 !   ! Make the Hirshfeld atom properties
@@ -20298,7 +20555,6 @@ contains
    ! Do one of the many kinds of plot calculations
    ENSURE(.grid.created, "no grid")
      dft :: BIN
-     basis_kind :: STR
      .grid.put
      .set_ANO_info(.grid.plot_kind)
      select case (.grid.plot_kind)
@@ -23381,7 +23637,7 @@ contains
       dft :: BIN
       if (plot_kind(1:11)/="deformation" AND plot_kind(1:4)/="e_hf") return
       ! If we get here, the ANO information will be used
-      ENSURE(.basis.created,"no basis sets")
+      ENSURE(.basis.created,"no gaussian basis sets")
       ENSURE(.slaterbasis.destroyed,"cannot have slater basis present")
       ENSURE(.coppensbasis.destroyed,"cannot have coppens basis present")
       ENSURE(.atom.created,"no atoms")
@@ -25072,11 +25328,8 @@ contains
      .atom.destroy
      .cluster.create_fragment_atom_list(.atom) 
      .set_atom_info
-     if (.basis_set_kind/=" ") then;
-        .set_basis_set_kind(.basis_set_kind)
-     else
-        .resolve_basis_info
-     end
+     .resolve_basis_info
+     .set_basis_info
 
      stdout.flush
      stdout.text("Save old molecule; make new cluster")
@@ -25101,14 +25354,15 @@ contains
      .set_atom_info
 
      ! Set up basis sets
-     if (.saved.basis_set_kind/=" ") then
-        .set_basis_set_kind(.saved.basis_set_kind)
-     else
-        if (.saved.basis.created)               .basis.create_copy(.saved.basis)
-        if (.saved.slaterbasis.created)   .slaterbasis.create_copy(.saved.slaterbasis)
-        if (.saved.coppensbasis.created) .coppensbasis.create_copy(.saved.coppensbasis)
-        .resolve_basis_info
-     end
+     if (.atom.created) .atom.nullify_bases
+     if (.saved.basis.created)               .basis.create_copy(.saved.basis)
+     if (.saved.slaterbasis.created)   .slaterbasis.create_copy(.saved.slaterbasis)
+     if (.saved.coppensbasis.created) .coppensbasis.create_copy(.saved.coppensbasis)
+     .basis_kind        = .saved.basis_kind
+     .slaterbasis_kind  = .saved.slaterbasis_kind
+     .coppensbasis_kind = .saved.coppensbasis_kind
+     .resolve_basis_info
+     .set_basis_info
 
    end
 
