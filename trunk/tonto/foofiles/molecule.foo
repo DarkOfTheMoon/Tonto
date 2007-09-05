@@ -2631,7 +2631,7 @@ contains
 
       if (.scfdata.created) then
          small = minval(abs(.overlap_eigenvalues))
-         if (minval(abs(.overlap_eigenvalues))<.scfdata.overlap_eigenvalue_tol) then
+         if (minval(abs(.overlap_eigenvalues))<.scfdata.linear_dependance_tol) then
             WARN(" ")
             WARN("Basis is linearly dependent to "//trim(small.to_str("e15.8")))
          end
@@ -9883,48 +9883,44 @@ contains
    end
 
    MO_eigen_update
-   ! Solve for the molecular orbitals.  Requires a set of old molecular
-   ! orbitals.
+   ! Solve for the molecular orbitals.  Requires a set of old molecular orbitals.
    ! The new molecular orbitals "cU" are found from the old MOs "c" by solving :
-   ! (c^T F c)U = c^T S c U E ... where U is an orthogonal matrix, F fock
-   ! matrix.
+   ! (c^T F c)U = c^T S c U E ... where U is an orthogonal matrix, F fock matrix.
    ENSURE(.molecular_orbitals.created,"no old MO's")
    ENSURE(.molecular_orbitals.any_created,"no old MO's")
+
      scf_kind :: STR
-     e :: VEC{REAL}*
-     MO,F :: MAT{REAL}*
-     MOc,Fc :: MAT{CPX}*
-!     .archive_molecular_orbitals(archive_name="old_molecular_orbitals")
+
+     ! Update the MO's
      scf_kind = .scfdata.scf_kind
      select case (scf_kind)
         case ("rhf","rks","rohf","xray_rhf","xray_rks", &
               "embedded_rhf","embedded_rks","embedded_rohf", &
               "embedded_xray_rhf","embedded_xray_rks", &
               "crystal_rhf", "noninteracting-group-rhf")
-           e   => .orbital_energies.restricted
-           MO  => .molecular_orbitals.restricted
-           F   => .fock_matrix.restricted
-           .MO_r_eigen_update(e,MO,F)
+           .MO_r_eigen_update(.orbital_energies.restricted, &
+                              .molecular_orbitals.restricted, &
+                              .fock_matrix.restricted)
         case ("uhf","uks","xray_uhf","xray_uks", &
               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-           e   => .orbital_energies.alpha
-           MO  => .molecular_orbitals.alpha
-           F   => .fock_matrix.alpha
-           .MO_r_eigen_update(e,MO,F)
-           e   => .orbital_energies.beta
-           MO  => .molecular_orbitals.beta
-           F   => .fock_matrix.beta
-           .MO_r_eigen_update(e,MO,F)
+           .MO_r_eigen_update(.orbital_energies.alpha, &
+                              .molecular_orbitals.alpha, &
+                              .fock_matrix.alpha)
+           .MO_r_eigen_update(.orbital_energies.beta, &
+                              .molecular_orbitals.beta, &
+                              .fock_matrix.beta)
         case ("gchf","cghf")
-           e   => .orbital_energies.general
-           MOc => .molecular_orbitals.general_complex
-           Fc  => .fock_matrix.general_complex
-           .MO_gc_eigen_update(e,MOc,Fc)
+           .MO_gc_eigen_update(.orbital_energies.general, &
+                               .molecular_orbitals.general_complex, &
+                               .fock_matrix.general_complex)
         case default
            DIE("unknown scf kind, "//scf_kind.trim)
      end
+
+     ! Archive the MO's
      .archive_molecular_orbitals
      .archive_orbital_energies
+
    end
 
    MO_r_eigen_update(MO_energies,MO,F)
@@ -9933,58 +9929,90 @@ contains
    ! matrix "F".  The new molecular orbitals "MO*U" are found from the old MOs
    ! "MO" by solving : (c^T F c)U = c^T S c U E ...... where U is an orthogonal
    ! matrix.
-     MO_energies :: VEC{REAL}
-     MO,F :: MAT{REAL}
+     MO_energies :: VEC{REAL}, OUT
+     MO :: MAT{REAL}, INOUT
+     F :: MAT{REAL}, IN
    ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.overlap_matrix.created,"no overlap_matrix")
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_eigenvalues")
 
      G,U,X,S :: MAT{REAL}*
      i :: INT
 
+     ! Remove linear dependence from F
      G.create(.n_bf,.n_bf)
-     G = F
+     .shift_linear_dependence_from(F,G)
 
+     ! Change F into old MO basis, G
      G.change_basis_using(MO)
 
-     ! Level shifting in old MO basis
+     ! Level shift in old MO basis
      if (.scfdata.apply_level_shifting) then
        do i = .n_a + 1, .n_bf
          G(i,i) = .scfdata.level_shift + G(i,i)
        end
      end
 
- !   .put_debug(MO,"MO matrix before orthogonalisation")
- !   .put_debug(G,"G matrix before orthogonalisation")
-
- !   ! Symmetric orthogonalise MO's
- !   X.create(.n_bf,.n_bf)
- !   S.create(.n_bf,.n_bf)
- !   .make_overlap_matrix(S)
- !   S.change_basis_using(MO)
- ! ! X.to_power_product_inv_sqrt_of(S)
- !   X.to_inverse_sqrt_of(S,tol=.scfdata.overlap_eigenvalue_tol)
- !   G.change_basis_using(X)
- !   S.to_product_of(MO,X)
- !   MO = S
- !   S.destroy
- !   X.destroy
-
- !   .put_debug(MO,"MO matrix after orthogonalisation")
- !   .put_debug(G,"G matrix after orthogonalisation")
-
+     ! Get rotation U from old to new MO's
      U.create(.n_bf,.n_bf)
      G.solve_eigenproblem(MO_energies,U)
    ! G.diagonalise_by_jacobi(MO_energies,U)
-   ! U.make_diagonally_dominant
-     ! MO.to_product_of(X,U)
+
+     ! Lock orbitals in place, if requested
+     if (.scfdata.using_orbital_locking) U.make_diagonally_dominant
+
+     ! Update orbitals
      G.to_product_of(MO,U)
      MO = G
 
-     .put_debug(U,"U matrix")
-     .put_debug(MO,"New MO matrix")
-
+     ! Clean up
      U.destroy
-     ! X.destroy
      G.destroy
+
+   end
+
+   shift_linear_dependence_from(F,Fnew)
+   ! Level shift the linear dependance in AO matrix "F" using overlap
+   ! eigenvectors with small eigenvalue; place the result into "Fnew"
+   ! WARNING: this routine assumed overlap_eigenvalues are ordered 
+   ! smallest to largest.
+      F,Fnew :: MAT{REAL}
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.overlap_matrix.created,"no overlap_matrix")
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_eigenvalues")
+   ENSURE(F.is_square,"F not square")
+   ENSURE(Fnew.is_square,"Fnew not square")
+   ENSURE(F.is_same_shape_as(Fnew),"F and Fnew incompatible")
+   ENSURE(F.dim1==.n_bf,"wrong size, F")
+
+      n,i :: INT
+      W,V :: MAT{REAL}*
+      tol,fac :: REAL
+
+      ! Return if all overlap matrix eigenvalues are big enough
+      tol = .scfdata.linear_dependance_tol
+      n   = .overlap_eigenvalues.index_of_first_greater_than(tol)
+      if (n==1) then
+         Fnew = F
+         return
+      end
+
+      ! Make projection matrix, W
+      W.create(.n_bf,.n_bf)
+      V => .overlap_eigenvectors(:,n:)
+      W.to_product_of(V,V,transpose_b=TRUE)
+
+      ! Do the projection
+      F.change_basis_to(Fnew,W)
+      W.destroy
+
+      ! Shift the small eigenvectors to high energy
+      fac = .scfdata.linear_dependance_shift
+      V => .overlap_eigenvectors(:,1:n-1)
+      Fnew.plus_scaled_product_of(V,V,fac,transpose_b=TRUE)
+
    end
 
    MO_gc_eigen_update(MO_energies,MO,F)
@@ -11661,22 +11689,34 @@ contains
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.density_matrix.created,"no density matrix")
    ENSURE(.density_matrix.created(.scfdata.spinorbital_kind),"incompatible density")
+
      dP,dF :: OPMATRIX*
      genre :: STR
      do_delta_build,DFT_calculation :: BIN
      delta_archive,archive :: ARCHIVE
+
+     ! Create space
      .fock_matrix.destroy
      .fock_matrix.create(.n_bf)
-     ! Determine whether to use a delta fock matrix build
+
+     ! Determine genre
      genre = .density_matrix.spinorbital_kind
-     delta_archive.set(.name,"delta_density_matrix",genre)
+
+     ! If DFT, store the Hartree matrix only
      DFT_calculation = .scfdata.is_DFT_calculation
      if (DFT_calculation) then; archive.set(.name,"hartree_matrix",genre)
      else;                      archive.set(.name,"fock_matrix",genre)   
      end
+
+     ! Determine whether to use a delta fock matrix build
+     delta_archive.set(.name,"delta_density_matrix",genre)
      do_delta_build = .scfdata.do_delta_build AND delta_archive.exists AND archive.exists
-     if (do_delta_build) then         ! DO NOT do exchange correlation part
-        dF.create(.n_bf)              ! It does not work with delta build
+
+     ! Make the fock matrix.
+     ! For DFT, DO NOT do exchange correlation part,
+     ! It does not work with delta build
+     if (do_delta_build) then         
+        dF.create(.n_bf)              
         dP.create(.n_bf)
         delta_archive.read(dP)
         .make_fock_matrix(dP,dF,core=FALSE,r12=r12,xc=FALSE)
@@ -11687,12 +11727,18 @@ contains
      else
         .make_fock_matrix(.density_matrix,.fock_matrix,core,r12,xc=FALSE)
      end
-     if (DFT_calculation) then        ! Now explicitly do the XC part if needed
-        if (.scfdata.using_delta_build) archive.write(.fock_matrix) ! Archive for delta build
+
+     ! Now explicitly do the XC part if needed.
+     ! Archive the hartree_matrix for delta build, if needed.
+     if (DFT_calculation) then        
+        if (.scfdata.using_delta_build) archive.write(.fock_matrix) 
         .add_XC_matrix(.fock_matrix)
      end
+
+     ! Archive it
      .archive_fock_matrix
      .put_debug(.fock_matrix,"fock matrix")
+
    end
 
    make_fock_matrix(P,F,core,r12,xc) ::: leaky
