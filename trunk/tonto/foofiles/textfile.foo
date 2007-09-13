@@ -145,7 +145,7 @@ contains
       end
     ! stdout.buffer.nullify_ptr_part
       stdout.buffer.set_defaults
-      stdout.put_margin
+      stdout.clear_and_put_margin
       self => stdout
    end
 
@@ -169,7 +169,7 @@ contains
       end
     ! stderr.buffer.nullify_ptr_part
       stderr.buffer.set_defaults
-      stderr.put_margin
+      stderr.clear_and_put_margin
       self => stderr
    end
 
@@ -177,28 +177,36 @@ contains
    ! Create a textfile, and optionally set the name. Does not open the file.
       self :: PTR
       name :: STR, optional
+
       unit :: UNIT_NUMBER
+
       nullify(self)
       allocate(self)
       ADD_MEMORY(SELF_TYPE_SIZE)
+
       .nullify_ptr_part
-      if (present(name)) then
-        .name = name
-      else
-        .name = "unknown"
+
+      if (present(name)) then; .name = name
+      else;                    .name = "unknown"
       end
+
       .action = "unknown"
       .record = 0
       .io_status = 0
       .ignore_end_of_file = FALSE
       .no_of_lines = -1
+
+      .set_default_format
+
       .default_units = " "
       .comment_chars = TEXTFILE_COMMENT_CHARS
       .quote_chars   = TEXTFILE_QUOTE_CHARS
       .ignore_unmatched_quotes = FALSE
-      unit.get(.unit) ! get a unique unit number
-    ! .buffer.nullify_ptr_part
+      .eliminate_specials = TRUE
+
       .buffer.set_defaults  ! Set defaults
+      .clear_and_put_margin
+
    end
 
    create(internal) ::: leaky
@@ -247,7 +255,7 @@ contains
       nullify(.replacement_list)
       nullify(.internal)
       nullify(.saved)
-      nullify(.buffer.replacement_list)
+      .buffer.nullify_ptr_part
    end
 
    destroy_ptr_part ::: leaky
@@ -317,8 +325,8 @@ contains
    end
 
    unsave ::: leaky
-   ! Revert to previously saved textfile settings. Note that this
-   ! is not the same as reverting to a previously saved textfile
+   ! Go back to previously saved textfile settings. Note that this
+   ! is not the same as reverting to a previously redirected textfile
       self :: PTR
    ENSURE(.saved.created,"no previous settings")
       saved :: TEXTFILE*
@@ -455,7 +463,7 @@ contains
       if (IO_IS_ALLOWED) then
 
         inquire(file=.name.trim,exist=exists)
-        DIE_IF(NOT exists,"error trying to open nonexistent file for reading: "//trim(.name))
+        DIE_IF(NOT exists,"file does not exist: "//trim(.name))
 
         open(unit=.unit,        &
            file=.name.trim,     &
@@ -466,7 +474,7 @@ contains
       end
 
       PARALLEL_BROADCAST(.io_status,0)
-      DIE_IF(.io_status/=0,"error trying to open nonexistent file for reading: "//trim(.name))
+      DIE_IF(.io_status/=0,"error opening old file for reading: "//trim(.name))
 
       ! Don't rewind a new file, there's no need.
       ! .rewind
@@ -498,10 +506,10 @@ contains
            iostat=.io_status)
       end
       PARALLEL_BROADCAST(.io_status,0)
-      DIE_IF(.io_status/=0,"error opening old file "//trim(.name))
+      DIE_IF(.io_status/=0,"error opening old file: "//trim(.name))
       .rewind
       .set_default_format
-      .put_margin
+      .clear_and_put_margin
    end
 
    open_new_file_for_write ::: private
@@ -522,7 +530,7 @@ contains
 ! Don't rewind a new file, there's no need.
 !      .rewind
       .set_default_format
-      .put_margin
+      .clear_and_put_margin
    end
 
    close
@@ -2227,10 +2235,11 @@ contains
 !  Data output routines
 !  ********************
 
-   put_margin
-   ! Put a margin into the buffer of the output object
-       if (.margin_width == 0) return
-      .buffer.put(repeat(" ",.margin_width))
+   clear_and_put_margin
+   ! Clear the buffer and put a margin in
+       .buffer.clear
+       if (.margin_width==0) return
+       .buffer.put(repeat(" ",.margin_width))
    end
 
    flush
@@ -2245,8 +2254,7 @@ contains
       DIE_IF(.io_status>0,"read error")
       unit.unit = .unit
       unit.flush_buffer
-      .buffer.clear
-      .put_margin
+      .clear_and_put_margin
       .record = .record + 1
    end
 
@@ -2307,10 +2315,8 @@ contains
       string :: STR, IN
       int_width :: BIN, IN, optional
       .put_text(pretext)
-      if (string.includes(" ")) then
-        .put_str('"'//trim(string)//'"',int_width,flush=1)
-      else
-        .put_str(string,int_width,flush=1)
+      if (string.includes(" ")) then; .put_str('"'//trim(string)//'"',int_width,flush=1)
+      else;                           .put_str(string,int_width,flush=1)
       end
    end
 
@@ -2474,21 +2480,25 @@ contains
       form,tmpcopy :: STR 
       wid,len :: INT
       if (NOT .use_fields) then
-         .buffer.put(" "//trim(string))
+         if (.buffer.item_end==0) then; .buffer.put(trim(string))
+         else;                          .buffer.put(" "//trim(string))
+         end
       else 
          wid = .real_width
          if (present(int_width)) wid = .int_width
          if (present(width))     wid = width
          len = len_trim(string)
          if (len>wid) then
-            .buffer.put(" "//trim(string))
+            if (.buffer.item_end==0) then; .buffer.put(trim(string))
+            else;                          .buffer.put(" "//trim(string))
+            end
          else if (len==wid AND present(width)) then
             .buffer.put(trim(string))
          else if (len==wid) then
             .buffer.put(" "//trim(string))
          else if (present(left_justify)) then
             tmpcopy = string 
-            .buffer.put(adjustl(tmpcopy(1:wid)))
+            .buffer.put_str(adjustl(tmpcopy(1:wid)))
          else if (len/=0) then
             form = "a" // trim(wid.to_str)
             .buffer.put(trim(string),form)
@@ -3603,17 +3613,14 @@ contains
    end
 
    set_margin(margin_width)
-   ! Set the width of the margin in the buffer. Takes effect at the next
-   ! output line
+   ! Set the width of the margin in the buffer. 
+   ! WARNING: buffer is cleared.
       margin_width :: INT
-      ENSURE(margin_width>=0,"margin width less than zero")
-      ENSURE(margin_width<=STR_SIZE,"margin width too large")
-      item_end :: INT
-      item_end=.buffer.item_end ! to shorten the ENSURE line below.
-      ENSURE(item_end<=.margin_width,"set margin width only on empty buffers")
+   ENSURE(margin_width>=0,"margin width less than zero")
+   ENSURE(margin_width<=STR_SIZE,"margin width too large")
+   ENSURE(.buffer.item_end<=.margin_width,"set margin width only on empty buffers")
       .margin_width = margin_width
-      .buffer.clear
-      .put_margin
+      .clear_and_put_margin
    end
 
 !  ************************
