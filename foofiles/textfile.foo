@@ -183,7 +183,6 @@ contains
       nullify(self)
       allocate(self)
       ADD_MEMORY(SELF_TYPE_SIZE)
-
       .nullify_ptr_part
 
       if (present(name)) then; .name = name
@@ -261,15 +260,16 @@ contains
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts of "self", including any saved parts,
    ! which are destroyed recursively.
+      .buffer.destroy_ptr_part
       .replacement_list.destroy
       .internal.destroy
       .saved.destroy
    end
 
    destroy_replacement_list ::: leaky
-   ! Destroy the only the .replacement_list
+   ! Destroy the .replacement_list; needed if set_replacement_list is used
       .replacement_list.destroy
-      .buffer.destroy_replacement_list
+      .buffer.replacement_list.destroy
    end
 
    created result (res) ::: get_from(OBJECT), inlined_by_foo
@@ -296,15 +296,28 @@ contains
       .copy(file)
    end
 
-   copy(file) ::: recursive, leaky
-   ! Make a copy of this textfile
+   copy(file,copy_saved) ::: recursive, leaky
+   ! Make a copy of this textfile. If "saved" is TRUE, recursively
+   ! copy the .saved component. Default is *not* to recursively copy.
       file :: TEXTFILE
+      copy_saved :: BIN, optional
+      
+      ! Non pointer (simple) copy
       self = file
+
+      ! Pointer parts are create-copied
       .nullify_ptr_part
       .buffer.copy(file.buffer)
       if (file.internal.created)         .internal.create_copy(file.internal)
-      if (file.saved.created)            .saved.create_copy(file.saved)
       if (file.replacement_list.created) .replacement_list.create_copy(file.replacement_list)
+
+      ! Copy saved only if requested (recursive)
+      if (present(copy_saved)) then
+      if (copy_saved) then
+      if (file.saved.created)            .saved.create_copy(file.saved)
+      end
+      end
+
    end
 
 !  *******************
@@ -315,12 +328,24 @@ contains
    ! Saved everything about the current textfile "self" in ".saved"
    ! Do not open a new textfile. Can be used to save style settings.
       self :: PTR
+   ENSURE(.created,"no self")
+
       saved :: TEXTFILE*
+
+      ! Keep self in saved
       saved => self
+
+      ! Allocate fresh space for new self
       nullify(self)
       allocate(self)
       ADD_MEMORY(SELF_TYPE_SIZE)
-      self = saved            ! Keep all settings, even line number
+
+      ! Copy self --- keep all settings, even line number.
+      ! NOTE: can't use self = saved since both are pointers 
+      ! and it would copy the target of saved.
+      self.copy(saved) 
+
+      ! Make .saved the old self
       .saved => saved
    end
 
@@ -329,10 +354,22 @@ contains
    ! is not the same as reverting to a previously redirected textfile
       self :: PTR
    ENSURE(.saved.created,"no previous settings")
+
       saved :: TEXTFILE*
+
+      ! Keep the old .saved component
       saved => .saved
-      DELETE_MEMORY(SELF_TYPE_SIZE)
+
+      ! Destroy the pointer parts of self
+      .buffer.destroy_ptr_part
+      .replacement_list.destroy
+      .internal.destroy
+
+      ! Now deallocate self
       deallocate(self)
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+
+      ! Self is the old .saved
       self  => saved
    end
 
@@ -341,36 +378,91 @@ contains
 !  *************************
 
    redirect(name) ::: leaky
-   ! Save all the info for the current file in ".saved", and open a new
-   ! textfile.  This is used for input, or output redirection. The new file
-   ! retains the style settings of the saved file
+   ! Save all the info for the current file in ".saved", and open a
+   ! new textfile.  This is used for input, or output redirection. 
+   ! The new file retains the style settings of the saved file
       self :: PTR
       name :: STR
+
       saved :: TEXTFILE*
+
+      ! Keep self in saved
       saved => self
+
+      ! Create a new self
       .create(name)
+
+      ! The .saved component of new self is the old self
       .saved => saved
+
+      ! Preserve old style settings
       .use_style(saved)
+
+      ! Open the new file
       .open(for=.saved.action)
    end
 
    redirect(internal) ::: leaky
-   ! Save all the info for the current file in ".saved", and open a new
-   ! internal textfile. This is used for *only* input redirection.
+   ! Save all the info for the current file in ".saved", and open a
+   ! new internal textfile. This is used for *only* input redirection.
    ! The new file retains the style settings of the saved file
       self :: PTR
       internal :: VEC{STR}, IN
+
       saved :: TEXTFILE*
+
+      ! Keep self in saved
       saved => self
+
+      ! Create new .internal file
       nullify(.internal)
       .create(internal)
+
+      ! The .saved component of new self is the old self
       .saved => saved
+
+      ! Preserve old style settings
       .use_style(saved)
    end
 
+   revert ::: leaky
+   ! Revert to the previously redirected textfile, but keep current
+   ! style settings, including (for example) any default_units settings.
+   ENSURE(.saved.created,"no previous settings")
+      self :: PTR
+
+      saved :: TEXTFILE*
+      unit :: UNIT_NUMBER
+
+      ! Preserve current style settings
+      .saved.use_style(self)
+
+      ! Soft-ending
+      .saved.io_status = -1     
+
+      ! Keep previous .saved file
+      saved => .saved
+
+      ! Destroy pointer parts of self ...
+      ! Do not destroy .saved parts recursively, just deallocate
+      if (.internal.created) then
+         .internal.destroy      
+      else
+         .buffer.destroy_ptr_part
+         .replacement_list.destroy
+         .close
+         unit.free(.unit)
+      end
+      deallocate(self)          
+      DELETE_MEMORY(SELF_TYPE_SIZE)
+
+      ! Self is the old .saved
+      self => saved
+   end
+
    use_style(saved) ::: private
-   ! Revert to the previously saved style settings, including
-   ! any default units.
+   ! Revert to the previously saved style settings, including any
+   ! default units.
       saved :: TEXTFILE
       .default_units = saved.default_units
       .use_labels    = saved.use_labels
@@ -387,47 +479,6 @@ contains
       .ignore_unmatched_quotes = saved.ignore_unmatched_quotes
       .eliminate_specials = saved.eliminate_specials
    end
-
-   revert ::: leaky
-   ! Revert to the previously redirected textfile, but keep current style
-   ! settings, including (for example) any default_units settings.
-   ENSURE(.saved.created,"no previous settings")
-      self :: PTR
-      saved :: TEXTFILE*
-      unit :: UNIT_NUMBER
-      .saved.use_style(self)
-      .saved.io_status = -1     ! Soft-ending
-      saved => .saved
-      if (.internal.created) then
-         .internal.destroy      ! Do not destroy self recursively ...
-      else
-         .close
-         unit.free(.unit)
-      end
-      DELETE_MEMORY(SELF_TYPE_SIZE)
-      deallocate(self)          ! instead, just deallocate it
-      self => saved
-   end
-
-!   revert ::: leaky
-!   ! Revert to the previously redirected textfile, but keep current style
-!   ! settings, including (for example) any default_units settings.
-!   ENSURE(.saved.created,"no previous settings")
-!      saved :: TEXTFILE*
-!      unit :: UNIT_NUMBER
-!      saved => .saved
-!      if (.internal.created) then
-!         .internal.destroy      ! Do not destroy .saved recursively ...
-!      else
-!         .close
-!         unit.free(.unit)
-!      end
-!      saved.use_style(self)
-!      self  = saved
-!      .io_status = -1           ! Soft-ending
-!      DELETE_MEMORY(SELF_TYPE_SIZE)
-!      deallocate(saved)         ! instead, just deallocate it
-!   end
 
 !  ******************************
 !  Opening, closing, and deletion
@@ -462,7 +513,7 @@ contains
 
       if (IO_IS_ALLOWED) then
 
-        inquire(file=.name.trim,exist=exists)
+        inquire(file=trim(.name),exist=exists)
         DIE_IF(NOT exists,"file does not exist: "//trim(.name))
 
         open(unit=.unit,        &
@@ -475,9 +526,6 @@ contains
 
       PARALLEL_BROADCAST(.io_status,0)
       DIE_IF(.io_status/=0,"error opening old file for reading: "//trim(.name))
-
-      ! Don't rewind a new file, there's no need.
-      ! .rewind
 
    end
 
@@ -499,7 +547,7 @@ contains
       .action = "write"
       if (IO_IS_ALLOWED) then
         open(unit=.unit,        &
-           file=.name.trim,     &
+           file=trim(.name),    &
            status="old",        &
            access="sequential", &
            form="formatted",    &
@@ -507,8 +555,6 @@ contains
       end
       PARALLEL_BROADCAST(.io_status,0)
       DIE_IF(.io_status/=0,"error opening old file: "//trim(.name))
-      .rewind
-      .set_default_format
       .clear_and_put_margin
    end
 
@@ -519,7 +565,7 @@ contains
       .action = "write"
       if (IO_IS_ALLOWED) then
         open(unit=.unit,        &
-           file=.name.trim,     &
+           file=trim(.name),    &
            status="new",        &
            access="sequential", &
            form="formatted",    &
@@ -527,10 +573,6 @@ contains
       end
       PARALLEL_BROADCAST(.io_status,0)
       DIE_IF(.io_status/=0,"error opening new file "//trim(.name))
-! Don't rewind a new file, there's no need.
-!      .rewind
-      .set_default_format
-      .clear_and_put_margin
    end
 
    close
@@ -3591,7 +3633,7 @@ contains
    end
 
    set_replacement_list(list) ::: leaky
-   ! Set .ignoire_unmatched_quote to "ignore".
+   ! Set the replacement_list.
       list :: MAT{STR}*
    ENSURE(list.created,"list destroyed")
    ENSURE(list.dim2==2,"second dimension must be 2")
