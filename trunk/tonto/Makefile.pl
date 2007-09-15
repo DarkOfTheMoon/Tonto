@@ -21,7 +21,7 @@ my $FC = '';                          # The fortran compiler command.
 my $COMPILER_VENDOR = '';             # Name of the compiler vendor.
 my $COMPILER_ID_ = '';                # Compiler ID 
 my $havelibs = 0;                     # Whether have determined the libraries to use.
-my $FSUFFIX = 'f';                    # Fortran files have this suffix.
+my $FSUFFIX = 'f90';                  # Fortran files have this suffix.
 my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
 my $PLATFORM_ID = '';                 # e.g. LAHEY-lf95-on-WINDOWS
 my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
@@ -44,6 +44,7 @@ my %vendors = (                                # This contains a list of string
 'NAG'        => 'NAG',
 'HP'         => 'HP',
 'WORKSHOP'   => 'WorkShop',
+'SUN'        => 'Sun',
 'MIPSPRO'    => 'MIPSpro',
 'PGI'        => 'Portland',
 'INTEL'      => 'Intel',
@@ -239,16 +240,17 @@ sub get_default_integer_kind {
   print INTTEST "  print *,kind(i)\n";
   print INTTEST "end program\n";
   close(INTTEST);
-  system("${FC} -o inttest inttest.f90 >& /dev/null");
-  if ( -x 'inttest.exe')  { system("./inttest.exe > inttest.out"); }
-  if ( -x 'inttest')      { system("./inttest     > inttest.out"); }
+  system("${FC} -o ./inttest ./inttest.f90 > /dev/null 2>&1");
+  if ( -x 'inttest.exe')  { system("inttest.exe > inttest.out"); }
+  if ( -x 'inttest')      { system("inttest     > inttest.out"); }
   if (open(INTTEST,"<","inttest.out")) {
      $INT_KIND = <INTTEST>;
      chomp($INT_KIND);
      $INT_KIND =~s/\s+//g;
      $INT_KIND =~s/\W+//g;
   } 
-  unlink("inttest.map","inttest","inttest.f90","inttest.out","inttest.exe","inttest.o","inttest.obj");
+  unlink("inttest.f90");
+  unlink("inttest.map","inttest","inttest.out","inttest.exe","inttest.o","inttest.obj");
 }
 
 ################################################################################
@@ -260,7 +262,7 @@ sub get_default_double_precision_kind {
   print REALTEST "  print *,kind(1.0d0)\n";
   print REALTEST "end program\n";
   close(REALTEST);
-  system("${FC} -o realtest.exe realtest.f90 >& /dev/null");
+  system("${FC} -o realtest.exe realtest.f90 > /dev/null 2>&1");
   if ( -x 'realtest.exe') { system("./realtest.exe > realtest.out"); }
   if ( -x 'realtest')     { system("./realtest     > realtest.out"); }
   if (open(REALTEST,"<","realtest.out")) {
@@ -282,7 +284,7 @@ sub get_default_logical_kind {
   print BINTEST "  print *,kind(l)\n";
   print BINTEST "end program\n";
   close(BINTEST);
-  system("${FC} -o bintest.exe bintest.f90 >& /dev/null");
+  system("${FC} -o bintest.exe bintest.f90 > /dev/null 2>&1");
   if ( -x 'bintest.exe') { system("./bintest.exe > bintest.out"); }
   if ( -x 'bintest')     { system("./bintest     > bintest.out"); }
   if (open(BINTEST,"<","bintest.out")) {
@@ -348,7 +350,8 @@ sub get_vendor {
     }
     if ($vendor ne 'UNKNOWN') {last}
   }
-  unlink("conf.test","conftest.${FSUFFIX}","a.out","conf.exe");
+  unlink("conftest.${FSUFFIX}");
+  unlink("conf.test","a.out","conf.exe");
   return $vendor;
 }
 
