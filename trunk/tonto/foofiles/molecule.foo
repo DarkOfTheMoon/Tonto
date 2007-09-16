@@ -76,6 +76,7 @@ contains
       nullify(.atom_kind)
       nullify(.unique_atom)
       nullify(.overlapping_atoms)
+      nullify(.overlapping_atom3)
       nullify(.scfdata)
       nullify(.orbital_energies)
       nullify(.molecular_orbitals)
@@ -141,6 +142,7 @@ contains
       .atom_kind.destroy
       .unique_atom.destroy
       .overlapping_atoms.destroy
+      .overlapping_atom3.destroy
       .scfdata.destroy
       .orbital_energies.destroy
       .molecular_orbitals.destroy
@@ -269,6 +271,7 @@ contains
       if (mol.atom_kind.created)                  .atom_kind.create_copy(mol.atom_kind)
       if (mol.unique_atom.created)                .unique_atom.create_copy(mol.unique_atom)
       if (mol.overlapping_atoms.created)          .overlapping_atoms.create_copy(mol.overlapping_atoms)
+      if (mol.overlapping_atom3.created)          .overlapping_atom3.create_copy(mol.overlapping_atom3)
       if (mol.first_basis_fn_for_atom.created)    .first_basis_fn_for_atom.create_copy(mol.first_basis_fn_for_atom)
       if (mol.last_basis_fn_for_atom.created)     .last_basis_fn_for_atom.create_copy(mol.last_basis_fn_for_atom)
       if (mol.scfdata.created)                    .scfdata.create_copy(mol.scfdata)
@@ -1163,6 +1166,24 @@ contains
        fb = .first_basis_fn_for_atom(b)
        lb = .last_basis_fn_for_atom(b)
        S_max(ab) = maxval(.overlap_matrix(fa:la,fb:lb))
+     end
+   end
+
+   make_S_max_for_bf_pairs(S_max)
+   ! Make "S_max", the maximum of the overlap integrals between basis
+   ! functions in pairs of shells.
+     S_max :: VEC{REAL}
+   ENSURE(S_max.dim==.no_of_atom_pairs,"wrong size, S_max")
+     ab,a,b,fa,fb,la,lb :: INT
+     .get_overlap_matrix
+     do ab = 1, .no_of_atom_pairs
+       a = (1+int(sqrt(EIGHT*ab-SEVEN)))/2
+       b = ab - a*(a-1)/2
+       fa = .first_basis_fn_for_atom(a)
+       la = .last_basis_fn_for_atom(a)
+       fb = .first_basis_fn_for_atom(b)
+       lb = .last_basis_fn_for_atom(b)
+       S_max(ab) = maxval(abs(.overlap_matrix(fa:la,fb:lb)))
      end
    end
 
@@ -8441,7 +8462,6 @@ contains
       mol.set_scf_defaults(use_ks)
       mol.scfdata.output = .scfdata.guess_output ! assume this is a guess
       mol.scfdata.convergence = .scfdata.convergence
-      mol.scfdata.using_rough_convergence = FALSE
       mol.scfdata.diis.set_genre("ediis+diis")   ! Over-ride user settings here
       mol.scfdata.diis.convergence_tolerance = .scfdata.diis.convergence_tolerance
       mol.scfdata.diis.set_start_tolerance(0.4d0)
@@ -8480,7 +8500,6 @@ contains
       mol.scfdata.output = .scfdata.guess_output ! assume this is a guess
       mol.scfdata.convergence = .scfdata.convergence
       mol.scfdata.diis.convergence_tolerance = .scfdata.diis.convergence_tolerance
-      mol.scfdata.using_rough_convergence = .scfdata.using_rough_convergence
 
    end
 
@@ -11114,7 +11133,6 @@ contains
        if (mol.no_of_electrons >= 1) then
        ! mol.scfdata.diis.set_genre("ediis")
          mol.scfdata.using_fock_diis = TRUE
-         mol.scfdata.using_rough_convergence = FALSE
          mol.scfdata.using_direct_scf = TRUE
          mol.scf                             ! <<<<<<< SCF <<<<<<
          mol.make_ao_density_matrix
@@ -11227,7 +11245,6 @@ contains
 
          ! Do the SCF
          mol.scfdata.using_direct_scf = TRUE
-         mol.scfdata.using_rough_convergence = FALSE
          mol.scfdata.using_fock_diis = TRUE
          if (.atom_group(g).element.dim>1) &
          mol.scfdata.initial_density = "promolecule"
@@ -11499,8 +11516,6 @@ contains
      J,C :: OPMATRIX*
      energy :: VEC{REAL}*
      if (NOT .scfdata.using_fock_diis) return
-     ! Reset DIIS if convergence criteria altered
-     if (.scfdata.eri_cutoff_altered) .scfdata.diis.kept = 0
      .get_overlap_matrix
      energy => .scf_electronic_energies
      scf_kind = .scfdata.scf_kind
@@ -12313,7 +12328,8 @@ contains
      cutoff :: REAL
      ab,cd, a,b,c,d :: INT
      P_max,I_max :: VEC{REAL}
-     Pmax :: REAL
+ ! ENSURE(.scfdata.created," no scfdata")
+     tol,Pmax :: REAL
      ac,ad,bc,bd,k,l,m,n :: INT
      k = max(b,c); l = min(b,c)
      m = max(b,d); n = min(b,d)
@@ -12331,7 +12347,7 @@ contains
      end
    end
 
-   schwarz_test(skip_J,skip_K,cutoff,ab,cd,a,b,c,d,P_max,I_max)
+   schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,a,b,c,d,P_max,I_max)
    ! Return "skip_J" and "skip_K", logical variables are TRUE if the maximum
    ! contribution to the J and K matrices (based on the schwarz inequality test)
    ! from a shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd"
@@ -12339,28 +12355,78 @@ contains
    ! matrix elements for each shell pair "ab", and "I_max(ab)" is maximum value
    ! of the square root of the integral (ab|ab) for the shell pair with index "ab".
      skip_J,skip_K :: BIN, OUT
-     cutoff :: REAL, IN
+     cutoff,JP_cut,KP_cut :: REAL, IN
      ab,cd, a,b,c,d :: INT, IN
      P_max,I_max :: VEC{REAL}, IN
-     Jmax,Kmax :: REAL
+
+     JP_max,KP_max :: REAL
      ac,ad,bc,bd,k,l,m,n :: INT
+
+     ! Indices for (ab|cd) < sqrt(ab|ab) * sqrt(cd|cd) test.
      k = max(b,c); l = min(b,c)
      m = max(b,d); n = min(b,d)
-     ac = (a-1)*a/2 + c          ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+     ac = (a-1)*a/2 + c          
      ad = ac - c + d
      bc = (k-1)*k/2 + l
      bd = (m-1)*m/2 + n
-     Jmax = max(P_max(ab),P_max(cd))
-     Kmax = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+
+     JP_max = max(P_max(ab),P_max(cd))
+     KP_max = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+
      skip_J = FALSE
-     if      (Jmax < TOL(12)) then;                    skip_J = TRUE
-     else if (Jmax*I_max(ab)*I_max(cd) < cutoff) then; skip_J = TRUE
+     if      (JP_max < JP_cut) then;                     skip_J = TRUE
+     else if (JP_max*I_max(ab)*I_max(cd) < cutoff) then; skip_J = TRUE
      end
+
      skip_K = FALSE
-     if      (Kmax < TOL(9)) then;                     skip_K = TRUE
-     else if (Kmax*I_max(ab)*I_max(cd) < cutoff) then; skip_K = TRUE
+     if      (KP_max < KP_cut) then;                     skip_K = TRUE
+     else if (KP_max*I_max(ab)*I_max(cd) < cutoff) then; skip_K = TRUE
      end
+
    end
+
+!   schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,S_cut,ab,cd,a,b,c,d,P_max,I_max,S_max)
+!   ! Return "skip_J" and "skip_K", logical variables are TRUE if the maximum
+!   ! contribution to the J and K matrices (based on the schwarz inequality test)
+!   ! from a shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd"
+!   ! is smaller than a preset "cutoff". "P_max(ab)" is the maximum density
+!   ! matrix elements for each shell pair "ab", and "I_max(ab)" is maximum value
+!   ! of the square root of the integral (ab|ab) for the shell pair with index "ab".
+!     skip_J,skip_K :: BIN, OUT
+!     cutoff,JP_cut,KP_cut,S_cut :: REAL, IN
+!     ab,cd, a,b,c,d :: INT, IN
+!     P_max,I_max,S_max :: VEC{REAL}, IN
+!
+!     JP_max,KP_max,JS_max,KS_max :: REAL
+!     ac,ad,bc,bd,k,l,m,n :: INT
+!
+!     ! Indices for (ab|cd) < sqrt(ab|ab) * sqrt(cd|cd) test.
+!     k = max(b,c); l = min(b,c)
+!     m = max(b,d); n = min(b,d)
+!     ac = (a-1)*a/2 + c          
+!     ad = ac - c + d
+!     bc = (k-1)*k/2 + l
+!     bd = (m-1)*m/2 + n
+!
+!     JP_max = max(P_max(ab),P_max(cd))
+!     KP_max = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+!
+!     JS_max = max(S_max(ab),S_max(cd))
+!     KS_max = max(S_max(ac),S_max(ad),S_max(bc),S_max(bd))
+!
+!     skip_J = FALSE
+!     if      (JP_max < JP_cut) then;                     skip_J = TRUE
+!     else if (JS_max <  S_cut) then;                     skip_J = TRUE
+!     else if (JP_max*I_max(ab)*I_max(cd) < cutoff) then; skip_J = TRUE
+!     end
+!
+!     skip_K = FALSE
+!     if      (KP_max < KP_cut) then;                     skip_K = TRUE
+!     else if (KS_max <  S_cut) then;                     skip_K = TRUE
+!     else if (KP_max*I_max(ab)*I_max(cd) < cutoff) then; skip_K = TRUE
+!     end
+!
+!   end
 
    schwarz_J_test(skip_J,cutoff,ab,cd,a,b,c,d,P_max,I_max)
    ! Return "skip_J" which is set TRUE if the maximum contribution to the J
@@ -12497,6 +12563,21 @@ contains
        O.destroy
        S.destroy
      end
+   end
+
+   make_max_S_integrals(S_max)
+   ! Make "S_max", the maximum of the overlap integrals between basis
+   ! functions in all pairs of shells.
+     S_max :: VEC{REAL}
+   ENSURE(S_max.dim==.n_shell_pairs,"wrong size, S_max")
+
+     ab,sa,sb,fa,la,fb,lb :: INT
+
+     do ab = 1,.n_shell_pairs
+       .get_shell_pair_indices(ab,sa,sb,fa,la,fb,lb)
+       S_max(ab) = maxval(abs(.overlap_matrix(fa:la,fb:lb)))
+     end
+
    end
 
    reverse_transfer(P,PP) ::: leaky
@@ -12810,7 +12891,7 @@ contains
 !   ! .create_transfer(JJ)
 !     J = ZERO
 !     K = ZERO
-!     cutoff = .scfdata.eri_cutoff
+!     cutoff = .scfdata.eri_schwarz_cutoff
 !     if (.max_I.destroyed) .initialise_max_I
 !     max_P.create(.n_shell_pairs)
 !     .make_max_density_elements(max_P,P)
@@ -12889,7 +12970,7 @@ contains
 !   ! .create_transfer(JJ)
 !     J = ZERO
 !     K = ZERO
-!     cutoff = .scfdata.eri_cutoff
+!     cutoff = .scfdata.eri_schwarz_cutoff
 !     no_max_I = FALSE
 !     if (.max_I.destroyed) no_max_I = TRUE
 !     if (no_max_I) .initialise_max_I
@@ -12984,7 +13065,7 @@ contains
      skip,ab_same,cd_same,any_same,no_max_I :: BIN
      J = ZERO
      K = ZERO
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13065,41 +13146,75 @@ contains
    ! directly. This uses the J matrix engine, but it can be easily disabled.
      J,K,P :: MAT{REAL}
    ENSURE(.precomputed_basis_shellpair.created,"no precomputed shell pair information")
+
      PP,JJ :: VEC{VEC_{REAL}}*
-     max_P,Jab,Jcd,Pab,Pcd :: VEC{REAL}*
+     max_P,max_S,Jab,Jcd,Pab,Pcd :: VEC{REAL}*
      sh4s,sh4n :: SHELL1QUARTET
      ab,cd,aa,bb,cc,dd,fa,fb,fc,fd,la,lb,lc,ld :: INT
      atom_a,atom_b,atom_c,atom_d :: INT
-     factor,cutoff,P_max,IP_max :: REAL
-     skip_J,skip_K,ab_same,cd_same,any_same,no_max_I,ab_eq_cd :: BIN
+     factor,cutoff,JP_cut,KP_cut,bf_cut,P_max,IP_max :: REAL
+     skip_J,skip_K,ab_same,cd_same,bonded_pairs,any_same,no_max_I,ab_eq_cd :: BIN
+
+     ! Prepare for J-matrix engine
      .reverse_transfer(P,PP)
      .create_transfer(JJ)
-     J = ZERO
-     K = ZERO
-     cutoff = .scfdata.eri_cutoff
+
+     ! Schwarz test and density test cutoffs
+     cutoff = .scfdata.eri_schwarz_cutoff
+     JP_cut = .scfdata.eri_J_density_cutoff
+     KP_cut = .scfdata.eri_K_density_cutoff
+   ! bf_cut = .scfdata.eri_bf_overlap_cutoff
+
+     ! Get Schwarz test integrals and densities
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
-     max_P.create(.n_shell_pairs)
-     .make_max_density_elements(max_P,P)
+     max_P.create(.n_shell_pairs); .make_max_density_elements(max_P,P)
+   ! max_S.create(.n_shell_pairs); .make_max_S_integrals(max_S)
      P_max = maxval(max_P)
      IP_max = maxval(.max_I) * P_max
+
+     ! Initialise J, K
+     J = ZERO
+     K = ZERO
+
+     ! Loop over (ab| basis function pairs
      parallel do ab = 1,.n_shell_pairs
+
        if (.max_I(ab)*IP_max < cutoff)  cycle 
+
        .get_shell_pair_indices(ab,aa,bb,fa,la,fb,lb,atom_a,atom_b)
+
        ab_same = atom_a==atom_b
+
+       ! Set primitive-pair skipped and non-skipped quartets
        .set_new_shell_quartet_ab(sh4s,aa,bb,skip=TRUE)
        .set_new_shell_quartet_ab(sh4n,aa,bb,skip=FALSE)
+
+       ! Set up (ab| J/P matrix vectors
        Jab => JJ(ab).element
        Pab => PP(ab).element
+
+       ! Loop over |cd) basis function pairs
        do cd = 1,ab
+
          if (.max_I(ab)*.max_I(cd)*P_max < cutoff)  cycle 
+
          .get_shell_pair_indices(cd,cc,dd,fc,lc,fd,ld,atom_c,atom_d) 
+
          cd_same = atom_c==atom_d
-         .schwarz_test(skip_J,skip_K,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
-         if (skip_J AND skip_K) cycle
+
+         .schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+
+         bonded_pairs = .atom(a).is_bonded_to(atom_b) OR .atom(c).is_bonded_to(atom_d)
+
+       ! if (skip_J AND skip_K AND NOT bonded_pairs) cycle
+
+         ! Set up |cd} J/P matrix vectors
          Jcd => JJ(cd).element
          Pcd => PP(cd).element
+
+         ! Integral (ab|cd) permutation factor
          ab_eq_cd = FALSE
          if (aa==bb) then; factor = HALF 
          else;             factor = ONE
@@ -13109,6 +13224,8 @@ contains
             ab_eq_cd = TRUE
             factor = HALF * factor
          end
+
+         ! Make the J/K matrix contributions
          any_same = ab_same OR cd_same OR &
                     atom_a==atom_c OR atom_a==atom_d OR &
                     atom_b==atom_c OR atom_b==atom_d 
@@ -13121,16 +13238,28 @@ contains
             sh4s.make_r_JK_engine(Jab,Jcd,Pab,Pcd,K,P,skip_J,skip_K,ab_eq_cd,factor,fa,la,fb,lb,fc,lc,fd,ld)
             sh4s.destroy_cd
          end
+
        end
+
+       ! Clean (ab| quartet info
        sh4n.destroy_ab
        sh4s.destroy_ab
+
      end
+
+   ! max_S.destroy
      max_P.destroy
      if (no_max_I) .max_I.destroy
+
+     ! Do the J matrix forward transfer
      .forward_transfer(JJ,J)
+
+     ! Add in diagonal block factors
      .weight_diagonal_blocks(J,TWO)
      .blockwise_symmetric_fold(K)
      J = TWO*J
+
+     ! Parallel sums, if reqd.
      if (DO_IN_PARALLEL) then
         PARALLEL_SYMMETRIC_SUM(J)
         PARALLEL_SYMMETRIC_SUM(K)
@@ -13138,10 +13267,11 @@ contains
         J.symmetric_reflect
         K.symmetric_reflect
      end
-     JJ.destroy
-     PP.destroy
+
+     JJ.destroy; PP.destroy
      .put_debug(J,"direct j matrix 2")
      .put_debug(K,"direct k matrix 2")
+
    end
 
    make_r_J_direct(J,P)
@@ -13159,7 +13289,7 @@ contains
      .reverse_transfer(P,PP)
      .create_transfer(JJ)
      J = ZERO
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13246,7 +13376,7 @@ contains
 !     factor,cutoff,P_max,IP_max :: REAL
 !     skip :: BIN
 !     J = ZERO
-!     cutoff = .scfdata.eri_cutoff
+!     cutoff = .scfdata.eri_schwarz_cutoff
 !     max_I.create(.n_shell_pairs)
 !     max_P.create(.n_shell_pairs)
 !     .make_max_abab_integrals(max_I)
@@ -13299,7 +13429,7 @@ contains
      factor,cutoff,P_max,IP_max,I_abcd :: REAL
      skip,ab_same,cd_same,any_same,no_max_I :: BIN
      K = ZERO
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13529,7 +13659,7 @@ contains
      skip,ab_same,cd_same,any_same,no_max_I :: BIN
      J = ZERO
      K = ZERO
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13613,7 +13743,7 @@ contains
 !     skip :: BIN
 !     J = ZERO
 !     K = ZERO
-!     cutoff = .scfdata.eri_cutoff
+!     cutoff = .scfdata.eri_schwarz_cutoff
 !     if (.max_I.destroyed) .initialise_max_I
 !     max_P.create(.n_shell_pairs)
 !     .make_max_density_elements(max_P,P)
@@ -13663,7 +13793,7 @@ contains
      skip,ab_same,cd_same,any_same,no_max_I :: BIN
      J = ZERO
      K = ZERO
-     cutoff = SCFDATA_ERI_LIMIT
+     cutoff = SCFDATA_ERI_DISK_CUTOFF
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13751,7 +13881,7 @@ contains
 !     skip :: BIN
 !     J = ZERO
 !     K = ZERO
-!     cutoff = SCFDATA_ERI_LIMIT
+!     cutoff = SCFDATA_ERI_DISK_CUTOFF
 !     if (.max_I.destroyed) .initialise_max_I
 !     max_P.create(.n_shell_pairs)
 !     .make_max_density_elements(max_P,P)
@@ -13828,7 +13958,7 @@ contains
      skip,ab_same,cd_same,any_same,no_max_I :: BIN
      J.set_to_zero
      K.set_to_zero
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -13925,7 +14055,7 @@ contains
 !     J  = ZERO
 !     Ka = ZERO
 !     Kb = ZERO
-!     cutoff = .scfdata.eri_cutoff
+!     cutoff = .scfdata.eri_schwarz_cutoff
 !     max_P.create(.n_shell_pairs)
 !     .make_max_density_elements(max_P,P)
 !     if (.max_I.destroyed) .initialise_max_I
@@ -14081,7 +14211,7 @@ contains
      Ka  = ZERO
      Kb  = ZERO
      Kba = ZERO
-     cutoff = .scfdata.eri_cutoff
+     cutoff = .scfdata.eri_schwarz_cutoff
      no_max_I = FALSE
      if (.max_I.destroyed) no_max_I = TRUE
      if (no_max_I) .initialise_max_I
@@ -14492,17 +14622,7 @@ contains
    ENSURE(.density_matrix.any_created, "no density matrix")
    ENSURE(K.created,"K not created")
    ENSURE(K.created(.scfdata.spinorbital_kind),"appropriate part of K not created")
-      saved_becke_grid :: BECKE_GRID*
-      do_rough :: BIN
-      roughly_converged :: BIN, save
       genre :: STR
-      ! Adjust grid accuracy lower if required
-      if (.scfdata.iteration==0) roughly_converged = FALSE
-      if (.scfdata.roughly_converged) roughly_converged = TRUE
-      do_rough = .scfdata.apply_rough_convergence AND NOT roughly_converged
-      if (do_rough) then
-         saved_becke_grid => .becke_grid
-      end
       ! Ensure the NO's exist so we can calculate the density for the XC part
       genre = .scfdata.spinorbital_kind
       if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals(genre) !  leaky
@@ -14517,8 +14637,6 @@ contains
         case default
            DIE("unknown DFT SCF kind, "//trim(.scfdata.scf_kind))
       end
-      ! Put back accurate grid, if required
-      if (do_rough) .becke_grid => saved_becke_grid
    end
 
    add_XC_matrix(K)
@@ -15398,7 +15516,7 @@ contains
      skipped = 0
      if (.scfdata.output) then
        stdout.set_real_style("e")
-       stdout.show("Skipping electron repulsion integrals less than ",.scfdata.eri_limit)
+       stdout.show("Skipping electron repulsion integrals less than ",.scfdata.eri_disk_cutoff)
        stdout.set_real_style("f")
      end
      if (.scfdata.using_NDDO) then
@@ -15456,7 +15574,7 @@ contains
      else
         do q = 1, .n_shell_quartets
           .copy_shell_quartet(sh4,q,a,b,c,d)
-          if (sh4.skip_ERI(.scfdata.eri_limit)) then
+          if (sh4.skip_ERI(.scfdata.eri_disk_cutoff)) then
             skipped = skipped + 1
             sh4.destroy_ptr_part
             cycle
@@ -15729,7 +15847,7 @@ contains
 !              lc =  .last_shell_for_atom(c)
 !              do sc = fb,lb
 !                 .copy_shell_quartet(sh4,sa,sb,sc,sd)
-!                 if (sh4.skip_ERI(.scfdata.eri_limit)) then
+!                 if (sh4.skip_ERI(.scfdata.eri_disk_cutoff)) then
 !                    sh4.destroy_ptr_part
 !                    cycle
 !                 end
@@ -24692,7 +24810,6 @@ contains
 
      ! Do the atomic SCF
      mol.scfdata.using_direct_scf = TRUE
-     mol.scfdata.using_rough_convergence = FALSE
    ! mol.scfdata.output = FALSE
      mol.scfdata.is_guess = TRUE
      mol.scf
@@ -24752,7 +24869,6 @@ contains
 !     .make_molecule_from_atom(a,mol,use_ks)
 !   ! mol.scfdata.output = FALSE
 !     mol.scfdata.using_direct_scf = TRUE
-!     mol.scfdata.using_rough_convergence = FALSE
 !     mol.scf
 !     mol.delete_scf_MO_archive
 !     mol.delete_scf_fock_archive
