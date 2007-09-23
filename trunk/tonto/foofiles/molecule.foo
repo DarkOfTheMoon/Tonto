@@ -6595,212 +6595,314 @@ contains
    read_g94_checkpoint_file(name) ::: leaky
    ! Read a g94 checkpoint file (after fchk conversion to ASCII) into TONTO
       name :: STR, optional
+
       fchk :: STR
       chkfile :: TEXTFILE*
-      shell_l, nps, shell_to_atom, e_atom :: VEC{INT}*
-      tmp_nps, tmp_sta, tmp_shells :: VEC{INT}*
-      tmp_pe, tmp_cc :: VEC{REAL}*
-      pe, cc, extra_cc, temp_vec :: VEC{REAL}*
+      shell_l,n_prim_for_shell,atom_for_shell,atom_p :: VEC{INT}*
+      G_n_prim_for_shell,G_atom_for_shell,G_shell_type :: VEC{INT}*
+      G_ex,G_cc,G_cp, ex,cc,orb_energy :: VEC{REAL}*
       temp_mat :: MAT{REAL}*
-      temp_spin, temp_total, D :: OPMATRIX*
-      basis1 :: BASIS*
-      c, t, a, s, u, m1, m2, i,n_basis :: INT
-      n_shell, n_cc, nps_c, n_independent :: INT
-      same :: BIN
-      arch :: ARCHIVE
+      temp_spin,temp_total,D :: OPMATRIX*
+      a,s,t, f,l,g,h, b,n_basis :: INT
+      n_prim_shells,n_shell,n_shell_a,n_cc,n_prim,n_independent :: INT
+      restricted,same :: BIN
+      a_basis :: BASIS*
+      archive :: ARCHIVE
+
+      ! Destroy existing basis, and atom list
       if (.basis.created) .basis.destroy
       if (.atom.created)  .atom.destroy
+
+      ! Create scfdata
+      .scfdata.destroy
+      .scfdata.create
+
+      ! Get FChk file name
       if (present(name)) then;                 fchk = name
       else
          if (NOT stdin.buffer_exhausted) then; stdin.read(fchk) ! specified on stdin
          else;                                 fchk = .name
          end
       end
-      .scfdata.create
 
-      ! Read in basic stuff.
+      ! Open FChk file
       chkfile.create(fchk)
       chkfile.open(for="read")
+
+      ! Read in basic stuff.
       chkfile.look_for("Number of atoms")
       chkfile.move_to_line_item(5); chkfile.read(.n_atom)
+
       chkfile.look_for("Charge")
       chkfile.move_to_line_item(3); chkfile.read(.charge)
+
       chkfile.look_for("Multiplicity")
       chkfile.move_to_line_item(3); chkfile.read(.mult)
+
       chkfile.look_for("Number of electrons")
       chkfile.move_to_line_item(5); chkfile.read(.n_e)
+
       chkfile.look_for("Number of alpha electrons")
       chkfile.move_to_line_item(6); chkfile.read(.n_a)
+
       chkfile.look_for("Number of beta electrons")
       chkfile.move_to_line_item(6); chkfile.read(.n_b)
+
       chkfile.look_for("Number of basis functions")
       chkfile.move_to_line_item(6); chkfile.read(.n_bf)
+
       n_independent = .n_bf
       chkfile.look_for("Number of independant functions")
       chkfile.move_to_line_item(6); chkfile.read(n_independent)
+      WARN_IF(.n_bf/=n_independent,"No. of basis functions different to no. of independent functions")
+
       chkfile.look_for("Number of contracted shells")
-      chkfile.move_to_line_item(6); chkfile.read(.n_shell)
+      chkfile.move_to_line_item(6); chkfile.read(n_shell)
+
       chkfile.look_for("Number of primitive shells")
-      chkfile.move_to_line_item(6); chkfile.read(.n_prim)
+      chkfile.move_to_line_item(6); chkfile.read(n_prim_shells)
+
       chkfile.look_for("Total Energy")
-      chkfile.move_to_line_item(4)
-      chkfile.read_real(.scfdata.energy )
+      chkfile.move_to_line_item(4); chkfile.read_real(.scfdata.energy)
+
+      ! Read in atoms
       chkfile.look_for("Atomic numbers"); chkfile.read_line
       .atom.create(.n_atom)
-      do a = 1, .n_atom
+      do a = 1,.n_atom
          chkfile.read(.atom(a).atomic_number )
          .atom(a).label = trim(.atom(a).chemical_symbol)
       end
+
+      ! Read in coordinates
       chkfile.look_for("Current cartesian coordinates")
       chkfile.read_line
-      do a = 1, .n_atom
+      do a = 1,.n_atom
          chkfile.read(.atom(a).pos)
       end
 
-      ! Shell info.
+      ! Read gaussian shell info.
+      G_shell_type.create(n_shell)
+      G_n_prim_for_shell.create(n_shell)
+      G_atom_for_shell.create(n_shell)
+      G_ex.create(n_prim_shells)
+      G_cc.create(n_prim_shells)
+
       chkfile.look_for("Shell types"); chkfile.read_line
-      tmp_shells.create(.n_shell); tmp_nps.create(.n_shell)
-      tmp_sta.create(.n_shell); tmp_pe.create(.n_prim)
-      tmp_cc.create(.n_prim)
-      chkfile.read(tmp_shells)
-      chkfile.look_for("Number of primitives per shell")
-      chkfile.read_line; chkfile.read(tmp_nps)
+      chkfile.read(G_shell_type)
+      DIE_IF(any(G_shell_type<-1),"unknown shell types exist")
+
+      chkfile.look_for("Number of primitives per shell"); chkfile.read_line
+      chkfile.read(G_n_prim_for_shell)
+
       chkfile.look_for("Shell to atom map"); chkfile.read_line
-      chkfile.read(tmp_sta)
+      chkfile.read(G_atom_for_shell)
+
       chkfile.look_for("Primitive exponents"); chkfile.read_line
-      chkfile.read(tmp_pe)
+      chkfile.read(G_ex)
+
       chkfile.look_for("Contraction coefficients"); chkfile.read_line
-      chkfile.read(tmp_cc)
-      e_atom.create(.n_atom); e_atom = ZERO
-      extra_cc.create(.n_prim)
-      if (any(tmp_shells == (-1) )) then
-        do a = 1, .n_shell
-           if (tmp_shells(a) == (-1)) then
-              e_atom(tmp_sta(a)) = e_atom(tmp_sta(a)) + 1
-              .n_prim = .n_prim + tmp_nps(a)
-           end
+      chkfile.read(G_cc)
+
+      ! SP type shells
+      G_cp.create(n_prim_shells); G_cp = 0
+      atom_p.create(.n_atom);     atom_p = 0
+      if (any(G_shell_type==-1)) then
+        do s = 1,n_shell
+           if (G_shell_type(s)/=-1) cycle
+           a = G_atom_for_shell(s)
+           atom_p(a) = atom_p(a) + 1
+           n_prim_shells = n_prim_shells + G_n_prim_for_shell(s)
         end
         chkfile.look_for("P(S=P)"); chkfile.read_line
-        chkfile.read(extra_cc)
+        chkfile.read(G_cp)
       end
-      s = .n_shell + sum(e_atom)
-      shell_l.create(s); nps.create(s)
-      pe.create(.n_prim); cc.create(.n_prim)
-      shell_to_atom.create(s)
-      a = 0
-      m1 = 1; m2 = 1
-      do c = 1, .n_shell
-        a = a + 1
-        nps_c = tmp_nps(c)
-        if (tmp_shells(c) == (-1)) then
-           shell_l(a) = 0
-           nps(a) = nps_c
-           shell_to_atom(a) = tmp_sta(c)
-           pe(m1:m1+nps_c-1) = tmp_pe(m2:m2+nps_c-1)
-           cc(m1:m1+nps_c-1) = tmp_cc(m2:m2+nps_c-1)
-           a = a+1; m1=m1+nps_c
-           shell_l(a) = 1
-           nps(a) = nps_c
-           shell_to_atom(a) = tmp_sta(c)
-           pe(m1:m1+nps_c-1) = tmp_pe(m2:m2+nps_c-1)
-           cc(m1:m1+nps_c-1) = extra_cc(m2:m2+nps_c-1)
+
+      ! Get correct number of shells
+      .n_shell = n_shell + sum(atom_p)
+      atom_p.destroy
+
+      ! Create basis set arrays
+      shell_l.create(.n_shell)
+      n_prim_for_shell.create(.n_shell)
+      atom_for_shell.create(.n_shell)
+      ex.create(n_prim_shells)
+      cc.create(n_prim_shells)
+
+      ! Debug
+      if (.debugging("read_g94_checkpoint_file")) then
+
+         stdout.show(" n_shell = ", n_shell)
+         stdout.show(".n_shell = ",.n_shell)
+
+         stdout.text("Shell types:")
+         stdout.put(G_shell_type,"column")
+
+         stdout.text("Number of prims for:")
+         stdout.put(G_n_prim_for_shell,"column")
+
+         stdout.text("Atom for shell:")
+         stdout.put(G_atom_for_shell,"column")
+
+         stdout.text("Primitive exponents:")
+         stdout.put(G_ex,"column")
+
+         stdout.text("Contractions:")
+         stdout.put(G_cc,"column")
+
+         stdout.text("P(SP) contractions:")
+         stdout.put(G_cp,"column")
+
+      end
+
+      ! Copy the basis. Expand out L shells.
+      t = 0
+      l = 0; h = 0
+
+      do s = 1,n_shell
+
+        t = t + 1
+        n_prim = G_n_prim_for_shell(s)
+        f = l + 1; l = l + n_prim
+        g = h + 1; h = h + n_prim
+
+        if (G_shell_type(s)==-1) then
+
+           shell_l(t) = 0                    ! S part of L shell
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cc(g:h)
+
+           t = t + 1
+           f = l + 1
+           l = l + n_prim
+           shell_l(t) = 1                    ! P part of L shell
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cp(g:h)
+
         else
-           pe(m1:m1+nps_c-1) = tmp_pe(m2:m2+nps_c-1)
-           cc(m1:m1+nps_c-1) = tmp_cc(m2:m2+nps_c-1)
-         ! shell_l(a) = tmp_shells(c)
-           shell_l(a) = abs(tmp_shells(c)) ! WARNING: sometimes this can be -2
-           nps(a) = nps_c
-           shell_to_atom(a) = tmp_sta(c)
+
+           ex(f:l) = G_ex(g:h)
+           cc(f:l) = G_cc(g:h)
+           shell_l(t) = abs(G_shell_type(s)) ! WARNING: sometimes this can be -2
+           n_prim_for_shell(t) = n_prim
+           atom_for_shell(t) = G_atom_for_shell(s)
+
         end
-        m1 = m1 + nps_c; m2 = m2 + nps_c
+
       end
-      extra_cc.destroy
-      tmp_shells.destroy; tmp_sta.destroy
-      tmp_nps.destroy; tmp_pe.destroy; tmp_cc.destroy
-      .n_shell = s
-      c = 0      ! for recording number of primitives read
-      t = 0      ! for recording number of shells read
+
+      G_cp.destroy
+      G_shell_type.destroy; G_atom_for_shell.destroy
+      G_n_prim_for_shell.destroy; G_ex.destroy; G_cc.destroy
+      ENSURE(.n_shell==t,"wrong number of shells")
+
+      ! Debug
+      if (.debugging("read_g94_checkpoint_file")) then
+
+         stdout.text("ex:")
+         stdout.put(ex,"column")
+
+         stdout.text("cc:")
+         stdout.put(cc,"column")
+
+      end
+
+      ! Create the basis array
       n_basis = 0
       .basis.create(n_basis)
-      do a = 1, .n_atom
-         basis1.create
-         basis1.label = trim(.atom(a).chemical_symbol) // ":gaussian"
-         n_shell = count(shell_to_atom==a)
-         basis1.n_shell = n_shell
-         basis1.shell.create(n_shell)
-         basis1.shell.nullify_ptr_part
-         do s = 1, n_shell
-          ! n_comp = shell_l(t+s).n_comp
-            n_cc = nps(t+s)
-            basis1.shell(s).set_l(shell_l(t+s))
-            basis1.shell(s).set_n_comp
-            basis1.shell(s).n_cc = n_cc
-            basis1.shell(s).ex.create(n_cc )
-            basis1.shell(s).cc.create(n_cc )
-            basis1.shell(s).ex = pe(c+1 : c+n_cc )
-            basis1.shell(s).cc = cc(c+1 : c+n_cc )
-            c = c + n_cc
+
+      ! Transfer expanded info to basis object
+      l = 0      
+      t = 0
+      do a = 1,.n_atom
+
+         a_basis.create
+         a_basis.label = trim(.atom(a).chemical_symbol) // ":gaussian"
+
+         n_shell_a = count(atom_for_shell==a)
+
+         a_basis.n_shell = n_shell_a
+         a_basis.shell.create(n_shell_a)
+         a_basis.shell.nullify_ptr_part
+
+         do s = 1,n_shell_a
+            n_cc = n_prim_for_shell(t+s)
+            a_basis.shell(s).set_l(shell_l(t+s))
+            a_basis.shell(s).set_n_comp
+            a_basis.shell(s).n_cc = n_cc
+            f = l + 1
+            l = l + n_cc
+            a_basis.shell(s).ex.create(n_cc)
+            a_basis.shell(s).cc.create(n_cc)
+            a_basis.shell(s).ex = ex(f:l)
+            a_basis.shell(s).cc = cc(f:l)
          end
-         basis1.n_bf = basis1.no_of_basis_functions
-         basis1.n_prim = basis1.no_of_primitives
-         basis1.unnormalise ! Note this
-         t = t + n_shell
+
+         a_basis.n_bf   = a_basis.no_of_basis_functions
+         a_basis.n_prim = a_basis.no_of_primitives
+         a_basis.unnormalise ! Note this
+         t = t + n_shell_a
+
+         ! Is this basis the same as one before?
          same = FALSE
-         do i = 1,n_basis
-            if (.basis(i).same_as(basis1)) then
-               same = TRUE
-               exit
-            end
+         do b = 1,n_basis
+            if (NOT .basis(b).same_as(a_basis)) cycle
+            same = TRUE
+            exit
          end
-       ! .atom(a).basis.create
+
+         ! If the same, add label; else add basis to .basis
          if (same) then
-       !    .atom(a).basis.label = .basis(i).label
-            .atom(a).basis_label = .basis(i).label
+            .atom(a).basis_label = .basis(b).label
          else
-       !    .atom(a).basis.label = basis1.label
-            .atom(a).basis_label = basis1.label
+            .atom(a).basis_label = a_basis.label
             n_basis = n_basis + 1
             .basis.expand(n_basis)
-            .basis(n_basis).copy(basis1)
+            .basis(n_basis).copy(a_basis)
          end
-         basis1.destroy
+         a_basis.destroy
+
       end
-      pe.destroy; cc.destroy
-      shell_to_atom.destroy; nps.destroy; e_atom.destroy
+
+      cc.destroy; ex.destroy
+      atom_for_shell.destroy
+      n_prim_for_shell.destroy
       shell_l.destroy
-      m1 = .n_bf
+
       ! .basis.unnormalise ! NOTE this
       .set_atom_info
       .basis_kind = " " ! Reset gaussian basis_kind
       .resolve_basis_info
-      ENSURE(m1==.n_bf,"No. of basis functions inconsistent with basis set, did you use 6d/10f?")
 
       ! Read in orbital energies.
-      temp_vec.create(n_independent)
+      orb_energy.create(n_independent)
       chkfile.look_for("Alpha Orbital Energies")
-      chkfile.read_line; chkfile.read(temp_vec)
+      chkfile.read_line; chkfile.read(orb_energy)
       .orbital_energies.destroy
       if (chkfile.next_str == "Beta") then
-         u = 1
+         restricted = FALSE
          .scfdata.scf_kind = "uhf"
          .orbital_energies.create(.n_bf,"unrestricted")
          .orbital_energies.alpha = ZERO
-         .orbital_energies.alpha(1:n_independent) = temp_vec
-         chkfile.read_line; chkfile.read(temp_vec)
+         .orbital_energies.alpha(1:n_independent) = orb_energy
+         chkfile.read_line; chkfile.read(orb_energy)
          .orbital_energies.beta = ZERO
-         .orbital_energies.beta(1:n_independent) = temp_vec
-         temp_vec.destroy
+         .orbital_energies.beta(1:n_independent) = orb_energy
+         orb_energy.destroy
       else
-         u = 0
+         restricted = TRUE
          .scfdata.scf_kind = "rhf"
          .orbital_energies.create(.n_bf,"restricted")
          .orbital_energies.restricted = ZERO
-         .orbital_energies.restricted(1:n_independent) = temp_vec
-         temp_vec.destroy
+         .orbital_energies.restricted(1:n_independent) = orb_energy
+         orb_energy.destroy
       end
 
       ! Read in molecular orbitals.
-      temp_mat.create(n_independent,.n_bf)
+      temp_mat.create(.n_bf,n_independent)
       chkfile.look_for("Alpha MO")
       chkfile.read_line; chkfile.read(temp_mat)
       .molecular_orbitals.destroy
@@ -6824,7 +6926,7 @@ contains
 
       ! Read in density matrix.
       .density_matrix.destroy
-      if (u==0) then
+      if (restricted) then
          .density_matrix.create(.n_bf, "restricted")
          .density_matrix.triangle.create(.density_matrix.l_compress("restricted"))
          chkfile.look_for("Total SCF Density"); chkfile.read_line
@@ -6856,7 +6958,7 @@ contains
 
       ! Extract MP2 density matrix to file.  UHF untested
       if (chkfile.has_string("MP2 Density")) then
-        if (u==0) then
+        if (restricted) then
            D.create(.n_bf, "restricted")
            D.triangle.create(D.l_compress("restricted"))
            chkfile.look_for("Total MP2 Density"); chkfile.read_line
@@ -6864,8 +6966,8 @@ contains
            D.uncompress
            .swap_g94_orbital_order(D.restricted,"row")
            .swap_g94_orbital_order(D.restricted,"column")
-           arch.set(.name,"MP2_density_matrix")
-           arch.write(D)
+           archive.set(.name,"MP2_density_matrix")
+           archive.write(D)
            D.destroy
         else
            temp_total.create(.n_bf, "restricted")
@@ -6887,15 +6989,15 @@ contains
            .swap_g94_orbital_order(D.alpha,"column")
            .swap_g94_orbital_order(D.beta, "row")
            .swap_g94_orbital_order(D.beta, "column")
-           arch.set(.name,"MP2_density_matrix")
-           arch.write(D)
+           archive.set(.name,"MP2_density_matrix")
+           archive.write(D)
            D.destroy
         end
       end
 
       ! Extract MP3 density matrix to file.  UHF untested
       if (chkfile.has_string("MP3 Density")) then
-        if (u==0) then
+        if (restricted) then
            D.create(.n_bf, "restricted")
            D.triangle.create(D.l_compress("restricted"))
            chkfile.look_for("Total MP3 Density"); chkfile.read_line
@@ -6903,8 +7005,8 @@ contains
            D.uncompress
            .swap_g94_orbital_order(D.restricted,"row")
            .swap_g94_orbital_order(D.restricted,"column")
-           arch.set(.name,"MP3_density_matrix")
-           arch.write(D)
+           archive.set(.name,"MP3_density_matrix")
+           archive.write(D)
            D.destroy
         else
            temp_total.create(.n_bf, "restricted")
@@ -6926,15 +7028,15 @@ contains
            .swap_g94_orbital_order(D.alpha,"column")
            .swap_g94_orbital_order(D.beta, "row")
            .swap_g94_orbital_order(D.beta, "column")
-           arch.set(.name,"MP3_density_matrix")
-           arch.write(D)
+           archive.set(.name,"MP3_density_matrix")
+           archive.write(D)
            D.destroy
         end
       end
 
       ! Extract CC density matrix to file.  UHF untested
       if (chkfile.has_string("CC Density")) then
-        if (u==0) then
+        if (restricted) then
            D.create(.n_bf, "restricted")
            D.triangle.create(D.l_compress("restricted"))
            chkfile.look_for("Total CC Density"); chkfile.read_line
@@ -6942,8 +7044,8 @@ contains
            D.uncompress
            .swap_g94_orbital_order(D.restricted,"row")
            .swap_g94_orbital_order(D.restricted,"column")
-           arch.set(.name,"CC_density_matrix")
-           arch.write(D)
+           archive.set(.name,"CC_density_matrix")
+           archive.write(D)
            D.destroy
         else
            temp_total.create(.n_bf, "restricted")
@@ -6965,26 +7067,27 @@ contains
            .swap_g94_orbital_order(D.alpha,"column")
            .swap_g94_orbital_order(D.beta, "row")
            .swap_g94_orbital_order(D.beta, "column")
-           arch.set(.name,"CC_density_matrix")
-           arch.write(D)
+           archive.set(.name,"CC_density_matrix")
+           archive.write(D)
            D.destroy
         end
       end
 
       chkfile.close; chkfile.destroy
 
-      ! Save data in archive files
-      arch.set(.name,"density_matrix")
-      arch.write(.density_matrix)
-      arch.set(.name,"molecular_orbitals")
-      arch.write(.molecular_orbitals)
-      arch.set(.name,"orbital_energies")
-      arch.write(.orbital_energies)
+      ! Save data in archiveive files
+      archive.set(.name,"density_matrix")
+      archive.write(.density_matrix)
+      archive.set(.name,"molecular_orbitals")
+      archive.write(.molecular_orbitals)
+      archive.set(.name,"orbital_energies")
+      archive.write(.orbital_energies)
 
       if (associated(.crystal)) then
          .resolve_axis_system
          .crystal.make_fragment_data(.atom)
       end
+
    end
 
    swap_g94_orbital_order(X,swap)
