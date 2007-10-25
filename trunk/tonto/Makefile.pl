@@ -241,8 +241,8 @@ sub get_default_integer_kind {
   print INTTEST "end program\n";
   close(INTTEST);
   system("${FC} -o ./inttest ./inttest.f90 > /dev/null 2>&1");
-  if ( -x 'inttest.exe')  { system("inttest.exe > inttest.out"); }
-  if ( -x 'inttest')      { system("inttest     > inttest.out"); }
+  if ( -x 'inttest.exe')  { system("./inttest.exe > inttest.out"); }
+  if ( -x 'inttest')      { system("./inttest     > inttest.out"); }
   if (open(INTTEST,"<","inttest.out")) {
      $INT_KIND = <INTTEST>;
      chomp($INT_KIND);
