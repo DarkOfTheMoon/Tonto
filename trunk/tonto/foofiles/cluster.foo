@@ -40,7 +40,7 @@ module CLUSTER
 
    implicit none
 
-   debug :: VEC{STR}*, private  DEFAULT_NULL
+   debug_list :: VEC{STR}*, private  DEFAULT_NULL
 
 contains
 
@@ -261,6 +261,7 @@ contains
          case ("put_averaged_lff_l_tensors    "); .put_averaged_LFF_tensors
          case ("put_centroid_lff_l_tensors    "); .put_centroid_LFF_tensors
          case ("put_centroid_lff_l_tensors_old"); .put_centroid_LFF_tensors_old
+         case ("put_debug_list                "); .put_debug_list
          case ("put_lff_info                  "); .put_LFF_info
          case ("put_tonto_input               "); .put_tonto_input
          case ("radius=                       "); .read_radius
@@ -970,22 +971,29 @@ contains
 
    end
 
-   do_defragment_uc_atom(u,par,pos,mass) ::: leaky
-   ! Defragment the "occ_list" and get a whole load of electric
-   ! property info for LFF refractive index calculations.
+   do_defragment_uc_atom(u,symop,par,pos,mass) ::: leaky
+   ! Defragment the "occ_list" and get some positional and symop
+   ! information for, e.g. LFF refractive index calculations.
       u :: INT, IN
+      symop :: INT, OUT
       par :: VEC{INT}, OUT
       pos :: MAT{REAL}, OUT
       mass   :: VEC{REAL}, OUT
 
       occ_list :: VEC{INT}*
 
+      ! Get symop for first atom in molecule
+      symop = .crystal.symop_for_unit_cell_atom(u)
+
+      ! Make the coded occ_list for this atom
       occ_list.create(1)
       occ_list(1) = 5 + 5*10 + 5*100 + u*1000
 
+      ! Defragment this atom and get the molecule info
       .do_defragment(occ_list)
-      .extract_atom_info(occ_list,par,pos,mass)
+      .extract_molecule_atom_info(occ_list,par,pos,mass)
 
+      ! Clean up
       occ_list.destroy
 
    end
@@ -1088,10 +1096,10 @@ contains
 
    end
 
-   extract_atom_info(occ_list,par,pos,mass)
-   ! From the "occ_list", extract the atom positions "pos" , the
-   ! asymmetric atom parents "par", positions "pos", and masses
-   ! "mass".
+   extract_molecule_atom_info(occ_list,par,pos,mass)
+   ! From a *molecule* "occ_list", extract the atom positions "pos",
+   ! the "symop" for the first atom, the asymmetric atom parents "par", 
+   ! and masses "mass".
       occ_list :: VEC{INT}, IN
       par :: VEC{INT}, OUT
       pos :: MAT{REAL}, OUT
@@ -1100,18 +1108,15 @@ contains
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell geometry")
    ENSURE(.crystal.asym_atom_for_unit_cell_atom.created,"no crystal asym_atom_for_unit_cell_atom")
-   ENSURE(.crystal.symop_for_unit_cell_atom.created,"no crystal symop_for_unit_cell_atom")
    ENSURE(.crystal.frag_atom_for_unit_cell_atom.created,"no frag_atom_for_unit_cell_atom")
    ENSURE(.asymmetric_unit_atom.created, "no asymmetric_cell_atom data")
    ENSURE(mass.dim==occ_list.dim, "mass, wrong size")
    ENSURE(pos.dim1==3 AND pos.dim2==occ_list.dim, "pos, wrong size")
 
-     seitz :: MAT3{REAL}*
-     i,code,u,h1,h2,h3,p :: INT
+     i,code,u,h1,h2,h3,p,s :: INT
 
-     ! Transposed/Inverse symops
-     seitz => .crystal.transposed_xyz_seitz_matrices
 
+     ! Get atom info
      do  i = 1,occ_list.dim
 
         code = occ_list(i)   
@@ -1125,7 +1130,7 @@ contains
         h2 = h2 - 5
         h3 = h3 - 5
 
-        ! Get the cluster atom position (cartesian)
+        ! Get the atom position (cartesian)
         pos(:,i) = .crystal.unit_cell_geometry(:,u) + [h1,h2,h3] + .fragment_offset
         pos(:,i) = matmul(.crystal.unit_cell.direct_matrix,pos(:,i))
 
@@ -1137,8 +1142,6 @@ contains
         mass(i) = .asymmetric_unit_atom(p).mass
 
      end
-
-     seitz.destroy
 
    end
 
@@ -1533,6 +1536,7 @@ contains
    ! For a unit cell, add up a "tensor" property for one molecule, assumed to be
    ! the fragment_geometry.
      tensor :: TENSOR_TYPE
+
    ENSURE(.generation_method=="unit_cell","only for unit_cell clusters, for whole molecule fragment")
    ENSURE(.n_atoms>0,"no atoms in cluster")
    ENSURE(.occupation_list.created,"no occupation_list")
@@ -1540,19 +1544,22 @@ contains
    ENSURE(.crystal.asym_atom_for_unit_cell_atom.created,"no crystal asym_atom_for_unit_cell_atom")
    ENSURE(.crystal.symop_for_unit_cell_atom.created,"no crystal symop_for_unit_cell_atom")
    ENSURE(.crystal.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+
      ulist :: VEC{INT}*
      seitz :: MAT3{REAL}*
      tensor0,tensor1 :: TENSOR_TYPE
      m,a,u,s :: INT
+
      tensor0 = tensor
      tensor = ZERO
+
      ulist.create(.n_atoms)
      ulist = .occupation_list/1000              
      seitz => .crystal.transposed_xyz_seitz_matrices       ! transposed !
-   ! seitz => .crystal.xyz_seitz_matrices 
-           stdout.text("Making unit cell tensor")
-           stdout.text("original tensor")
-           stdout.put(tensor0)
+         ! stdout.text("Making unit cell tensor")
+         ! stdout.text("original tensor")
+         ! stdout.put(tensor0)
+
      do m = 1,.crystal.n_unit_cell_mols
         do a = 1,.n_atoms
            if (.crystal.unit_cell_mol_for_atom(a)/=m) cycle
@@ -1561,18 +1568,20 @@ contains
            tensor0.change_basis_to(tensor1,seitz(:,:,s))   ! Use R^T to change U tensor basis
            tensor = tensor + tensor1
 
-           stdout.show("molecule =",m)
-           stdout.show("symop    =",s)
-!          stdout.put(seitz(:,:,s))
-           stdout.text("transformed tensor")
-           stdout.put(tensor1)
+         ! stdout.show("molecule =",m)
+         ! stdout.show("symop    =",s)
+         ! stdout.put(seitz(:,:,s))
+         ! stdout.text("transformed tensor")
+         ! stdout.put(tensor1)
 
            exit
 
         end
      end
+
      seitz.destroy
      ulist.destroy
+
    end
 
    add_uc_tensors(tensor) ::: get_from(CLUSTER, TENSOR_TYPE=>MAT{REAL}(3,3))
@@ -1754,8 +1763,9 @@ contains
 
       n_mol,n_H,n,a,i1,i2,j1,j2,k1,k2,m1,m2 :: INT
       pos,pos0,com,L,L0,L1 :: MAT{REAL}* 
-      non_H,par,mol,mol0 :: VEC{INT}*
+      symop,non_H,par,mol,mol0 :: VEC{INT}*
       label0 :: VEC{STR}*
+      inverse_seitz :: MAT3{REAL}*
 
       ! Header
       stdout.flush
@@ -1763,7 +1773,7 @@ contains
 
       ! Get the positions, COM's for the molecules in the unit cell.
       ! By construction, the atoms in each molecule occur consecutively.
-      .get_LFF_molecule_info(mol,par,pos,com) 
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
 
       ! Get indices of non-Hydrogen-atom positions.
       n_mol = .crystal.n_unit_cell_mols
@@ -1780,7 +1790,7 @@ contains
       mol0   = mol(non_H)
 
       non_H.destroy
-      com.destroy; pos.destroy; par.destroy; mol.destroy
+      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
 
       ! Make the non-Hydrogen-atom Lorentz factor tensors
       L.create(3*n_mol,3*n_mol)
@@ -2116,8 +2126,8 @@ contains
       pos,coc,com,alpha_q :: MAT{REAL}*
       symop,alpha_m :: MAT3{REAL}*
 
-      ! Get the electrical properties
-      .get_LFF_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
 
       ! Make the charge and dipole Lorentz factor tensors
       n = par.dim
@@ -2176,10 +2186,901 @@ contains
 
    end
 
-!   make_uc_alpha(alpha_mol,uc_alpha)
-!   ! Make the naive unit cell polarisability
+!   make_averaged_LFF_tensor(L)
+!   ! Put the heavy-atom averaged local field factor dipole L tensor L1
+!   ! for the molecules in the unit cell. This uses the Reis formula.
+!
+!      L :: MAT{REAL}
+!
+!   ENSURE(.crystal.created,"no crystal")
+!   ENSURE(.crystal.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+!   ENSURE(.asymmetric_unit_atom.created,"no asymetric cell atoms")
+!   ENSURE(L.is_square,"L is square")
+!   ENSURE(L.dim1==.crystal.n_unit_cell_mols,"wrong size, L")
+!
+!      n_mol,n_H,n,a,i1,i2,j1,j2,k1,k2,m1,m2 :: INT
+!      pos,pos0,com, L0,L1 :: MAT{REAL}* 
+!      symop,non_H,par,mol,mol0 :: VEC{INT}*
+!
+!      ! Get the positions, COM's for the molecules in the unit cell.
+!      ! By construction, the atoms in each molecule occur consecutively.
+!      .get_uc_molecule_info(mol,symop,par,pos,com) 
+!
+!      ! Get indices of non-Hydrogen-atom positions.
+!      n_mol = .crystal.n_unit_cell_mols
+!      n_H   = count(.asymmetric_unit_atom(par).atomic_number>1)
+!      non_H.create(n_H)
+!      non_H = pack([(a,a=1,par.dim)],.asymmetric_unit_atom(par).atomic_number>1)
+!
+!      ! Set the non-Hydrogen-atom positions, molecules.
+!      pos0.create(3,n_H)
+!      mol0.create(n_H)
+!      pos0 = pos(:,non_H)
+!      mol0 = mol(  non_H)
+!
+!      non_H.destroy
+!      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+!
+!      ! Make the non-Hydrogen-atom Lorentz factor tensors
+!      L0.create(3*n_H,n_H)         ! charge L tensor
+!      L1.create(3*n_H,3*n_H)       ! dipole L tensor
+!      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+!
+!      mol0.destroy; pos0.destroy
+!
+!      ! Print monopole and dipole L tensor out
+!      n = n_H/n_mol
+!
+!      ! Average the L(1) tensors over molecules
+!      L = ZERO
+!      do i1 = 1,n_mol
+!      do i2 = 1,n_mol
+!         m1 = 3*(i1-1)
+!         m2 = 3*(i2-1)
+!         do j1 = 1,n
+!         do j2 = 1,n
+!            k1 = 3*(n*(i1-1)+j1-1)
+!            k2 = 3*(n*(i2-1)+j2-1)
+!            L(m1+1:m1+3,m2+1:m2+3) = L(m1+1:m1+3,m2+1:m2+3) + L1(k1+1:k1+3,k2+1:k2+3)
+!         end
+!         end
+!      end
+!      end
+!      L = L/real(n*n,kind=REAL_KIND)
+!
+!      ! Clean up
+!      L1.destroy; L0.destroy
+!
+!   end
+
+!  **********************
+!  Susceptibility tensors
+!  **********************
+
+   make_chi1_naive(chi1,alpha_mol)
+   ! Make the naive second order susceptibility from the
+   ! polarisability of the molecule.
+      chi1 :: MAT{REAL}(3,3), OUT ! Clausius-Mossotti, L=1/3
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+      alpha_uc :: MAT{REAL}(3,3)
+      D :: MAT{REAL}* 
+      fac :: REAL
+
+      .make_alpha_uc(alpha_uc,alpha_mol)
+
+      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      fac = FOUR*PI/.crystal.unit_cell.volume
+
+      D.create(3,3)
+      D.to_unit_matrix
+      D = D - fac*THIRD*alpha_uc
+      D.to_inverse_of(D)
+      chi1 = fac*matmul(alpha_uc,D)
+      D.destroy
+
+   end
+
+   make_alpha_uc(alpha_uc,alpha_mol)
+   ! Make the unit cell alpha.
+      alpha_uc :: MAT{REAL}(3,3), OUT
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+   ENSURE(.crystal.created,"no crystal")
+
+      alpha :: MAT{REAL}(3,3)
+      mol,symop,par :: VEC{INT}*
+      pos,com :: MAT{REAL}* 
+      inverse_seitz :: MAT3{REAL}*
+      n_mol,m :: INT
+
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
+      com.destroy; pos.destroy; par.destroy; mol.destroy
+
+      ! Transposed/Inverse symops
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+
+      ! No of molecules
+      n_mol = symop.dim
+
+      !    stdout.text("original tensor")
+      !    stdout.put(alpha_mol)
+
+      ! Add up the polarisabilities
+      alpha_uc = ZERO
+      do m = 1,n_mol
+         alpha_mol.change_basis_to(alpha,inverse_seitz(:,:,symop(m)))
+         alpha_uc = alpha_uc + alpha
+      !    stdout.show("molecule =",m)
+      !    stdout.show("symop :",symop(m))
+      !    stdout.put(symop(m))
+      !    stdout.text("transformed tensor")
+      !    stdout.put(alpha)
+      end
+
+      !    stdout.text("UC alpha")
+      !    stdout.put(alpha_uc)
+
+      ! Clean
+      inverse_seitz.destroy
+      symop.destroy
+
+   end
+
+
+   make_chi1_ALFFA(chi1,alpha_mol)
+   ! Make the ALFFA "chi1" matrix: chi = Tr_block a^1(1 - L^1 a^1)^-1
+   ! where L^1 is the dipole L tensor, a^1 is the (symmetry
+   ! transformed) molecular dipole polarisability "alpha_mol". The L
+   ! tensors are evaluated at the molecular center-of_masses.
+   ! The trace is over 3x3 blocks.
+      chi1 :: MAT{REAL}(3,3), OUT
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+      mol,mol0,symop,par,non_H :: VEC{INT}*
+      inverse_seitz,alpha :: MAT3{REAL}*
+      pos,com, L0,L1, D,Df :: MAT{REAL}* 
+      alph :: MAT{REAL}(3,3)
+      n,n_mol,n_atom_per_mol,dim,a,b,i,j,m :: INT
+      fac :: REAL
+
+      n = .crystal.n_unit_cell_atoms    ! No. of atoms in unit cell
+      n_mol = .crystal.n_unit_cell_mols ! No. of molecules
+      n_atom_per_mol = n/n_mol          ! No. of atoms per molecules
+
+      ! Molecular polarisabilities
+      alpha.create(3,3,n_mol)
+
+      ! D matrix: D = (1 - aL)^-1 
+      dim = 3*n_mol
+      D.create(dim,dim)          
+
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
+
+      ! Get the molecule indices (they are consecutive by construction)
+      mol0.create(n_mol)
+      mol0 = [(m,m=1,n_mol)]
+
+      ! Print out centroid info ... important
+      stdout.flush
+      stdout.show("Center of mass =",com(:,1))
+
+      ! Make the centroid charge and dipole Lorentz factor tensors
+      L0.create(dim,n_mol)
+      L1.create(dim,dim)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,com,mol0)
+
+      ! Get the reduced molecular polarisabilities
+      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+      fac = FOUR*PI/.crystal.unit_cell.volume
+      alph = fac*alpha_mol
+      do m = 1,n_mol
+         alph.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+      end
+      inverse_seitz.destroy
+
+      ! Print out centroid info ... important
+      if (.debugging("make_chi1_ALFFA")) then
+      stdout.flush
+      stdout.text("Arrays for centroid calculation:")
+      stdout.text("com (center of mass):")
+      stdout.put(transpose(com))
+      stdout.text("mol0:")
+      stdout.put(mol0,"column")
+      stdout.text("Alpha for each molecule:")
+      stdout.put(alpha,as_matrices=TRUE)
+      stdout.text("Dipole L1 tensor:")
+      stdout.put(L1)
+      end
+
+      ! Make the (inverse) D matrix
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_mol
+         j = 0
+         do b = 1,n_mol
+            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L1(i+1:i+3,j+1:j+3),alpha(:,:,b),-ONE)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Clean up
+      L1.destroy; L0.destroy; mol0.destroy
+      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+
+      ! Invert
+      D.to_inverse_of(D)
+    
+      ! Make the local field factors
+      Df.create(dim,3)
+      .make_local_field_factors(Df,D)
+
+      ! Make the chi1 (ALFFA) susceptibility
+      chi1 = ZERO
+      i = 0
+      do a = 1,n_mol
+         chi1.plus_product_of(alpha(:,:,a),Df(i+1:i+3,:))
+         i = i + 3
+      end
+
+      ! Clean up
+      Df.destroy; D.destroy; alpha.destroy
+
+   end
+
+!   make_chi1_ALFFA(chi1,alpha_mol)
+!   ! Make the ALFFA "chi1" matrix: chi = Tr_block a^1(1 - L^1 a^1)^-1
+!   ! where L^1 is the dipole L tensor, a^1 is the (symmetry
+!   ! transformed) molecular dipole polarisability "alpha_mol". The L
+!   ! tensors are evaluated at the molecular center-of_masses.
+!   ! The trace is over 3x3 blocks.
+!      chi1 :: MAT{REAL}(3,3), OUT
 !      alpha_mol :: MAT{REAL}(3,3), IN
-!      uc_alpha  :: MAT{REAL}(3,3), OUT ! Unit cell alpha
+!
+!      mol,mol0,symop,par,non_H :: VEC{INT}*
+!      inverse_seitz,alpha :: MAT3{REAL}*
+!      pos,com, L0,L1, D,Df :: MAT{REAL}* 
+!      alph :: MAT{REAL}(3,3)
+!      n,n_mol,n_atom_per_mol,dim,a,b,i,j,m :: INT
+!      fac :: REAL
+!
+!      ! Get the unit cell molecule atom info
+!      .get_uc_molecule_info(mol,symop,par,pos,com) 
+!
+!      n = .crystal.n_unit_cell_atoms   ! No. of atoms in unit cell
+!      n_mol = symop.dim                ! No. of molecules
+!      n_atom_per_mol = n/n_mol         ! No. of atoms per molecules
+!
+!      ! Get the molecule indices (they are consecutive by construction)
+!      mol0.create(n_mol)
+!      mol0 = [(m,m=1,n_mol)]
+!
+!      ! Print out centroid info ... important
+!      stdout.flush
+!      stdout.show("Center of mass =",com(:,1))
+!
+!      ! Make the centroid charge and dipole Lorentz factor tensors
+!      dim = 3*n_mol
+!      alpha.create(3,3,n_mol)
+!      D.create(dim,dim)
+!      L0.create(dim,n_mol)
+!      L1.create(dim,dim)
+!      .crystal.unit_cell.make_LFF_tensors(L0,L1,com,mol0)
+!
+!      ! Get the reduced molecular polarisabilities
+!      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+!      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+!      fac = FOUR*PI/.crystal.unit_cell.volume
+!      alph = fac*alpha_mol
+!      do m = 1,n_mol
+!         alph.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+!      end
+!
+!      ! Print out centroid info ... important
+!      if (.debugging("make_chi1_ALFFA")) then
+!      stdout.flush
+!      stdout.text("Arrays for centroid calculation:")
+!      stdout.text("com (center of mass):")
+!      stdout.put(transpose(com))
+!      stdout.text("mol0:")
+!      stdout.put(mol0,"column")
+!      stdout.text("Alpha for each molecule:")
+!      stdout.put(alpha,as_matrices=TRUE)
+!      stdout.text("Dipole L1 tensor:")
+!      stdout.put(L1)
+!      end
+!
+!      ! Mini Clean up
+!      inverse_seitz.destroy
+!      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+!
+!      ! Make the (inverse) D matrix
+!      D.to_unit_matrix
+!      i = 0
+!      do a = 1,n_mol
+!         j = 0
+!         do b = 1,n_mol
+!            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L1(i+1:i+3,j+1:j+3),alpha(:,:,b),-ONE)
+!            j = j + 3
+!         end
+!         i = i + 3
+!      end
+!
+!      ! Clean up
+!
+!      ! Invert
+!      D.to_inverse_of(D)
+!    
+!      ! Make the local field factors
+!      Df.create(dim,3)
+!      .make_local_field_factors(Df,D)
+!
+!      ! Make the chi1 (ALFFA) susceptibility
+!      chi1 = ZERO
+!      i = 0
+!      do a = 1,n_mol
+!         chi1.plus_product_of(alpha(:,:,a),Df(i+1:i+3,:))
+!         i = i + 3
+!      end
+!
+!      ! Clean up
+!      Df.destroy
+!      L1.destroy; L0.destroy; D.destroy; alpha.destroy
+!      mol0.destroy
+!
+!   end
+
+   make_chi1_RLFTn(chi1,alpha_mol)
+   ! Make the RLFTn "chi1" matrix: chi1 = Tr_block a^1(1 - L^1 a^1)^-1
+   ! where L^1 is the dipole L tensor, a^1 is the (symmetry
+   ! transformed) molecular dipole polarisability "alpha_mol" divided
+   ! by the number of non-Hydrogen atoms in a molecule.  The L tensors
+   ! are evaluated at these non H atom sites. The trace is over 3x3 blocks
+      chi1 :: MAT{REAL}(3,3), OUT
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+      mol,mol0,symop,par,non_H :: VEC{INT}*
+      inverse_seitz,alpha :: MAT3{REAL}*
+      pos,pos0,com, L0,L1, D,Df :: MAT{REAL}* 
+      alph :: MAT{REAL}(3,3)
+      n,n_mol,n_non_H,n_non_H_per_mol,dim,a,b,i,j,m :: INT
+      fac :: REAL
+
+      n = .crystal.n_unit_cell_atoms    ! No. of atoms in unit cell
+      n_mol = .crystal.n_unit_cell_mols ! No. of molecules
+
+      ! No of non-hydrogen atoms in unit cell
+      par => .crystal.asym_atom_for_unit_cell_atom
+      n_non_H = count(.asymmetric_unit_atom(par).atomic_number>1)
+
+      ! No. of non-H hydrogen atoms per molecule
+      DIE_IF(mod(n_non_H,n_mol)/=0,"no of non-Hydrogen atoms wrong")
+      n_non_H_per_mol = n_non_H/n_mol
+
+      ! Molecular polarisabilities
+      alpha.create(3,3,n_mol)
+
+      ! D matrix: D = (1 - aL)^-1 
+      dim = 3*n_non_H
+      D.create(dim,dim)          
+
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
+
+      ! Get the reduced averaged site polarisabilities
+      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+      fac = FOUR*PI/.crystal.unit_cell.volume
+      alph = fac*alpha_mol/n_non_H_per_mol
+      do m = 1,n_mol
+         alph.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+      end
+      inverse_seitz.destroy
+
+      ! Get *indices* for non-H positions
+      non_H.create(n_non_H)
+      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
+
+      ! Get the non-H positions and molecules
+      pos0.create(3,n_non_H)
+      mol0.create(  n_non_H)
+      pos0 = pos(:,non_H)
+      mol0 = mol(  non_H)
+
+      ! Make the non H charge and dipole Lorentz factor tensors
+      L0.create(dim,n_non_H)     ! charge L tensor
+      L1.create(dim,dim)         ! dipole L tensor
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+
+      ! Print out position info ... 
+      if (.debugging("make_chi1_RLFTn")) then
+      stdout.flush
+      stdout.text("Arrays for non H calculation:")
+      stdout.text("non_H:")
+      stdout.put(non_H,"column")
+      stdout.text("pos0:")
+      stdout.put(transpose(pos0))
+      stdout.text("mol0:")
+      stdout.put(mol0,"column")
+      stdout.text("symop :")
+      stdout.put(symop)
+      stdout.text("Alpha for each molecule:")
+      stdout.put(n_non_H_per_mol*alpha/fac,as_matrices=TRUE)
+      stdout.text("UC Alpha :")
+      stdout.put(sum(n_non_H_per_mol*alpha/fac,dim=3))
+      stdout.text("Dipole L1 tensor:")
+      stdout.put(L1)
+      end
+
+      ! Make the (inverse) D matrix: D = (1 - aL)^-1 
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_non_H
+         j = 0
+         do b = 1,n_non_H
+            m  = (b-1)/n_non_H_per_mol + 1
+            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L1(i+1:i+3,j+1:j+3),alpha(:,:,m),-ONE)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Clean up
+      L1.destroy; L0.destroy 
+      mol0.destroy; pos0.destroy; non_H.destroy
+      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+
+      ! Invert
+      D.to_inverse_of(D)
+    
+      ! Make the local field factors
+      Df.create(dim,3)
+      .make_local_field_factors(Df,D)
+
+      ! Make the chi1 (RLFTn) susceptibility
+      chi1 = ZERO
+      i = 0
+      do a = 1,n_non_H
+         m = (a-1)/n_non_H_per_mol + 1
+         chi1.plus_product_of(alpha(:,:,m),Df(i+1:i+3,:))
+         i = i + 3
+      end
+
+      ! Clean up
+      Df.destroy; D.destroy; alpha.destroy
+
+   end
+
+!   make_chi1_RLFTn(chi1,alpha_mol)
+!   ! Make the RLFTn "chi1" matrix: chi1 = Tr_block a^1(1 - L^1 a^1)^-1
+!   ! where L^1 is the dipole L tensor, a^1 is the (symmetry
+!   ! transformed) molecular dipole polarisability "alpha_mol" divided
+!   ! by the number of non-Hydrogen atoms in a molecule.  The L tensors
+!   ! are evaluated at these non H atom sites. The trace is over 3x3 blocks
+!      chi1 :: MAT{REAL}(3,3), OUT
+!      alpha_mol :: MAT{REAL}(3,3), IN
+!
+!      mol,mol0,symop,par,non_H :: VEC{INT}*
+!      inverse_seitz,alpha :: MAT3{REAL}*
+!      pos,pos0,com, L0,L1, D,Df :: MAT{REAL}* 
+!      alph :: MAT{REAL}(3,3)
+!      n,n_mol,n_non_H,n_non_H_per_mol,dim,a,b,i,j,m :: INT
+!      fac :: REAL
+!
+!      ! Get the unit cell molecule atom info
+!      .get_uc_molecule_info(mol,symop,par,pos,com) 
+!
+!      n = .crystal.n_unit_cell_atoms   ! No. of atoms in unit cell
+!      n_mol = symop.dim                ! No. of molecules
+!
+!      ! Get *indices* for non-H positions
+!      n_non_H = count(.asymmetric_unit_atom(par).atomic_number>1)
+!      non_H.create(n_non_H)
+!      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
+!
+!      ! No. of non-H hydrogen atoms per molecule
+!      DIE_IF(mod(n_non_H,n_mol)/=0,"no of non-Hydrogen atoms wrong")
+!      n_non_H_per_mol = n_non_H/n_mol
+!
+!      ! Get the non-H positions and molecules
+!      pos0.create(3,n_non_H)
+!      mol0.create(n_non_H)
+!      pos0 = pos(:,non_H)
+!      mol0 = mol(non_H)
+!
+!      ! Make the non H charge and dipole Lorentz factor tensors
+!      dim = 3*n_non_H
+!      alpha.create(3,3,n_mol)
+!      D.create(dim,dim)          ! (1 - aL)^-1 
+!      L0.create(dim,n_non_H)     ! charge L tensor
+!      L1.create(dim,dim)         ! dipole L tensor
+!      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+!
+!      ! Get the reduced averaged site polarisabilities
+!      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+!      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+!      fac = FOUR*PI/.crystal.unit_cell.volume
+!      alph = fac*alpha_mol/n_non_H_per_mol
+!      do m = 1,n_mol
+!         alph.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+!      end
+!
+!      ! Print out position info ... important
+!      if (.debugging("make_chi1_RLFTn")) then
+!      stdout.flush
+!      stdout.text("Arrays for non H calculation:")
+!      stdout.text("non_H:")
+!      stdout.put(non_H,"column")
+!      stdout.text("pos0:")
+!      stdout.put(transpose(pos0))
+!      stdout.text("mol0:")
+!      stdout.put(mol0,"column")
+!      stdout.text("symop :")
+!      stdout.put(symop)
+!      stdout.text("Alpha for each molecule:")
+!      stdout.put(n_non_H_per_mol*alpha/fac,as_matrices=TRUE)
+!      stdout.text("UC Alpha :")
+!      stdout.put(sum(n_non_H_per_mol*alpha/fac,dim=3))
+!      stdout.text("Dipole L1 tensor:")
+!      stdout.put(L1)
+!      end
+!
+!      ! Mini Clean up
+!      inverse_seitz.destroy
+!      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+!
+!      ! Make the (inverse) D matrix
+!      D.to_unit_matrix
+!      i = 0
+!      do a = 1,n_non_H
+!         j = 0
+!         do b = 1,n_non_H
+!            m  = (b-1)/n_non_H_per_mol + 1
+!            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L1(i+1:i+3,j+1:j+3),alpha(:,:,m),-ONE)
+!            j = j + 3
+!         end
+!         i = i + 3
+!      end
+!
+!      ! Invert
+!      D.to_inverse_of(D)
+!    
+!      ! Make the local field factors
+!      Df.create(dim,3)
+!      .make_local_field_factors(Df,D)
+!
+!      ! Make the chi1 (RLFTn) susceptibility
+!      chi1 = ZERO
+!      i = 0
+!      do a = 1,n_non_H
+!         m = (a-1)/n_non_H_per_mol + 1
+!         chi1.plus_product_of(alpha(:,:,m),Df(i+1:i+3,:))
+!         i = i + 3
+!      end
+!
+!      ! Clean up
+!      Df.destroy
+!      L1.destroy; L0.destroy; D.destroy; alpha.destroy
+!      mol0.destroy; pos0.destroy
+!      non_H.destroy
+!
+!   end
+
+   make_chi1_RLFTn_av_L(chi1,alpha_mol)
+   ! Make the RLFTn "chi1" matrix: chi1 = Tr_block a^1(1 - L^1 a^1)^-1
+   ! where L^1 is the dipole L tensor, a^1 is the (symmetry
+   ! transformed) molecular dipole polarisability "alpha_mol" divided
+   ! by the number of non-Hydrogen atoms in a molecule.  The L tensors
+   ! are evaluated at these non H atom sites. The trace is over 3x3 blocks
+      chi1 :: MAT{REAL}(3,3), OUT
+      alpha_mol :: MAT{REAL}(3,3), IN
+
+      mol,mol0,symop,par,non_H :: VEC{INT}*
+      inverse_seitz,alpha :: MAT3{REAL}*
+      pos,pos0,com, L,L0,L1, D,Df :: MAT{REAL}* 
+      alph :: MAT{REAL}(3,3)
+      n,n_mol,n_non_H,n_non_H_per_mol,dim, i1,i2,j1,j2,k1,k2,m1,m2, a,b,i,j,m :: INT
+      fac :: REAL
+
+      n = .crystal.n_unit_cell_atoms    ! No. of atoms in unit cell
+      n_mol = .crystal.n_unit_cell_mols ! No. of molecules
+
+      ! Molecular polarisabilities
+      alpha.create(3,3,n_mol)
+
+      ! Molecule averaged L1
+      dim = 3*n_mol
+      L.create(dim,dim)
+
+      ! Get the unit cell molecule atom info
+      .get_uc_molecule_info(mol,symop,par,pos,com) 
+
+      ! Get *indices* for non-H positions
+      n_non_H = count(.asymmetric_unit_atom(par).atomic_number>1)
+      non_H.create(n_non_H)
+      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
+
+      ! No. of non-H hydrogen atoms per molecule
+      DIE_IF(mod(n_non_H,n_mol)/=0,"no of non-Hydrogen atoms wrong")
+      n_non_H_per_mol = n_non_H/n_mol
+
+      ! Get the non-H positions and molecules
+      pos0.create(3,n_non_H)
+      mol0.create(  n_non_H)
+      pos0 = pos(:,non_H)
+      mol0 = mol(  non_H)
+
+      ! Get the reduced molecular polarisabilities
+      ! fac = factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      inverse_seitz => .crystal.transposed_xyz_seitz_matrices
+      fac = FOUR*PI/.crystal.unit_cell.volume
+      alph = fac*alpha_mol
+      do m = 1,n_mol
+         alph.change_basis_to(alpha(:,:,m),inverse_seitz(:,:,symop(m)))
+      end
+      inverse_seitz.destroy
+
+      ! Make the non H charge and dipole Lorentz factor tensors
+      dim = 3*n_non_H
+      L0.create(dim,n_non_H)     ! charge L tensor
+      L1.create(dim,dim)         ! dipole L tensor
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
+
+      ! Average the L(1) tensors over molecules
+      L = ZERO
+      do i1 = 1,n_mol
+      do i2 = 1,n_mol
+         m1 = 3*(i1-1)
+         m2 = 3*(i2-1)
+         do j1 = 1,n_non_H_per_mol
+         do j2 = 1,n_non_H_per_mol
+            k1 = 3*(n_non_H_per_mol*(i1-1)+j1-1)
+            k2 = 3*(n_non_H_per_mol*(i2-1)+j2-1)
+            L(m1+1:m1+3,m2+1:m2+3) = L(m1+1:m1+3,m2+1:m2+3) + L1(k1+1:k1+3,k2+1:k2+3)
+         end
+         end
+      end
+      end
+      fac = ONE/(n_non_H_per_mol*n_non_H_per_mol)
+      L = fac*L
+
+      ! Mini Clean up
+      L1.destroy; L0.destroy
+      mol0.destroy; pos0.destroy; non_H.destroy
+      com.destroy; pos.destroy; par.destroy; symop.destroy; mol.destroy
+
+      ! Print out position info ... important
+      if (.debugging("make_chi1_RLFTn_av_L1")) then
+      stdout.text("Averaged L1 tensor:")
+      stdout.put(L)
+      end
+
+      ! Make the (inverse) D matrix: D = (1 - aL)^-1 
+      dim = 3*n_mol
+      D.create(dim,dim)          
+      D.to_unit_matrix
+      i = 0
+      do a = 1,n_mol
+         j = 0
+         do b = 1,n_mol
+            D(i+1:i+3,j+1:j+3).plus_scaled_product_of(L(i+1:i+3,j+1:j+3),alpha(:,:,b),-ONE)
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+      ! Invert
+      D.to_inverse_of(D)
+    
+      ! Make the local field factors
+      Df.create(dim,3)
+      .make_local_field_factors(Df,D)
+
+      ! Make the chi1 (ALFFA-like) susceptibility
+      chi1 = ZERO
+      i = 0
+      do a = 1,n_mol
+         chi1.plus_product_of(alpha(:,:,a),Df(i+1:i+3,:))
+         i = i + 3
+      end
+
+      ! Clean up
+      Df.destroy; D.destroy
+      L.destroy; alpha.destroy
+
+   end
+
+   make_local_field_factors(Df,D)
+   ! Make the second ortder susceptibility from distributed
+   ! polarisabilities.
+      Df :: MAT{REAL}, OUT
+      D  :: MAT{REAL}, IN
+
+   ENSURE(D.is_square,     "non square D")
+   ENSURE(mod(D.dim1,3)==0,"D dim1 is not divisible by 3")
+   ENSURE(Df.dim1==D.dim1, "wrong dim1, Df")
+   ENSURE(Df.dim2==3,      "wrong dim2, Df")
+
+      n,a,b,i,j :: INT
+
+      n = D.dim1/3
+
+      Df = ZERO
+      i = 0
+      do a = 1,n
+         j = 0
+         do b = 1,n
+            Df(i+1:i+3,:) = Df(i+1:i+3,:) + D(i+1:i+3,j+1:j+3)      
+            j = j + 3
+         end
+         i = i + 3
+      end
+
+   end
+
+! These are for more complicated calculations
+
+   make_D_matrix(D)
+   ! Make the D matrix: D = (1 - L^0 a^0 - L^1 a^1)^-1
+   ! where L^0 and L^1 are the monopole and dipole L tensors and
+   ! where a^0 and a^1 are the monopole and dipole polarisabilities
+   ! for every atom site at which the L tensors are evaluated.
+      D :: MAT{REAL}, target
+
+   ENSURE(D.is_square,  "non square D")
+   ENSURE(.crystal.created,"no crystal")
+
+      mol,par :: VEC{INT}*
+      symop,alpha_m :: MAT3{REAL}*
+      pos,coc,com,alpha_q :: MAT{REAL}*
+      L0,L1,Lm, DD :: MAT{REAL}* 
+      Lq :: VEC{REAL}*
+      n,dim,a,b,i,j :: INT
+      fac :: REAL
+
+      ! Factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      fac = FOUR*PI/.crystal.unit_cell.volume
+
+      ! Get the electrical properties for each atom
+      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
+
+      com.destroy
+      coc.destroy
+      pos.destroy
+      par.destroy
+      symop.destroy
+      mol.destroy
+
+      ! Get no of atoms in unit cell
+      n   = par.dim
+      dim = D.dim1
+      ENSURE(dim==3*n,"wrong size, par array")
+
+      ! Make the charge and dipole Lorentz factor tensors
+      L0.create(dim,n)
+      L1.create(dim,dim)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,mol)
+
+      ! Make the (inverse) D matrix
+      D.to_unit_matrix
+
+      i = 0
+      do a = 1,n
+
+         j = 0
+         do b = 1,n
+
+            Lq => L0(i+1:i+3,b)      
+            Lm => L1(i+1:i+3,j+1:j+3)      
+
+            DD =>   D(i+1:i+3,j+1:j+3)      
+            DD = DD - fac*Lq.outer_product_with(alpha_q(:,b))
+            DD = DD - fac*matmul(Lm,alpha_m(:,:,b))
+            
+            j = j + 3
+         end
+
+         i = i + 3
+      end
+
+      ! Clean up
+      alpha_m.destroy; alpha_q.destroy
+      L1.destroy; L0.destroy
+
+      ! Invert
+      D.to_inverse_of(D)
+
+   end
+
+   make_Dnc_matrix(Dnc)
+   ! Make the Dnc matrix: Dnc = (1 - L^1 a^1)^-1
+   ! where L^1 is the dipole L tensors and where a^1 is the dipole 
+   ! polarisability for every atom site at which the L tensors are 
+   ! evaluated.  NOTE: Dnc means "no charge dipole terms"
+      Dnc :: MAT{REAL}, target
+
+   ENSURE(Dnc.is_square,"non square Dnc")
+   ENSURE(.crystal.created,"no crystal")
+
+      mol,par :: VEC{INT}*
+      symop,alpha_m :: MAT3{REAL}*
+      pos,coc,com,alpha_q :: MAT{REAL}*
+      L0,L1,Lm, DD :: MAT{REAL}* 
+      n,dim,a,b,i,j :: INT
+      fac :: REAL
+
+      ! Factor to reduce polarisabilities = 1/(eps_0 V) (in au)
+      fac = FOUR*PI/.crystal.unit_cell.volume
+
+      ! Get the unit cell electrical properties for each atom
+      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
+
+      alpha_q.destroy
+      com.destroy
+      coc.destroy
+      pos.destroy
+      par.destroy
+      symop.destroy
+      mol.destroy
+
+      ! Get no of atoms in unit cell
+      n   = par.dim
+      dim = Dnc.dim1
+      ENSURE(dim==3*n,"wrong size, par array")
+
+      ! Make the charge and dipole Lorentz factor tensors
+      L0.create(dim,n)
+      L1.create(dim,dim)
+      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,mol)
+
+      ! Make the (inverse) D matrix
+      Dnc.to_unit_matrix
+
+      i = 0
+      do a = 1,n
+
+         j = 0
+         do b = 1,n
+
+            Lm => L1(i+1:i+3,j+1:j+3)      
+
+            DD => Dnc(i+1:i+3,j+1:j+3)      
+            DD = DD - fac*matmul(Lm,alpha_m(:,:,b))
+
+            j = j + 3
+         end
+
+         i = i + 3
+      end
+
+      ! Clean up
+      L1.destroy
+      L0.destroy
+
+      ! Invert
+      Dnc.to_inverse_of(Dnc)
+
+   end
+
+! Old distributed polarisability code
+
+!   make_susceptibility2(alpha_mol,beta_mol,uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi2_nonH,chi1_nc,chi1_do,chi1)
+!   ! Make the second ortder susceptibility from distributed
+!   ! polarisabilities.
+!      alpha_mol :: MAT{REAL}(3,3), IN
+!      beta_mol  :: MAT3{REAL}(3,3,3), IN
+!      uc_alpha      :: MAT{REAL}(3,3), OUT ! Unit cell alpha
+!      chi1_naive    :: MAT{REAL}(3,3), OUT ! Clausius-Mossotti, L=1/3
+!      chi1_centroid :: MAT{REAL}(3,3), OUT ! Dipoles at the COM
+!      chi1_nonH     :: MAT{REAL}(3,3), OUT ! Non-hydrogen model, RLFTn
+!      chi1_nc       :: MAT{REAL}(3,3), OUT ! No charge contributons to polarisability
+!      chi1_do       :: MAT{REAL}(3,3), OUT ! Atomic alpha used
+!      chi1          :: MAT{REAL}(3,3), OUT ! Distributed polarisability
+!      chi2_nonH     :: MAT3{REAL}(3,3,3)
 !
 !   ENSURE(.crystal.created,"no crystal")
 !   ENSURE(.asymmetric_unit_atom.created,"no asymetric cell atoms")
@@ -2194,8 +3095,8 @@ contains
 !      n,n_m,n_a,n_H,nH,a,b,i,j,m :: INT
 !      fac :: REAL
 !
-!      ! Get the electrical properties for each atom
-!      .get_LFF_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
+!      ! Get the unit cell electrical properties for each atom
+!      .get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
 !
 !      ! Get no of atoms in unit cell
 !      n = par.dim
@@ -2518,363 +3419,13 @@ contains
 !   end
 
 
-   make_susceptibility2(alpha_mol,beta_mol,uc_alpha,chi1_naive,chi1_centroid,chi1_nonH,chi2_nonH,chi1_nc,chi1_do,chi1)
-   ! Make the second ortder susceptibility from distributed
-   ! polarisabilities.
-      alpha_mol :: MAT{REAL}(3,3), IN
-      beta_mol  :: MAT3{REAL}(3,3,3), IN
-      uc_alpha      :: MAT{REAL}(3,3), OUT ! Unit cell alpha
-      chi1_naive    :: MAT{REAL}(3,3), OUT ! Clausius-Mossotti, L=1/3
-      chi1_centroid :: MAT{REAL}(3,3), OUT ! Dipoles at the COM
-      chi1_nonH     :: MAT{REAL}(3,3), OUT ! Non-hydrogen model, RLFTn
-      chi1_nc       :: MAT{REAL}(3,3), OUT ! No charge contributons to polarisability
-      chi1_do       :: MAT{REAL}(3,3), OUT ! Atomic alpha used
-      chi1          :: MAT{REAL}(3,3), OUT ! Distributed polarisability
-      chi2_nonH     :: MAT3{REAL}(3,3,3)
-
-   ENSURE(.crystal.created,"no crystal")
-   ENSURE(.asymmetric_unit_atom.created,"no asymetric cell atoms")
-
-      alph,al :: MAT{REAL}(3,3)
-      beta,be :: MAT3{REAL}(3,3,3)
-      L0,L1,Lm,D,Dnc,Ddo,Dd,AA, df :: MAT{REAL}* 
-      pos,pos0,coc,com,coc0,dipole,alpha_q,centroid :: MAT{REAL}*
-      mol,mol0,par,non_H :: VEC{INT}*
-      charge,r,Lq :: VEC{REAL}*
-      symop,alpha_m,alpha :: MAT3{REAL}*
-      n,n_m,n_a,n_H,nH,a,b,i,j,m :: INT
-      fac :: REAL
-
-      ! Get the electrical properties for each atom
-      .get_LFF_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) 
-
-      ! Get no of atoms in unit cell
-      n = par.dim
-
-      ! Factor to reduce polarisabilities (in au)
-      fac = FOUR*PI/.crystal.unit_cell.volume
-
-      ! Make the charge and dipole Lorentz factor tensors
-      D.create(3*n,3*n)
-      Dnc.create(3*n,3*n)
-      Ddo.create(3*n,3*n)
-      alpha.create(3,3,n)
-      L0.create(3*n,n)
-      L1.create(3*n,3*n)
-      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos,mol)
-
-      ! Get the atomic alpha's
-      alpha = ZERO
-      AA.create(3,3)
-      r.create(3)
-      do a = 1,n
-         r = pos(:,a) - coc(:,a)
-         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-         alpha(:,:,a) = alpha(:,:,a) + AA
-      end
-      r.destroy; AA.destroy
-
-      ! Make the D matrix
-      D.to_unit_matrix
-      Dnc.to_unit_matrix
-      Ddo.to_unit_matrix
-      i = 0
-      do a = 1,n
-         j = 0
-         do b = 1,n
-            Lq => L0(i+1:i+3,b)      
-            Lm => L1(i+1:i+3,j+1:j+3)      
-
-            Dd =>   D(i+1:i+3,j+1:j+3)      
-            Dd = Dd - fac*Lq.outer_product_with(alpha_q(:,b))
-            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
-
-            Dd => Dnc(i+1:i+3,j+1:j+3)      
-            Dd = Dd - fac*matmul(Lm,alpha_m(:,:,b))
-
-            Dd => Ddo(i+1:i+3,j+1:j+3)      
-            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
-            
-            j = j + 3
-         end
-         i = i + 3
-      end
-      D.to_inverse_of(D)
-      Dnc.to_inverse_of(Dnc)
-      Ddo.to_inverse_of(Ddo)
-      L1.destroy
-      L0.destroy
-
-      ! Make the distributed polarisability chi1 
-      chi1 = ZERO
-      chi1_nc = ZERO
-      chi1_do = ZERO
-      uc_alpha = ZERO
-      AA.create(3,3)
-      r.create(3)
-      i = 0
-      do a = 1,n
-         r = pos(:,a) - coc(:,a)
-         AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-         uc_alpha = uc_alpha + AA
-         AA = fac*AA
-         j = 0
-         do b = 1,n
-            Dd =>   D(i+1:i+3,j+1:j+3)      
-            chi1 = chi1 + matmul(AA,Dd)
-            Dd => Dnc(i+1:i+3,j+1:j+3)      
-            chi1_nc = chi1_nc + matmul(AA,Dd)
-            Dd => Ddo(i+1:i+3,j+1:j+3)      
-            chi1_do = chi1_do + matmul(AA,Dd)
-            j = j + 3
-         end
-         i = i + 3
-      end
-
-      ! Clean up
-      r.destroy; AA.destroy
-      alpha.destroy
-      Ddo.destroy; Dnc.destroy; D.destroy
-
-      ! ************************************************
-
-      ! Make chi1_naive
-      D.create(3,3)
-      D.to_unit_matrix
-      D = D - fac*THIRD*uc_alpha
-      D.to_inverse_of(D)
-      chi1_naive = fac*matmul(uc_alpha,D)
-      D.destroy
-
-      ! ************************************************
-
-      ! Get the no of molecules
-      n_m = maxval(mol) 
-      DIE_IF(mod(n,n_m)/=0,"no of atoms in a molecule is not integral")
-
-      ! Get the no of atoms per molecule
-      n_a = n/n_m
-
-      ! Get the molecular alpha's
-      alpha.create(3,3,n_m)
-      alpha = ZERO
-      AA.create(3,3)
-      r.create(3)
-      a = 0
-      do m = 1,n_m
-         do i = 1,n_a
-            a = a + 1
-            r = pos(:,a) - coc(:,a)
-            AA = r.outer_product_with(alpha_q(:,a)) + alpha_m(:,:,a)
-            alpha(:,:,m) = alpha(:,:,m) + AA
-         end
-      end
-      r.destroy; AA.destroy
-
-      ! Get the centroids, use COM
-      coc0.create(3,n_m)
-      mol0.create(n_m)
-      coc0 = com(:,1:(n_m-1)*n_a+1:n_a)
-      mol0 = mol(1:(n_m-1)*n_a+1:n_a)
-
-      ! Print out centroid info ... important
-      stdout.flush
-      stdout.show("Center of mass =",coc0(:,1))
-
-      ! Make the centroid charge and dipole Lorentz factor tensors
-      D.create(3*n_m,3*n_m)
-      L0.create(3*n_m,n_m)
-      L1.create(3*n_m,3*n_m)
-      .crystal.unit_cell.make_LFF_tensors(L0,L1,coc0,mol0)
-
-      ! Print out centroid info ... important
-
-      if (.debugging("make_susceptibility2")) then
-      stdout.flush
-      stdout.text("Arrays for centroid calculation:")
-      stdout.text("coc0 (center of mass):")
-      stdout.put(transpose(coc0))
-      stdout.text("mol0:")
-      stdout.put(mol0,"column")
-      stdout.text("Dipole L1 tensor:")
-      stdout.put(L1)
-      stdout.text("Alpha for each molecule:")
-      stdout.put(alpha,as_matrices=TRUE)
-      end
-
-      ! Make the D matrix
-      D.to_unit_matrix
-      i = 0
-      do a = 1,n_m
-         j = 0
-         do b = 1,n_m
-            Dd => D(i+1:i+3,j+1:j+3)      
-            Lm => L1(i+1:i+3,j+1:j+3)      
-            Dd = Dd - fac*matmul(Lm,alpha(:,:,b))
-            j = j + 3
-         end
-         i = i + 3
-      end
-      D.to_inverse_of(D)
-      L1.destroy
-      L0.destroy
-
-      ! Make the chi1_centroid susceptibility
-      chi1_centroid = ZERO
-      AA.create(3,3)
-      r.create(3)
-      i = 0
-      do a = 1,n_m
-         AA = alpha(:,:,a)
-         AA = fac*AA
-         j = 0
-         do b = 1,n_m
-            Dd => D(i+1:i+3,j+1:j+3)      
-            chi1_centroid = chi1_centroid + matmul(AA,Dd)
-            j = j + 3
-         end
-         i = i + 3
-      end
-
-      ! Clean up
-      r.destroy; AA.destroy
-      D.destroy
-      mol0.destroy; coc0.destroy
-
-      ! ************************************************
-      ! RLFTn
-      ! ************************************************
-
-      ! Get non H positions.
-      n_H = count(.asymmetric_unit_atom(par).atomic_number>1)
-      non_H.create(n_H)
-      non_H = pack([(a,a=1,n)],.asymmetric_unit_atom(par).atomic_number>1)
-
-      ! Get the non H positions, indices, molecules.
-      pos0.create(3,n_H)
-      mol0.create(n_H)
-      pos0 = pos(:,non_H)
-      mol0 = mol(non_H)
-
-      ! Make the non H charge and dipole Lorentz factor tensors
-      D.create(3*n_H,3*n_H)        ! (1 - aL)^-1 
-      df.create(3*n_H,3)           ! local field factor tensor
-      L0.create(3*n_H,n_H)         ! charge L tensor
-      L1.create(3*n_H,3*n_H)       ! dipole L tensor
-      .crystal.unit_cell.make_LFF_tensors(L0,L1,pos0,mol0)
-
-      ! Print out position info ... important
-      if (.debugging("make_susceptibility2")) then
-      stdout.flush
-      stdout.text("Arrays for non H calculation:")
-      stdout.text("non_H:")
-      stdout.put(non_H,"column")
-      stdout.text("pos0:")
-      stdout.put(transpose(pos0))
-      stdout.text("mol0:")
-      stdout.put(mol0,"column")
-      stdout.text("Dipole L1 tensor:")
-      stdout.put(L1)
-      end
-    
-      ! Get number of Non-H hydrogen atoms per molecule
-      DIE_IF(mod(n_H,n_m)/=0,"no of non-Hydrogen atoms wrong")
-      nH = n_H/n_m        
-
-      ! Average alpha over non-H sites
-      alpha = alpha/nH
-
-      ! Get the reduced average molecular polarisabilities
-      alph = fac*alpha_mol/nH
-      beta = fac*beta_mol/nH
-
-      ! Make the D matrix
-      D.to_unit_matrix
-      i = 0
-      do a = 1,n_H
-         j = 0
-         do b = 1,n_H
-            Dd => D(i+1:i+3,j+1:j+3)      
-            Lm => L1(i+1:i+3,j+1:j+3)      
-            m  = (b-1)/nH + 1
-
-            ! Old way
-         !  Dd = Dd - fac*matmul(Lm,alpha(:,:,m))
-
-            ! New way -- should be better -- check
-            alph.change_basis_to(al,symop(:,:,m))
-            Dd = Dd - matmul(Lm,al)
-
-            j = j + 3
-         end
-         i = i + 3
-      end
-      D.to_inverse_of(D)
-      L1.destroy
-      L0.destroy
-
-      ! Make the chi1_nonH susceptibility
-      chi1_nonH = ZERO
-      AA.create(3,3)
-      i = 0
-      do a = 1,n_H
-         m  = (a-1)/nH + 1
-         AA = alpha(:,:,m)
-         AA = fac*AA
-         j = 0
-         do b = 1,n_H
-            Dd => D(i+1:i+3,j+1:j+3)      
-            chi1_nonH = chi1_nonH + matmul(AA,Dd)
-            j = j + 3
-         end
-         i = i + 3
-      end
-
-      ! Local field factors
-      df = ZERO
-      i = 0
-      do a = 1,n_H
-         j = 0
-         do b = 1,n_H
-            df(i+1:i+3,:) = df(i+1:i+3,:) + D(i+1:i+3,j+1:j+3)      
-            j = j + 3
-         end
-         i = i + 3
-      end
-
-      ! Make the chi1_nonH and chi2_nonH susceptibility
-      chi1_nonH = ZERO
-      chi2_nonH = ZERO
-      i = 0
-      do a = 1,n_H
-         m = (a-1)/nH + 1
-         alph.change_basis_to(al,symop(:,:,m))
-         chi1_nonH = chi1_nonH + matmul(al,df(i+1:i+3,:))
-         beta.change_basis_to(be,symop(:,:,m))
-         be.change_basis_using(df(i+1:i+3,:))
-         chi2_nonH = chi2_nonH + be
-         i = i + 3
-      end
-      chi2_nonH = HALF*chi2_nonH
-
-      ! Clean up
-      df.destroy; D.destroy
-      mol0.destroy; pos0.destroy
-      non_H.destroy
-      alpha.destroy
-      alpha_m.destroy; alpha_q.destroy
-      com.destroy; coc.destroy; pos.destroy
-      par.destroy; symop.destroy; mol.destroy
-
-   end
-
-   get_LFF_molecule_info(mol,par,pos,com) ::: leaky
+   get_uc_molecule_info(mol,symop,par,pos,com) ::: leaky
    ! Get the unit cell molecule information for a distributed local
    ! field factor (LFF) calculation. "mol" is the molecule index for
    ! an atom in the unit cell. "pos" are the positions. "par" is the
    ! asymmetric unit atom parent. "com" are the molecular center of
    ! masses.
-      mol,par :: VEC{INT}*
+      mol,symop,par :: VEC{INT}*
       pos,com :: MAT{REAL}*
 
    ENSURE(.crystal.created,"no crystal")
@@ -2889,7 +3440,9 @@ contains
       ! Create the info arrays
       n_mol  = .crystal.n_unit_cell_mols
       n_atom = .crystal.n_unit_cell_atoms
+
       mol.create(n_atom)
+      symop.create(n_mol)
       par.create(n_atom)
       pos.create(3,n_atom)
       com.create(3,n_mol)
@@ -2908,11 +3461,11 @@ contains
             if (.crystal.unit_cell_mol_for_atom(u)/=m) cycle
 
             mol(n+1:n+n_atom) = m
-            par0     => par(n+1:n+n_atom)
+            par0     => par(  n+1:n+n_atom)
             pos0     => pos(:,n+1:n+n_atom)
-            mass0    => mass(n+1:n+n_atom)
+            mass0    => mass( n+1:n+n_atom)
 
-            .do_defragment_uc_atom(u,par0,pos0,mass0)
+            .do_defragment_uc_atom(u,symop(m),par0,pos0,mass0)
 
             exit
 
@@ -2934,7 +3487,7 @@ contains
 
    end
 
-   get_LFF_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) ::: leaky
+   get_uc_molecule_info(mol,symop,par,pos,coc,com,alpha_q,alpha_m) ::: leaky
    ! Get the unit cell molecule information for a distributed local field factor
    ! (LFF) calculation. "coc" are the molecular center of charges.
       mol,par :: VEC{INT}*
@@ -3633,16 +4186,20 @@ contains
 !  Debug printing
 !  **************
 
-   read_debug_on ::: get_from(DEBUG)
+   read_debug_on ::: get_from(DEBUG), leaky
    ! Read a debug descriptor and add it to the list.
    end
 
-   read_debug_off ::: get_from(DEBUG)
+   read_debug_off ::: get_from(DEBUG), leaky
    ! Read a debug descriptor and remove it from the list.
    end
 
    debugging(name) result (res) ::: get_from(DEBUG)
    ! Return TRUE if the debug switch "name" has been set.
+   end
+
+   put_debug_list ::: get_from(DEBUG)
+   ! Put of the list of debug switches
    end
 
    put_debug(X,name) ::: get_from(DEBUG, TYPE=>REAL)
