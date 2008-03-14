@@ -21131,8 +21131,7 @@ contains
      select case (.plot_grid.plot_kind)
         case("crystal_error_map                   "); .make_crystal_error_map
         case("current_density                     "); .make_j_grid
-        case("bond_density                        "); .make_bond_density_grid
-      ! case("bond_deformation_density            "); .make_bond_def_density_grid
+        case("deformation_bond_density            "); .make_def_bond_density_grid
         case("deformation_density                 "); .make_deformation_density_grid
         case("deformation_dft_eff_potential       "); .make_def_dft_eff_pot_grid
         case("deformation_dft_energy              "); .make_def_dft_energy_grid
@@ -21335,12 +21334,24 @@ contains
    ENSURE(.plot_grid.created, "no grid")
       grid :: VEC{REAL}*
       pt :: MAT{REAL}*
+
+      ! Make space for grid values and grid points
       grid.create(.plot_grid.n_pt)
-      pt.create(.plot_grid.n_pt,3); .plot_grid.make_points(pt)
+      pt.create(.plot_grid.n_pt,3)
+
+      ! Make the grid points
+      .plot_grid.make_points(pt)
+      
+      ! Make the grid values
       MAKE_GRID(grid,pt)
+
+      ! Print out
       .dump_plot_grid(grid,LABEL)
+
+      ! Clean up
       pt.destroy
       grid.destroy
+
    end
 
    deformation_grid(grid,pt) ::: template
@@ -21351,11 +21362,20 @@ contains
    ENSURE(.occupation_numbers.created,"no natural orbitals")
    ENSURE(.atom.has_all_ANO_data,"no atomic natural orbitals")
      promolecule_grid :: VEC{REAL}*
+
+     ! Make the normal grid values
      MAKE_GRID(grid,pt)
+
+     ! Make the reference grid values
      promolecule_grid.create(grid.dim)
      MAKE_PRO_GRID(promolecule_grid,pt)
+
+     ! Subtract to form deformation grid
      grid = grid - promolecule_grid
+
+     ! Clean up
      promolecule_grid.destroy
+
    end
 
    pro_grid(density_grid,pt) ::: template
@@ -21368,8 +21388,10 @@ contains
      grid :: VEC{REAL}*
      a :: INT
 
+     ! Create space for an atom's grid values
      grid.create(density_grid.dim)
 
+     ! Sum up the atom grid values
      density_grid = ZERO
      parallel do a = 1,.n_atom
         .atom(a).MAKE_GRID(grid,pt)
@@ -21379,6 +21401,7 @@ contains
         PARALLEL_SUM(density_grid)
      end
 
+     ! Clean up
      grid.destroy
 
    end
@@ -21571,69 +21594,121 @@ contains
       grid.destroy
    end
 
-   make_bond_density_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_bond_density_grid, LABEL=>"bond_density_grid")
+   make_def_bond_density_grid
    ! Work out the property density on ".plot_grid" using ".natural orbitals" and the
    ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
+   ENSURE(.plot_grid.created, "no grid")
+   ENSURE(.plot_grid.bond_density_atom.created, "no grid bond density atoms")
+
+      grid :: VEC{REAL}*
+      pt :: MAT{REAL}*
+      label :: STR
+
+      ! Make space for grid values and grid points
+      grid.create(.plot_grid.n_pt)
+      pt.create(.plot_grid.n_pt,3)
+
+      ! Make the grid points
+      .plot_grid.make_points(pt)
+
+      ! Make the density
+      .make_def_bond_density_grid(grid,pt,.plot_grid.bond_density_atom)
+
+      ! Make the plot label
+      label = "deformation_bond_("
+      label = trim(label) // trim(.plot_grid.bond_density_atom(1).to_str) // ","
+      label = trim(label) // trim(.plot_grid.bond_density_atom(2).to_str) 
+      if (.plot_grid.bond_density_atom.dim==3) &
+      label = trim(label) // ";" // trim(.plot_grid.bond_density_atom(3).to_str) 
+      label = trim(label) // ")_density_grid" 
+
+      ! Print out
+      .dump_plot_grid(grid,trim(label))
+
+      ! Clean up
+      pt.destroy
+      grid.destroy
+
    end
 
-   make_bond_density_grid(grid,pt) ::: get_from(MOLECULE:deformation_grid, MAKE_GRID=>.make_density_grid, MAKE_PRO_GRID=>.make_spherical_atom_grid)
-   ! Make a Gnuplot ascii file containing the deformation density grid.
-     grid :: VEC{REAL}, OUT
+   make_def_bond_density_grid(density_grid,pt,bond_density_atom)
+   ! Make the bond deformation "density_grid" for the points "pt". 
+   ! If there are two atoms in .plot_grid.bond_atom then the whole
+   ! bond density is made; if there are three then the third atom
+     self :: IN
+     density_grid :: VEC{REAL}, OUT
      pt :: MAT{REAL}, IN
+     bond_density_atom :: VEC{INT}*
+
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.atom.has_all_density_data,"no atomic orbitals")
+
+     rho_ab,rho_pr,rho_a,rho_b :: VEC{REAL}*
+     n_atoms,n_pt,a,b,c :: INT
+
+     ! Make the deformation density
+     .make_deformation_density_grid(density_grid,pt)
+
+     ! No of bond density atoms
+     n_atoms = bond_density_atom.dim
+
+     ! No of grid points
+     n_pt = density_grid.dim
+
+     ! Create space for densities
+     rho_a.create(n_pt)
+     rho_b.create(n_pt)
+     rho_ab.create(n_pt)
+     rho_pr.create(n_pt)
+
+     ! Get the atom pair density
+     rho_pr = ZERO
+     do a = 2,n_atoms
+        .atom(a).make_density_grid(rho_a,pt)
+        do b = 1,a-1
+           if (NOT .atom.bonded(a,b)) cycle
+           .atom(b).make_density_grid(rho_b,pt)
+           rho_pr = rho_a + rho_b
+        end
+     end
+
+     ! Indices of bonded pair
+     a = bond_density_atom(1)
+     b = bond_density_atom(2)
+     if (n_atoms==3) &
+     c = bond_density_atom(3)
+
+     ! Get the density grid for the bond
+     .atom(a).make_density_grid(rho_a,pt)
+     .atom(b).make_density_grid(rho_b,pt)
+     rho_ab = rho_a + rho_b
+
+     ! Make the deformation bond pair density
+     where (rho_pr>epsilon(ONE)); density_grid = (rho_ab/rho_pr)*density_grid
+     elsewhere;                   density_grid = ZERO
+     end
+     rho_pr.destroy
+
+     ! Make the atom contribution --- if required
+     if (n_atoms==3) then
+        if (c==a) then
+           where (rho_ab>epsilon(ONE)); density_grid = (rho_a/rho_ab)*density_grid
+           elsewhere;                   density_grid = ZERO
+           end
+        else if (c==b) then
+           where (rho_ab>epsilon(ONE)); density_grid = (rho_b/rho_ab)*density_grid
+           elsewhere;                   density_grid = ZERO
+           end
+        else
+           DIE("atom is not one of those in the bond")
+        end
+     end
+
+     ! Clean up
+     rho_ab.destroy
+     rho_b.destroy; rho_a.destroy
+
    end
-
-!   make_bond_def_density_grid ::: get_from(MOLECULE:density_grid, MAKE_GRID=>.make_bond_def_density_grid, LABEL=>"bond_def_density_grid")
-!   ! Work out the property density on ".plot_grid" using ".natural orbitals" and the
-!   ! ".occupation_numbers" vector. A Gnuplot ascii file is generated.
-!   end
-
-!   make_bond_def_density_grid(density_grid,pt)
-!   ! Make the bond deformation "density_grid" for the points "pt". 
-!     self :: IN
-!     density_grid :: VEC{REAL}, OUT
-!     pt :: MAT{REAL}, IN
-!
-!   ENSURE(.atom.created,"no atoms")
-!   ENSURE(.atom.has_all_density_data,"no atomic orbitals")
-!
-!     grid,rho_fragment :: VEC{REAL}*
-!     is_fragment_atom :: VEC{BIN}*
-!     n_atoms,n_pt,a :: INT
-!
-!     n_pt = density_grid.dim
-!     grid.create(n_pt)
-!     rho_fragment.create(n_pt)
-!     rho_fragment = ZERO
-!
-!     n_atoms = .atom.dim
-!     is_fragment_atom => .saved.cluster.is_fragment_atom
-!
-!     do a = 1,n_atoms
-!        if (NOT is_fragment_atom(a)) cycle
-!        .atom(a).make_density_grid(grid,pt) ! this incorporates a skip step
-!        rho_fragment = rho_fragment + grid
-!     end
-!
-!     density_grid = rho_fragment
-!     do a = 1,n_atoms
-!        if (is_fragment_atom(a)) cycle
-!        .atom(a).make_density_grid(grid,pt) ! this incorporates a skip step
-!        density_grid = density_grid + grid
-!     end
-!
-!     ! density_grid = rho_fragment/density_grid
-!     do a = 1,size(density_grid)
-!       if (density_grid(a)>epsilon(ONE)) then
-!         density_grid(a) = rho_fragment(a)/density_grid(a)
-!       else
-!         density_grid(a) = ZERO
-!       end
-!     end
-!
-!     rho_fragment.destroy
-!     grid.destroy
-!
-!   end
 
 ! ****************************
 ! Local ionisation energy grid
@@ -23915,11 +23990,52 @@ contains
    ! Do one of the many kinds of isosurface plot calculations
    ENSURE(.isosurface.created,"no isosurface")
      self :: target
+
+     ! Below is required for selfless function calls
      saved_self => self ! Note this !
+
+     ! Set up preliminaries for some plots
      .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
      .set_ANO_info(.isosurface.iso_kind)
+
+     ! Do the plot
+     .do_isosurface_plot
+
+   end
+
+   saved_isosurface_plot ::: leaky
+   ! Do one of the many kinds of isosurface plot calculations, but using the
+   ! .saved molecule information with the CURRENT .isosurface information.
+   ! That is, the isosurface stored for this molecule is actually that for the
+   ! .saved molecule.
+
+   ENSURE(.isosurface.created,"no isosurface")
+   ENSURE(.saved.created,"no saved molecule")
+
+     saved_isosurface :: ISOSURFACE*
+
+     ! Below is required for selfless function calls
+     saved_self => .saved                  ! Note this !
+     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
+     .saved.isosurface => .isosurface      ! ... or this
+
+     ! Set up preliminaries for some plots
+     .saved.set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
+     .saved.set_ANO_info(.isosurface.iso_kind)
+
+     ! Do the plot
+     .do_isosurface_plot
+
+     ! Put back the saved isosurface?
+     .saved.isosurface => saved_isosurface
+
+   end
+
+   do_isosurface_plot ::: private
+   ! Do one of the many kinds of isosurface plot calculations
+   ENSURE(.isosurface.created,"no isosurface")
      select case (.isosurface.iso_kind)
-        case("bond_density                     "); .isosurface.cubify(MOLECULE::bond_density_grid)
+        case("deformation_bond_density         "); .isosurface.cubify(MOLECULE::deformation_bond_density_grid)
         case("deformation_density              "); .isosurface.cubify(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential    "); .isosurface.cubify(MOLECULE::def_dft_eff_pot_grid)
         case("deformation_dft_energy           "); .isosurface.cubify(MOLECULE::def_dft_energy_grid)
@@ -23955,17 +24071,58 @@ contains
      end
    end
 
+
    plot_on_isosurface ::: leaky
    ! Plot one of the many kinds of density functions on an existing
    ! isosurface---useful for mapping properties on a surface.
    ENSURE(.isosurface.created,"no isosurface")
    ENSURE(.isosurface.surface_property/=" ","no isosurface surface_property specified")
      self :: target
+
+     ! Below is required for selfless function calls
      saved_self => self ! Note this !
+
+     ! Set up preliminaries for some plots
      .set_interpolator_info(.isosurface.surface_property,.isosurface.interpolator)
      .set_ANO_info(.isosurface.surface_property)
+
+     ! Do the plot
+     .do_plot_on_isosurface
+
+   end
+
+   saved_plot_on_isosurface ::: leaky
+   ! Plot one of the many kinds of density functions on an existing
+   ! isosurface---useful for mapping properties on a surface---but using the
+   ! .saved molecule information for the density functions which are evaluated
+   ! and stored on the current .isosurface.
+   ENSURE(.isosurface.created,"no isosurface")
+   ENSURE(.isosurface.surface_property/=" ","no isosurface surface_property specified")
+   ENSURE(.saved.created,"no saved molecule")
+     saved_isosurface :: ISOSURFACE*
+
+     ! Below is required for selfless function calls
+     saved_self => .saved                  ! Note this !
+     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
+     .saved.isosurface => .isosurface      ! ... or this
+
+     ! Set up preliminaries for some plots
+     .saved.set_interpolator_info(.isosurface.surface_property,.isosurface.interpolator)
+     .saved.set_ANO_info(.isosurface.surface_property)
+
+     ! Do the plot
+     .do_plot_on_isosurface
+
+     ! Put back the saved isosurface?
+     .saved.isosurface => saved_isosurface
+
+   end
+
+   do_plot_on_isosurface ::: private
+   ! Plot one of the many kinds of density functions on an existing
+   ! isosurface---useful for mapping properties on a surface.
      select case (.isosurface.surface_property)
-        case("bond_density                    "); .isosurface.plot_function(MOLECULE::bond_density_grid)
+        case("deformation_bond_density        "); .isosurface.plot_function(MOLECULE::deformation_bond_density_grid)
         case("deformation_density             "); .isosurface.plot_function(MOLECULE::deformation_density_grid)
         case("deformation_dft_eff_potential   "); .isosurface.plot_function(MOLECULE::def_dft_eff_pot_grid)
         case("deformation_dft_energy          "); .isosurface.plot_function(MOLECULE::def_dft_energy_grid)
@@ -23983,6 +24140,7 @@ contains
         case("elf                             "); .isosurface.plot_function(MOLECULE::ELF_grid)
         case("fermi_mobility                  "); .isosurface.plot_function(MOLECULE::fermi_mobility_grid)
         case("g_kinetic_energy                "); .isosurface.plot_function(MOLECULE::G_kinetic_energy_grid)
+        case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
         case("h_dft_energy                    "); .isosurface.plot_function(MOLECULE::H_dft_energy_grid)
         case("k_kinetic_energy                "); .isosurface.plot_function(MOLECULE::K_kinetic_energy_grid)
         case("laplacian                       "); .isosurface.plot_function(MOLECULE::laplacian_grid)
@@ -23996,110 +24154,8 @@ contains
         case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::Hirshfeld_density_grid)
         case("true_fermi_mobility             "); .isosurface.plot_function(MOLECULE::true_fermi_mobility_grid)
         case("tsirelson_elf                   "); .isosurface.plot_function(MOLECULE::Tsirelson_ELF_grid)
-        case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
         case default;                UNKNOWN(.isosurface.surface_property)
      end
-   end
-
-   saved_isosurface_plot ::: leaky
-   ! Do one of the many kinds of isosurface plot calculations, but using the
-   ! .saved molecule information with the CURRENT .isosurface information.
-   ! That is, the isosurface stored for this molecule is actually that for the
-   ! .saved molecule.
-   ENSURE(.isosurface.created,"no isosurface")
-   ENSURE(.saved.created,"no saved molecule")
-     saved_isosurface :: ISOSURFACE*
-     saved_self => .saved ! Note this !
-     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
-     .saved.isosurface => .isosurface      ! ... or this
-     .saved.set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
-     .saved.set_ANO_info(.isosurface.iso_kind)
-     select case (.isosurface.iso_kind)
-        case("bond_density                    "); .isosurface.cubify(MOLECULE::bond_density_grid)
-        case("deformation_density             "); .isosurface.cubify(MOLECULE::deformation_density_grid)
-        case("deformation_dft_eff_potential   "); .isosurface.cubify(MOLECULE::def_dft_eff_pot_grid)
-        case("deformation_dft_energy          "); .isosurface.cubify(MOLECULE::def_dft_energy_grid)
-        case("deformation_dft_xc_potential    "); .isosurface.cubify(MOLECULE::def_dft_xc_pot_grid)
-        case("deformation_electric_potential  "); .isosurface.cubify(MOLECULE::def_e_pot_grid)
-        case("deformation_g_kinetic_energy    "); .isosurface.cubify(MOLECULE::def_G_kinetic_grid)
-        case("deformation_h_dft_energy        "); .isosurface.cubify(MOLECULE::def_H_dft_energy_grid)
-        case("deformation_k_kinetic_energy    "); .isosurface.cubify(MOLECULE::def_K_kinetic_grid)
-        case("deformation_laplacian           "); .isosurface.cubify(MOLECULE::def_laplacian_grid)
-        case("dft_eff_potential               "); .isosurface.cubify(MOLECULE::dft_eff_pot_grid)
-        case("dft_energy                      "); .isosurface.cubify(MOLECULE::dft_energy_grid)
-        case("dft_xc_potential                "); .isosurface.cubify(MOLECULE::dft_xc_pot_grid)
-        case("electric_potential              "); .isosurface.cubify(MOLECULE::electric_potential_grid)
-        case("electron_density                "); .isosurface.cubify(MOLECULE::electron_density_grid)
-        case("elf                             "); .isosurface.cubify(MOLECULE::ELF_grid)
-        case("fermi_mobility                  "); .isosurface.cubify(MOLECULE::fermi_mobility_grid)
-        case("g_kinetic_energy                "); .isosurface.cubify(MOLECULE::G_kinetic_energy_grid)
-        case("h_dft_energy                    "); .isosurface.cubify(MOLECULE::H_dft_energy_grid)
-        case("k_kinetic_energy                "); .isosurface.cubify(MOLECULE::K_kinetic_energy_grid)
-        case("laplacian                       "); .isosurface.cubify(MOLECULE::laplacian_grid)
-        case("local_ionisation_energy         "); .isosurface.cubify(MOLECULE::local_ionisation_grid)
-        case("orbital                         "); .isosurface.cubify(MOLECULE::orbital_grid)
-        case("oscillator_orbital              "); .isosurface.cubify(MOLECULE::oscillator_orbital_grid)
-        case("orbital_density                 "); .isosurface.cubify(MOLECULE::orbital_density_grid)
-        case("promolecule_density             "); .isosurface.cubify(MOLECULE::promolecule_density_grid)
-        case("spin_density                    "); .isosurface.cubify(MOLECULE::spin_density_grid)
-        case("stockholder_density             "); .isosurface.cubify(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight              "); .isosurface.cubify(MOLECULE::Hirshfeld_density_grid)
-        case("true_fermi_mobility             "); .isosurface.cubify(MOLECULE::true_fermi_mobility_grid)
-        case("tsirelson_elf                   "); .isosurface.cubify(MOLECULE::Tsirelson_ELF_grid)
-        case("grad_rho_on_rho                 "); .isosurface.cubify(MOLECULE::grad_rho_on_rho_grid)
-        case default;                UNKNOWN(.isosurface.iso_kind)
-     end
-     .saved.isosurface => saved_isosurface
-   end
-
-   saved_plot_on_isosurface ::: leaky
-   ! Plot one of the many kinds of density functions on an existing
-   ! isosurface---useful for mapping properties on a surface---but using the
-   ! .saved molecule information for the density functions which are evaluated
-   ! and stored on the current .isosurface.
-   ENSURE(.isosurface.created,"no isosurface")
-   ENSURE(.isosurface.surface_property/=" ","no isosurface surface_property specified")
-   ENSURE(.saved.created,"no saved molecule")
-     saved_isosurface :: ISOSURFACE*
-     saved_self => .saved ! Note this !
-     saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
-     .saved.isosurface => .isosurface      ! ... or this
-     .saved.set_interpolator_info(.isosurface.surface_property,.isosurface.interpolator)
-     .saved.set_ANO_info(.isosurface.surface_property)
-     select case (.isosurface.surface_property)
-        case("deformation_density             "); .isosurface.plot_function(MOLECULE::deformation_density_grid)
-        case("deformation_dft_eff_potential   "); .isosurface.plot_function(MOLECULE::def_dft_eff_pot_grid)
-        case("deformation_dft_energy          "); .isosurface.plot_function(MOLECULE::def_dft_energy_grid)
-        case("deformation_dft_xc_potential    "); .isosurface.plot_function(MOLECULE::def_dft_xc_pot_grid)
-        case("deformation_electric_potential  "); .isosurface.plot_function(MOLECULE::def_e_pot_grid)
-        case("deformation_g_kinetic_density   "); .isosurface.plot_function(MOLECULE::def_G_kinetic_grid)
-        case("deformation_h_energy_density    "); .isosurface.plot_function(MOLECULE::def_H_dft_energy_grid)
-        case("deformation_k_kinetic_density   "); .isosurface.plot_function(MOLECULE::def_K_kinetic_grid)
-        case("deformation_laplacian_density   "); .isosurface.plot_function(MOLECULE::def_laplacian_grid)
-        case("dft_eff_potential               "); .isosurface.plot_function(MOLECULE::dft_eff_pot_grid)
-        case("dft_energy                      "); .isosurface.plot_function(MOLECULE::dft_energy_grid)
-        case("dft_xc_potential                "); .isosurface.plot_function(MOLECULE::dft_xc_pot_grid)
-        case("electric_potential              "); .isosurface.plot_function(MOLECULE::electric_potential_grid)
-        case("electron_density                "); .isosurface.plot_function(MOLECULE::electron_density_grid)
-        case("elf                             "); .isosurface.plot_function(MOLECULE::ELF_grid)
-        case("fermi_mobility                  "); .isosurface.plot_function(MOLECULE::fermi_mobility_grid)
-        case("g_kinetic_density               "); .isosurface.plot_function(MOLECULE::G_kinetic_energy_grid)
-        case("h_dft_energy                    "); .isosurface.plot_function(MOLECULE::H_dft_energy_grid)
-        case("k_kinetic_density               "); .isosurface.plot_function(MOLECULE::K_kinetic_energy_grid)
-        case("laplacian_density               "); .isosurface.plot_function(MOLECULE::laplacian_grid)
-        case("local_ionisation_energy         "); .isosurface.plot_function(MOLECULE::local_ionisation_grid)
-        case("orbital                         "); .isosurface.plot_function(MOLECULE::orbital_grid)
-        case("orbital_density                 "); .isosurface.plot_function(MOLECULE::orbital_density_grid)
-        case("promolecule_density             "); .isosurface.plot_function(MOLECULE::promolecule_density_grid)
-        case("spin_density                    "); .isosurface.plot_function(MOLECULE::spin_density_grid)
-        case("stockholder_density             "); .isosurface.plot_function(MOLECULE::stockholder_density_grid)
-        case("stockholder_weight              "); .isosurface.plot_function(MOLECULE::Hirshfeld_density_grid)
-        case("true_fermi_mobility             "); .isosurface.plot_function(MOLECULE::true_fermi_mobility_grid)
-        case("tsirelson_elf                   "); .isosurface.plot_function(MOLECULE::Tsirelson_ELF_grid)
-        case("grad_rho_on_rho                 "); .isosurface.plot_function(MOLECULE::grad_rho_on_rho_grid)
-        case default;                UNKNOWN(.isosurface.surface_property)
-     end
-     .saved.isosurface => saved_isosurface
    end
 
 
@@ -24207,12 +24263,12 @@ contains
    end
 
 
-   bond_density_grid(g,pt) ::: selfless
-   ! Work out the electron deformation density grid "g" for a the points "pt".
+   deformation_bond_density_grid(g,pt) ::: selfless
+   ! Work out the bond deformation density grid "g" for a the points "pt".
       g  :: VEC{REAL}, OUT
       pt :: MAT{REAL}, IN
       self :: MOLECULE*; self => saved_self
-      .make_bond_density_grid(g,pt)
+      .make_def_bond_density_grid(g,pt,.isosurface.plot_grid.bond_density_atom)
    end
 
    deformation_density_grid(g,pt) ::: selfless
