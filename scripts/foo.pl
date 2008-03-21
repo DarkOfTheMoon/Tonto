@@ -4305,7 +4305,6 @@ sub make_fortran_type_declarations {
 #print "type_size_part  = $type_size_part";
 #print "type_head_name  = $type_head_name";
 #print "type_arg_1      = $type_arg_1";
-#print "arg_1_decl      = $arg_1_decl";
 #print "is_routine_arg  = $is_routine_arg";
 #print "fortran_mod_name  = $fortran_mod_name";
 #print "fortran_type_name = $fortran_type_name   ";
@@ -4320,7 +4319,8 @@ sub make_fortran_type_declarations {
      &report_error("Do not use CHR to declare variables, use STR(len=1).");
    }
    #############################################################################
-   elsif  ($is_intrinsic_scalar) {  # For INTRINSIC scalar variable declarations
+   elsif  ($is_intrinsic_scalar) {  
+   # For INTRINSIC scalar variable declarations # # ############################
       ($fortran_type_decl,$fortran_self_decl) =
          &make_scalar_fortran_types($type_name,$type_size_part,$is_routine_arg);
    }
@@ -4385,11 +4385,11 @@ sub make_scalar_fortran_types {
    my ($fortran_type_decl,$kind);
 
    $kind = "";
-   if ($type_name =~ "^(STR)({.*})?"  ||  # For INTRINSIC types
-       $type_name =~ "^(BIN)({.*})?"  ||  # Kind is specified in curlies
-       $type_name =~ "^(INT)({.*})?"  ||
-       $type_name =~ "^(REAL)({.*})?" ||
-       $type_name =~ "^(CPX)({.*})?"  ) {
+   if ($type_name =~ "^(STR)({.*})? *\$"  ||  # For INTRINSIC types
+       $type_name =~ "^(BIN)({.*})? *\$"  ||  # Kind is specified in curlies
+       $type_name =~ "^(INT)({.*})? *\$"  ||
+       $type_name =~ "^(REAL)({.*})? *\$" ||
+       $type_name =~ "^(CPX)({.*})? *\$"  ) {
       $fortran_type_decl = $1;      
       if (defined $2 && $2 ne '') {
          $kind = $2;
