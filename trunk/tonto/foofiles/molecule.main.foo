@@ -2899,23 +2899,97 @@ contains
       end
    end
 
-   make_spherically_averaged_HA(rho_av,a,interpolator,n_gl) ::: leaky
+   make_spherically_averaged_HAs ::: leaky
+   ! Make the spherically averaged Hirshfeld atom density
+   ! interpolators for every atom.
+
+      interpolator :: VEC{INTERPOLATOR}*
+      rho_av :: VEC{VEC_{REAL}}*
+      eps,eps_a :: REAL
+      a,n_gl,iteration :: INT
+
+      ! Set up grids, atomic densities, and NO's
+      .set_up_Hirshfeld_info
+
+      ! List of initial atom interpolators. Leaky.
+      interpolator.create(.n_atom)
+      do a = 1,.n_atom
+         interpolator(a).copy(.atom(a).interpolator)
+      end
+
+      ! Destroy unique atom interpolators. Leaky.
+      .destroy_ANO_interpolators
+
+      ! Reassign fresh interpolator copy
+      do a = 1,.n_atom
+         .atom(a).interpolator => interpolator(a)
+         interpolator(a).put
+      end
+
+      return
+
+      ! The list of new atomic radial densities
+      rho_av.create(.n_atom)
+
+      ! No of Gauss-Legendre integration points
+      n_gl = 181
+
+      ! Begin iterative cycle
+      iteration = 0
+
+      do
+
+         iteration = iteration + 1
+
+         ! Spherically average each atom
+         eps = ZERO
+         do a = 1,.n_atom
+            rho_av(a).element.create(interpolator(a).n_data)
+            .MAIN:make_spherically_averaged_HA(rho_av(a).element,eps_a,a,interpolator(a),n_gl)
+            eps = max(eps,eps_a)
+         end
+
+         ! Transfer averaged values to atoms and interpolators
+         do a = 1,.n_atom
+            interpolator(a).set_data_values(rho_av(a).element)
+            interpolator(a).finalise
+            .atom(a).interpolator => interpolator(a)
+         end
+
+         ! Spherical atoms obtained
+         if (eps<TOL(3)) exit
+         if (iteration>100) exit
+
+      end
+
+      ! Clean up
+      rho_av.destroy
+
+   end
+
+   make_spherically_averaged_HA(rho_av,eps,a,interpolator,n_gl) 
    ! Make the spherically averaged Hirshfeld atom density "rho_av" for
-   ! the atom with index "a". The spacing and radial data values from
+   ! the atom with index "a". Also return "eps", the maximum relative
+   ! difference between the rho_av values and those stored in the
+   ! interpolator data_values. The spacing and radial data values from
    ! the center of atom "a" are taken from the "interpolator".  "n_gl"
    ! is the number of points used for Gauss-Legendre spherical averaging.
       rho_av :: VEC{REAL}, OUT
+      eps :: REAL, OUT
       a,n_gl :: INT, IN
       interpolator :: INTERPOLATOR
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
+   ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
+   ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
+   ENSURE(.ANO_data_made,"No ANO data")
 
       pt :: MAT{REAL}*
       wt,rho,Wa :: VEC{REAL}*
       pos :: VEC{REAL}(3)
       n_pts,t,p,i,n :: INT
-      r,r_st,th,ph,ct,st,cp,sp,fac :: REAL
+      val,r,r_st,th,ph,ct,st,cp,sp,fac :: REAL
       theta,phi :: QUADRATURE*
 
       ! Averaging factor
@@ -2949,11 +3023,21 @@ contains
       ! Atom position
       pos = .atom(a).pos
 
+      ! Maximum relative difference
+      eps = ZERO
+
       ! Loop over radial values
       do i = 1,interpolator.n_data
 
          ! Radial value r
          r = interpolator.data_point(i)
+
+         ! Interpolator data valie
+         val = interpolator.data_value(i)
+
+         ! Convert to actual r?
+         if (.atom(a).use_x1x_interpolation) &
+            r = .atom(a).bragg_slater_radius*BOHR_PER_ANGSTROM*sqrt(r/(1-r))
 
          ! For each r, make a spherical shell of points
          n = 0
@@ -2983,6 +3067,9 @@ contains
 
          ! Averaged value
          rho_av(i) = fac*sum(Wa)
+
+         ! Eps value
+         eps = max(eps,abs((rho_av(i)-val)/val))
 
       end
 
@@ -4288,7 +4375,7 @@ contains
         case ("b_field=                      "); .read_B_field
         case ("basis_sets=                   "); .read_basis_sets
         case ("basis_directory=              "); .read_basis_directory
-        case ("basis_kind=                   "); .read_basis_kind
+        case ("basis_name=                   "); .read_basis_name
         case ("becke_grid=                   "); .read_becke_grid
       ! case ("canonicalize_mos              "); .canonicalize_mos
         case ("change_axis_system_to         "); .change_axis_system_to
@@ -4299,7 +4386,7 @@ contains
         case ("cif=                          "); .MAIN:read_CIF
         case ("cleanup_scf                   "); .cleanup_scf
         case ("cluster=                      "); .read_cluster
-        case ("coppensbasis_kind=            "); .read_coppensbasis_kind
+        case ("coppensbasis_name=            "); .read_coppensbasis_name
       ! case ("coppens_basis_sets=           "); .read_coppensbasis_sets
         case ("create_cluster                "); .create_cluster
         case ("crystal=                      "); .read_crystal
@@ -4357,6 +4444,7 @@ contains
         case ("make_promol_mos               "); .make_promol_MOs
         case ("make_scf_density_matrix       "); .make_scf_density_matrix(damp=FALSE)
       ! case ("make_spin_b_field             "); .MAIN:make_spin_b_field
+        case ("make_sphericall_averaged_has  "); .MAIN:make_spherically_averaged_HAs
         case ("make_structure_factors        "); .make_x_structure_factors
         case ("make_symortho_density_matrix  "); .make_group_density_matrix
         case ("make_sz_structure_factors     "); .make_n_structure_factors
@@ -4455,16 +4543,16 @@ contains
       ! case ("roby_population_analysis      "); .roby_population_analysis
         case ("roby_analysis                 "); .roby_analysis
         case ("robydata=                     "); .read_robydata
-        case ("saved_basis_kind=             "); .read_saved_basis_kind
-        case ("saved_coppensbasis_kind=      "); .read_saved_coppensbasis_kind
-        case ("saved_slaterbasis_kind=       "); .read_saved_slaterbasis_kind
+        case ("saved_basis_name=             "); .read_saved_basis_name
+        case ("saved_coppensbasis_name=      "); .read_saved_coppensbasis_name
+        case ("saved_slaterbasis_name=       "); .read_saved_slaterbasis_name
         case ("saved_isosurface_plot         "); .saved_isosurface_plot
         case ("saved_plot_on_isosurface      "); .saved_plot_on_isosurface
         case ("set_atom_info                 "); .set_atom_info
         case ("scf                           "); .scf
         case ("scfdata=                      "); .read_scfdata
         case ("simulate_new_f_exp            "); .crystal.simulate_new_F_exp
-        case ("slaterbasis_kind=             "); .read_slaterbasis_kind
+        case ("slaterbasis_name=             "); .read_slaterbasis_name
       ! case ("slater_basis_sets=            "); .read_slaterbasis_sets
         case ("start_new_molecule            "); .MAIN:reset_molecule
         case ("start_timer                   "); timer.start_timing
@@ -4879,7 +4967,7 @@ contains
                        trim(radius.to_str("f5.1"))//" angstrom"
          end
       end
-      .crystal.put_cif(.basis_kind,scf_type)
+      .crystal.put_cif(.basis_name,scf_type)
 
       ! Clean up
       stdout.revert
