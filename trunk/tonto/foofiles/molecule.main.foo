@@ -2906,7 +2906,7 @@ contains
       interpolator :: VEC{INTERPOLATOR}*
       rho_av :: VEC{VEC_{REAL}}*
       eps,eps_a :: REAL
-      a,n_gl,iteration :: INT
+      a,l_max,iteration :: INT
 
       ! Set up grids, atomic densities, and NO's
       .set_up_Hirshfeld_info
@@ -2923,16 +2923,21 @@ contains
       ! Reassign fresh interpolator copy
       do a = 1,.n_atom
          .atom(a).interpolator => interpolator(a)
-         interpolator(a).put
       end
-
-      return
 
       ! The list of new atomic radial densities
       rho_av.create(.n_atom)
 
       ! No of Gauss-Legendre integration points
-      n_gl = 181
+      l_max = 35
+
+      ! Banner
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("Iter",int_width=TRUE)
+      stdout.put("% change")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
 
       ! Begin iterative cycle
       iteration = 0
@@ -2945,15 +2950,21 @@ contains
          eps = ZERO
          do a = 1,.n_atom
             rho_av(a).element.create(interpolator(a).n_data)
-            .MAIN:make_spherically_averaged_HA(rho_av(a).element,eps_a,a,interpolator(a),n_gl)
+            .MAIN:make_spherically_averaged_HA(rho_av(a).element,eps_a,a,interpolator(a),l_max)
             eps = max(eps,eps_a)
          end
+
+         ! Update convergence
+         stdout.put(iteration)
+         stdout.put(eps)
+         stdout.flush
 
          ! Transfer averaged values to atoms and interpolators
          do a = 1,.n_atom
             interpolator(a).set_data_values(rho_av(a).element)
             interpolator(a).finalise
             .atom(a).interpolator => interpolator(a)
+          ! interpolator(a).put
          end
 
          ! Spherical atoms obtained
@@ -2962,21 +2973,24 @@ contains
 
       end
 
+      ! Footer
+      stdout.put_dash(int_fields=1,real_fields=1)
+
       ! Clean up
       rho_av.destroy
 
    end
 
-   make_spherically_averaged_HA(rho_av,eps,a,interpolator,n_gl) 
+   make_spherically_averaged_HA(rho_av,eps,a,interpolator,l_max) 
    ! Make the spherically averaged Hirshfeld atom density "rho_av" for
    ! the atom with index "a". Also return "eps", the maximum relative
    ! difference between the rho_av values and those stored in the
    ! interpolator data_values. The spacing and radial data values from
-   ! the center of atom "a" are taken from the "interpolator".  "n_gl"
-   ! is the number of points used for Gauss-Legendre spherical averaging.
+   ! the center of atom "a" are taken from the "interpolator". "l_max"
+   ! is the maximum l value for the lebedev angular integration grid
       rho_av :: VEC{REAL}, OUT
       eps :: REAL, OUT
-      a,n_gl :: INT, IN
+      a,l_max :: INT, IN
       interpolator :: INTERPOLATOR
 
    ENSURE(.basis_info_made,"no basis info")
@@ -2986,39 +3000,24 @@ contains
    ENSURE(.ANO_data_made,"No ANO data")
 
       pt :: MAT{REAL}*
-      wt,rho,Wa :: VEC{REAL}*
+      rho,Wa :: VEC{REAL}*
       pos :: VEC{REAL}(3)
-      n_pts,t,p,i,n :: INT
-      val,r,r_st,th,ph,ct,st,cp,sp,fac :: REAL
-      theta,phi :: QUADRATURE*
+      n_pts,n,i :: INT
+      old,r,pc :: REAL
+      lebedev :: LEBEDEV*
 
-      ! Averaging factor
-      fac = ONE/(FOUR*PI)
-
-      ! Set up grids, atomic densities, and NO's
-      .set_up_Hirshfeld_info
+      ! Set the spherical grid
+      lebedev.create 
+      lebedev.set_l(l_max)
 
       ! No of quadrature points (on sphere)
-      n_pts = 2*n_gl*n_gl
+      n_pts = lebedev.n_points
 
       ! Weight function, molecular density, spherical points
       ! and weights
       Wa.create(n_pts)
       rho.create(n_pts)
       pt.create(n_pts,3)
-      wt.create(n_pts)
-
-      ! Set the theta and phi quadrature objects
-      theta.create 
-      theta.set_kind("gauss_legendre")
-      theta.set_n_points(n)
-      theta.set_quadrature_points
-      theta.set_limits([ZERO,PI])
-      phi.create 
-      phi.set_kind("gauss_legendre")
-      phi.set_n_points(2*n)
-      phi.set_quadrature_points
-      phi.set_limits([ZERO,2*PI])
 
       ! Atom position
       pos = .atom(a).pos
@@ -3026,34 +3025,31 @@ contains
       ! Maximum relative difference
       eps = ZERO
 
+    ! stdout.show("atom a =",a)
+    ! stdout.put("r")
+    ! stdout.put("rho_av")
+    ! stdout.put("old")
+    ! stdout.put("%")
+    ! stdout.flush
+
       ! Loop over radial values
       do i = 1,interpolator.n_data
 
-         ! Radial value r
+         ! Table value r
          r = interpolator.data_point(i)
 
          ! Interpolator data valie
-         val = interpolator.data_value(i)
+         old = interpolator.data_value(i)
 
          ! Convert to actual r?
          if (interpolator.domain_is_sqrt_x1x) &
             r = sqrt(r/(1-r))*interpolator.domain_scale_factor
 
          ! For each r, make a spherical shell of points
-         n = 0
-         do t = 1,theta.n_points
-         do p = 1,phi.n_points
-            n = n + 1
-            th = theta.point(t)
-            ph = phi.point(p)
-            ct = cos(th); st = sin(th)
-            cp = cos(ph); sp = sin(ph)
-            r_st = r*st
-            pt(n,1) = pos(1) + r_st*cp                 ! the spherical shell
-            pt(n,2) = pos(2) + r_st*sp
-            pt(n,3) = pos(3) + r*ct
-            wt(n)   = st*theta.weight(t)*phi.weight(p) ! the area x weights
-         end
+         do n = 1,n_pts
+            pt(n,1) = pos(1) + r*lebedev.point(n,1)  
+            pt(n,2) = pos(2) + r*lebedev.point(n,2)
+            pt(n,3) = pos(3) + r*lebedev.point(n,3)
          end
 
          ! Weight function for atom a on the spherical shell
@@ -3063,22 +3059,143 @@ contains
          .make_density_grid(rho,pt)
 
          ! Weighted Hirshfeld atom density on shell
-         Wa  = Wa*rho*wt
+         Wa  = Wa*rho*lebedev.weight
 
          ! Averaged value
-         rho_av(i) = fac*sum(Wa)
+         rho_av(i) = sum(Wa)
 
          ! Eps value
-         eps = max(eps,abs((rho_av(i)-val)/val))
+         pc = abs((rho_av(i)-old)/old)
+         eps = max(eps,pc)
+
+    ! stdout.put(r)
+    ! stdout.put(rho_av(i))
+    ! stdout.put(old)
+    ! stdout.put(pc)
+    ! stdout.flush
 
       end
 
       ! Clean up
-      phi.destroy; theta.destroy
-      wt.destroy;  pt.destroy
-      rho.destroy; Wa.destroy
+      pt.destroy; rho.destroy; Wa.destroy
+      lebedev.destroy
 
    end
+
+!   make_spherically_averaged_HA(rho_av,eps,a,interpolator,n_gl) 
+!   ! Make the spherically averaged Hirshfeld atom density "rho_av" for
+!   ! the atom with index "a". Also return "eps", the maximum relative
+!   ! difference between the rho_av values and those stored in the
+!   ! interpolator data_values. The spacing and radial data values from
+!   ! the center of atom "a" are taken from the "interpolator".  "n_gl"
+!   ! is the number of points used for Gauss-Legendre spherical averaging.
+!      rho_av :: VEC{REAL}, OUT
+!      eps :: REAL, OUT
+!      a,n_gl :: INT, IN
+!      interpolator :: INTERPOLATOR
+!
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
+!   ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
+!   ENSURE(.ANO_data_made,"No ANO data")
+!
+!      pt :: MAT{REAL}*
+!      wt,rho,Wa :: VEC{REAL}*
+!      pos :: VEC{REAL}(3)
+!      n_pts,t,p,i,n :: INT
+!      val,r,r_st,th,ph,ct,st,cp,sp,fac :: REAL
+!      theta,phi :: QUADRATURE*
+!
+!      ! Averaging factor
+!      fac = ONE/(FOUR*PI)
+!
+!      ! No of quadrature points (on sphere)
+!      n_pts = 2*n_gl*n_gl
+!
+!      ! Weight function, molecular density, spherical points
+!      ! and weights
+!      Wa.create(n_pts)
+!      rho.create(n_pts)
+!      pt.create(n_pts,3)
+!      wt.create(n_pts)
+!
+!      ! Set the theta and phi quadrature objects
+!      theta.create 
+!      theta.set_kind("gauss_legendre")
+!      theta.set_n_points(n_gl)
+!      theta.set_quadrature_points
+!      theta.set_limits([ZERO,PI])
+!      phi.create 
+!      phi.set_kind("gauss_legendre")
+!      phi.set_n_points(2*n_gl)
+!      phi.set_quadrature_points
+!      phi.set_limits([ZERO,2*PI])
+!
+!      ! Atom position
+!      pos = .atom(a).pos
+!
+!      ! Maximum relative difference
+!      eps = ZERO
+!
+!      ! Loop over radial values
+!      do i = 1,interpolator.n_data
+!
+!         ! Radial value r
+!         r = interpolator.data_point(i)
+!
+!         ! Interpolator data valie
+!         val = interpolator.data_value(i)
+!
+!         ! Convert to actual r?
+!         if (interpolator.domain_is_sqrt_x1x) &
+!            r = sqrt(r/(1-r))*interpolator.domain_scale_factor
+!
+!      stdout.show("r      = ",r)
+!
+!         ! For each r, make a spherical shell of points
+!         n = 0
+!         do t = 1,theta.n_points
+!         do p = 1,phi.n_points
+!            n = n + 1
+!            th = theta.point(t)
+!            ph = phi.point(p)
+!            ct = cos(th); st = sin(th)
+!            cp = cos(ph); sp = sin(ph)
+!            r_st = r*st
+!            pt(n,1) = pos(1) + r_st*cp                 ! the spherical shell
+!            pt(n,2) = pos(2) + r_st*sp
+!            pt(n,3) = pos(3) + r*ct
+!            wt(n)   = st*theta.weight(t)*phi.weight(p) ! the area x weights
+!         end
+!         end
+!
+!         ! Weight function for atom a on the spherical shell
+!         .make_stockholder_atom_grid(Wa,a,pt)
+!
+!         ! Molecular density on the spherical shell
+!         .make_density_grid(rho,pt)
+!
+!         ! Weighted Hirshfeld atom density on shell
+!         Wa  = Wa*rho*wt
+!
+!         ! Averaged value
+!         rho_av(i) = fac*sum(Wa)
+!
+!      stdout.show("old val= ",val)
+!      stdout.show("rho_av = ",rho_av(i))
+!
+!         ! Eps value
+!         eps = max(eps,abs((rho_av(i)-val)/val))
+!
+!      end
+!
+!      ! Clean up
+!      phi.destroy; theta.destroy
+!      wt.destroy;  pt.destroy
+!      rho.destroy; Wa.destroy
+!
+!   end
 
 
 ! *************
@@ -4422,6 +4539,7 @@ contains
       ! case ("integrate_density_functional  "); .integrate_density_functional
         case ("localise_mos=                 "); .MAIN:localise_MOs
         case ("locate_memory_leak            "); .MAIN:locate_memory_leak
+        case ("make_ano_data                 "); .make_ANO_data
         case ("make_ao_density_matrix        "); .make_ao_density_matrix
         case ("make_ao_sz_density_matrix     "); .make_ao_sz_density_matrix
         case ("make_fermi_mobility_grid      "); .make_fermi_mobility_grid
