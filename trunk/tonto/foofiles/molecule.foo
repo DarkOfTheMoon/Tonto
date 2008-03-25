@@ -54,6 +54,7 @@ contains
       nullify(.slaterbasis)
       nullify(.coppensbasis)
       nullify(.plot_grid)
+      nullify(.interpolator)
       nullify(.isosurface)
     ! nullify(.dftgrid)
       nullify(.becke_grid)
@@ -121,6 +122,7 @@ contains
       .slaterbasis.destroy
       .coppensbasis.destroy
       .plot_grid.destroy
+      .interpolator.destroy
       .isosurface.destroy
     ! .dftgrid.destroy
       .becke_grid.destroy
@@ -255,7 +257,8 @@ contains
       if (mol.slaterbasis.created)                .slaterbasis.create_copy(mol.slaterbasis)
       if (mol.coppensbasis.created)               .coppensbasis.create_copy(mol.coppensbasis)
       if (mol.plot_grid.created)                  .plot_grid.create_copy(mol.plot_grid)
-    ! if (mol.dftgrid.created)                    .dftgrid.create_copy(mol.dftgrid)
+      if (mol.interpolator.created)               .interpolator.create_copy(mol.interpolator)
+      if (mol.isosurface.created)                 .isosurface.create_copy(mol.isosurface)
       if (mol.becke_grid.created)                 .becke_grid.create_copy(mol.becke_grid)
       if (mol.crystal.created)                    .crystal.create_copy(mol.crystal)
       if (mol.cluster.created)                    .cluster.create_copy(mol.cluster)
@@ -315,6 +318,7 @@ contains
       .slaterbasis_name = " "
       .coppensbasis_name = " "
       .basis_info_made = FALSE
+      .use_interpolators = TRUE
       .ANO_data_made = FALSE
       .Hirshfeld_atom_info_made = FALSE
       .atomic_polarisabilities_made = FALSE
@@ -6132,11 +6136,6 @@ contains
       ! Read options
       .plot_grid.read_keywords
 
-      ! Post-process (finalise) any options
-      if (.atom.created) then
-         .atom.set_use_interpolators(.plot_grid.use_interpolator)
-      end
-
    end
 
    read_isosurface ::: leaky
@@ -6170,12 +6169,6 @@ contains
       .isosurface.plot_grid.set_points_widths_origin
 
       .isosurface.iso_kind = "stockholder_weight"  
-
-      ! Creating this interpolator implies it will always be used 
-      if (.isosurface.interpolator.destroyed) then
-         .isosurface.interpolator.create  
-         .isosurface.interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
-      end
 
       !!!!!!!!!!!!!!!!!!!!!!!!!
       .isosurface.read_keywords
@@ -6252,10 +6245,6 @@ contains
       ! External post-process options
       if (.scfdata.using_diis) then
          .scfdata.diis.set_archive_root_name(.name)
-      end
-
-      if (.atom.created) then
-         .atom.set_use_interpolators(.scfdata.use_interpolator)
       end
 
    end
@@ -21017,8 +21006,25 @@ contains
    plot ::: leaky
    ! Do one of the many kinds of plot calculations
    ENSURE(.plot_grid.created, "no grid")
+
+     ! See plot_grid parameters
      .plot_grid.put
+
+     ! Set interpolators for stockholder or promolecule plots
+     .set_interpolator_info(.plot_grid.plot_kind)
+
+     ! Set ANO's for deformation densities
      .set_ANO_info(.plot_grid.plot_kind)
+
+     ! Do the plot
+     .do_plot
+
+   end
+
+   do_plot ::: leaky
+   ! Do one of the many kinds of plot calculations
+   ENSURE(.plot_grid.created, "no grid")
+
      select case (.plot_grid.plot_kind)
         case("crystal_error_map                   "); .make_crystal_error_map
         case("current_density                     "); .make_j_grid
@@ -21083,6 +21089,7 @@ contains
         case("v_from_virial                       "); .make_V_from_virial_grid
         case default;                UNKNOWN(.plot_grid.plot_kind)
      end
+
    end
 
    bounding_cube_width result(width)
@@ -23872,6 +23879,192 @@ contains
      pt.destroy
    end
 
+! *****************************
+! Set interpolator and ANO info 
+! *****************************
+
+   set_interpolator_info(plot_kind) ::: leaky
+   ! Set the interpolator info for all the atoms if the "plot_kind" is such
+   ! that interpolation tables could be beneficial. This should be called just
+   ! prior to doing the plot to take advantage of speed-ups.
+      plot_kind :: STR
+
+      do_interpolator :: BIN
+
+      do_interpolator = plot_kind=="stockholder_density" &
+                     OR plot_kind=="stockholder_weight"  &
+                     OR plot_kind=="promolecule_density"
+
+      if (NOT do_interpolator) return
+
+      ENSURE(.atom.created,"no atom list")
+
+      ! Get interpolators. 
+      select case (.atom(1).basis_kind)
+         case ("slater")
+            ENSURE(.slaterbasis.created,"no slater bases")
+            .make_slater_interpolators
+         case ("coppens")
+            ENSURE(.coppensbasis.created,"no coppens bases")
+            .make_coppens_interpolators
+         case ("gaussian")
+            ENSURE(.basis.created,"no gaussian bases")
+            .make_ANOs_and_interpolators
+      end
+      
+   end
+
+   make_interpolator_sqrt(interpolator) ::: leaky
+   ! Make a non-gaussian interpolator. These typically used for
+   ! stockholder weight functions.
+      interpolator :: INTERPOLATOR*
+
+      ! Create default interpolator
+      interpolator.create  
+
+      ! Reset default table eps
+      interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
+
+      ! If a saved cluster exists, use a table eps from that
+      if (.saved.created) then
+      if (.saved.cluster.created) then
+      if (.saved.cluster.info_made) then
+         interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
+      end
+      end
+      end
+
+      ! Set a linear-sqrt interpolator
+      interpolator.set_interpolation_method("linear")
+      interpolator.set_range_mapping("none")
+      interpolator.set_domain_mapping("sqrt")
+      interpolator.set_table_length(900d0)
+      interpolator.set_table_spacing(0.2d0)
+      
+   end
+
+   make_interpolator_sqrt_x1x(interpolator) ::: leaky
+   ! Make a gaussian interpolator. 
+      interpolator :: INTERPOLATOR*
+
+      ! Create default interpolator
+      interpolator.create  
+
+      ! Reset default table eps
+      interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
+
+      ! If a saved cluster exists, use a table eps from that
+      if (.saved.created) then
+      if (.saved.cluster.created) then
+      if (.saved.cluster.info_made) then
+         interpolator.set_table_eps(.saved.cluster.atom_density_cutoff)
+      end
+      end
+      end
+
+      ! Set a linear-sqrt interpolator
+      interpolator.set_interpolation_method("cubic_spline")
+      interpolator.set_range_mapping("none")
+      interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
+      interpolator.set_table_length(ONE) 
+      interpolator.set_spacing(0.0001d0) 
+      
+   end
+
+   make_slater_interpolators ::: leaky
+   ! Make the slaterbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ENSURE(.slaterbasis.created,"no slaterbasis")
+
+      template :: INTERPOLATOR*
+      i :: INT
+
+      stdout.flush
+      stdout.text("Making slater interpolators ...")
+
+      ! Make the interpolators
+      if (.interpolator.created) then
+         do i = 1,.slaterbasis.dim   
+           .slaterbasis(i).make_interpolator(.interpolator)
+         end                         
+      else
+         .make_interpolator_sqrt(template)
+         do i = 1,.slaterbasis.dim   
+           .slaterbasis(i).make_interpolator(template)
+         end                         
+         template.destroy
+      end
+
+      ! Set .atom to use this interpolator
+      if (.atom.created) .atom.basis_kind = "slater"
+
+   end
+
+   make_coppens_interpolators ::: leaky
+   ! Make the coppensbasis orbital density interpolators.
+   ! Make them using the defaults set in a give "interpolator".
+   ! Otherwise use an atom density cutoff "tol".
+   ! NOTE: any existing interpolators are destroyed first
+   ENSURE(.coppensbasis.created,"no slaterbasis")
+
+
+      template :: INTERPOLATOR*
+      i :: INT
+
+      stdout.flush
+      stdout.text("Making coppens interpolators ...")
+
+      ! Make the interpolators
+      if (.interpolator.created) then
+         do i = 1,.coppensbasis.dim  ! Make the interpolators
+            .coppensbasis(i).make_interpolator(.interpolator)
+         end                      
+      else
+         .make_interpolator_sqrt(template)
+         do i = 1,.coppensbasis.dim  ! Make the interpolators
+            .coppensbasis(i).make_interpolator(template)
+         end                      
+         template.destroy
+      end
+
+      ! Set .atom to use this interpolator
+      if (.atom.created) .atom.basis_kind = "coppens"
+
+   end
+
+
+   set_ANO_info(plot_kind) ::: leaky
+   ! Set the ANO info for all the atoms if the "plot_kind" is such that the ANO
+   ! data must be made.
+      plot_kind :: STR
+
+      dft :: BIN
+
+      if (plot_kind(1:11)=="deformation" OR plot_kind(1:4)=="e_hf") then
+         ! If we get here, the ANO information will be used
+          .make_ANOs_and_interpolators
+      else if (plot_kind(1:5)=="bond_") then
+         ! If we get here, the spherically averaged atom information will be used
+         .get_spherical_atoms
+      end
+
+   end
+
+   make_ANOs_and_interpolators ::: leaky
+   ! Make the gaussian density interpolators; sets ANO's as side effect.
+   ENSURE(.basis.created,"no basis")
+   ENSURE(.atom.created,"no atoms")
+
+      dft :: BIN
+
+      if (.scfdata.destroyed) then; dft = FALSE
+      else;                         dft = .scfdata.is_DFT_calculation
+      end
+
+      .make_ANO_data(dft)
+
+   end
+
 ! ***************************
 ! Isosurface plotting methods
 ! ***************************
@@ -23884,8 +24077,10 @@ contains
      ! Below is required for selfless function calls
      saved_self => self ! Note this !
 
-     ! Set up preliminaries for some plots
-     .set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
+     ! Set interpolators for stockholder or promolecule plots
+     .set_interpolator_info(.isosurface.iso_kind)
+
+     ! Set ANO's for deformation densities
      .set_ANO_info(.isosurface.iso_kind)
 
      ! Do the plot
@@ -23909,8 +24104,10 @@ contains
      saved_isosurface => .saved.isosurface ! I'm not sure why this is necessary --dylan
      .saved.isosurface => .isosurface      ! ... or this
 
-     ! Set up preliminaries for some plots
-     .saved.set_interpolator_info(.isosurface.iso_kind,.isosurface.interpolator)
+     ! Set interpolators for stockholder or promolecule plots
+     .saved.set_interpolator_info(.isosurface.iso_kind)
+
+     ! Set ANO's for deformation densities
      .saved.set_ANO_info(.isosurface.iso_kind)
 
      ! Do the plot
@@ -23924,6 +24121,7 @@ contains
    do_isosurface_plot ::: private
    ! Do one of the many kinds of isosurface plot calculations
    ENSURE(.isosurface.created,"no isosurface")
+
      select case (.isosurface.iso_kind)
         case("deformation_bond_density         "); .isosurface.cubify(MOLECULE::deformation_bond_density_grid)
         case("deformation_density              "); .isosurface.cubify(MOLECULE::deformation_density_grid)
@@ -23959,6 +24157,7 @@ contains
         case("tsirelson_elf                    "); .isosurface.cubify(MOLECULE::Tsirelson_ELF_grid)
         case default;                UNKNOWN(.isosurface.iso_kind)
      end
+
    end
 
 
@@ -23973,7 +24172,7 @@ contains
      saved_self => self ! Note this !
 
      ! Set up preliminaries for some plots
-     .set_interpolator_info(.isosurface.surface_property,.isosurface.interpolator)
+     .set_interpolator_info(.isosurface.surface_property)
      .set_ANO_info(.isosurface.surface_property)
 
      ! Do the plot
@@ -23997,7 +24196,7 @@ contains
      .saved.isosurface => .isosurface      ! ... or this
 
      ! Set up preliminaries for some plots
-     .saved.set_interpolator_info(.isosurface.surface_property,.isosurface.interpolator)
+     .saved.set_interpolator_info(.isosurface.surface_property)
      .saved.set_ANO_info(.isosurface.surface_property)
 
      ! Do the plot
@@ -24046,117 +24245,6 @@ contains
         case("tsirelson_elf                   "); .isosurface.plot_function(MOLECULE::Tsirelson_ELF_grid)
         case default;                UNKNOWN(.isosurface.surface_property)
      end
-   end
-
-
-   set_interpolator_info(plot_kind,interpolator) ::: leaky
-   ! Set the interpolator info for all the atoms if the "plot_kind" is such
-   ! that interpolation tables could be beneficial. This should be called just
-   ! prior to doing the plot to take advantage of speed-ups.
-      plot_kind :: STR
-      interpolator :: INTERPOLATOR*
-
-      do_interpolator,dft :: BIN
-
-      do_interpolator = plot_kind=="stockholder_density" &
-                     OR plot_kind=="stockholder_weight"  &
-                     OR plot_kind=="promolecule_density" &
-                     OR plot_kind=="unit_cell_promolecule_density"
-
-      if (NOT do_interpolator) return
-
-      ENSURE(.atom.created,"no atom list")
-
-      ! Get interpolators. 
-      select case (.atom(1).basis_kind)
-         case ("slater")
-            ENSURE(.slaterbasis.created,"no slater bases")
-            .make_slater_interpolators(interpolator)
-         case ("coppens")
-            ENSURE(.coppensbasis.created,"no coppens bases")
-            .make_coppens_interpolators(interpolator)
-         case ("gaussian")
-            ENSURE(.basis.created,"no gaussian bases")
-            .make_ANOs_and_interpolators
-      end
-      
-   end
-
-   make_slater_interpolators(interpolator) ::: leaky
-   ! Make the slaterbasis orbital density interpolators.
-   ! Make them using the defaults set in a give "interpolator".
-   ! NOTE: any existing interpolators are destroyed first
-      interpolator :: INTERPOLATOR*, optional
-
-   ENSURE(.slaterbasis.created,"no slaterbasis")
-
-      i :: INT
-
-      stdout.flush
-      stdout.text("Making slater interpolators ...")
-
-      do i = 1,.slaterbasis.dim   
-        .slaterbasis(i).make_interpolator(interpolator)
-      end                         
-
-      if (.atom.created) .atom.basis_kind = "slater"
-
-   end
-
-   make_coppens_interpolators(interpolator) ::: leaky
-   ! Make the coppensbasis orbital density interpolators.
-   ! Make them using the defaults set in a give "interpolator".
-   ! Otherwise use an atom density cutoff "tol".
-   ! NOTE: any existing interpolators are destroyed first
-      interpolator :: INTERPOLATOR*, optional
-
-   ENSURE(.coppensbasis.created,"no slaterbasis")
-
-      i :: INT
-
-      stdout.flush
-      stdout.text("Making coppens interpolators ...")
-
-      do i = 1,.coppensbasis.dim  ! Make the interpolators
-        .coppensbasis(i).make_interpolator(interpolator)
-      end                      
-
-      if (.atom.created) .atom.basis_kind = "coppens"
-
-   end
-
-   make_ANOs_and_interpolators ::: leaky
-   ! Make the gaussian density interpolators; sets ANO's as side effect.
-
-   ENSURE(.basis.created,"no basis")
-   ENSURE(.atom.created,"no atoms")
-
-      dft :: BIN
-
-      if (.scfdata.destroyed) then; dft = FALSE
-      else;                         dft = .scfdata.is_DFT_calculation
-      end
-
-      .make_ANO_data
-
-   end
-
-   set_ANO_info(plot_kind) ::: leaky
-   ! Set the ANO info for all the atoms if the "plot_kind" is such that the ANO
-   ! data must be made.
-      plot_kind :: STR
-
-      dft :: BIN
-
-      if (plot_kind(1:11)=="deformation" OR plot_kind(1:4)=="e_hf") then
-         ! If we get here, the ANO information will be used
-          .make_ANOs_and_interpolators
-       ! .set_atom_shell_info
-      else if (plot_kind(1:5)=="bond_") then
-         ! If we get here, the spherically averaged atom information will be used
-         .get_spherical_atoms
-      end
-
    end
 
 
@@ -25159,6 +25247,7 @@ contains
    ! Get the restricted atomic natural orbitals (ANO) data for all
    ! atoms in the molecule.
       use_ks :: BIN, optional
+
    ENSURE(.atom.created,"no atoms")
    ENSURE(.atom_info_made,"no atom info")
    ENSURE(.basis.created,"no basis set")
@@ -25204,6 +25293,7 @@ contains
    ENSURE(.atom(a).occupation_numbers.destroyed,"occupations exist, atom "//trim(a.to_str))
    ENSURE(.atom(a).density_matrix.destroyed,"density exists, atom "//trim(a.to_str))
 
+     template :: INTERPOLATOR*
      mol :: MOLECULE*
 
      ! Create the molecule
@@ -25245,7 +25335,13 @@ contains
      .atom(a).energy             =  mol.scfdata.energy
 
      ! Make the interpolator
-     .atom(a).make_interpolator
+     if (.interpolator.created) then 
+        .atom(a).make_interpolator(.interpolator)
+     else
+        .make_interpolator_sqrt_x1x(template)
+        .atom(a).make_interpolator(template)
+        template.destroy
+     end
 
      ! Nullify parts we just copied or can't destroy
      mol.atom.nullify_ptr_part       ! do not destroy ptr part

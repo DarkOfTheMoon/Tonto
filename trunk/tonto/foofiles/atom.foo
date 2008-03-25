@@ -428,8 +428,6 @@ contains
       .axis_system = "cartesian"
       .thermal_axis_system = "cartesian"
       .use_interpolator = TRUE
-      .use_r2_interpolation = FALSE
-      .use_x1x_interpolation = TRUE
       .energy = ZERO
       .group  = 0
       ! MM/protien defaults
@@ -1826,15 +1824,15 @@ contains
 
       select case (.basis_kind)
          case ("gaussian")
-          ! if (.interpolator.created) then
-          !    .add_interpolated_density(density_grid,pt,pos,occ)
-          ! else
+            if (.interpolator.created) then
+               .add_interpolated_density(density_grid,pt,occ)
+            else
                ENSURE(.basis.created,"no basis")
                ENSURE(.natural_orbitals.created,"no natural orbitals")
                if (.natural_orbitals.number_kind=="real") then; .add_density_grid_r(density_grid,pt,occ)
                else;                                            .add_density_grid_c(density_grid,pt,occ)
                end
-          ! end
+            end
          case ("slater")
             ENSURE(.slaterbasis.created,"no slaterbasis")
             .slaterbasis.add_density_grid(density_grid,pt,.pos,occ)
@@ -2275,54 +2273,57 @@ contains
      res = .density_at_radius(R)
    end
 
-   density_at_sqrt_radius2(R2) result (res) ::: selfless, public
-   ! Return the density values at the square root of radial value "R2".
-   ! This assumes that the atomic density is spherical!
-     R2 :: REAL, IN
-     res :: REAL
-     R :: REAL
-     self :: ATOM*
-     self => saved_self
-     R = sqrt(R2)
-     res = .density_at_radius(R)
-   end
+!   density_at_sqrt_radius2(R2) result (res) ::: selfless, public
+!   ! Return the density values at the square root of radial value "R2".
+!   ! This assumes that the atomic density is spherical!
+!     R2 :: REAL, IN
+!     res :: REAL
+!     R :: REAL
+!     self :: ATOM*
+!     self => saved_self
+!     R = sqrt(R2)
+!     res = .density_at_radius(R)
+!   end
 
-   density_at_sqrt_x1x(x) result (res) ::: selfless, public
-   ! The function r2 = (x/1-x) maps [0,1] -> [0,inf]. An even spacing
-   ! of points in x will lead to a distribution of points in r in the
-   ! range [0,inf] on which the density rho can be calculated. An
-   ! interpolation table of rho vs. x can be made.  The inverse of the
-   ! function is x = (r2/1+r2). These values of x can easily be
-   ! calculated from a given r2. The value of rho can then be
-   ! interpolated. This assumes that the atomic density is spherical!
-     x :: REAL, IN
-     res :: REAL
-
-     R :: REAL
-     self :: ATOM*
-
-
-     if (x>=ONE) then
-        res = ZERO
-     else
-        self => saved_self
-        R = .bragg_slater_radius*BOHR_PER_ANGSTROM*sqrt(x/(ONE-x))
-        res = .density_at_radius(R)
-     end
-
-   end
+!   density_at_sqrt_x1x(x) result (res) ::: selfless, public
+!   ! The function r2 = (x/1-x) maps [0,1] -> [0,inf]. An even spacing
+!   ! of points in x will lead to a distribution of points in r in the
+!   ! range [0,inf] on which the density rho can be calculated. An
+!   ! interpolation table of rho vs. x can be made.  The inverse of the
+!   ! function is x = (r2/1+r2). These values of x can easily be
+!   ! calculated from a given r2. The value of rho can then be
+!   ! interpolated. This assumes that the atomic density is spherical!
+!     x :: REAL, IN
+!     res :: REAL
+!
+!     R :: REAL
+!     self :: ATOM*
+!
+!
+!     if (x>=ONE) then
+!        res = ZERO
+!     else
+!        self => saved_self
+!        R = .bragg_slater_radius*BOHR_PER_ANGSTROM*sqrt(x/(ONE-x))
+!        res = .density_at_radius(R)
+!     end
+!
+!   end
 
 ! ************
 ! Interpolator
 ! ************
 
    make_interpolator(interpolator) ::: leaky
-   ! Make the interpolator for the slater atom density in terms of the radial
-   ! distance squared (to avoid square roots). If present, "interpolator" is
-   ! used as a template to get the settings needed. If present, "tol" defines
-   ! the length of the table, so that the smallest value just exceeds "tol". 
+   ! Make the .interpolator for the atom density. If present,
+   ! "interpolator" is used as a template to get the settings needed. 
+   ! NOTE: This is for a gaussian basis set; for slater or coppens
+   ! bases use the interpolators stored in those bases. 
       interpolator :: INTERPOLATOR*, optional
 
+   ENSURE(.basis_kind=="gaussian","interpolation must be for a gaussian basis")
+
+      ! Create a copy of the template if it exists
       if (present(interpolator)) then
       if (interpolator.created) then
          .interpolator.destroy
@@ -2330,22 +2331,16 @@ contains
       end
       end
 
-      if (.interpolator.destroyed) then
-         .interpolator.create
-      end
+      ! If no template, create a default interpolator
+      if (.interpolator.destroyed) .interpolator.create
 
-      .set_saved_self                          ! Used by function below
-      if (.use_r2_interpolation) then
-         .interpolator.set_table_length(900d0) ! 30 Bohr table
-         .interpolator.set_even_spaced_data(ATOM::density_at_sqrt_radius2)
-      else if (.use_x1x_interpolation) then
-         .interpolator.set_interpolation_kind("cubic_spline")
-         .interpolator.set_table_length(ONE) 
-         .interpolator.set_spacing(0.0001d0) 
-         .interpolator.set_even_spaced_data(ATOM::density_at_sqrt_x1x,tol=1.0d-10)
-      else
-         .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
-      end
+      ! Set domain scale factor. May not be required.
+      .interpolator.set_domain_scale_factor(.bragg_slater_radius*BOHR_PER_ANGSTROM)
+
+      ! Set the interpolation table
+      .set_saved_self ! Used by ATOM: function below
+      .interpolator.set_even_spaced_data(ATOM::density_value_at_radius)
+
    end
 
    interpolator_table_length(tol) result (length)
@@ -2370,38 +2365,32 @@ contains
      pt :: MAT{REAL}, IN
      occ :: REAL, IN, optional
 
-   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
-   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ! ENSURE(.interpolator.created,"no interpolator defined!")
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(density.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.interpolator.created,"no interpolator defined!")
+   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
-     R :: VEC{REAL}*
+     R2 :: VEC{REAL}*
      n_pt,n :: INT
      x,y,z,b :: REAL
 
+     ! Space for R2
      n_pt = pt.dim1
-     R.create(n_pt)
+     R2.create(n_pt)
 
+     ! Get squared distances R2
      do n = 1,n_pt
         x = pt(n,1) - .pos(1)
         y = pt(n,2) - .pos(2)
         z = pt(n,3) - .pos(3)
-        R(n) = x*x + y*y + z*z
+        R2(n) = x*x + y*y + z*z
      end
 
-     ! Now get the interpolated density values
-     if (.use_r2_interpolation) then
-        .interpolator.values_for(R,density,occ)
-     else if (.use_x1x_interpolation) then
-        b = .bragg_slater_radius*BOHR_PER_ANGSTROM
-        b = b*b
-        R = R/(b+R)
-        .interpolator.values_for(R,density,occ)
-     else
-        .interpolator.values_for_squared(R,density,occ)
-     end
+     ! Get the interpolated density values
+     .interpolator.values_for_squared(R2,density,occ)
 
      ! Clean up
-     R.destroy
+     R2.destroy
 
    end
 
@@ -2413,81 +2402,34 @@ contains
      pt :: MAT{REAL}, IN
      occ :: REAL, IN, optional
 
-   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
-   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-   ! ENSURE(.interpolator.created,"no interpolator defined!")
+   ENSURE(pt.dim2==3,"wrong dimension for points array")
+   ENSURE(density.dim==pt.dim1,"inconsistent number of points")
+   ENSURE(.interpolator.created,"no interpolator defined!")
+   ENSURE(.interpolator.domain_mapping(1:4)=="sqrt","must using sqrt-like mapping")
 
-     R :: VEC{REAL}*
+     R2 :: VEC{REAL}*
      n_pt,n :: INT
      x,y,z,b :: REAL
 
+     ! Space for R2
      n_pt = pt.dim1
-     R.create(n_pt)
+     R2.create(n_pt)
 
+     ! Get squared distances R2
      do n = 1,n_pt
         x = pt(n,1) - .pos(1)
         y = pt(n,2) - .pos(2)
         z = pt(n,3) - .pos(3)
-        R(n) = x*x + y*y + z*z
+        R2(n) = x*x + y*y + z*z
      end
 
-     ! Now get the interpolated density values
-     if (.use_r2_interpolation) then
-        .interpolator.add_values_for(R,density,occ)
-     else if (.use_x1x_interpolation) then
-        b = .bragg_slater_radius*BOHR_PER_ANGSTROM
-        b = b*b
-        R = R/(b+R)
-        .interpolator.add_values_for(R,density,occ)
-     else
-        .interpolator.add_values_for_squared(R,density,occ)
-     end
+     ! Get the interpolated density values
+     .interpolator.add_values_for_squared(R2,density,occ)
 
      ! Clean up
-     R.destroy
+     R2.destroy
 
    end
-
-!   add_interpolated_density(density,kappa,pt)
-!   ! Add the spherical atomic "density" scaled by "kappa" for the
-!   ! supplied points "pt" using a precalculated interpolator.
-!     self :: IN
-!     density :: VEC{REAL}, INOUT
-!     kappa :: REAL, IN
-!     pt :: MAT{REAL}, IN
-!
-!   ! ENSURE(pt.dim2==3,"wrong dimension for points array")
-!   ! ENSURE(density.dim==pt.dim1,"inconsistent number of points")
-!   ! ENSURE(.interpolator.created,"no interpolator defined!")
-!
-!     R :: VEC{REAL}*
-!     n_pt,n :: INT
-!     x,y,z :: REAL
-!
-!     n_pt = pt.dim1
-!     R.create(n_pt)
-!
-!     do n = 1,n_pt
-!        x = pt(n,1) - .pos(1)
-!        y = pt(n,2) - .pos(2)
-!        z = pt(n,3) - .pos(3)
-!        R(n) = x*x + y*y + z*z
-!     end
-!
-!     ! Now get the interpolated density values
-!     if (kappa.equals(ONE)) then
-!        if (.use_r2_interpolation) then; .interpolator.add_values_for(R,density)
-!        else;                            .interpolator.add_values_for_squared(R,density)
-!        end
-!     else
-!        if (.use_r2_interpolation) then; .interpolator.add_values_for(R,density,kappa)
-!        else;                            .interpolator.add_values_for_squared(R,density,kappa)
-!        end
-!     end
-!
-!     R.destroy
-!
-!   end
 
 ! ***************************
 ! Nabla density grid routines
