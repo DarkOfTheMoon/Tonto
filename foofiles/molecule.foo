@@ -114,6 +114,7 @@ contains
          .atom.nullify_slaterbasis_part
          .atom.nullify_coppensbasis_part
          if (.ANO_data_made)            .destroy_ANO_data  
+         if (.ANO_interpolators_made)   .destroy_ANO_interpolators
          if (.spherical_atom_data_made) .destroy_spherical_atom_data  
        ! .destroy_atom_shell_info ! In case promolecule densities used
       end
@@ -320,6 +321,7 @@ contains
       .basis_info_made = FALSE
       .use_interpolators = TRUE
       .ANO_data_made = FALSE
+      .ANO_interpolators_made = FALSE
       .Hirshfeld_atom_info_made = FALSE
       .atomic_polarisabilities_made = FALSE
       .CX_file_name = " "
@@ -8247,13 +8249,11 @@ contains
          ENSURE(.becke_grid.finalized,"no finalized becke_grid")
       end
 
-      ! Set up atomic densities (and interpolators) for stockholder weights
-      if (NOT .ANO_data_made) then
-         if (.scfdata.destroyed) then; dft = FALSE
-         else;                         dft = .scfdata.is_DFT_calculation
-         end
-         .make_ANO_data(use_ks=dft)
-      end
+      ! Set up atomic ANOs for stockholder weights
+      .make_ANO_data
+
+      ! Set up atomic ANO interpolators
+      .make_ANO_interpolators
 
       if (present(skip_NOs)) then
       if (skip_NOs) return
@@ -8464,12 +8464,16 @@ contains
    ! Set up scf defaults for molecule
    ! If present and TRUE, "use_ks" tells to use a Kohn-Sham calculation not HF
       use_ks :: BIN, optional
+
       ks :: BIN
+
       ks = FALSE
       if (present(use_ks)) ks = use_ks
+
       if (.scfdata.destroyed) then; .scfdata.create
       else;                         .scfdata.set_defaults
       end
+
       if (ks) then
          if (.mult==1) .scfdata.scf_kind = "rks"
          if (.mult/=1) .scfdata.scf_kind = "uks"
@@ -8477,22 +8481,25 @@ contains
          if (.mult==1) .scfdata.scf_kind = "rhf"
          if (.mult/=1) .scfdata.scf_kind = "uhf"
       end
+
       .scfdata.using_fock_diis = TRUE
       .scfdata.using_MO_diis = FALSE
       .scfdata.using_direct_scf = TRUE
       .scfdata.diis.set_archive_root_name(.name)
       .initialise_DFT_grids
+
    end
 
-   make_molecule_from_atom(n,mol,use_ks) ::: leaky
+   make_molecule_from_atom(n,mol) ::: leaky
    ! Make a fully fledged molecule "mol" from a single atom "n" in self
    ! The new molecule is ready for an SCF calculation.
    ! DANGER: see warnings below
       n :: INT
       mol :: MOLECULE
-      use_ks :: BIN, optional
 
    ENSURE(n<=.n_atom,"atom number n too big")
+
+      dft :: BIN
 
       ! Clear the pointer part
       mol.nullify_ptr_part
@@ -8515,7 +8522,10 @@ contains
       mol.set_basis_info
 
       ! Set the SCF defaults
-      mol.set_scf_defaults(use_ks)
+      if (.scfdata.destroyed) then; dft = FALSE
+      else;                         dft = .scfdata.is_DFT_calculation
+      end
+      mol.set_scf_defaults(use_ks=dft)
 
       ! Reset some defaults if user has already set in .scfdata
       if (.scfdata.created) then
@@ -11170,6 +11180,7 @@ contains
    get_promolecule_density ::: leaky
    ! Make the ANO densities and add them together.
       .make_ANO_data
+      .make_ANO_interpolators
       .add_ANO_densities
      .density_matrix.convert_to(.scfdata.spinorbital_kind,factor=HALF)
      .put_debug(.density_matrix,"promolecule density matrix")
@@ -23909,7 +23920,8 @@ contains
             .make_coppens_interpolators
          case ("gaussian")
             ENSURE(.basis.created,"no gaussian bases")
-            .make_ANOs_and_interpolators
+            .make_ANO_data
+            .make_ANO_interpolators
       end
       
    end
@@ -24042,26 +24054,12 @@ contains
 
       if (plot_kind(1:11)=="deformation" OR plot_kind(1:4)=="e_hf") then
          ! If we get here, the ANO information will be used
-          .make_ANOs_and_interpolators
+         .make_ANO_data
+         .make_ANO_interpolators
       else if (plot_kind(1:5)=="bond_") then
          ! If we get here, the spherically averaged atom information will be used
          .get_spherical_atoms
       end
-
-   end
-
-   make_ANOs_and_interpolators ::: leaky
-   ! Make the gaussian density interpolators; sets ANO's as side effect.
-   ENSURE(.basis.created,"no basis")
-   ENSURE(.atom.created,"no atoms")
-
-      dft :: BIN
-
-      if (.scfdata.destroyed) then; dft = FALSE
-      else;                         dft = .scfdata.is_DFT_calculation
-      end
-
-      .make_ANO_data(dft)
 
    end
 
@@ -25243,10 +25241,9 @@ contains
 !  ANO control routines
 !  ********************
 
-   make_ANO_data(use_ks) ::: leaky
+   make_ANO_data ::: leaky
    ! Get the restricted atomic natural orbitals (ANO) data for all
    ! atoms in the molecule.
-      use_ks :: BIN, optional
 
    ENSURE(.atom.created,"no atoms")
    ENSURE(.atom_info_made,"no atom info")
@@ -25268,14 +25265,13 @@ contains
 
       do k = 1,.n_atom_kind ! Get ANO data only for unique atoms
         u = .unique_atom(k)
-        .make_ANO_data_for_atom(u,use_ks)
+        .make_ANO_data_for_atom(u)
         do j = u+1,.n_atom
            if (.atom_kind(j)/=k) cycle
            .atom(j).density_matrix     => .atom(u).density_matrix
            .atom(j).natural_orbitals   => .atom(u).natural_orbitals
            .atom(j).occupation_numbers => .atom(u).occupation_numbers
            .atom(j).energy             =  .atom(u).energy
-           .atom(j).interpolator       => .atom(u).interpolator
         end
       end
 
@@ -25283,11 +25279,10 @@ contains
 
    end
 
-   make_ANO_data_for_atom(a,use_ks) ::: leaky, private
+   make_ANO_data_for_atom(a) ::: leaky, private
    ! Make the spherically averaged restricted atomic natural orbitals
    ! (ANO) and density matrix data and interpolator for atom "a".
      a :: INT
-     use_ks :: BIN, optional
 
    ENSURE(.atom(a).natural_orbitals.destroyed,"NO's exist, atom "//trim(a.to_str))
    ENSURE(.atom(a).occupation_numbers.destroyed,"occupations exist, atom "//trim(a.to_str))
@@ -25298,7 +25293,7 @@ contains
 
      ! Create the molecule
      mol.create
-     .make_molecule_from_atom(a,mol,use_ks)
+     .make_molecule_from_atom(a,mol)
 
      ! Do the atomic SCF
      mol.scfdata.using_direct_scf = TRUE
@@ -25322,8 +25317,7 @@ contains
      mol.delete_archive("natural_orbitals")
      mol.delete_archive("occupation_numbers")
 
-     ! Destroy the atoms's NO and interpolator info
-     .atom(a).interpolator.destroy
+     ! Destroy the atoms's NO 
      .atom(a).density_matrix.destroy
      .atom(a).occupation_numbers.destroy
      .atom(a).natural_orbitals.destroy
@@ -25333,15 +25327,6 @@ contains
      .atom(a).occupation_numbers => mol.occupation_numbers
      .atom(a).density_matrix     => mol.density_matrix
      .atom(a).energy             =  mol.scfdata.energy
-
-     ! Make the interpolator
-     if (.interpolator.created) then 
-        .atom(a).make_interpolator(.interpolator)
-     else
-        .make_interpolator_sqrt_x1x(template)
-        .atom(a).make_interpolator(template)
-        template.destroy
-     end
 
      ! Nullify parts we just copied or can't destroy
      mol.atom.nullify_ptr_part       ! do not destroy ptr part
@@ -25373,11 +25358,9 @@ contains
         .atom(u).natural_orbitals.destroy
         .atom(u).occupation_numbers.destroy
         .atom(u).density_matrix.destroy
-        .atom(u).interpolator.destroy
         nullify(.atom(u).natural_orbitals)
         nullify(.atom(u).occupation_numbers)
         nullify(.atom(u).density_matrix)
-        nullify(.atom(u).interpolator)
         .atom(u).energy = ZERO
 
         do j = u+1,.n_atom
@@ -25385,7 +25368,6 @@ contains
            nullify(.atom(j).natural_orbitals)
            nullify(.atom(j).occupation_numbers)
            nullify(.atom(j).density_matrix)
-           nullify(.atom(j).interpolator)
            .atom(j).energy = ZERO
         end
 
@@ -25395,13 +25377,55 @@ contains
 
    end
 
+
+   make_ANO_interpolators ::: leaky
+   ! Get the gaussian ANO interpolators
+
+   ENSURE(.unique_atom.created,"no unique atom list")
+   ENSURE(.ANO_data_made,"no ANO data")
+
+      template :: INTERPOLATOR*
+      k,u,j :: INT
+
+      if (.ANO_interpolators_made) return
+
+      stdout.flush
+      stdout.text("Making gaussian ANO data and interpolators ...")
+
+      .destroy_ANO_interpolators
+
+      do k = 1,.n_atom_kind ! Get interpolator only for unique atoms
+
+        u = .unique_atom(k)
+
+        ! Make the interpolator
+        if (.interpolator.created) then 
+           .atom(u).make_interpolator(.interpolator)
+        else
+           .make_interpolator_sqrt_x1x(template)
+           .atom(u).make_interpolator(template)
+           template.destroy
+        end
+
+        ! Copy to the other atoms
+        do j = u+1,.n_atom
+           if (.atom_kind(j)/=k) cycle
+           .atom(j).interpolator => .atom(u).interpolator
+        end
+
+      end
+
+      .ANO_interpolators_made = TRUE
+
+   end
+
    destroy_ANO_interpolators ::: leaky
    ! Destroy the ANO interpolators 
    ! all atoms in the molecule.
 
       k,u,j :: INT
 
-      if (NOT .ANO_data_made) return
+      if (NOT .ANO_interpolators_made) return
 
       if (.unique_atom.destroyed) return
 
@@ -25418,6 +25442,8 @@ contains
         end
 
       end
+
+      .ANO_interpolators_made = FALSE
 
    end
 
