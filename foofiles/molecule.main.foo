@@ -2899,6 +2899,7 @@ contains
       end
    end
 
+
    make_spherically_averaged_HAs ::: leaky
    ! Make the spherically averaged Hirshfeld atom density
    ! interpolators for every atom.
@@ -2912,12 +2913,12 @@ contains
       ! Set up the template for interpolators
       .interpolator.destroy
       .interpolator.create
-      .interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
       .interpolator.set_interpolation_method("cubic_spline")
       .interpolator.set_range_mapping("none")
       .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
       .interpolator.set_table_length(ONE) 
       .interpolator.set_spacing(0.001d0) 
+      .interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
 
       ! Set up grids, atomic densities, and NO's
       .set_up_Hirshfeld_info
@@ -2931,6 +2932,9 @@ contains
       ! Destroy atom ANO data and interpolators. Leaky.
       .destroy_ANO_data
       .destroy_interpolators
+
+      ! Set interpolators
+      .interpolators_made = TRUE
 
       ! The list of new atomic radial densities
       rho_av.create(.n_atom)
@@ -2959,6 +2963,8 @@ contains
 
          iteration = iteration + 1
 
+         stdout.show("Iteration = ",iteration)
+
          ! Spherically average each atom
          eps = ZERO
          do a = 1,.n_atom
@@ -2981,7 +2987,7 @@ contains
 
          ! Spherical atoms obtained
          if (eps<TOL(6)) exit
-         if (iteration>0) exit
+         if (iteration>50) exit
 
       end
 
@@ -3016,10 +3022,10 @@ contains
    ENSURE(.atom.created,"no atom list")
    ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
    ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
-   ENSURE(.ANO_data_made,"No ANO data")
+   ENSURE(.interpolators_made,"No interpolators")
 
       pt :: MAT{REAL}*
-      rho,Wa :: VEC{REAL}*
+      rho,Wa, del,pc :: VEC{REAL}*
       pos :: VEC{REAL}(3)
       old,r :: REAL
       n_pts,n,i :: INT
@@ -3038,13 +3044,18 @@ contains
       rho.create(n_pts)
       pt.create(n_pts,3)
 
+      del.create(interpolator.n_data)
+      pc.create(interpolator.n_data)
+
       ! Atom position
       pos = .atom(a).pos
 
       ! Maximum relative difference
       eps = ZERO
 
-    ! stdout.show("atom a =",a)
+      stdout.show("atom =",a)
+      interpolator.put
+
     ! stdout.put("r")
     ! stdout.put("rho_av")
     ! stdout.put("old")
@@ -3085,6 +3096,8 @@ contains
 
          ! Average percentage change
          eps = max(eps,abs((rho_av(i)-old)))
+         del(i) = rho_av(i)-old
+         pc(i)  = del(i)/old
 
     ! stdout.put(r)
     ! stdout.put(rho_av(i))
@@ -3094,9 +3107,367 @@ contains
 
       end
 
+      stdout.text("del:")
+      stdout.put(del,"column")
+
+      stdout.text("pc:")
+      stdout.put(pc,"column")
+
       ! Clean up
+      pc.destroy; del.destroy
       pt.destroy; rho.destroy; Wa.destroy
       lebedev.destroy
+
+   end
+
+   make_averaged_BDAs ::: leaky
+   ! Make the spherically averaged bond density atom 
+   ! interpolators for every atom.
+   ENSURE(.use_interpolators,"must be using interpolators")
+
+      interpolator :: VEC{INTERPOLATOR}*
+      rho_av :: VEC{VEC_{REAL}}*
+      eps,eps_a :: REAL
+      a,l_max,iteration :: INT
+
+      ! Set up the template for interpolators
+      .interpolator.destroy
+      .interpolator.create
+      .interpolator.set_interpolation_method("cubic_spline")
+      .interpolator.set_range_mapping("none")
+      .interpolator.set_domain_mapping("sqrt(x/(1-x))*scale")
+      .interpolator.set_table_length(ONE) 
+      .interpolator.set_spacing(0.001d0) 
+      .interpolator.set_table_eps(CLUSTER_ATOM_DENSITY_CUTOFF)
+
+      ! Set up grids, atomic densities, and NO's
+      .set_up_Hirshfeld_info
+
+      ! List of initial atom interpolators. Leaky
+      interpolator.create(.n_atom)
+      do a = 1,.n_atom
+         interpolator(a).copy(.atom(a).interpolator)
+      end
+
+      ! Destroy atom ANO data and interpolators. Leaky.
+      .destroy_ANO_data
+      .destroy_interpolators
+
+      ! Set this switch
+      .interpolators_made = TRUE
+
+      ! The list of new atomic radial densities
+      rho_av.create(.n_atom)
+
+      ! Reassign fresh interpolator copy; create averaged rho
+      do a = 1,.n_atom
+         .atom(a).interpolator => interpolator(a)
+          rho_av(a).element.create(interpolator(a).n_data)
+      end
+
+      ! No of Gauss-Legendre integration points
+      l_max = 35
+
+      ! Banner
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+      stdout.put("Iter",int_width=TRUE)
+      stdout.put("Max change")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=1)
+
+      ! Begin iterative cycle
+      iteration = 0
+
+      do
+
+         iteration = iteration + 1
+
+         stdout.show("Iteration = ",iteration)
+
+         ! Spherically average each atom
+         eps = ZERO
+         do a = 1,.n_atom
+            .MAIN:make_averaged_BDAs(rho_av(a).element,eps_a,a,interpolator(a),l_max)
+            eps = max(eps,eps_a)
+         end
+
+         ! Update convergence
+         stdout.put(iteration)
+         stdout.put(eps)
+         stdout.flush
+
+         ! Transfer averaged values to atoms and interpolators
+         do a = 1,.n_atom
+            interpolator(a).set_data_values(rho_av(a).element)
+            interpolator(a).finalise
+            .atom(a).interpolator => interpolator(a)
+          ! interpolator(a).put
+         end
+
+         ! Spherical atoms obtained
+         if (eps<TOL(6)) exit
+         if (iteration>=1) exit
+
+      end
+
+      ! Footer
+      stdout.put_dash(int_fields=1,real_fields=1)
+
+      ! Copy atom interpolators. Leaky
+      do a = 1,.n_atom
+         nullify(.atom(a).interpolator)
+         .atom(a).interpolator.create_copy(interpolator(a))
+      end
+
+      ! Clean up
+      rho_av.destroy
+      interpolator.destroy
+
+   end
+
+   make_averaged_BDAs(rho_av,eps,a,interpolator,l_max) 
+   ! Make the spherically averaged Hirshfeld atom density "rho_av" for
+   ! the atom with index "a". Also return "eps", the maximum 
+   ! difference between the rho_av values and those stored in the
+   ! interpolator data_values. The spacing and radial data values from
+   ! the center of atom "a" are taken from the "interpolator". "l_max"
+   ! is the maximum l value for the lebedev angular integration grid
+      rho_av :: VEC{REAL}, OUT
+      eps :: REAL, OUT
+      a,l_max :: INT, IN
+      interpolator :: INTERPOLATOR
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(rho_av.dim==interpolator.n_data,"wrong size, rho_av")
+   ENSURE(a.is_in_range([1,.n_atom]),"a out of range")
+   ENSURE(.interpolators_made,"No interpolators")
+
+      pt :: MAT{REAL}*
+      rho,Wa, del,pc :: VEC{REAL}*
+      pos :: VEC{REAL}(3)
+      old,r :: REAL
+      n_pts,n,i :: INT
+      lebedev :: LEBEDEV*
+
+      ! Set the spherical grid
+      lebedev.create 
+      lebedev.set_l(l_max)
+
+      ! No of quadrature points (on sphere)
+      n_pts = lebedev.n_points
+
+      ! Weight function, molecular density, spherical points
+      ! and weights
+      Wa.create(n_pts)
+      rho.create(n_pts)
+      pt.create(n_pts,3)
+
+      del.create(interpolator.n_data)
+      pc.create(interpolator.n_data)
+
+      ! Atom position
+      pos = .atom(a).pos
+
+      ! Maximum relative difference
+      eps = ZERO
+
+      stdout.show("atom =",a)
+      interpolator.put
+
+    ! stdout.put("r")
+    ! stdout.put("rho_av")
+    ! stdout.put("old")
+    ! stdout.put("%")
+    ! stdout.flush
+
+      ! Loop over radial values
+      do i = 1,interpolator.n_data
+
+         ! Table value r
+         r = interpolator.data_point(i)
+
+         ! Interpolator data valie
+         old = interpolator.data_value(i)
+
+         ! Convert to actual r?
+         if (interpolator.domain_is_sqrt_x1x) &
+            r = sqrt(r/(1-r))*interpolator.domain_scale_factor
+
+         ! For each r, make a spherical shell of points
+         do n = 1,n_pts
+            pt(n,1) = pos(1) + r*lebedev.point(n,1)  
+            pt(n,2) = pos(2) + r*lebedev.point(n,2)
+            pt(n,3) = pos(3) + r*lebedev.point(n,3)
+         end
+
+         ! Weight function for atom a on the spherical shell
+         .make_bond_density_atom_grid(Wa,pt,a)
+
+         ! Weighted Hirshfeld atom density on shell
+         Wa  = Wa*lebedev.weight
+
+         ! Averaged value
+         rho_av(i) = sum(Wa)
+
+         ! Average percentage change
+         eps = max(eps,abs((rho_av(i)-old)))
+         del(i) = rho_av(i)-old
+         pc(i)  = del(i)/old
+
+    ! stdout.put(r)
+    ! stdout.put(rho_av(i))
+    ! stdout.put(old)
+    ! stdout.put(pc)
+    ! stdout.flush
+
+      end
+
+      stdout.text("del:")
+      stdout.put(del,"column")
+
+      stdout.text("pc:")
+      stdout.put(pc,"column")
+
+      ! Clean up
+      pc.destroy; del.destroy
+      pt.destroy; rho.destroy; Wa.destroy
+      lebedev.destroy
+
+   end
+
+   put_BDA_charges
+   ! Put the BDA charges.
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+
+      bond :: VEC{VEC_{INT}}*
+      bond_charge :: VEC{VEC_{REAL}}*
+      label :: STR
+      a,b,c :: INT
+      has_bond :: BIN
+
+      ! Make the charges
+      .MAIN:make_BDA_charges(bond,bond_charge)
+
+      ! Put the table
+      stdout.dash(real_fields=3)
+      stdout.tab(real_fields=1)
+      stdout.put("Bonded")
+      stdout.put("Bond")
+      stdout.flush
+      stdout.put("Atom")
+      stdout.put("Atom")
+      stdout.put("Charge")
+      stdout.flush
+      stdout.dash(real_fields=3)
+
+      do a = 1,.n_atom
+
+         label = trim(.atom(a).label) // "(" // trim(a.to_str) // ")"
+         stdout.put(label)
+
+         has_bond = bond(a).element.created
+         if (has_bond) has_bond = bond(a).element.dim>0
+
+         if (NOT has_bond) then
+            stdout.flush
+         else
+
+            do b = 1,bond(a).element.dim
+               if (b>1) stdout.tab(real_fields=1)
+               c = bond(a).element(b)
+               label = trim(.atom(c).label) // "(" // trim(c.to_str) // ")"
+               stdout.put(label)
+               stdout.put(-bond_charge(a).element(b))
+               stdout.flush
+            end
+            stdout.tab(real_fields=2)
+            stdout.put(-sum(bond_charge(a).element))
+            stdout.flush
+
+         end
+
+      end
+
+      stdout.dash(real_fields=3)
+
+      ! Clean up
+      bond.destroy
+      bond_charge.destroy
+
+   end
+
+   make_BDA_charges(bond,bond_charge) ::: leaky
+   ! make the bond density atom charges.
+      bond :: VEC{VEC_{INT}}*
+      bond_charge :: VEC{VEC_{REAL}}*
+
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+
+      pt :: MAT{REAL}*
+      wt,rho_aba,def_density_grid :: VEC{REAL}*
+      bond_density_atom :: VEC{INT}*
+      n_pt,a,b :: INT
+      val :: REAL
+
+      ! Set up grids, atomic densities, and NO's
+      .set_up_Hirshfeld_info
+
+      ! Array for bonds and bond charges
+      bond.create(.n_atom)
+      bond_charge.create(.n_atom)
+
+      ! Loop over atoms, a
+      do a = 1,.n_atom
+
+         ! Make becke grid
+         .becke_grid.make_grid(pt,wt,[a])
+         n_pt = pt.dim1
+
+         ! Deformation density on grid
+         def_density_grid.create(n_pt)
+         .make_deformation_density_grid(def_density_grid,pt)
+
+         ! Bond density on grid
+         rho_aba.create(n_pt)
+
+         ! bond density atom
+         bond_density_atom.create(3)
+         bond_density_atom(1) = a
+         bond_density_atom(3) = a
+
+         ! Loop over atoms b, bonded to a
+         do b = 1,.n_atom
+
+            if (a==b) cycle
+            if (NOT .atom.bonded(a,b)) cycle
+
+            ! Get the bond density
+            bond_density_atom(2) = b
+            .make_def_bond_density_grid(rho_aba,pt,bond_density_atom,def_density_grid)
+
+            ! Get weighted integral
+            rho_aba  = rho_aba*wt
+
+            ! Get charge
+            val = sum(rho_aba)
+
+            ! Store charge
+            bond(a).element.append(b)
+            bond_charge(a).element.append(val)
+          
+         end
+
+         ! Clean up
+         bond_density_atom.destroy
+         rho_aba.destroy
+         def_density_grid.destroy
+         pt.destroy; wt.destroy
+
+      end
 
    end
 
@@ -4466,6 +4837,7 @@ contains
         case ("make_promol_mos               "); .make_promol_MOs
         case ("make_scf_density_matrix       "); .make_scf_density_matrix(damp=FALSE)
       ! case ("make_spin_b_field             "); .MAIN:make_spin_b_field
+        case ("make_spherically_averaged_bdas"); .MAIN:make_averaged_BDAs
         case ("make_spherically_averaged_has "); .MAIN:make_spherically_averaged_HAs
         case ("make_structure_factors        "); .make_x_structure_factors
         case ("make_symortho_density_matrix  "); .make_group_density_matrix
@@ -4498,6 +4870,7 @@ contains
         case ("put_atom_coord_info           "); .atom.put_coord_info(FALSE)
         case ("put_all_atom_coord_info       "); .atom.put_coord_info(TRUE)
         case ("put_ao_energy_partition       "); .put_AO_energy_partition
+        case ("put_bda_charges               "); .MAIN:put_BDA_charges
       ! case ("put_atom_kind_map             "); .put_atom_kind_map
         case ("put_chi2_vs_angle_plot        "); .crystal.put_chi2_vs_angle_plot
         case ("put_cif                       "); .MAIN:put_cif
