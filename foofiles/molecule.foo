@@ -5047,6 +5047,38 @@ contains
 
    end
 
+!   make_partition_factor(p,atom_a,is_zero)
+!   ! Make the partitition factor "p" for a particular thermal smearing
+!   ! "model", for "atom_a". Return "is_zero" as TRUE if p is zero.
+!      p :: REAL
+!      atom_a :: INT, IN
+!      is_zero :: BIN, OUT, optional
+!
+!   ENSURE(.crystal.created,"no crystal data")
+!
+!      ra,fa :: REAL
+!
+!      ra = .crystal.repetition_factor(atom_a)
+!
+!      if (present(is_zero)) then
+!        if (ra<1) then; is_zero = TRUE; return
+!        else;           is_zero = FALSE
+!        end
+!      end
+!
+!      if (ra<1) then; fa = ZERO
+!      else;           fa = ONE/ra
+!      end
+!
+!      select case (trim(.crystal.partition_model))
+!         case (" ","none"); p = ONE
+!         case ("mulliken"); p = fa
+!         case ("gaussian"); p = fa
+!         case default;      DIE("unknown model, "//trim(.crystal.partition_model))
+!      end
+!
+!   end
+
    make_partition_factors(p,sh,atom_a,atom_b,is_zero)
    ! Make the partitition factors "p" for a particular thermal smearing "model",
    ! for a given "sh" pair with atom centres "atom_a" and "atom_b".
@@ -5400,6 +5432,62 @@ contains
       .crystal.make_F_predicted
      ! stdout.text("X-ray structure factor data", flush=1)
      ! .crystal.data.reflections.put_structure_factor_data
+
+   end
+
+   make_x_structure_factors_h(D)
+   ! Make the structure factors from a rhf density matrix "D".
+      D :: MAT{REAL}
+
+   ENSURE(.crystal.created, "no crystal")
+   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+      genre :: STR
+
+      ! Allocate complex structure factors
+      Fc.create(.crystal.n_refl)
+
+      ! Make unique k points
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+      .crystal.make_unique_SF_k_pts(k_pts)
+
+      ! Make the unique structure factors
+      sf_eq.create(k_pts.dim1)
+      .make_ft(sf_eq,D,k_pts)
+
+      ! Clean
+      k_pts.destroy
+
+      ! Sum up unique SF's to get Fc
+      .crystal.sum_unique_sf(Fc,sf_eq)
+
+      ! Make dispersion correction
+      if (.crystal.correct_dispersion) then
+        k_pts.create(.crystal.n_refl,3)
+        .crystal.make_k_pts(k_pts)
+        .add_dispersion_correction(Fc,k_pts)
+        k_pts.destroy
+      end
+
+      ! Clean
+      sf_eq.destroy
+
+      ! Set the calculated SF's
+      .crystal.set_F_calc(Fc)
+
+      ! Clean
+      Fc.destroy
+
+      ! Make predicted structure factors
+      .crystal.make_F_predicted
+
+      ! Debugging
+      if (.debugging("make_x_structure_factors_h")) then
+         stdout.text("X-ray structure factor data",flush=1)
+         .crystal.data.reflections.put_structure_factor_data
+      end
 
    end
 
@@ -8668,7 +8756,7 @@ contains
       ! Create the single atom and copy its pointers
       ! WARNING: dont destroy ptr parts of mol.atom 
       mol.atom.create(1)
-      mol.atom = .atom(n)                   
+      mol.atom(1) = .atom(n)                ! <<< pointer copy here
       mol.atom(1).group = 0                 ! does not belong to a group
       mol.atom(1).pos = (/ZERO,ZERO,ZERO/)
 
@@ -22443,13 +22531,14 @@ contains
      P.create(n_pt,3)
      D.create(n_pt,3)
      n_occ = .no_of_occupied_NOs
-     do n = 1,n_occ
+     parallel do n = 1,n_occ
        .make_laplacian_orbital_grid_r(D,P,NO,.natural_orbitals.restricted(:,n), pt)
-       laplacian_grid(:) = laplacian_grid(:) +  &
+       laplacian_grid = laplacian_grid +  &
           .occupation_numbers.restricted(n) * ( &
           NO * (D(:,1)+D(:,2)+D(:,3)) + (P(:,1)*P(:,1) + P(:,2)*P(:,2) + P(:,3)*P(:,3)))
      end
-     laplacian_grid(:) = TWO*laplacian_grid(:)
+     PARALLEL_SUM(laplacian_grid)
+     laplacian_grid = TWO*laplacian_grid
      D.destroy
      P.destroy
      NO.destroy
@@ -26067,6 +26156,7 @@ contains
      mol.delete_archive("occupation_numbers")
 
      ! Destroy the atoms's NO 
+     .atom(a).atomic_orbitals.destroy
      .atom(a).density_matrix.destroy
      .atom(a).occupation_numbers.destroy
      .atom(a).natural_orbitals.destroy
@@ -26075,6 +26165,7 @@ contains
      .atom(a).natural_orbitals   => mol.natural_orbitals
      .atom(a).occupation_numbers => mol.occupation_numbers
      .atom(a).density_matrix     => mol.density_matrix
+     .atom(a).atomic_orbitals    => mol.molecular_orbitals
      .atom(a).energy             =  mol.scfdata.energy
 
      ! Nullify parts we just copied or can't destroy
@@ -26082,6 +26173,7 @@ contains
      nullify(mol.natural_orbitals)   ! do not destroy this
      nullify(mol.occupation_numbers) ! do not destroy this
      nullify(mol.density_matrix)     ! do not destroy this
+     nullify(mol.molecular_orbitals) ! do not destroy this
      nullify(mol.basis)              ! do not destroy this
      nullify(mol.slaterbasis)        ! do not destroy this
      nullify(mol.coppensbasis)       ! do not destroy this
@@ -26253,6 +26345,133 @@ contains
 !        end
 !      end
 !   end
+
+
+!  ***********************
+!  Core structure factors
+!  ***********************
+
+   make_core_structure_factors ::: leaky
+   ! Make em!
+
+   ENSURE(.atom.created,"no atoms")
+   ENSURE(.atom_info_made,"no atom info")
+   ENSURE(.basis.created,"no basis set")
+   ENSURE(.basis_info_made,"no basis_set info")
+   ENSURE(.unique_atom.created,"no unique atom list")
+   ENSURE(.atom_kind.created,"no atom kind list")
+   ENSURE(.crystal.created,"no crystal information!")
+   ENSURE(.crystal.xray_data.created,"no crystal xray data!")
+   ENSURE(.crystal.xray_data.reflections.created,"no crystal xray data reflection!")
+
+      k_pt,D,AO :: MAT{REAL}*
+      k1,k2,k3  :: VEC{REAL}*
+      ru,rj,diff :: VEC{REAL}(3)
+      core,phase :: VEC{CPX}*
+      mol :: MOLECULE*
+      II  :: CPX
+      n_k,n_core,n_bf,k,u,j,n :: INT
+
+      ! Complex i
+      II = cmplx(ZERO,ONE)
+
+      ! Make ANO data if not already there ...
+      .make_ANO_data                            ! <-- leaky
+
+      ! Create space for the core reflections
+      .crystal.core_reflection.destroy          ! <-- leaky
+      .crystal.core_reflection.create(.crystal.xray_data.reflections.dim)
+
+      ! Space for k points
+      n_k = .crystal.xray_data.reflections.dim
+      k_pt.create(n_k,3)     
+
+      ! Make k points and components k1, k2, k3 ...
+      .crystal.make_k_pts(k_pt)
+      k1 => k_pt(:,1)
+      k2 => k_pt(:,2)
+      k3 => k_pt(:,3)
+
+      ! Make space for translation phases
+      phase.create(n_k)
+
+      ! Get core structure factors only for unique atoms
+      do k = 1,.n_atom_kind 
+
+        ! The unique atom in .atom list
+        u = .unique_atom(k)
+
+        ! Skip H atoms they have no core!
+        if (.atom(u).atomic_number==1) cycle
+
+        ! No. of core orbitals
+        n_core = .atom(u).n_core_electrons/2
+
+        ! Core atomic orbitals
+        AO => .atom(u).atomic_orbitals.restricted(:,1:n_core)
+
+        ! No. of basis functions for atom u
+        n_bf = AO.dim1
+
+        ! Space for the core density matrix
+        D.create(n_bf,n_bf)
+
+        ! Make the core density matrix
+        D.to_product_of(AO,AO,transpose_b=TRUE)
+
+        ! Make a molecule from atom u
+        mol.create
+        .make_molecule_from_atom(u,mol)
+
+        ! Duplicate crystal information into this mol
+        mol.crystal.create_copy(.crystal)
+
+        ! Make the core structure factors
+        mol.make_x_structure_factors_h(D)
+        D.destroy
+
+        ! Make a copy of atom u's core structure factors
+        core.create_copy(mol.crystal.xray_data.reflections(:).F_calc)
+
+        ! Nullify parts we just copied or can't destroy
+        mol.atom.nullify_ptr_part       ! do not destroy ptr part
+        nullify(mol.basis)              ! do not destroy this
+        nullify(mol.slaterbasis)        ! do not destroy this
+        nullify(mol.coppensbasis)       ! do not destroy this
+
+        ! Safe to destroy
+        mol.destroy
+
+        ! Add in the core reflections for atom u
+        .crystal.core_reflection(:).F_calc = .crystal.core_reflection(:).F_calc + core
+
+        ! Store atom u position
+        ru = .atom(u).pos
+
+        ! Loop over other equivalent atoms; add core contributions
+        do j = u+1,.n_atom
+
+           if (.atom_kind(j)/=k) cycle
+
+           ! Difference between atom u and atom j position
+           diff = .atom(j).pos - ru
+
+           ! Make the phase shifts
+           do n = 1,n_k
+              phase(n) = exp(II*(k1(n)*diff(1)+k2(n)*diff(2)+k3(n)*diff(3)))
+           end
+
+           ! Add the structure factors in
+           .crystal.core_reflection(:).F_calc = .crystal.core_reflection(:).F_calc + phase*core
+
+        end
+
+      end
+
+      ! Clean up
+      k_pt.destroy
+
+   end
 
 !  *********************************************
 !  Spherically average atoms in existing density
