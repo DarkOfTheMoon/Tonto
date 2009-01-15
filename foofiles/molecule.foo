@@ -10009,6 +10009,7 @@ contains
      sh :: SHELL2
      fac,cutoff :: REAL
      q,fa,la,fb,lb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
+
      n_unique = .crystal.n_unique_SF_k_pts
      n_refl = .crystal.n_refl
      fac = TWO/max(n_refl - .crystal.n_param,1)
@@ -10019,12 +10020,15 @@ contains
      Fexp.create(n_refl);  Fexp = .crystal.F_exp
      Fsig.create(n_refl);  Fsig = .crystal.F_sigma
      Fm.create(n_refl);    Fm = max(abs(Fc),TOL(10))
+
      fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
  !   fac_times_alpha = fac * alpha * (alpha - Fexp/Fm) / (Fsig * Fsig)
+
      Fm.destroy
      Fsig.destroy
      Fexp.destroy
      alpha.destroy
+
      Fconjg.create(n_refl)
      Fconjg=conjg(Fc)
      k_pts.create(n_unique,3)
@@ -10055,15 +10059,27 @@ contains
        ft_ab.destroy
        sh.destroy_ptr_part
      end
+
+     ! Symmetrise
      if (DO_IN_PARALLEL) then
         PARALLEL_SYMMETRIC_SUM(C)
      else
         C.symmetric_reflect
      end
+
+     ! Get rid of OO block if requested
+     if (.scfdata.zero_oo_constraint_block) then
+        C.change_basis_using(.molecular_orbitals.restricted)
+        C(1:.n_a,1:.n_a) = ZERO
+        C.back_transform_using(.molecular_orbitals.restricted)
+     end
+
+     ! Clean up
      Fconjg.destroy
      k_pts.destroy
      Fc.destroy
      fac_times_alpha.destroy
+
    end
    
    make_pnd_constraint(C)
@@ -15566,8 +15582,11 @@ contains
          ! Evaluate XC potentials and energy density.
          V0 = ZERO                              
          V1 = ZERO                              
-         .add_r_XC_potentials(V0,rho0,V1,rho1)  
-         .set_r_XC_energy_density(E0,rho0,rho1)
+         .new_set_r_XC_potentials(V0,rho0 &
+            ,V1(:,1),V1(:,2),V1(:,3) &
+            ,rho1(:,1),rho1(:,2),rho1(:,3)) ! Evaluation the XC potentials
+         .new_set_r_XC_energy_density(E0,rho0 &
+            ,rho1(:,1),rho1(:,2),rho1(:,3)) ! Evaluation the XC potentials
          rho1.destroy; rho0.destroy
          
          ! Incorporate weights into XC potential
@@ -15594,6 +15613,10 @@ contains
          end
          ab0.destroy; E0.destroy
          V1.destroy; V0.destroy
+
+         stdout.text("V:")
+         stdout.put(V(fa+1:la,fb+1:lb))
+         stop
 
          ! Clean up
          if (same_atoms) then
@@ -15832,6 +15855,69 @@ contains
       if (corr/="none") add.r_potential(corr,V0,rho0,V1,rho1)
    end
 
+
+   new_set_r_XC_energy_density(E,N0,Nx,Ny,Nz)
+   ! Set the *restricted* exchange correlation energy density "E", for
+   ! given densities "N0" and gradient densities "Nn".
+      E  :: VEC{REAL}, OUT
+      N0 :: VEC{REAL}, IN
+      Nx,Ny,Nz :: VEC{REAL}, IN, optional
+
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.becke_grid.created,"no becke_grid")
+
+      exch,corr :: STR
+      add :: DFT_FUNCTIONAL
+
+      if (NOT .scfdata.is_DFT_calculation) return
+
+      add.set_defaults
+      add.set_rho_cutoff(.becke_grid.rho_cutoff)
+
+      exch = .scfdata.dft_exchange_functional
+      corr = .scfdata.dft_correlation_functional
+
+      E = ZERO ! <<< set to zero
+
+      if (exch/="none") add.new_r_energy_density(exch,E,N0,Nx,Ny,Nz)
+      if (corr/="none") add.new_r_energy_density(corr,E,N0,Nx,Ny,Nz)
+
+   end
+
+   new_set_r_XC_potentials(V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+   ! For given densities "N0" and gradient densities "Nn", return
+   ! "V0" and "Vn", the local and non_local terms necessary to
+   ! calculate the matrix elements of the *restricted* exchange
+   ! correlation potential. 
+      V0 :: VEC{REAL}, INOUT
+      N0 :: VEC{REAL}, IN
+      Vx,Vy,Vz :: VEC{REAL}, INOUT, optional
+      Nx,Ny,Nz :: VEC{REAL}, IN, optional
+
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.becke_grid.created,"no becke_grid")
+
+      exch,corr :: STR
+      add :: DFT_FUNCTIONAL
+
+      if (NOT .scfdata.is_DFT_calculation) return
+
+      add.set_defaults
+      add.set_rho_cutoff(.becke_grid.rho_cutoff)
+
+      exch = .scfdata.dft_exchange_functional
+      corr = .scfdata.dft_correlation_functional
+
+      V0 = ZERO ! <<< set to zero
+      if (present(Vx)) then
+         Vx = ZERO; Vy = ZERO; Vz = ZERO
+      end
+
+      if (exch/="none") add.new_r_potential(exch,V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+      if (corr/="none") add.new_r_potential(corr,V0,N0,Vx,Vy,Vz,Nx,Ny,Nz)
+
+   end
+
 !*******************************************************************************
 !  Unrestricted DFT
 !*******************************************************************************
@@ -15969,7 +16055,7 @@ contains
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.becke_grid.created, "need to specify becke_grid for DFT integrations")
       a1,b1 :: MAT3{REAL}*
-      pt,rho1a,rho1b,a0,b0,V1a,V1b,Vb,Va,W :: MAT{REAL}*
+      pt,rho1a,rho1b,a0,b0,V1a,V1b,Vb,Va :: MAT{REAL}*
       wt,rho0a,rho0b,V0a,V0b,E0,ab0 :: VEC{REAL}*
       q,a,b,aa,bb,fa,la,na,fb,lb,nb,n_pt, ma,mb :: INT
       atom_a,atom_b,i :: INT
@@ -15978,7 +16064,6 @@ contains
       atom2 :: VEC{INT}(2), target
       atoms :: VEC{INT}*
       Va_ab,Vb_ab,E_ab,Da_ab,Db_ab,fac :: REAL
-      W.create(.n_bf,.n_bf)
       Va.create(.n_bf,.n_bf)                    ! Use temporary V for parallelisation
       Vb.create(.n_bf,.n_bf)
       nullify(a0); nullify(b0)
@@ -16005,10 +16090,15 @@ contains
        !     a1,a0,b1,b0,ma,mb,.becke_grid.rho_cutoff) ! re-use a0, b0 grids
          .make_nabla_density_grid_u_A(rho1a,rho1b,rho0a,rho0b,pt,atoms, &
              a1,a0,b1,b0,.becke_grid.rho_cutoff) ! re-use a0, b0 grids
+
          V0a = ZERO; V0b = ZERO                    
          V1a = ZERO; V1b = ZERO                    
-         .add_u_XC_potentials(V0a,V0b,rho0a,rho0b,V1a,V1b,rho1a,rho1b) ! Evaluation the XC potentials
-         .set_u_XC_energy_density(E0,rho0a,rho0b,rho1a,rho1b)
+         .new_set_u_XC_potentials(V0a,V0b,rho0a,rho0b &
+            ,V1a(:,1),V1a(:,2),V1a(:,3),V1b(:,1),V1b(:,2),V1b(:,3) &
+            ,rho1a(:,1),rho1a(:,2),rho1a(:,3),rho1b(:,1),rho1b(:,2),rho1b(:,3)) ! Evaluation the XC potentials
+         .new_set_u_XC_energy_density(E0,rho0a,rho0b &
+            ,rho1a(:,1),rho1a(:,2),rho1a(:,3),rho1b(:,1),rho1b(:,2),rho1b(:,3)) ! Evaluation the XC potentials
+
   ! stdout.show("q =",q)
   ! stdout.text("pt:")
   ! stdout.put(pt)
@@ -16080,8 +16170,7 @@ contains
   ! stdout.put(Va(fa+1:la,fb+1:lb))
   ! stdout.text("Vb:")
   ! stdout.put(Vb(fa+1:la,fb+1:lb))
-  ! stdout.text("W:")
-  ! stdout.put(W(fa+1:la,fb+1:lb))
+  ! stop
          ab0.destroy; E0.destroy
          V1b.destroy; V1a.destroy
          V0b.destroy; V0a.destroy
@@ -16103,7 +16192,6 @@ contains
     ! E = E - HALF*.density_matrix.alpha.trace_of_product_with(Va) &
     !       - HALF* .density_matrix.beta.trace_of_product_with(Vb)
       Vb.destroy; Va.destroy
-      W.destroy
    end
 
    add_u_XC_functionals(E,rho0a,rho0b,rho1a,rho1b)
@@ -16164,6 +16252,70 @@ contains
       corr = .scfdata.dft_correlation_functional
       if (exch/="none") add.u_potential(exch,V0a,V0b,rho0a,rho0b,V1a,V1b,rho1a,rho1b)
       if (corr/="none") add.u_potential(corr,V0a,V0b,rho0a,rho0b,V1a,V1b,rho1a,rho1b)
+   end
+
+
+   new_set_u_XC_energy_density(E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+   ! Return the *unrestricted* exchange correlation energy density "E", for
+   ! given alpha and beta densities "rho0a", "rho0b" and for the alpha and beta
+   ! gradient densities "rho1a", "rho1b".
+      E :: VEC{REAL}, OUT
+      N0a,N0b :: VEC{REAL}, IN
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN, optional
+
+   ENSURE(.scfdata.created,"no scfdata")
+
+      exch,corr :: STR
+      add :: DFT_FUNCTIONAL
+
+      if (NOT .scfdata.is_DFT_calculation) return
+
+      add.set_defaults
+      add.set_rho_cutoff(.becke_grid.rho_cutoff)
+
+      exch = .scfdata.dft_exchange_functional
+      corr = .scfdata.dft_correlation_functional
+
+      E = ZERO ! <<< set to zero
+
+      if (exch/="none") add.new_u_energy_density(exch,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+      if (corr/="none") add.new_u_energy_density(corr,E,N0a,N0b,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+
+   end
+
+   new_set_u_XC_potentials(V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+   ! For given alpha and beta densities "N0a", "N0b" and gradient
+   ! densities "Nxa", ..., "Nzb" return the alpha and beta local
+   ! potentials, "V0a" and "V0b", and the non local potentails "Vxa",
+   ! ... , "Vzb" needed to calculate the matrix elements of the
+   ! *unrestricted* exchange correlation potentials. 
+      V0a,V0b :: VEC{REAL}, INOUT
+      N0a,N0b :: VEC{REAL}, IN
+      Vxa,Vya,Vza,Vxb,Vyb,Vzb :: VEC{REAL}, OUT, optional
+      Nxa,Nya,Nza,Nxb,Nyb,Nzb :: VEC{REAL}, IN, optional
+
+   ENSURE(.scfdata.created,"no scfdata")
+
+      exch,corr :: STR
+      add :: DFT_FUNCTIONAL
+
+      if (NOT .scfdata.is_DFT_calculation) return
+
+      add.set_defaults
+      add.set_rho_cutoff(.becke_grid.rho_cutoff)
+
+      exch = .scfdata.dft_exchange_functional
+      corr = .scfdata.dft_correlation_functional
+
+      V0a = ZERO; V0b = ZERO ! <<< set to zero
+      if (present(Vxa)) then
+         Vxa = ZERO; Vya = ZERO; Vza = ZERO
+         Vxb = ZERO; Vyb = ZERO; Vzb = ZERO
+      end
+
+      if (exch/="none") add.new_u_potential(exch,V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+      if (corr/="none") add.new_u_potential(corr,V0a,V0b,N0a,N0b,Vxa,Vya,Vza,Vxb,Vyb,Vzb,Nxa,Nya,Nza,Nxb,Nyb,Nzb)
+
    end
 
 ! Numerical J matrix -- calculated two ways
