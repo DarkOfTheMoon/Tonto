@@ -2009,7 +2009,7 @@ contains
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
 
-      .make_ao_density_matrix(.density_matrix)
+      .make_ao_density_matrix(.density_matrix)   ! leaky
       .archive(.density_matrix,"density_matrix")
 
    end
@@ -2197,13 +2197,13 @@ contains
       arch.write(.density_matrix)
    end
 
-   make_progroup_density_matrix
+   make_progroup_density_matrix ::: leaky
    ! Make the density matrix which is a sum of density matrices for
    ! each group specified in the molecule in the atom_group array.
    ! This will destroy any existing restricted density matrix archive.
       archive :: ARCHIVE
       P :: OPMATRIX*
-      .make_progroup_density
+      .make_progroup_density ! leaky
       P.create(.n_bf)
       archive.set(.name,"progroup_density_matrix", genre="restricted")
       archive.read(P, genre="restricted")
@@ -2219,14 +2219,14 @@ contains
    ! orthonormalised molecular orbitals are made and are ordered by group.  This
    ! will destroy any existing restricted density matrix and MOs.
    ENSURE(.molecular_orbitals.created,"no MO's")
-      .make_progroup_density(MOs=TRUE)
-      .symorthonormalise_occupied_MOs
+      .make_progroup_density(MOs=TRUE) ! leaky
+      .symorthonormalise_occupied_MOs  ! leaky
       .natural_orbitals => .molecular_orbitals
       .make_density_matrix
       nullify(.natural_orbitals)
    end
 
-   symorthonormalise_occupied_MOs
+   symorthonormalise_occupied_MOs ::: leaky
    ! Symmetrically orthonormalise the occupied MO's. The occupied orbitals
    ! are defined by the .occupation_numbers vector. The virtual orbitals are
    ! schmidt orthonormalised to the occupied MOs. Only works for restricted
@@ -2728,6 +2728,11 @@ contains
 
    make_primitive_overlap_matrix(S)
    ! Calculate the primitive overlap matrix "S"
+   ! NOTE: if the contraction coefficients have been unnormalised (as
+   ! is usually the case) then this overlap matrix will not have one's
+   ! on the diagonal. The make normalised overlap integrals refers to
+   ! the fact that the l > d shell type factors have been inlcuded and
+   ! not the overall normalisation of the primitive.
       S :: MAT{REAL}
    ENSURE(.atom.created,  "no atom list")
    ENSURE(.basis_info_made, "no basis info")
@@ -2954,7 +2959,7 @@ contains
 
       ! Make a symmetric matrix
       T.symmetric_reflect
-      .put_debug(T,"primitive overlap matrix")
+      .put_debug(T,"primitive kinetic matrix")
 
       ! Test
    ! ccm.create(.n_prim,.n_bf)
@@ -3513,40 +3518,63 @@ contains
 !  Core matrix
 !  ***********
 
-   get_core_matrix(nuclei) ::: leaky
+   get_core_matrix ::: leaky
    ! Get the core hamiltonian matrix. 
-   ! If already in memory, do nothing.
-   ! Otherwise make it.
-      nuclei :: VEC{INT}, optional
+   ! If already in memory, do nothing. Otherwise make it.
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
 
-      Z,F :: MAT{REAL}*
+      ! No scfdata ====
+      if (.scfdata.destroyed) then
+
+         if (.core_matrix.destroyed("restricted")) then
+            .core_matrix.create(.n_bf,"restricted") ! leaky
+            .make_r_core_matrix(.core_matrix.restricted)
+         end
+
+      ! Has scfdata ====
+      else
+
+         select case (.scfdata.scf_kind)
+            case ("gchf"); .get_gc_core_matrix
+            case default;  .get_r_core_matrix
+         end
+
+      end
+
+   end
+
+
+   get_r_core_matrix ::: leaky
+   ! Get the restricted core hamiltonian matrix. 
+   ! If already in memory, do nothing; otherwise make it.
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.scfdata.created,  "no scfdata")
+
+      Z,F,H :: MAT{REAL}*
 
       ! If using self consistent cluster charges, 
-      ! get a new core matrix.
-      if (.scfdata.created) then
+      ! destroy core matrix to force a re-build
       if (.scfdata.using_SC_cluster_charges) then
       if  (NOT .Hirshfeld_atom_info_made) then
          .core_matrix.destroy
       end
       end
-      end
 
       ! Return if already there
-      if (.core_matrix.created) return
+      if (.core_matrix.created("restricted")) return
 
-      ! Make the core matrix 
-      .core_matrix.create(.n_bf,.n_bf) ! leaky
-  ! the following matrices have been added by Hudy&Bucini
-      if(.scfdata.using_douglas_kroll_hess) then
-         .make_DKH_1e_matrix(.core_matrix)
-      else
-         .make_core_matrix(.core_matrix,nuclei)
+      ! Allocate the core matrix 
+      .core_matrix.create(.n_bf,"restricted") ! leaky
+      H => .core_matrix.restricted            ! *** ALIAS ***
+
+      ! Make the core matrix here (relativistic vs non-rel)
+      if (.scfdata.using_douglas_kroll_hess) then; .make_r_DKH_matrix(H)
+      else;                                        .make_r_core_matrix(H)
       end
 
       ! No cluster charges for SCF guess
-      if (.scfdata.destroyed) return
       if (.scfdata.is_guess)  return
 
       ! Add cluster charges if needed 
@@ -3559,33 +3587,37 @@ contains
             .crystal.make_fragment_data(.atom,warnings=FALSE) 
          end
          Z.create(.n_bf,.n_bf)
-         .make_pt_charge_matrix(Z) 
-         .core_matrix = .core_matrix + Z
+         .make_pt_charge_matrix(Z) ! leaky
+         H = H + Z
+         Z.destroy
       end
 
+      ! Add Lorentz fields if needed 
       if (.scfdata.using_local_Lorentz_fields) then
          Z.create(.n_bf,.n_bf)
          F.create(.n_bf,.n_bf)
          .make_local_E_fields_in_core(Z,F)
-         .core_matrix = .core_matrix + Z
+         H = H + Z
          F.destroy
          Z.destroy
       end
 
    end
 
-   make_core_matrix(H,nuclei)
+   make_r_core_matrix(H)
    ! Make the core hamiltonian matrix "H".
       H :: MAT{REAL}
-      nuclei :: VEC{INT}, optional
+
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
+
       Z,Dx,Dy,Dz :: MAT{REAL}*
+
       .make_kinetic_matrix(H)
-      Z.create(.n_bf, .n_bf)
-      if (present(nuclei)) then; .make_nuclear_matrix(Z,nuclei)
-      else;                      .make_nuclear_matrix(Z)
-      end
+
+      Z.create(.n_bf,.n_bf)
+      .make_nuclear_matrix(Z)
+
       if (NOT .E_field.is_zero) then
          Dx.create(.n_bf,.n_bf)
          Dy.create(.n_bf,.n_bf)
@@ -3594,12 +3626,429 @@ contains
          Z = Z + Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
          Dz.destroy; Dy.destroy; Dx.destroy
       end
+
       H = H + Z
+
       Z.destroy
+
       .put_debug(H,"core matrix")
+
    end
 
-   make_pt_charge_matrix(Z)
+!   make_r_core_matrix(H,nuclei)
+!   ! Make the core hamiltonian matrix "H".
+!      H :: MAT{REAL}
+!      nuclei :: VEC{INT}
+!
+!   ENSURE(.basis_info_made, "no basis info")
+!   ENSURE(.atom.created,  "no atom list")
+!
+!      Z,Dx,Dy,Dz :: MAT{REAL}*
+!
+!      .make_kinetic_matrix(H)
+!
+!      Z.create(.n_bf, .n_bf)
+!      if (present(nuclei)) then; .make_nuclear_matrix(Z,nuclei)
+!      else;                      .make_nuclear_matrix(Z)
+!      end
+!
+!      if (NOT .E_field.is_zero) then
+!         Dx.create(.n_bf,.n_bf)
+!         Dy.create(.n_bf,.n_bf)
+!         Dz.create(.n_bf,.n_bf)
+!         .get_dipole_matrices(Dx,Dy,Dz)
+!         Z = Z + Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
+!         Dz.destroy; Dy.destroy; Dx.destroy
+!      end
+!
+!      H = H + Z
+!
+!      Z.destroy
+!
+!      .put_debug(H,"core matrix")
+!
+!   end
+
+
+   get_gc_core_matrix ::: leaky
+   ! Get the general complex core hamiltonian matrix. 
+   ! If already in memory, do nothing; otherwise make it.
+   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(.atom.created,  "no atom list")
+   ENSURE(.scfdata.created,  "no scfdata")
+
+      ! Return if core matrix already there
+      if (.core_matrix.created("general_complex")) return
+
+      ! Make and zero the gc core matrix 
+      .core_matrix.create(.n_bf,"general_complex") ! leaky
+      .core_matrix.general_complex = (ZERO,ZERO)
+
+      ! Add the lower half in ... depending on the method
+      ! NOTE: there may be some failures here ...
+      if (.scfdata.using_douglas_kroll_hess) .add_gc_DKH_core_matrix
+      if (.scfdata.using_1e_zora_term)       .add_gc_ZORA_core_matrix
+      if (.scfdata.using_pauli_terms)        .add_gc_Pauli_core_matrix
+
+      ! Make it Hermitian
+      .core_matrix.general_complex.make_hermitian
+
+   end
+
+   add_gc_DKH_core_matrix
+   ! Add the DKH core hamiltonian
+   ! NOTE: only lower half is made
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.using_douglas_kroll_hess," no DKH?")
+   ENSURE(.core_matrix.created("general_complex"),"no core matrix")
+
+      HH :: MAT{CPX}*
+      T,Lx,Ly,Lz :: MAT{REAL}*
+      fac :: REAL
+      I :: CPX
+
+      I = (ZERO,ONE)
+            
+      T.create(.n_bf,.n_bf)
+      Lx.create(.n_bf,.n_bf)
+      Ly.create(.n_bf,.n_bf)
+      Lz.create(.n_bf,.n_bf)
+
+      .make_DKH_matrices(T,Lx,Ly,Lz)
+
+      ! *** ALIAS ***
+      HH => .core_matrix.general_complex  
+
+      HH.alpha_alpha_plus(T)
+      HH.beta_beta_plus(T)
+
+      fac= ONE
+      HH.beta_alpha_plus(Lx,factor=fac*I)
+      HH.beta_alpha_plus(Ly,factor=-fac)
+      HH.alpha_alpha_plus(Lz,factor=fac*I)
+      HH.beta_beta_plus(Lz,factor=-fac*I)
+
+      T.destroy
+      Lz.destroy; Ly.destroy; Lx.destroy
+
+   end
+
+   add_gc_ZORA_core_matrix
+   ! Add the core hamiltonain to a general complex "F"
+   ! NOTE: only lower half is made
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.using_1e_zora_term," no Pauli?")
+   ENSURE(.core_matrix.created("general_complex"),"no core matrix")
+
+      HH :: MAT{CPX}*
+      S,T,Lx,Ly,Lz :: MAT{REAL}*
+      BB :: MAT{REAL}(3,3)
+      k,l :: INT
+      fac :: REAL
+      I :: CPX
+
+      I = (ZERO,ONE)
+            
+      T.create(.n_bf,.n_bf)
+      Lx.create(.n_bf,.n_bf)
+      Ly.create(.n_bf,.n_bf)
+      Lz.create(.n_bf,.n_bf)
+      .get_1e_ZORA_matrices(T,Lx,Ly,Lz)
+
+      ! *** ALIAS ***
+      HH => .core_matrix.general_complex  
+
+      HH.alpha_alpha_plus(T)
+      HH.beta_beta_plus(T)
+
+      fac = G_FACTOR/TWO
+      fac = fac * .scfdata.sl_1e_factor
+      HH.beta_alpha_plus(Lx,factor=-fac*I)
+      HH.beta_alpha_plus(Ly,factor=fac)
+      HH.alpha_alpha_plus(Lz,factor=-fac*I)
+      HH.beta_beta_plus(Lz,factor=fac*I)
+
+      T.destroy
+      Lz.destroy; Ly.destroy; Lx.destroy
+
+   end
+
+   add_gc_Pauli_core_matrix
+   ! Add the Pauli core hamiltonian ... including B-field terms
+   ! NOTE: only lower half is made
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.using_pauli_terms," no Pauli?")
+   ENSURE(.core_matrix.created("general_complex"),"no core matrix")
+
+      HH :: MAT{CPX}*
+      S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
+      BB :: MAT{REAL}(3,3)
+      k,l :: INT
+      fac :: REAL
+      I :: CPX
+
+      I = (ZERO,ONE)
+
+      ! *** ALIAS ***
+      HH => .core_matrix.general_complex           
+            
+      ! Diagonal part
+      .get_r_core_matrix
+      HH.alpha_alpha_plus(.core_matrix.restricted)
+      HH.beta_beta_plus(.core_matrix.restricted)
+
+      ! The Pauli terms below are not normally active if Douglas-Kroll
+      ! has been used
+      if (.scfdata.using_1e_sl_term) then
+
+            Lx.create(.n_bf,.n_bf)
+            Ly.create(.n_bf,.n_bf)
+            Lz.create(.n_bf,.n_bf)
+            .get_spin_orbit_matrices(Lx,Ly,Lz)
+            fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
+            fac = fac * .scfdata.sl_1e_factor
+            HH.beta_alpha_plus(Lx,factor=-fac*I)
+            HH.beta_alpha_plus(Ly,factor=fac)
+            HH.alpha_alpha_plus(Lz,factor=-fac*I)
+            HH.beta_beta_plus(Lz,factor=fac*I)
+            Lz.destroy; Ly.destroy; Lx.destroy
+
+      end
+
+      if (NOT .B_field.is_zero) then
+
+         if (.scfdata.using_bs_term) then
+            .get_overlap_matrix
+            fac = G_FACTOR/FOUR
+            HH.alpha_alpha_plus(.overlap_matrix,factor=fac*.B_field(3))
+            HH.beta_beta_plus(.overlap_matrix,factor=-fac*.B_field(3))
+            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(1))
+            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(2)*I)
+         end
+
+         if (.scfdata.using_bs_t_term) then
+            T.create(.n_bf,.n_bf)
+            .get_kinetic_matrix(T)
+            fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
+            HH.alpha_alpha_plus(T,factor=fac*.B_field(3))
+            HH.beta_beta_plus(T,factor=-fac*.B_field(3))
+            HH.beta_alpha_plus(T,factor=fac*.B_field(1))
+            HH.beta_alpha_plus(T,factor=fac*.B_field(2)*I)
+            T.destroy
+         end
+
+         if (.scfdata.using_bl_term) then
+            Lx.create(.n_bf,.n_bf)
+            Ly.create(.n_bf,.n_bf)
+            Lz.create(.n_bf,.n_bf)
+            .get_L_matrices(Lx,Ly,Lz)
+            Lx = Lx*.B_field(1) + Ly*.B_field(2) + Lz*.B_field(3)
+            fac = HALF
+            HH.alpha_alpha_plus(Lx,factor=fac*I)
+            HH.beta_beta_plus(Lx,factor=fac*I)
+            Lz.destroy; Ly.destroy; Lx.destroy
+         end
+
+         if (.scfdata.using_aa_term) then
+           xx.create(.n_bf,.n_bf); yy.create(.n_bf,.n_bf); zz.create(.n_bf,.n_bf)
+           xy.create(.n_bf,.n_bf); xz.create(.n_bf,.n_bf); yz.create(.n_bf,.n_bf)
+           .get_quadrupole_matrices(xx,yy,zz,xy,xz,yz)
+           fac = ONE/EIGHT
+           do k = 1,3
+              BB(k,k) = fac*(sum(.B_field*.B_field) - .B_field(k)*.B_field(k))
+           end
+           do k = 1,3
+           do l = k+1,3
+              BB(k,l) = -TWO*fac*.B_field(k)*.B_field(l)
+           end
+           end
+           xx =      BB(1,1)*xx; xx = xx + BB(2,2)*yy; xx = xx + BB(3,3)*zz
+           xx = xx + BB(1,2)*xy; xx = xx + BB(1,3)*xz; xx = xx + BB(2,3)*yz
+           HH.alpha_alpha_plus(xx)
+           HH.beta_beta_plus(xx)
+           yz.destroy; xz.destroy; xy.destroy
+           zz.destroy; yy.destroy; xx.destroy
+         end
+
+         if (.scfdata.using_1e_srxa_term) then
+            Lx.create(.n_bf,.n_bf)
+            Ly.create(.n_bf,.n_bf)
+            Lz.create(.n_bf,.n_bf)
+            .get_spin_orbit_B_matrices(Lx,Ly,Lz)
+            fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
+            HH.beta_alpha_plus(Lx,factor=fac)
+            HH.beta_alpha_plus(Ly,factor=fac*I)
+            HH.alpha_alpha_plus(Lz,factor=fac)
+            HH.beta_beta_plus(Lz,factor=-fac)
+            Lz.destroy; Ly.destroy; Lx.destroy
+         end
+
+      end
+
+   end
+
+!   get_gc_core_hamiltonian
+!   ! Add the core hamiltonain to a general complex "F"
+!   ENSURE(.scfdata.created,"no scfdata")
+!
+!      HH :: MAT{CPX}*
+!      S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
+!      BB :: MAT{REAL}(3,3)
+!      k,l :: INT
+!      fac :: REAL
+!      I :: CPX
+!
+!      ! Return if already there
+!      if (.core_matrix.created("general_complex")) return
+!
+!      ! Make the core matrix 
+!      .core_matrix.create(.n_bf,"general_complex") ! leaky
+!      HH => .core_matrix.general_complex           ! *** ALIAS ***
+!      HH = ZERO
+!
+!      I = (ZERO,ONE)
+!            
+!      if(.scfdata.using_douglas_kroll_hess) then
+!            T.create(.n_bf,.n_bf)
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .make_DKH_matrices(T,Lx,Ly,Lz)
+!            HH.alpha_alpha_plus(T)
+!            HH.beta_beta_plus(T)
+!
+!            fac= ONE
+!            HH.beta_alpha_plus(Lx,factor=fac*I)
+!            HH.beta_alpha_plus(Ly,factor=-fac)
+!            HH.alpha_alpha_plus(Lz,factor=fac*I)
+!            HH.beta_beta_plus(Lz,factor=-fac*I)
+!
+!            T.destroy
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!
+!      else
+!
+!        HH.alpha_alpha_plus(.core_matrix.restricted)
+!        HH.beta_beta_plus(.core_matrix.restricted)
+!
+!      end
+!
+!      ! The Pauli terms below are not normally active if Douglas-Kroll
+!      ! has been used
+!
+!      if (.scfdata.using_1e_sl_term) then
+!
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_spin_orbit_matrices(Lx,Ly,Lz)
+!            fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
+!            fac = fac * .scfdata.sl_1e_factor
+!            HH.beta_alpha_plus(Lx,factor=-fac*I)
+!            HH.beta_alpha_plus(Ly,factor=fac)
+!            HH.alpha_alpha_plus(Lz,factor=-fac*I)
+!            HH.beta_beta_plus(Lz,factor=fac*I)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!
+!      else if (.scfdata.using_1e_zora_term) then
+!
+!            T.create(.n_bf,.n_bf)
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_1e_ZORA_matrices(T,Lx,Ly,Lz)
+!            HH.alpha_alpha_plus(T)
+!            HH.beta_beta_plus(T)
+!            .get_kinetic_matrix(T) ! remove normal kinetic energy
+!            HH.alpha_alpha_plus(T,factor=-ONE)
+!            HH.beta_beta_plus(T,factor=-ONE)
+!            fac = G_FACTOR/TWO
+!            fac = fac * .scfdata.sl_1e_factor
+!            HH.beta_alpha_plus(Lx,factor=-fac*I)
+!            HH.beta_alpha_plus(Ly,factor=fac)
+!            HH.alpha_alpha_plus(Lz,factor=-fac*I)
+!            HH.beta_beta_plus(Lz,factor=fac*I)
+!            T.destroy
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!
+!      end
+!
+!      if (NOT .B_field.is_zero) then
+!
+!         if (.scfdata.using_bs_term) then
+!            .get_overlap_matrix
+!            fac = G_FACTOR/FOUR
+!            HH.alpha_alpha_plus(.overlap_matrix,factor=fac*.B_field(3))
+!            HH.beta_beta_plus(.overlap_matrix,factor=-fac*.B_field(3))
+!            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(1))
+!            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(2)*I)
+!         end
+!
+!         if (.scfdata.using_bs_t_term) then
+!            T.create(.n_bf,.n_bf)
+!            .get_kinetic_matrix(T)
+!            fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
+!            HH.alpha_alpha_plus(T,factor=fac*.B_field(3))
+!            HH.beta_beta_plus(T,factor=-fac*.B_field(3))
+!            HH.beta_alpha_plus(T,factor=fac*.B_field(1))
+!            HH.beta_alpha_plus(T,factor=fac*.B_field(2)*I)
+!            T.destroy
+!         end
+!
+!         if (.scfdata.using_bl_term) then
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_L_matrices(Lx,Ly,Lz)
+!            Lx = Lx*.B_field(1) + Ly*.B_field(2) + Lz*.B_field(3)
+!            fac = HALF
+!            HH.alpha_alpha_plus(Lx,factor=fac*I)
+!            HH.beta_beta_plus(Lx,factor=fac*I)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!         end
+!
+!         if (.scfdata.using_aa_term) then
+!           xx.create(.n_bf,.n_bf); yy.create(.n_bf,.n_bf); zz.create(.n_bf,.n_bf)
+!           xy.create(.n_bf,.n_bf); xz.create(.n_bf,.n_bf); yz.create(.n_bf,.n_bf)
+!           .get_quadrupole_matrices(xx,yy,zz,xy,xz,yz)
+!           fac = ONE/EIGHT
+!           do k = 1,3
+!              BB(k,k) = fac*(sum(.B_field*.B_field) - .B_field(k)*.B_field(k))
+!           end
+!           do k = 1,3
+!           do l = k+1,3
+!              BB(k,l) = -TWO*fac*.B_field(k)*.B_field(l)
+!           end
+!           end
+!           xx =      BB(1,1)*xx; xx = xx + BB(2,2)*yy; xx = xx + BB(3,3)*zz
+!           xx = xx + BB(1,2)*xy; xx = xx + BB(1,3)*xz; xx = xx + BB(2,3)*yz
+!           HH.alpha_alpha_plus(xx)
+!           HH.beta_beta_plus(xx)
+!           yz.destroy; xz.destroy; xy.destroy
+!           zz.destroy; yy.destroy; xx.destroy
+!         end
+!
+!         if (.scfdata.using_1e_srxa_term) then
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_spin_orbit_B_matrices(Lx,Ly,Lz)
+!            fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
+!            HH.beta_alpha_plus(Lx,factor=fac)
+!            HH.beta_alpha_plus(Ly,factor=fac*I)
+!            HH.alpha_alpha_plus(Lz,factor=fac)
+!            HH.beta_beta_plus(Lz,factor=-fac)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!         end
+!
+!      end
+!
+!      HH.make_hermitian
+!
+!   end
+
+
+   make_pt_charge_matrix(Z) ::: leaky
    ! Make the point charge matrix "H" from the point charges in .atom
    ! and the positions derived from ".scfdata.cluster".
    ! WARNING: the crystal asym unit charges must be defined.
@@ -3617,16 +4066,15 @@ contains
       q_c :: REAL
       sh :: SHELL2
 
-      ! Set up the cluster
+      ! Set up the cluster ... leaky
       .scfdata.cluster.destroy
       .scfdata.cluster.create(.crystal)
       .scfdata.cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
       .scfdata.cluster.set_generation_method("within_radius")
       .scfdata.cluster.defragment= TRUE
       .scfdata.cluster.radius = .scfdata.cluster_radius
-      .scfdata.cluster.make_info
+      .scfdata.cluster.make_info ! leaky
    !  .scfdata.cluster.put
-
 
       ! Make the cluster charges
       n_charges = .scfdata.cluster.n_atoms - .scfdata.cluster.n_fragment_atoms
@@ -3674,7 +4122,6 @@ contains
       F :: MAT{REAL}
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
-   ENSURE(.core_matrix.created,"no core matrix")
 
       pt,a0,b0 :: MAT{REAL}*
       Wc,mu,wt :: VEC{REAL}*
@@ -7686,6 +8133,13 @@ contains
       stdout.put(.molecular_orbitals)
    end
 
+   put_mo_energies
+   ! Output the molecular orbital energies
+      stdout.flush
+      stdout.text("Molecular orbital energies:")
+      stdout.put(.orbital_energies, format="column")
+   end
+
    put_natural_orbitals
    ! Output the current associated molecular orbitals
       stdout.flush
@@ -7758,16 +8212,17 @@ contains
 !  One electron properties
 !  ***********************
 
-   put_1e_properties 
+   put_1e_properties ::: leaky
    ! Put all the available one elctron properties
    ENSURE(.density_matrix.created,"no density")
    ENSURE(.atom.created,"no atoms")
    ENSURE(.basis.created,"no basis sets specified")
     ! charge :: VEC{REAL}*
 
-      .make_ao_density_matrix
+      .make_ao_density_matrix    ! leaky
 
-      .put_mulliken_populations
+      .put_mulliken_populations  ! leaky
+
       .put_dipole
 
     ! charge.create(.n_atom)
@@ -7789,7 +8244,7 @@ contains
 
    end
 
-   put_mulliken_populations
+   put_mulliken_populations ::: leaky
    ! sets the mulliken population matrix and the outputs it.
       mulliken_matrix, density :: MAT{REAL}*
       diagonals :: VEC{REAL}*
@@ -7799,7 +8254,7 @@ contains
       diagonals.create(.n_bf)
 
       ! Overlap matrix
-      .get_overlap_matrix
+      .get_overlap_matrix ! leaky
 
       ! Unrestricted case
       if (.density_matrix.created("unrestricted")) then
@@ -8300,7 +8755,7 @@ contains
       out :: BIN
 
       ! Set up grids, atomic densities, and NO's
-      .set_up_Hirshfeld_info
+      .set_up_Hirshfeld_info ! leaky
 
       ! Integrate
       n_e = ZERO
@@ -8561,7 +9016,7 @@ contains
 
       ! Set up integration grid if not there
       if (.becke_grid.destroyed) then
-         .becke_grid.create
+         .becke_grid.create               ! leaky
          .becke_grid.set_defaults
          .becke_grid.set_atom_info(.atom.atomic_number &
                                   ,.atom.transposed_coordinates &
@@ -8572,10 +9027,10 @@ contains
          ENSURE(.becke_grid.finalized,"no finalized becke_grid")
       end
 
-      ! Set up atomic ANOs for stockholder weights
+      ! Set up atomic ANOs for stockholder weights ... leaky
       .make_ANO_data
 
-      ! Set up atomic ANO interpolators
+      ! Set up atomic ANO interpolators ... leaky
       .make_ANO_interpolators
 
       if (present(skip_NOs)) then
@@ -10313,7 +10768,7 @@ contains
            .MO_r_eigen_update(.orbital_energies.beta, &
                               .molecular_orbitals.beta, &
                               .fock_matrix.beta)
-        case ("gchf","cghf")
+        case ("gchf")
            .MO_gc_eigen_update(.orbital_energies.general, &
                                .molecular_orbitals.general_complex, &
                                .fock_matrix.general_complex)
@@ -10775,59 +11230,59 @@ contains
       end
    end
 
-   scf_electronic_energy(P,nuclei) result (res)
-   ! Evaluates the SCF electronic energy as a trace of "D" with the
-   ! ".fock_matrix".  "nuclei" lists the nuclei to be used for obtaining n->e
-   ! attractions.
-      P :: OPMATRIX
-      nuclei :: VEC{INT}
-      res :: REAL
-   ENSURE(.fock_matrix.created,    "no fock matrix")
-   ENSURE(.fock_matrix.any_created,"no fock matrix")
-   ENSURE(.density_matrix.created,    "no density matrix")
-   ENSURE(.density_matrix.any_created,"no density matrix")
-
-      F :: MAT{REAL}*
-      FF :: MAT{CPX}*
-      scf_kind :: STR
-
-      .get_core_matrix
-
-      scf_kind = .scfdata.scf_kind
-      select case (scf_kind)
-        case ("rhf","rks","xray_rhf","xray_rks","noninteracting-group-rhf")
-           F.create(.n_bf,.n_bf)
-           F = .fock_matrix.restricted
-           .add_core_hamiltonian(F,nuclei)
-           res = HALF * P.restricted.trace_product_with(F)
-           F.destroy
-!        case ("xray_rks","rks")
+!   scf_electronic_energy(P,nuclei) result (res)
+!   ! Evaluates the SCF electronic energy as a trace of "D" with the
+!   ! ".fock_matrix".  "nuclei" lists the nuclei to be used for obtaining n->e
+!   ! attractions.
+!      P :: OPMATRIX
+!      nuclei :: VEC{INT}
+!      res :: REAL
+!   ENSURE(.fock_matrix.created,    "no fock matrix")
+!   ENSURE(.fock_matrix.any_created,"no fock matrix")
+!   ENSURE(.density_matrix.created,    "no density matrix")
+!   ENSURE(.density_matrix.any_created,"no density matrix")
+!
+!      F :: MAT{REAL}*
+!      FF :: MAT{CPX}*
+!      scf_kind :: STR
+!
+!      .get_core_matrix
+!
+!      scf_kind = .scfdata.scf_kind
+!      select case (scf_kind)
+!        case ("rhf","rks","xray_rhf","xray_rks","noninteracting-group-rhf")
 !           F.create(.n_bf,.n_bf)
 !           F = .fock_matrix.restricted
 !           .add_core_hamiltonian(F,nuclei)
 !           res = HALF * P.restricted.trace_product_with(F)
-!           res = res + .ex_corr_energy_term
 !           F.destroy
-        case ("uhf","uks","xray_uhf","xray_uks","rohf", &
-              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-           F.create(.n_bf,.n_bf);
-           F = .fock_matrix.alpha
-           .add_core_hamiltonian(F,nuclei)
-           res = HALF * P.alpha.trace_product_with(F)
-           F = .fock_matrix.beta
-           .add_core_hamiltonian(F,nuclei)
-           res = HALF * P.beta.trace_product_with(F) + res
-           F.destroy
-        case ("gchf")
-           FF.create(2*.n_bf,2*.n_bf);
-           FF = .fock_matrix.general_complex
-           .add_core_hamiltonian(FF,nuclei)
-           res = HALF * P.general_complex.trace_product_with(FF)
-           FF.destroy
-        case default
-           DIE("unknown scf kind, "//trim(scf_kind))
-      end
-   end
+!!        case ("xray_rks","rks")
+!!           F.create(.n_bf,.n_bf)
+!!           F = .fock_matrix.restricted
+!!           .add_core_hamiltonian(F,nuclei)
+!!           res = HALF * P.restricted.trace_product_with(F)
+!!           res = res + .ex_corr_energy_term
+!!           F.destroy
+!        case ("uhf","uks","xray_uhf","xray_uks","rohf", &
+!              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+!           F.create(.n_bf,.n_bf);
+!           F = .fock_matrix.alpha
+!           .add_core_hamiltonian(F,nuclei)
+!           res = HALF * P.alpha.trace_product_with(F)
+!           F = .fock_matrix.beta
+!           .add_core_hamiltonian(F,nuclei)
+!           res = HALF * P.beta.trace_product_with(F) + res
+!           F.destroy
+!        case ("gchf")
+!           FF.create(2*.n_bf,2*.n_bf);
+!           FF = .fock_matrix.general_complex
+!           .add_core_hamiltonian(FF,nuclei)
+!           res = HALF * P.general_complex.trace_product_with(FF)
+!           FF.destroy
+!        case default
+!           DIE("unknown scf kind, "//trim(scf_kind))
+!      end
+!   end
 
    scf_electronic_energies result (res) ::: leaky
    ! Evaluates the SCF electronic energies as a trace of density "P" with
@@ -11539,23 +11994,24 @@ contains
    ! and the molecular_orbitals "MO"
       MO_energies :: VEC{REAL}
       MO :: MAT{REAL}
-   ENSURE(.core_matrix.created,"no core_matrix")
+   ENSURE(.core_matrix.created("restricted"),"no core_matrix")
    ENSURE(.overlap_matrix.created,"no overlap_matrix")
       R,H :: MAT{REAL}* DEFAULT_NULL
-      !  H~ = S^-1/2 H S^-1/2
-      !  c  = S^-1/2 c~
 
+      ! Space
       H.create(.n_bf,.n_bf)
       R.create(.n_bf,.n_bf) 
 
+      !  H~ = S^-1/2 H S^-1/2
+      !  c  = S^-1/2 c~
       .make_overlap_inverse_sqrt(R)
-
-      .core_matrix.change_basis_to(H,R)
+      .core_matrix.restricted.change_basis_to(H,R)
 
       H.solve_eigenproblem(MO_energies,MO)
       H.to_product_of(R,MO)
       MO = H
 
+      ! Clean
       R.destroy
       H.destroy
 
@@ -12107,16 +12563,8 @@ contains
           .scfdata.diis.accelerate(.fock_matrix,.density_matrix,.overlap_matrix,energy,J)
           J.destroy
        case ("gchf")
-          DIE("not yet implemented")
-        ! error.create(.n_bf,"general_complex")
-        ! Fc  => .fock_matrix.general_complex
-        ! Pc  => .density_matrix.general_complex
-        ! .make_gc_diis_error(error.general_complex,Fc,Pc)
-        ! error.compress
-        ! err_len = error.square.norm
-        ! .fock_matrix.compress
-        ! .scfdata.diis.extrapolate_fock(.fock_matrix.square,error.square)
-        ! .fock_matrix.uncompress
+        ! DIE("not yet implemented")
+          .scfdata.diis.accelerate(.fock_matrix,.density_matrix,.overlap_matrix,energy)
        case default;          DIE("unknown SCF kind, "//trim(scf_kind))
       end
       energy.destroy
@@ -12254,170 +12702,176 @@ contains
            .make_ro_fock(P,F,direct,core,r12)
         case ("uhf","xray_uhf","pnd_uhf","xray_pnd_uhf")
            .make_u_fock(P,F,direct,core,r12)
-        case ("gchf","cghf")
+        case ("gchf")
            .make_gc_fock(P,F,direct,core,r12)
            .add_gc_so_fock(P,F)
         case default;  DIE("unknown SCF kind, "//trim(.scfdata.scf_kind))
       end
    end
 
-   add_core_hamiltonian(F,nuclei)
+   add_core_hamiltonian(F)
    ! Add the core hamiltonain to "F"
-   ! if "nuclei" is present then the core_matrix is calculated using
-   ! only the nuclei specified
       F :: MAT{REAL}
-      nuclei :: VEC{INT}, optional
-   ENSURE(.core_matrix.created,"no core_hamiltonian")
-      F = F + .core_matrix
+   ENSURE(.core_matrix.created("restricted"),"no core_hamiltonian")
+      F = F + .core_matrix.restricted
    end
 
    add_core_hamiltonian(Fa,Fb)
    ! Add the core hamiltonain to "Fa" and "Fb"
       Fa,Fb :: MAT{REAL}
-   ENSURE(.core_matrix.created,"no core_hamiltonian")
-      Fa = Fa + .core_matrix
-      Fb = Fb + .core_matrix
+   ENSURE(.core_matrix.created("restricted"),"no core_hamiltonian")
+      Fa = Fa + .core_matrix.restricted
+      Fb = Fb + .core_matrix.restricted
    end
 
-   add_core_hamiltonian(F,nuclei)
+   add_core_hamiltonian(F)
    ! Add the core hamiltonain to a general complex "F"
       F :: MAT{CPX}
-      nuclei :: VEC{INT}, optional
-   ENSURE(.core_matrix.created,"no core_hamiltonian")
-
-      HH :: MAT{CPX}*
-      S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
-      BB :: MAT{REAL}(3,3)
-      k,l :: INT
-      fac :: REAL
-      I :: CPX
-
-      HH.create(2*.n_bf,2*.n_bf)
-      HH = ZERO
-      I = (ZERO,ONE)
-            
-       if(.scfdata.using_douglas_kroll_hess) then
-            T.create(.n_bf,.n_bf)
-            Lx.create(.n_bf,.n_bf)
-            Ly.create(.n_bf,.n_bf)
-            Lz.create(.n_bf,.n_bf)
-            .make_DKH_matrices(T,Lx,Ly,Lz)
-            HH.alpha_alpha_plus(T)
-            HH.beta_beta_plus(T)
- ! i c the HH matrices are pushed to be Hermitian
- ! would it not be better to use only the Pauli matrices
- ! which give the sign to the Faa Fab Fbb Fba matrices ???
-            fac= ONE
-            HH.beta_alpha_plus(Lx,factor=fac*I)
-            HH.beta_alpha_plus(Ly,factor=-fac)
-            HH.alpha_alpha_plus(Lz,factor=fac*I)
-            HH.beta_beta_plus(Lz,factor=-fac*I)
-            T.destroy
-            Lz.destroy; Ly.destroy; Lx.destroy
-      else
-        HH.alpha_alpha_plus(.core_matrix)
-        HH.beta_beta_plus(.core_matrix)
-      end
-
-      if (.scfdata.using_1e_sl_term) then
-            Lx.create(.n_bf,.n_bf)
-            Ly.create(.n_bf,.n_bf)
-            Lz.create(.n_bf,.n_bf)
-            .get_spin_orbit_matrices(Lx,Ly,Lz)
-            fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
-            fac = fac * .scfdata.sl_1e_factor
-            HH.beta_alpha_plus(Lx,factor=-fac*I)
-            HH.beta_alpha_plus(Ly,factor=fac)
-            HH.alpha_alpha_plus(Lz,factor=-fac*I)
-            HH.beta_beta_plus(Lz,factor=fac*I)
-            Lz.destroy; Ly.destroy; Lx.destroy
-      else if (.scfdata.using_1e_zora_term) then
-            T.create(.n_bf,.n_bf)
-            Lx.create(.n_bf,.n_bf)
-            Ly.create(.n_bf,.n_bf)
-            Lz.create(.n_bf,.n_bf)
-            .get_1e_ZORA_matrices(T,Lx,Ly,Lz)
-            HH.alpha_alpha_plus(T)
-            HH.beta_beta_plus(T)
-            .get_kinetic_matrix(T) ! remove normal kinetic energy
-            HH.alpha_alpha_plus(T,factor=-ONE)
-            HH.beta_beta_plus(T,factor=-ONE)
-            fac = G_FACTOR/TWO
-            fac = fac * .scfdata.sl_1e_factor
-            HH.beta_alpha_plus(Lx,factor=-fac*I)
-            HH.beta_alpha_plus(Ly,factor=fac)
-            HH.alpha_alpha_plus(Lz,factor=-fac*I)
-            HH.beta_beta_plus(Lz,factor=fac*I)
-            T.destroy
-            Lz.destroy; Ly.destroy; Lx.destroy
-      end
-      if (NOT .B_field.is_zero) then
-         if (.scfdata.using_bs_term) then
-            .get_overlap_matrix
-            fac = G_FACTOR/FOUR
-            HH.alpha_alpha_plus(.overlap_matrix,factor=fac*.B_field(3))
-            HH.beta_beta_plus(.overlap_matrix,factor=-fac*.B_field(3))
-            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(1))
-            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(2)*I)
-         end
-         if (.scfdata.using_bs_t_term) then
-            T.create(.n_bf,.n_bf)
-            .get_kinetic_matrix(T)
-            fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
-            HH.alpha_alpha_plus(T,factor=fac*.B_field(3))
-            HH.beta_beta_plus(T,factor=-fac*.B_field(3))
-            HH.beta_alpha_plus(T,factor=fac*.B_field(1))
-            HH.beta_alpha_plus(T,factor=fac*.B_field(2)*I)
-            T.destroy
-         end
-         if (.scfdata.using_bl_term) then
-            Lx.create(.n_bf,.n_bf)
-            Ly.create(.n_bf,.n_bf)
-            Lz.create(.n_bf,.n_bf)
-            .get_L_matrices(Lx,Ly,Lz)
-            Lx = Lx*.B_field(1) + Ly*.B_field(2) + Lz*.B_field(3)
-            fac = HALF
-            HH.alpha_alpha_plus(Lx,factor=fac*I)
-            HH.beta_beta_plus(Lx,factor=fac*I)
-            Lz.destroy; Ly.destroy; Lx.destroy
-         end
-         if (.scfdata.using_aa_term) then
-           xx.create(.n_bf,.n_bf); yy.create(.n_bf,.n_bf); zz.create(.n_bf,.n_bf)
-           xy.create(.n_bf,.n_bf); xz.create(.n_bf,.n_bf); yz.create(.n_bf,.n_bf)
-           .get_quadrupole_matrices(xx,yy,zz,xy,xz,yz)
-           fac = ONE/EIGHT
-           do k = 1,3
-              BB(k,k) = fac*(sum(.B_field*.B_field) - .B_field(k)*.B_field(k))
-           end
-           do k = 1,3
-           do l = k+1,3
-              BB(k,l) = -TWO*fac*.B_field(k)*.B_field(l)
-           end
-           end
-           xx =      BB(1,1)*xx; xx = xx + BB(2,2)*yy; xx = xx + BB(3,3)*zz
-           xx = xx + BB(1,2)*xy; xx = xx + BB(1,3)*xz; xx = xx + BB(2,3)*yz
-           HH.alpha_alpha_plus(xx)
-           HH.beta_beta_plus(xx)
-           yz.destroy; xz.destroy; xy.destroy
-           zz.destroy; yy.destroy; xx.destroy
-         end
-         if (.scfdata.using_1e_srxa_term) then
-            Lx.create(.n_bf,.n_bf)
-            Ly.create(.n_bf,.n_bf)
-            Lz.create(.n_bf,.n_bf)
-            .get_spin_orbit_B_matrices(Lx,Ly,Lz)
-            fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
-            HH.beta_alpha_plus(Lx,factor=fac)
-            HH.beta_alpha_plus(Ly,factor=fac*I)
-            HH.alpha_alpha_plus(Lz,factor=fac)
-            HH.beta_beta_plus(Lz,factor=-fac)
-            Lz.destroy; Ly.destroy; Lx.destroy
-         end
-      end
-      HH.make_hermitian
-      F = HH + F
-      HH.destroy
+   ENSURE(.core_matrix.created("general_complex"),"no core_hamiltonian")
+      F = F + .core_matrix.general_complex
    end
+
+!   add_core_hamiltonian(F,nuclei)
+!   ! Add the core hamiltonain to a general complex "F"
+!      F :: MAT{CPX}
+!      nuclei :: VEC{INT}, optional
+!   ENSURE(.core_matrix.created("restricted"),"no core_hamiltonian")
+!
+!      HH :: MAT{CPX}*
+!      S,T,xx,yy,zz,xy,xz,yz,Lx,Ly,Lz :: MAT{REAL}*
+!      BB :: MAT{REAL}(3,3)
+!      k,l :: INT
+!      fac :: REAL
+!      I :: CPX
+!
+!      HH.create(2*.n_bf,2*.n_bf)
+!      HH = ZERO
+!      I = (ZERO,ONE)
+!            
+!      if(.scfdata.using_douglas_kroll_hess) then
+!            T.create(.n_bf,.n_bf)
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .make_DKH_matrices(T,Lx,Ly,Lz)
+!            HH.alpha_alpha_plus(T)
+!            HH.beta_beta_plus(T)
+! ! i c the HH matrices are pushed to be Hermitian
+! ! would it not be better to use only the Pauli matrices
+! ! which give the sign to the Faa Fab Fbb Fba matrices ???
+!            fac= ONE
+!            HH.beta_alpha_plus(Lx,factor=fac*I)
+!            HH.beta_alpha_plus(Ly,factor=-fac)
+!            HH.alpha_alpha_plus(Lz,factor=fac*I)
+!            HH.beta_beta_plus(Lz,factor=-fac*I)
+!            T.destroy
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!      else
+!        HH.alpha_alpha_plus(.core_matrix)
+!        HH.beta_beta_plus(.core_matrix)
+!      end
+!
+!      ! The Pauli terms below are not normally active if Douglas-Kroll
+!      ! has been used
+!      if (.scfdata.using_1e_sl_term) then
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_spin_orbit_matrices(Lx,Ly,Lz)
+!            fac = G_FACTOR/(EIGHT*SPEED_OF_LIGHT_AU**2)
+!            fac = fac * .scfdata.sl_1e_factor
+!            HH.beta_alpha_plus(Lx,factor=-fac*I)
+!            HH.beta_alpha_plus(Ly,factor=fac)
+!            HH.alpha_alpha_plus(Lz,factor=-fac*I)
+!            HH.beta_beta_plus(Lz,factor=fac*I)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!      else if (.scfdata.using_1e_zora_term) then
+!            T.create(.n_bf,.n_bf)
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_1e_ZORA_matrices(T,Lx,Ly,Lz)
+!            HH.alpha_alpha_plus(T)
+!            HH.beta_beta_plus(T)
+!            .get_kinetic_matrix(T) ! remove normal kinetic energy
+!            HH.alpha_alpha_plus(T,factor=-ONE)
+!            HH.beta_beta_plus(T,factor=-ONE)
+!            fac = G_FACTOR/TWO
+!            fac = fac * .scfdata.sl_1e_factor
+!            HH.beta_alpha_plus(Lx,factor=-fac*I)
+!            HH.beta_alpha_plus(Ly,factor=fac)
+!            HH.alpha_alpha_plus(Lz,factor=-fac*I)
+!            HH.beta_beta_plus(Lz,factor=fac*I)
+!            T.destroy
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!      end
+!      if (NOT .B_field.is_zero) then
+!         if (.scfdata.using_bs_term) then
+!            .get_overlap_matrix
+!            fac = G_FACTOR/FOUR
+!            HH.alpha_alpha_plus(.overlap_matrix,factor=fac*.B_field(3))
+!            HH.beta_beta_plus(.overlap_matrix,factor=-fac*.B_field(3))
+!            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(1))
+!            HH.beta_alpha_plus(.overlap_matrix,factor=fac*.B_field(2)*I)
+!         end
+!         if (.scfdata.using_bs_t_term) then
+!            T.create(.n_bf,.n_bf)
+!            .get_kinetic_matrix(T)
+!            fac = -G_FACTOR/(FOUR*SPEED_OF_LIGHT_AU**2)
+!            HH.alpha_alpha_plus(T,factor=fac*.B_field(3))
+!            HH.beta_beta_plus(T,factor=-fac*.B_field(3))
+!            HH.beta_alpha_plus(T,factor=fac*.B_field(1))
+!            HH.beta_alpha_plus(T,factor=fac*.B_field(2)*I)
+!            T.destroy
+!         end
+!         if (.scfdata.using_bl_term) then
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_L_matrices(Lx,Ly,Lz)
+!            Lx = Lx*.B_field(1) + Ly*.B_field(2) + Lz*.B_field(3)
+!            fac = HALF
+!            HH.alpha_alpha_plus(Lx,factor=fac*I)
+!            HH.beta_beta_plus(Lx,factor=fac*I)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!         end
+!         if (.scfdata.using_aa_term) then
+!           xx.create(.n_bf,.n_bf); yy.create(.n_bf,.n_bf); zz.create(.n_bf,.n_bf)
+!           xy.create(.n_bf,.n_bf); xz.create(.n_bf,.n_bf); yz.create(.n_bf,.n_bf)
+!           .get_quadrupole_matrices(xx,yy,zz,xy,xz,yz)
+!           fac = ONE/EIGHT
+!           do k = 1,3
+!              BB(k,k) = fac*(sum(.B_field*.B_field) - .B_field(k)*.B_field(k))
+!           end
+!           do k = 1,3
+!           do l = k+1,3
+!              BB(k,l) = -TWO*fac*.B_field(k)*.B_field(l)
+!           end
+!           end
+!           xx =      BB(1,1)*xx; xx = xx + BB(2,2)*yy; xx = xx + BB(3,3)*zz
+!           xx = xx + BB(1,2)*xy; xx = xx + BB(1,3)*xz; xx = xx + BB(2,3)*yz
+!           HH.alpha_alpha_plus(xx)
+!           HH.beta_beta_plus(xx)
+!           yz.destroy; xz.destroy; xy.destroy
+!           zz.destroy; yy.destroy; xx.destroy
+!         end
+!         if (.scfdata.using_1e_srxa_term) then
+!            Lx.create(.n_bf,.n_bf)
+!            Ly.create(.n_bf,.n_bf)
+!            Lz.create(.n_bf,.n_bf)
+!            .get_spin_orbit_B_matrices(Lx,Ly,Lz)
+!            fac = G_FACTOR/(TWO*EIGHT*(SPEED_OF_LIGHT_AU)**2)
+!            HH.beta_alpha_plus(Lx,factor=fac)
+!            HH.beta_alpha_plus(Ly,factor=fac*I)
+!            HH.alpha_alpha_plus(Lz,factor=fac)
+!            HH.beta_beta_plus(Lz,factor=-fac)
+!            Lz.destroy; Ly.destroy; Lx.destroy
+!         end
+!      end
+!      HH.make_hermitian
+!      F = HH + F
+!      HH.destroy
+!   end
 
    make_r_fock(P,F,direct,core,r12) ::: leaky
    ! Make a new restricted Fock matrix "F" from the density matrix "P".
@@ -17275,7 +17729,7 @@ contains
       .put_roby_energy_partition(symorthonormalise=FALSE)
    end
 
-   put_roby_energy_partition(symorthonormalise)
+   put_roby_energy_partition(symorthonormalise) ::: leaky
    ! Calculate and put out the roby energy decomposition specified in the
    ! .atom_group array.  If "symorthonormalise" is TRUE, then the occupied
    ! monomer molecular orbitals are symmetrically orthonormalised in order to
@@ -26661,7 +27115,7 @@ contains
 
       do k = 1,.n_atom_kind ! Get ANO data only for unique atoms
         u = .unique_atom(k)
-        .make_ANO_data_for_atom(u)
+        .make_ANO_data_for_atom(u) ! leaky
         do j = u+1,.n_atom
            if (.atom_kind(j)/=k) cycle
            .atom(j).density_matrix     => .atom(u).density_matrix
@@ -26703,7 +27157,7 @@ contains
       mol.pointgroup.create("oh")
       mol.symmetrise(mol.density_matrix)
 
-      ! Make the natural orbitals
+      ! Make the natural orbitals ... leaky
       mol.make_natural_orbitals 
 
       ! Clean up the SCF files
@@ -26714,7 +27168,7 @@ contains
       mol.delete_archive("natural_orbitals")
       mol.delete_archive("occupation_numbers")
 
-      ! Destroy the atoms's NO 
+      ! Destroy the atoms's NO  ... leaky
       .atom(a).atomic_orbitals.destroy
       .atom(a).density_matrix.destroy
       .atom(a).occupation_numbers.destroy
@@ -26803,7 +27257,7 @@ contains
       stdout.flush
       stdout.text("Making gaussian ANO interpolators ...")
 
-      .destroy_ANO_interpolators
+      .destroy_ANO_interpolators ! leaky
 
       do k = 1,.n_atom_kind ! Get interpolator only for unique atoms
 
@@ -28183,13 +28637,13 @@ contains
 
      .atom.make_primitive_limits(frst,last,at,l,ex)
 
-    X_def=1.0d-8
-    norm=1.0d-4
-    TRE=ZERO
-    m_out=0
+    X_def = 1.0d-8
+    norm  = 1.0d-4
+    TRE = ZERO
+    m_out=ZERO
     n_gcm=.n_prim
     nps = .atom.no_of_primitive_shells
-   do i=1,nps-1
+    do i=1,nps-1
       G.a.set_pos(.atom(at(i)).pos)
      if (m_out(frst(i),frst(i))==1) cycle
      do j=i+1,nps
@@ -28214,6 +28668,11 @@ contains
          end if
        end do
      end do
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
    end
 
    get_da_gcm_now(M,M_gcm,m_out,n_gcm)  
@@ -28323,7 +28782,7 @@ contains
 
    end
 
-   make_DKH_1e_matrix(H)
+   make_r_DKH_matrix(H)
    ! the 1electron dkh hamiltonian
    ! in the case of a scalar dkh calculation this routine should be called
    ! this routine is really long I should make it shorter using "subroutines"
@@ -29004,7 +29463,7 @@ end if
 
    make_DENSITY_norm(D,YU,Ap,Ep,P2,m_out,n_gcm)
    ! correct the picture change
-   ! this routine is based on the make_DKH_1e_matrix(H) routine
+   ! this routine is based on the make_r_DKH_matrix(H) routine
    
         D :: MAT{REAL} 
         YU :: MAT{REAL} , IN
@@ -29939,7 +30398,7 @@ end if
    make_DENSITY_PCE_off(GG,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ,sPZP,PPZPP)
    ! correct the picture change
    ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
-   ! this routine is based on the make_DKH_1e_matrix(H) routine
+   ! this routine is based on the make_r_DKH_matrix(H) routine
    
         GG :: MAT{REAL} , OUT
         YU :: MAT{REAL} , IN
@@ -30320,7 +30779,7 @@ end if
    make_DENSITY_PCE_SO_off(GG,GGx,GGy,GGz,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ,sPZP,sPZPx,sPZPy,sPZPz,PPZPP)
    ! correct the  picture change
    ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
-   ! this routine is based on the make_DKH_1e_matrix(H) routine
+   ! this routine is based on the make_r_DKH_matrix(H) routine
    
         GG,GGx,GGy,GGz :: MAT{REAL} , OUT
         YU :: MAT{REAL} , IN
@@ -31225,7 +31684,7 @@ end if
 
      ! Make a symmetric matrix
      T.symmetric_reflect
-     .put_debug(T,"primitive overlap matrix")
+     .put_debug(T,"primitive pdp matrix")
 
    end
 
@@ -31269,7 +31728,7 @@ end if
 
      ! Make a symmetric matrix
      T.symmetric_reflect
-     .put_debug(T,"primitive overlap matrix")
+     .put_debug(T,"primitive ppdpp matrix")
 
    end
 
