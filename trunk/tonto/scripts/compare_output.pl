@@ -62,25 +62,24 @@ sub compare {
       my $line1 = <FILE1>;
       my $line2 = <FILE2>;
 
-      chomp($line1);
-      chomp($line2);
-
       OK_LINE1: while (1) {
+         last OK_LINE1 if (!$line1);
+         chomp($line1); 
          foreach my $skip (@skip) {
             next if $line1 !~ /${skip}/;   # Skip explicitly ignored -skip lines
             $line1 = <FILE1>;
-            last OK_LINE1 if (!$line1);
-            chomp($line1); next OK_LINE1;
+            next OK_LINE1;
          }
          last OK_LINE1;
       }
 
       OK_LINE2: while (1) {
+         last OK_LINE2 if (!$line2);
+         chomp($line2);
          foreach my $skip (@skip) {
             next if $line2 !~ /${skip}/;   # Skip explicitly ignored -skip lines
             $line2 = <FILE2>;
-            last OK_LINE2 if (!$line2);
-            chomp($line2); next OK_LINE2;
+            next OK_LINE2;
          }
          last OK_LINE2;
       }
