@@ -26,22 +26,26 @@ push @skip, '^\s*Platform:';
 push @skip, '^\s*Build-date:';
 push @skip, '^\s*Wall-clock time taken';
 push @skip, '^\s*CPU time taken';
-push @skip, '^\s*Warning in routine';
+push @skip, '^\s*Warning from';
 push @skip, '^\s*Routine call stack:';
-push @skip, '^\s*Call *Routine name *Memory used';
-push @skip, '^    \d+\.   [A-Z.]+:\w+\s+\d+\s*$';
+push @skip, '^\s*Call \s*Routine name \s*Memory Used';
+push @skip, '^\s*\d+\.\s*[A-Z.]+:\w+\s+\d+\s*$';
 push @skip, 'Memory usage report';
-push @skip, '^\s*Memory used                =';
+push @skip, '^\s*Memory currently used      =';
 push @skip, '^\s*Maximum memory used        =';
 push @skip, '^\s*Memory blocks used         =';
 push @skip, '^\s*Maximum memory blocks used =';
+push @skip, '^\s*Memory limit               =';
 push @skip, '^\s*Call stack level           =';
 push @skip, '^\s*Maximum call stack depth   =';
+push @skip, '^\s*Warning from MOLECULE.MAIN:run ... memory leak';
+push @skip, '^\s*SYSTEM: Memory usage report:';
 
 open(FILE1,"<",$filenamea) || die "\nError opening $filenamea:\n$!";
 open(FILE2,"<",$filenameb) || die "\nError opening $filenameb:\n$!";
 
 my $equal = &compare; # do the comparison
+# print "equal = $equal\n";
 
 close(FILE2);
 close(FILE1);
@@ -57,9 +61,6 @@ sub compare {
 
       my $line1 = <FILE1>;
       my $line2 = <FILE2>;
-      return (1) if (!$line1 and !$line2); # EOF on both files
-      return (0) if ( $line1 and !$line2); # EOF on FILE2 but not FILE1
-      return (0) if (!$line1 and  $line2); # EOF on FILE1 but not FILE2
 
       chomp($line1);
       chomp($line2);
@@ -87,11 +88,19 @@ sub compare {
       return (0) if ( $line1 and !$line2); # EOF on FILE2 but not FILE1
       return (0) if (!$line1 and  $line2); # EOF on FILE1 but not FILE2
       return (1) if (!$line1 and !$line2); # EOF on both files
-      $line1 =~ s/\s+/ /g;  # Condense all whitespace
-      $line2 =~ s/\s+/ /g;  # Condense all whitespace
-      $line1 =~ s/\W+//g;   # Remove non-word characters
-      $line2 =~ s/\W+//g;   # Remove non-word characters
-      return (0) if ( $line1 ne   $line2); # Lines differ, not same
-   }
-}
 
+      $line1 =~ s/-(0.0*)( |$)/$1$2/g; # Replace -0.0 with 0.0
+      $line2 =~ s/-(0.0*)( |$)/$1$2/g; # Replace -0.0 with 0.0
+      $line1 =~ s/\s+/ /g;             # Condense all whitespace
+      $line2 =~ s/\s+/ /g;             # Condense all whitespace
+      $line1 =~ s/\W+//g;              # Remove non-word characters
+      $line2 =~ s/\W+//g;              # Remove non-word characters
+
+    # print "line1:$line1\n";
+    # print "line2:$line2\n";
+
+      return (0) if ( $line1 ne   $line2); # Lines differ, not same
+
+   }
+
+}
