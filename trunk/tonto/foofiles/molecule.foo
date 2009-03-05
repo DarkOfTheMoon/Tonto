@@ -3565,13 +3565,20 @@ contains
       ! Return if already there
       if (.core_matrix.created("restricted")) return
 
-      ! Allocate the core matrix 
-      .core_matrix.create(.n_bf,"restricted") ! leaky
-      H => .core_matrix.restricted            ! *** ALIAS ***
+      ! Allocate core matrix 
+      if (.core_matrix.destroyed) then; .core_matrix.create(.n_bf)
+      else;                             .core_matrix.set(.n_bf)
+      end
+      .core_matrix.create("restricted") 
+
+      ! *** ALIAS ***
+      H => .core_matrix.restricted            
 
       ! Make the core matrix here (relativistic vs non-rel)
-      if (.scfdata.using_douglas_kroll_hess) then; .make_r_DKH_matrix(H)
-      else;                                        .make_r_core_matrix(H)
+      select case (.scfdata.relativity_kind)
+         case ("douglas-kroll-hess","dkh"); .make_r_DKH_matrix(H)
+         case ("iotc");                     .make_r_IOTC_matrix(H)
+         case default;                      .make_r_core_matrix(H)
       end
 
       ! No cluster charges for SCF guess
@@ -3680,15 +3687,22 @@ contains
       ! Return if core matrix already there
       if (.core_matrix.created("general_complex")) return
 
-      ! Make and zero the gc core matrix 
-      .core_matrix.create(.n_bf,"general_complex") ! leaky
+      ! Allocate core matrix 
+      if (.core_matrix.destroyed) then; .core_matrix.create(.n_bf)
+      else;                             .core_matrix.set(.n_bf)
+      end
+      .core_matrix.create("general_complex")
       .core_matrix.general_complex = (ZERO,ZERO)
 
       ! Add the lower half in ... depending on the method
       ! NOTE: there may be some failures here ...
-      if (.scfdata.using_douglas_kroll_hess) .add_gc_DKH_core_matrix
-      if (.scfdata.using_1e_zora_term)       .add_gc_ZORA_core_matrix
-      if (.scfdata.using_pauli_terms)        .add_gc_Pauli_core_matrix
+      select case (.scfdata.relativity_kind)
+         case ("douglas-kroll-hess"); .add_gc_DKH_core_matrix
+         case ("dkh");                .add_gc_DKH_core_matrix
+         case ("zora");               .add_gc_ZORA_core_matrix
+         case ("iotc");               .set_gc_IOTC_core_matrix
+         case ("pauli");              .add_gc_Pauli_core_matrix
+      end
 
       ! Make it Hermitian
       .core_matrix.general_complex.make_hermitian
@@ -3699,7 +3713,6 @@ contains
    ! Add the DKH core hamiltonian
    ! NOTE: only lower half is made
    ENSURE(.scfdata.created,"no scfdata")
-   ENSURE(.scfdata.using_douglas_kroll_hess," no DKH?")
    ENSURE(.core_matrix.created("general_complex"),"no core matrix")
 
       HH :: MAT{CPX}*
@@ -3773,6 +3786,21 @@ contains
 
    end
 
+   set_gc_IOTC_core_matrix
+   ! Add the core hamiltonain to a general complex "F"
+   ! NOTE: only lower half is made
+   ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.scfdata.using_iotc," no iotc ?")
+   ENSURE(.core_matrix.created("general_complex"),"no core matrix")
+
+      H :: MAT{CPX}*
+
+      H => .core_matrix.general_complex
+      .make_gc_IOTC_matrix(H)
+      .put_debug(H,"MU+YOFOYUM matrix2")
+
+   end
+
    add_gc_Pauli_core_matrix
    ! Add the Pauli core hamiltonian ... including B-field terms
    ! NOTE: only lower half is made
@@ -3789,11 +3817,12 @@ contains
 
       I = (ZERO,ONE)
 
-      ! *** ALIAS ***
-      HH => .core_matrix.general_complex           
-            
       ! Diagonal part
       .get_r_core_matrix
+
+      ! *** ALIAS ***
+      HH => .core_matrix.general_complex           
+
       HH.alpha_alpha_plus(.core_matrix.restricted)
       HH.beta_beta_plus(.core_matrix.restricted)
 
@@ -11970,7 +11999,9 @@ contains
       .orbital_energies.create(.n_bf,"restricted")
       .molecular_orbitals.destroy
       .molecular_orbitals.create(.n_bf,"restricted")
-      .get_core_matrix
+!   LBXXX at 4.3.2009 ???
+!      .get_core_matrix
+      .get_r_core_matrix
       .get_overlap_matrix
 
       ! Get the guess orbitals
@@ -18350,39 +18381,43 @@ contains
       density_grid :: VEC{REAL}
       pt :: MAT{REAL}
       sgn :: INT, IN, optional
+
    ENSURE(.natural_orbitals.created, "no natural orbitals")
    ENSURE(.natural_orbitals.any_created, "no natural orbitals")
-      nkind,okind :: STR
-      nkind = .natural_orbitals.number_kind
+
+      relativity,okind :: STR
+
       okind = .natural_orbitals.spinorbital_kind
-     if(.scfdata.PCE_CORR AND .scfdata.using_douglas_kroll_hess)then 
-       if (nkind == "real") then
-          if (okind=="restricted") then; .make_DKH_density_grid(density_grid,pt)
-          else;                          .make_DKH_density_grid(density_grid,pt,sgn)
-          end
-       elseif(.natural_orbitals.spinorbital_kind == "general_complex")then
-       .make_DKH_density_grid(density_grid,pt)
-       else 
-       WARN("Unimplemented orbital kind! Sorry :(")
-       end
-     else 
-      if (nkind == "real") then
-           if (okind=="restricted") then; .make_density_grid_r(density_grid,pt)
-           else;                          .make_density_grid_u(density_grid,pt,sgn)
-           end
-      elseif(.natural_orbitals.spinorbital_kind == "restricted" )then
-         .make_density_grid_c(density_grid,pt)
-      elseif(.natural_orbitals.spinorbital_kind == "general_complex" ) then
-         .make_density_grid_gc(density_grid,pt)
-      else
-        WARN("                                      ")
-        WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        WARN("  The uchf case do not works          ")
-        WARN("  only gchf and rchf work, sorry :(   ")
-        WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        WARN("                                      ")
+
+      relativity = "none"
+      if (.scfdata.created) then
+         relativity = .scfdata.relativity_kind
+         if (NOT .scfdata.PCE_CORR) relativity = "none"
+      end if   
+
+      select case (relativity)
+
+         case ("douglas-kroll-hess","dkh")
+            select case (okind)
+               case ("restricted");       .make_DKH_density_grid(density_grid,pt)
+               case ("unrestricted");     .make_DKH_density_grid(density_grid,pt,sgn)
+               case ("general_complex");  .make_DKH_density_grid(density_grid,pt)
+               case default; WARN("Unimplemented orbital kind! Sorry :(")
+            end
+
+         case ("none")
+
+            select case (okind)
+               case ("restricted");       .make_density_grid_r(density_grid,pt)
+               case ("unrestricted");     .make_density_grid_u(density_grid,pt,sgn)
+               case ("general_complex");  .make_density_grid_gc(density_grid,pt)
+               case default;   DIE("unimplemented")
+            end
+
+         case default; DIE("unimplemented")
+
       end
-     end
+
    end
 
    make_density_grid(p_a,p_b,pt)
@@ -18553,45 +18588,74 @@ contains
    ENSURE(.plot_grid.orbital>=0, "non-positive grid orbital")
    ENSURE(.natural_orbitals.created, "no natural orbitals")
    ENSURE(.natural_orbitals.any_created, "no natural orbitals")
+
       pt :: MAT{REAL}*
       gr :: VEC{REAL}*
       gc :: VEC{CPX}*
       orb :: INT
+      relativity,okind :: STR
+
+      ! Restricted or general complex?
+      okind = .natural_orbitals.spinorbital_kind
+
+      ! Orbital to be plotted
       orb = .plot_grid.orbital
-      pt.create(.plot_grid.n_pt,3); .plot_grid.make_points(pt)
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Orbital density here
       gr.create(.plot_grid.n_pt)
-      if (.natural_orbitals.number_kind == "real") then
-        if(.scfdata.PCE_CORR AND .scfdata.using_douglas_kroll_hess)then 
-          .make_DKH_orbital_grid_r(gr,orb,pt,square=TRUE)
-        else
-          .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt,square=TRUE)
-        end
-      else
-        gc.create(.plot_grid.n_pt)
-        if(.natural_orbitals.spinorbital_kind == "restricted" )then
-         .make_orbital_grid_c(gc,.natural_orbitals.restricted_complex(:,orb),pt,square=TRUE)
-!        elseif(.natural_orbitals.spinorbital_kind == "general_complex" ) then
-        elseif(.natural_orbitals.spinorbital_kind == "general_complex" ) then
-          if(.scfdata.PCE_CORR AND .scfdata.using_douglas_kroll_hess)then 
-            .make_DKH_orb_dens_grid_gc(gc,orb,pt)
-          else   
-            .make_orbital_grid_gc(gc,.molecular_orbitals.general_complex(:,orb),pt,square=TRUE)
-          end if   
-        else
-        WARN("                                      ")
-        WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        WARN("  The unrestricted case do not works  ")
-        WARN("  only gchf and rchf works, sorry :(  ")
-        WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        WARN("                                      ")
-        end
-        gr = gc
-        gc.destroy
+
+      ! Kind of relativity to use
+      relativity = "none"
+      if (.scfdata.created) then
+         relativity = .scfdata.relativity_kind
+         if (NOT .scfdata.PCE_CORR) relativity = "none"
+      end if   
+
+      select case (relativity)
+
+         case ("douglas-kroll-hess","dkh")
+
+            select case (okind)
+               case("restricted") 
+                  .make_DKH_orbital_grid_r(gr,orb,pt,square=TRUE)
+               case("general_complex") 
+                  gc.create(.plot_grid.n_pt)
+                  .make_DKH_orb_dens_grid_gc(gc,orb,pt)
+                  gr = gc
+                  gc.destroy
+               case default
+                  DIE("unimplemented")
+            end
+
+         case ("none")
+
+            select case (okind)
+               case("restricted") 
+                  .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt,square=TRUE)
+               case("general_complex") 
+                  gc.create(.plot_grid.n_pt)
+                  .make_orbital_grid_gc(gc,.molecular_orbitals.general_complex(:,orb),pt,square=TRUE)
+                  gr = gc
+                  gc.destroy
+               case default
+                  DIE("unimplemented")
+            end
+
+         case default
+
+            DIE("Unimplemented")
+
       end
+
       .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_density_grid")
-!       .dump_plot_grid(gr,"orbital_density_grid")
+
       gr.destroy
       pt.destroy
+
    end
 
    make_orbital_grid
@@ -18601,60 +18665,75 @@ contains
    ENSURE(.plot_grid.orbital>=0, "non-positive grid orbital")
    ENSURE(.natural_orbitals.created, "no natural orbitals")
    ENSURE(.natural_orbitals.any_created, "no natural orbitals")
+
       arch :: ARCHIVE
       pt :: MAT{REAL}*
       gr :: VEC{REAL}*
       gc,gcu,gcd :: VEC{CPX}*
       orb :: INT
+      relativity,okind :: STR
+
+      ! Restricted or general complex?
+      okind = .natural_orbitals.spinorbital_kind
+
+      ! Orbital to be plotted
       orb = .plot_grid.orbital
-      pt.create(.plot_grid.n_pt,3); .plot_grid.make_points(pt)
-      if (.natural_orbitals.number_kind == "real") then
-         gr.create(.plot_grid.n_pt)
-         if(.scfdata.PCE_CORR AND .scfdata.using_douglas_kroll_hess)then 
-           WARN("NOTE: You will loose the phase of the ploted orbitals! :(")
-           WARN("to obtain the phase (signs) switch use_PCE_corr off!!")
-           .make_DKH_orbital_grid_r(gr,orb,pt,square=FALSE)
-         else  
-           .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt)
-         end  
-         .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid")
-!          .dump_plot_grid(gr,"orbital_grid")
-         gr.destroy
-      else
-         if(.natural_orbitals.spinorbital_kind == "restricted" )then
-         gc.create(.plot_grid.n_pt)
-           .make_orbital_grid_c(gc,.natural_orbitals.restricted_complex(:,orb),pt)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid")
-         arch.write(gc)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="ascii")
-         arch.write(gc)
-         gc.destroy
-         elseif(.natural_orbitals.spinorbital_kind == "general_complex" ) then
-          gcu.create(.plot_grid.n_pt)
-          gcd.create(.plot_grid.n_pt)
-          if(.scfdata.PCE_CORR)then
-           WARN("I am (LBxxx) sincerely sorry, but gchf PCE does not work! :(")
-           WARN("switch the do_PCE_corr off!!")
-!           .make_DKH_orbital_grid_gc(gcu,gcd,orb,pt)
-          else   
-           .make_orbital_grid_gc(gcu,gcd,.natural_orbitals.general_complex(:,orb),pt)
-          end 
-      !   arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid")
-      !  arch.write(gcu,gcd)
-         arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="ascii")
-         arch.write_orbital(gcu,gcd,.plot_grid.n_pt)
-         gcu.destroy
-         gcd.destroy
-         else
-           WARN("                                      ")
-           WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-           WARN("  The unrestricted case do not works  ")
-           WARN("  only gchf and rchf works, sorry :(  ")
-           WARN("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-           WARN("                                      ")
-        end
+
+      ! Points to plot
+      pt.create(.plot_grid.n_pt,3)
+      .plot_grid.make_points(pt)
+
+      ! Kind of relativity to use
+      relativity = "none"
+      if (.scfdata.created) then
+         relativity = .scfdata.relativity_kind
+         if (NOT .scfdata.PCE_CORR) relativity = "none"
+      end if   
+
+      select case (relativity)
+
+         case ("douglas-kroll-hess","dkh")
+
+            select case (okind)
+               case("restricted") 
+                  WARN("NOTE: You will loose the phase of the ploted orbitals! :(")
+                  WARN("to obtain the phase (signs) switch use_PCE_corr off!!")
+                  gr.create(.plot_grid.n_pt)
+                  .make_DKH_orbital_grid_r(gr,orb,pt,square=FALSE)
+                  .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid")
+                  gr.destroy
+               case default
+                  DIE("unimplemented")
+            end
+
+         case ("none")
+
+            select case (okind)
+               case("restricted") 
+                  gr.create(.plot_grid.n_pt)
+                  .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt)
+                  .dump_plot_grid(gr,"orbital_"//trim(orb.to_str)//"_grid")
+                  gr.destroy
+               case("general_complex") 
+                  gcu.create(.plot_grid.n_pt)
+                  gcd.create(.plot_grid.n_pt)
+                  .make_orbital_grid_gc(gcu,gcd,.natural_orbitals.general_complex(:,orb),pt)
+                  arch.set(.name,"orbital_"//trim(orb.to_str)//"_grid",format="ascii")
+                  arch.write_orbital(gcu,gcd,.plot_grid.n_pt)
+                  gcu.destroy
+                  gcd.destroy
+               case default
+                  DIE("unimplemented")
+            end
+
+         case default
+
+            DIE("Unimplemented")
+
       end
+
       pt.destroy
+
    end
 
    make_orbital_grid_r(g,orb,pt,square)
@@ -28782,6 +28861,113 @@ contains
 
    end
 
+   get_da_gcm_now(M,M_gcm,m_out,n_gcm)  
+   ! This routine is thought for the S,T,Z,PZP primitive integrals matrices
+   ! meaning of variables
+   ! M any primitive matrix; input
+   ! M_gcm non-redundant primitive matrix; output
+   ! m_out matrix; input 
+   ! n_gcm the dimension of Sgcm; input 
+
+      M :: MAT{CPX}  
+      M_gcm :: MAT{CPX}  
+      m_out :: MAT{INT} 
+      n_gcm :: INT 
+      TRE :: REAL  
+      i,j,k,l :: INT    
+
+      M_gcm=ZERO  
+      k=0
+      l=0
+      do i=1,.n_prim
+
+! if the line is the sme like a previous line do not copy it to do M_gcm 
+        if(m_out(i,i)==1) cycle 
+
+        k=k+1
+        l=k
+
+        do j=i,.n_prim
+
+! if the column j is the sme like a previous column do not copy it to do M_gcm 
+          if(m_out(j,j)==1) cycle
+
+!          M_gcm(k,l)=M(i,j)
+           M_gcm(l,k)=M(j,i)
+          l=l+1
+
+        end
+
+      end
+    M_gcm.symmetric_reflect
+   end
+
+   get_back_prim_now(M_gcm,M,m_out,n_gcm)  
+   ! This routine is thought for the final DKH matrix in the non-redundant a-la general contraction
+   ! primitive basis set style to get projected back to the tonto primitive often redundant basis set style 
+   ! meaning of variables
+   ! M_gcm any gcm matrix; input
+   ! M primitive matrix; output 
+   ! m_out matrix of
+   ! n_gcm the dimension of Sgcm 
+
+      M_gcm :: MAT{CPX} 
+      M :: MAT{CPX} 
+      m_out :: MAT{INT} 
+      n_gcm :: INT    
+      TRE :: REAL  
+      i,j,k,l :: INT    
+
+
+! the routine has three steps
+! first those lines(columns) which are non-redundant give back to the same place like they were obtained 
+! in the S to S_gcm transformation
+! I am not sure if this can not be written in a more effective way
+      k=0
+      l=0
+      do i=1,.n_prim
+        if(m_out(i,i)==1)cycle
+        k=k+1
+        l=k+1
+        M(i,i)=M_gcm(k,k)
+        do j=i+1,.n_prim
+          if(m_out(j,j)==1)cycle
+          M(i,j)=M_gcm(k,l)
+          M(j,i)=M_gcm(l,k)
+          l=l+1
+        end
+      end
+
+  !   M.symmetric_reflect
+
+! Second copy each line which was deleted back
+
+      do i=1,.n_prim
+        if(m_out(i,i)==1) cycle
+        do j=i+1,.n_prim
+          if(m_out(i,j)==1) then
+          do k=1,.n_prim
+                M(j,k)=M(i,k) 
+              end
+            end
+        end
+      end
+
+! third copy each column which was deleted back
+
+      do i=1,.n_prim
+        if(m_out(i,i)==1) cycle
+        do j=i+1,.n_prim
+          if(m_out(i,j)==1) then
+            do k=1,.n_prim
+              M(k,j)=M(k,i) 
+            end
+          end
+        end
+      end
+
+   end
+
    make_r_DKH_matrix(H)
    ! the 1electron dkh hamiltonian
    ! in the case of a scalar dkh calculation this routine should be called
@@ -29982,9 +30168,13 @@ end if
      .get_da_gcm_now(SOz,Lz,m_out,n_gcm)  
      A.to_product_of(YU,Lz,transpose_a=TRUE)
      Lz.to_product_of(A,YU)
+
+     A.destroy
+     R.destroy
      SOx.destroy
      SOy.destroy
      SOx.destroy
+     m_out.destroy
 
      c= SPEED_OF_LIGHT_AU
      X.create(n_gcm,n_gcm)
@@ -29992,6 +30182,7 @@ end if
      Ep.create(n_gcm)
      P2.create(n_gcm)
      .make_DKH_mxs(X,Ap,Ep,P2)
+     X.destroy
      do i=1,n_gcm
        do j=1,n_gcm
     
@@ -30004,13 +30195,10 @@ end if
        end
      end
 
-     X.destroy
      Ap.destroy
      Ep.destroy
      P2.destroy
-     R.destroy
-     A.destroy
-     m_out.destroy
+
    end
 
    make_DKH_mxs2(Z,PZP,YU)
@@ -30395,6 +30583,403 @@ end if
     m_out.destroy
    end
 
+   make_PCE_off(GG,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ,sPZP,met,PPZPP)
+   ! correct the picture change
+   ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
+   ! this routine is based on the make_DKH_1e_matrix(H) routine
+   
+        GG :: MAT{CPX} , OUT
+        YU :: MAT{REAL} , IN
+        Ap,Ep,P2 :: VEC{REAL} , IN
+        xx,yy,zz :: REAL , IN
+        m_out :: MAT{INT} , IN
+        n_gcm :: INT , IN
+        S,sZ,sPZP :: MAT{REAL} , IN
+        met :: INT, IN , optional
+        PPZPP :: MAT{REAL} , IN , optional
+
+        c :: REAL  
+        i,j,k :: INT   
+        R,D,PDP,PPDPP,Ac,T,TX,X,buco :: MAT{CPX}*  
+        WW,W2 :: MAT{REAL}*
+        SOx,SOy,SOz,sPZPx,sPZPy,sPZPz,ZXX,PZPXX :: MAT{REAL}*
+        Rx,Ry,Rz :: MAT{REAL}*
+        A,B,Z,PZP :: MAT{REAL}*
+        M :: MAT{REAL}* 
+
+!!!  the density operator X !!!
+     R.create(.n_prim,.n_prim)
+     R=ZERO
+! it do not exist in the moment
+     select case (met)
+       case(1)
+         .make_primitive_ft_matrix(R,xx,yy,zz)
+       case default
+         DIE("unknown value of method ")
+     end        
+     D.create(n_gcm,n_gcm)
+     D=ZERO
+! put the potential energy matrix into the n_gcm non-redundant space
+     .get_da_gcm_now(R,D,m_out,n_gcm)  
+
+     Ac.create(n_gcm,n_gcm)
+     Ac.to_product_of(YU,D,transpose_a=TRUE)
+     D.to_product_of(Ac,YU)
+
+!!!  PDP MATRIX  !!!
+      R=ZERO
+     select case (met)
+       case(1)
+         .make_primitive_pftp_matrix(R,xx,yy,zz)
+      ! R=ZERO
+      ! WARN("pFTp=ZERO")
+       case default
+         DIE("unknown value of method ")
+     end        
+
+     PDP.create(n_gcm,n_gcm)
+     PDP=ZERO
+! put the PDP matrix into the n_gcm non-redundant space
+    .get_da_gcm_now(R,PDP,m_out,n_gcm)  
+     Ac=ZERO
+     Ac.to_product_of(YU,PDP,transpose_a=TRUE)
+     PDP.to_product_of(Ac,YU)
+
+   if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+      R=ZERO 
+      DIE("the <ppftpp> are not finished switch the use_ppzpp off")
+!      .make_primitive_ppDpp_matrix(R,xx,yy,zz) 
+!      PPDPP.create(n_gcm,n_gcm)
+!      .get_da_gcm_now(R,PPDPP,m_out,n_gcm)  
+!      A=ZERO
+!      A.to_product_of(YU,PPDPP,transpose_a=TRUE)
+!      PPDPP.to_product_of(A,YU)
+  end if 
+
+!!! A-O LETS GO !!!
+        
+     c = SPEED_OF_LIGHT_AU
+     do i=1,n_gcm
+       do j=1,n_gcm
+    
+        D(i,j) = Ap(i)*D(i,j)*Ap(j)
+        PDP(i,j) = c*c*(Ap(i)/(Ep(i)+c*c))*PDP(i,j)*(Ap(j)/(Ep(j)+c*c))                                        
+    
+       end
+     end
+
+     A.create(n_gcm,n_gcm) 
+     B.create(n_gcm,n_gcm) 
+     A=ZERO
+     B=ZERO  
+
+  if(.scfdata.DK1_PCE)then
+     do i = 1,n_gcm
+         B(i,i)=(c*P2(i)*c) / ( (c*c + Ep(i)) * (c*c + Ep(i)) )
+         A(i,i)=ONE/B(i,i)
+     end do
+
+    T.create(n_gcm,n_gcm)
+    T=ZERO
+    T= matmul(sPZP, matmul(A,PDP) )
+    T= T - matmul(sPZP,D)
+    T= T - matmul(sZ,PDP)
+    T= T + matmul(sZ, matmul(B,D) )
+    T= T + matmul(D, matmul(B,sZ) )
+    T= T - matmul(PDP,sZ)
+    T= T - matmul(D,sPZP)
+    T= T + matmul(PDP, matmul(A,sPZP) )
+     if(.scfdata.using_SO_FDFF) then
+     DIE("using_SO_FDFF not to be used with PCE corr of ft ")
+     ! these are additional scalar terms due to presence of SO terms
+     ! - (SOx*1/P2*sSOx + SOy*1/P2*sSOy + SOz*1/P2*sSOz 
+     ! sSOx*1/P2*SOx + sSOy*1/P2*SOy + sSOz*1/P2*SOz)
+!!!  SO MATRICES  !!!
+      Rx.create(.n_prim,.n_prim)
+      Ry.create(.n_prim,.n_prim)
+      Rz.create(.n_prim,.n_prim)
+      Rx=ZERO; Ry=ZERO; Rz=ZERO
+     .make_primitive_pDp_SO_matrix(Rx,Ry,Rz,xx,yy,zz) 
+
+     SOx.create(n_gcm,n_gcm)
+     SOy.create(n_gcm,n_gcm)
+     SOz.create(n_gcm,n_gcm)
+! put the SO matrices into the n_gcm non-redundant space
+    .get_da_gcm_now(Rx,SOx,m_out,n_gcm)  
+    Rx.destroy
+    .get_da_gcm_now(Ry,SOy,m_out,n_gcm)  
+    Ry.destroy
+    .get_da_gcm_now(Rz,SOz,m_out,n_gcm)  
+    Rz.destroy
+       ZXX.create(n_gcm,n_gcm); PZPXX.create(n_gcm,n_gcm) 
+     ZXX=ZERO
+     ZXX.to_product_of(YU,SOx,transpose_a=TRUE)
+     SOx.to_product_of(ZXX,YU)
+     ZXX=ZERO
+     ZXX.to_product_of(YU,SOy,transpose_a=TRUE)
+     SOy.to_product_of(ZXX,YU)
+     ZXX=ZERO
+     ZXX.to_product_of(YU,SOz,transpose_a=TRUE)
+     SOz.to_product_of(ZXX,YU)
+     do i=1,n_gcm
+       do j=1,n_gcm
+        SOx(i,j) = c*c*(Ap(i)/(Ep(i)+c*c))*SOx(i,j)*(Ap(j)/(Ep(j)+c*c))                                        
+        SOy(i,j) = c*c*(Ap(i)/(Ep(i)+c*c))*SOy(i,j)*(Ap(j)/(Ep(j)+c*c))                                        
+        SOz(i,j) = c*c*(Ap(i)/(Ep(i)+c*c))*SOz(i,j)*(Ap(j)/(Ep(j)+c*c))                                        
+       end
+     end
+       sPZPx.create(n_gcm,n_gcm); sPZPy.create(n_gcm,n_gcm); sPZPz.create(n_gcm,n_gcm)
+       .make_DKH_mxs3(ZXX,PZPXX,sPZPx,sPZPy,sPZPz,YU)
+       ZXX.destroy; PZPXX.destroy
+       T= T - matmul(SOx, matmul(A,sPZPx) ) 
+       T= T - matmul(SOy, matmul(A,sPZPy) ) 
+       T= T - matmul(SOz, matmul(A,sPZPz) ) 
+       T= T - matmul(sPZPx, matmul(A,SOx) )
+       T= T - matmul(sPZPy, matmul(A,SOy) )
+       T= T - matmul(sPZPz, matmul(A,SOz) )
+       SOx.destroy; SOy.destroy; SOz.destroy;
+       sPZPx.destroy; sPZPy.destroy; sPZPz.destroy;
+     end if
+    
+    if(.scfdata.DK2_PCE)then
+    !!! W1W1
+      WW.create(n_gcm,n_gcm)
+      WW=ZERO
+     
+      WW= - matmul(sZ, matmul(B,sZ) )
+      WW= WW + matmul(sPZP,sZ) 
+      WW= WW + matmul(sZ,sPZP) 
+      WW= WW - matmul(sPZP, matmul(A,sPZP) ) 
+
+      X.create(n_gcm,n_gcm)
+      X=ZERO
+      X=D+PDP
+      TX.create(n_gcm,n_gcm)
+      TX=ZERO
+      TX=HALF*(matmul(WW,X)+matmul(X,WW))
+      WW.destroy
+
+      Z.create(n_gcm,n_gcm)
+      PZP.create(n_gcm,n_gcm)
+      Z=ZERO
+      PZP=ZERO
+      !!!
+      X=ZERO
+      
+      if(.scfdata.using_ppzpp)then
+! use the second derivatives in the [W1,[W1,X(even,0)]] and [W2,X(odd,0)] terms   
+        do i=1,n_gcm
+          do j=1,n_gcm
+            PPDPP(i,j) = Ap(i)*(c**4)/((Ep(i)+c*c)**2)*PPDPP(i,j)*Ap(j)/( (Ep(j)+c*c)**2 ) 
+            Z(i,j)=sZ(i,j)*(Ep(i)+Ep(j))
+            PZP(i,j)=sPZP(i,j)*(Ep(i)+Ep(j))
+          end do
+        end do
+        X=PPDPP+PDP
+        TX=TX-matmul(sPZP,matmul(A,matmul(X,sZ)))
+        TX=TX+matmul(sPZP,matmul(A, matmul(X, matmul(A,sPZP))))
+        TX=TX+matmul(sZ,matmul(X,sZ))
+        TX=TX-matmul(sZ,matmul(X, matmul(A,sPZP)))
+        PPDPP.destroy 
+        X.destroy
+        
+   !!!  The -[W2,X(odd,0)] terms
+        W2.create(n_gcm,n_gcm)
+        W2=ZERO
+        do i=1,n_gcm
+          do j=1,n_gcm
+            do k=1,n_gcm
+              W2(i,j) = W2(i,j)                        &
+              + sPZP(i,k)*A(k,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )*A(j,j) &
+              - sZ(i,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )*A(j,j) &
+              - (Z(i,k)+PZP(i,k))*sPZP(k,j)/( Ep(i)+Ep(j) )*A(j,j)  & 
+              + (Z(i,k)+PZP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )   
+            end do
+          end do
+        end do
+        TX=TX+matmul(W2,PDP)
+
+        W2=ZERO
+        do i=1,n_gcm
+          do j=1,n_gcm
+            do k=1,n_gcm
+              W2(i,j) = W2(i,j)                        &
+              + sZ(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+              - A(i,i)*sPZP(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+              - A(i,i)*(PZP(i,k)+PPZPP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )  &
+              + A(i,i)*(PZP(i,k)+PPZPP(i,k))*A(k,k)*sPZP(k,j)/( Ep(i)+Ep(j) )  
+            end do
+          end do
+        end do
+        TX=TX+matmul(PDP,W2)
+     
+        W2=ZERO
+        do i=1,n_gcm
+          do j=1,n_gcm
+            do k=1,n_gcm
+              W2(i,j) = W2(i,j)                        &
+              -  B(i,i)*sZ(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+              +  sPZP(i,k)*(Z(k,j)+PZP(k,j))/( Ep(i)+Ep(j) )   &
+              +  (PZP(i,k)+PPZPP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )   &
+              -  (PZP(i,k)+PPZPP(i,k))*A(k,k)*sPZP(k,j)/( Ep(i)+Ep(j) )   
+            end do
+          end do
+        end do
+        TX=TX+matmul(D,W2)
+      
+        W2=ZERO
+        do i=1,n_gcm
+          do j=1,n_gcm
+            do k=1,n_gcm
+              W2(i,j) = W2(i,j)                         &
+             -  sPZP(i,k)*A(k,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )    &
+             +  sZ(i,k)*(PZP(k,j)+PPZPP(k,j))/( Ep(i)+Ep(j) )    &
+             +  (Z(i,k)+PZP(i,k))*sPZP(k,j)/( Ep(i)+Ep(j) )    &
+             -  (Z(i,k)+PZP(i,k))*sZ(k,j)/( Ep(i)+Ep(j) )*B(j,j)    
+            end do
+          end do
+        end do
+        TX=TX+matmul(W2,D)
+
+! the second derivatives are not used in the [W1,[W1,E(even,0)]] and [W2,X(odd,0)] terms   
+      else  
+        X.destroy
+        do i=1,n_gcm
+          do j=1,n_gcm
+            Z(i,j)=sZ(i,j)*(Ep(i)+Ep(j))
+            PZP(i,j)=sPZP(i,j)*(Ep(i)+Ep(j))
+          end do
+        end do
+        TX=TX-matmul(sPZP,matmul(A,matmul(PDP,sZ)))
+        TX=TX-matmul(sPZP,matmul(D,matmul(B,sZ)))
+        TX=TX+matmul(sPZP,matmul(A, matmul(PDP, matmul(A,sPZP))))
+        TX=TX+matmul(sPZP, matmul(D,sPZP))
+        TX=TX+matmul(sZ,matmul(PDP,sZ))
+        TX=TX+matmul(sZ,matmul(B, matmul(D, matmul(B,sZ))))
+        TX=TX-matmul(sZ,matmul(PDP, matmul(A,sPZP)))
+        TX=TX-matmul(sZ,matmul(B, matmul(D,sPZP)))
+
+   !!!  The [W2,X(odd,0)] terms
+   !   the second derivatives are not used
+        W2.create(n_gcm,n_gcm)
+        W2=ZERO
+        W2=   matmul( sPZP, matmul(A, matmul(PZP,A) ) )
+        W2=W2+matmul( sPZP, Z )
+        W2=W2-matmul( sZ, ( matmul(PZP,A) ) )
+        W2=W2-matmul( sZ, ( matmul(B,Z) ) )
+        W2=W2-matmul( Z,  matmul(sPZP,A)  )
+        W2=W2-matmul( PZP,  matmul(sPZP,A)  )
+        W2=W2+matmul( Z,  sZ  )
+        W2=W2+matmul( PZP,  sZ  )
+        do i=1,n_gcm
+          do j=1,n_gcm
+            W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+          end do
+        end do
+
+        TX=TX+matmul(W2,PDP)
+
+        W2=ZERO
+        W2=   matmul( sZ, Z )
+        W2=W2+matmul( sZ, PZP )
+        W2=W2-matmul( matmul(A,sPZP), Z )
+        W2=W2-matmul( matmul(A,sPZP), PZP )
+        W2=W2-matmul( matmul(A,PZP)  ,   sZ)
+        W2=W2-matmul( matmul(Z,B)  ,   sZ)
+        W2=W2+matmul( matmul(A,matmul(PZP,A)) , sPZP)
+        W2=W2+matmul( Z , sPZP)
+        do i=1,n_gcm
+          do j=1,n_gcm
+            W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+          end do
+        end do
+      
+        TX=TX+matmul(PDP,W2)
+     
+        W2=ZERO
+        W2=W2-matmul( matmul(B,sZ), Z )
+        W2=W2-matmul( matmul(B,sZ), PZP )
+        W2=W2+matmul( sPZP  ,   Z )
+        W2=W2+matmul( sPZP  , PZP )
+        W2=W2+matmul( PZP   ,  sZ )
+        W2=W2+matmul( matmul(B,matmul(Z,B)) , sZ)
+        W2=W2-matmul( matmul(PZP,A) , sPZP )
+        W2=W2-matmul( matmul(B,Z) , sPZP )
+        do i=1,n_gcm
+          do j=1,n_gcm
+            W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+          end do
+        end do
+ 
+        TX=TX+matmul(D,W2)
+      
+        W2=ZERO
+        W2=W2-matmul( sPZP  , matmul(A,PZP) )
+        W2=W2-matmul( sPZP  , matmul(Z,B) )
+        W2=W2+matmul( sZ    , PZP)
+        W2=W2+matmul( sZ    , matmul( B, matmul(Z,B) ) )
+        W2=W2+matmul( Z , sPZP  )
+        W2=W2+matmul( PZP , sPZP  )
+        W2=W2-matmul( Z ,  matmul(sZ,B) )
+        W2=W2-matmul( PZP ,  matmul(sZ,B) )
+        do i=1,n_gcm
+          do j=1,n_gcm
+            W2(i,j) = W2(i,j)/( Ep(i)+Ep(j) ) 
+          end do
+        end do
+      
+  
+        TX=TX+matmul(W2,D)
+      
+      end if
+      W2.destroy
+      Z.destroy
+      PZP.destroy
+    
+      end if
+    end if
+    A.destroy
+    B=ZERO
+    
+    D = D + PDP
+    PDP.destroy
+    if(.scfdata.DK1_PCE)then
+      D = D + T
+      T.destroy
+    end if   
+   
+    if(.scfdata.DK2_PCE)then
+      D = D + TX
+      TX.destroy
+    end if
+     
+     B.to_product_of(S,YU)
+
+     Ac.to_product_of(B,D)
+     D.to_product_of(Ac,B,transpose_b=TRUE)
+
+     Ac.destroy
+     B.destroy
+
+!!! moving back to tonto style primitive basis sets 
+     R=ZERO
+! put the Fock matrix back to the space .n_prim space
+     .get_back_prim_now(D,R,m_out,n_gcm)  
+     D.destroy
+
+!!! moving back to contracted basis sets 
+     M.create(.n_prim,.n_bf)
+    .make_normalised_contraction_mx(M)
+     buco.create(.n_bf,.n_prim)
+     buco.to_product_of(M,R,transpose_a=TRUE)
+     R.destroy
+
+     GG.to_product_of(buco,M)
+
+     M.destroy
+     buco.destroy
+   end   
+  
    make_DENSITY_PCE_off(GG,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ,sPZP,PPZPP)
    ! correct the picture change
    ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
@@ -31792,6 +32377,1573 @@ end if
 
    end
 
-end
+!! development
 
+   get_x_structure_factors_test   !::: private
+   ! Make the structure factors for this molecule.
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+!   ENSURE(.density_matrix.created, "no density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+      genre :: STR
+
+      Fc.create(.crystal.n_refl)
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+
+      .crystal.make_unique_SF_k_pts(k_pts)
+      .make_ao_density_matrix
+      genre = .density_matrix.spinorbital_kind
+
+      sf_eq.create(k_pts.dim1)
+!      if (genre.includes("complex")) then
+!        .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+!      else
+        .make_ft_test(sf_eq,.density_matrix.restricted,k_pts)
+        if (.scfdata.created) then
+        if (.scfdata.spinorbital_kind=="unrestricted") then
+           .density_matrix.destroy("restricted")
+        end
+        end
+!      end
+       k_pts.destroy
+
+     .crystal.sum_unique_sf(Fc,sf_eq)
+     if (.crystal.correct_dispersion) then
+       k_pts.create(.crystal.n_refl,3)
+      .crystal.make_k_pts(k_pts)
+      .add_dispersion_correction(Fc,k_pts)
+       k_pts.destroy
+     end
+
+     .crystal.set_F_calc(Fc)
+
+     .crystal.make_F_predicted
+     .crystal.put_reflection_data
+      sf_eq.destroy
+      Fc.destroy
+     ! stdout.text("X-ray structure factor data", flush=1)
+     ! .crystal.data.reflections.put_structure_factor_data
+
+   end
+
+   get_x_structure_factors_dkh    !::: private
+   ! Make the structure factors for this molecule.
+!   ENSURE(.crystal.created, "no crystal")
+!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
+!   ENSURE(.density_matrix.created, "no density matrix")
+
+      sf_eq,Fc :: VEC{CPX}*
+      k_pts :: MAT{REAL}*
+      genre :: STR
+
+      Fc.create(.crystal.n_refl)
+      k_pts.create(.crystal.n_unique_SF_k_pts,3)
+
+      .crystal.make_unique_SF_k_pts(k_pts)
+      .make_ao_density_matrix
+      genre = .density_matrix.spinorbital_kind
+
+      sf_eq.create(k_pts.dim1)
+!      if (genre.includes("complex")) then
+!        .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
+!      else
+        .make_ft_DKH(sf_eq,.density_matrix.restricted,k_pts)
+        if (.scfdata.created) then
+        if (.scfdata.spinorbital_kind=="unrestricted") then
+           .density_matrix.destroy("restricted")
+        end
+        end
+!      end
+       k_pts.destroy
+
+     .crystal.sum_unique_sf(Fc,sf_eq)
+     if (.crystal.correct_dispersion) then
+       k_pts.create(.crystal.n_refl,3)
+      .crystal.make_k_pts(k_pts)
+      .add_dispersion_correction(Fc,k_pts)
+       k_pts.destroy
+     end
+
+     .crystal.set_F_calc(Fc)
+
+     .crystal.make_F_predicted
+     .crystal.put_reflection_data
+      sf_eq.destroy
+      Fc.destroy
+     ! stdout.text("X-ray structure factor data", flush=1)
+     ! .crystal.data.reflections.put_structure_factor_data
+
+   end
+
+   make_ft_test(sf,D,k_pts)
+   ! make the PCE corrected structure factors 
+   ! 
+       sf :: VEC{CPX}, OUT
+       D :: MAT{REAL}, target
+       k_pts :: MAT{REAL}, IN
+       n_gcm,n_pt :: INT
+       n,i,j,k_max :: INT
+       g :: CPX
+       c :: REAL
+       xx,yy,zz :: REAL
+       m_out :: MAT{INT}* 
+       MM,GG,ft_hkl,pftp_hkl,buco :: MAT{CPX}*
+       YU,S,R,Z,PZP,PPZPP :: MAT{REAL}*
+       M :: MAT{REAL}*
+       P2,Ap,Ep,PP,c2P :: VEC{REAL}*
+
+      k_max = size(k_pts,1)
+
+      m_out.create(.n_prim,.n_prim)
+      .get_n_gcm(m_out,n_gcm)  
+      R.create(.n_prim,.n_prim)
+      .make_primitive_overlap_matrix(R)
+      S.create(n_gcm,n_gcm)
+      S=ZERO 
+      .get_da_gcm_now(R,S,m_out,n_gcm) 
+      R.destroy 
+
+     M.create(.n_prim,.n_bf)
+     buco.create(.n_bf,.n_prim)
+     .make_normalised_contraction_mx(M)
+     MM.create(.n_prim,.n_bf)
+     MM=M
+     M.destroy
+
+     ft_hkl.create(.n_bf,.n_bf)
+     GG.create(.n_prim,.n_prim)
+     pftp_hkl.create(.n_prim,.n_prim)
+     do n = 1,k_max
+        ft_hkl=ZERO
+        GG=ZERO
+        pftp_hkl=ZERO
+        buco=ZERO
+! here it comes babes
+! point for point the density will be on and on calculated
+! I am sincerely sorry, but the code comparing to its non-relativistic
+! counterpart is really not effective :(
+       .make_primitive_ft_matrix(GG,k_pts(n,1),k_pts(n,2),k_pts(n,3))
+  !     .make_primitive_pftp_matrix(ft_hkl,pt(n,1),pt(n,2),pt(n,3))
+  !     buco.to_product_of(M,ft_hkl,transpose_a=TRUE)
+       buco.to_product_of(MM,GG,dagger_a=TRUE)
+
+       ft_hkl.to_product_of(buco,MM)
+
+       .make_part_and_therm_smear(ft_hkl)
+
+        g=(ZERO,ZERO) !???
+   
+        do i=1,.n_bf
+           do j=1,.n_bf
+               g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
+           end do           
+        end do           
+
+            stdout.flush
+            stdout.put(n)
+            stdout.put(k_pts(n,1))
+            stdout.put(k_pts(n,2))
+            stdout.put(k_pts(n,3))
+            stdout.put(real(g))
+
+        sf(n)=g
+     end do
+     MM.destroy
+     buco.destroy
+       ! unfortunatelly the PCE corrected orbitals lose phase :(
+     if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+       PPZPP.destroy
+     end if
+
+       S.destroy
+       Z.destroy
+       PZP.destroy
+       GG.destroy
+       YU.destroy
+       Ap.destroy
+       Ep.destroy
+       P2.destroy
+!       c2P.destroy
+!       PP.destroy
+       m_out.destroy
+    
+   end
+
+   make_ft_DKH(sf,D,k_pts)
+   ! make the PCE corrected structure factors 
+   ! 
+       sf :: VEC{CPX}, OUT
+       D :: MAT{REAL}, target
+       k_pts :: MAT{REAL}, IN
+       n_gcm,n_pt,met :: INT
+       n,i,j,k_max :: INT
+       g :: CPX
+       c :: REAL
+       xx,yy,zz :: REAL
+       m_out :: MAT{INT}* 
+       MM,GG,ft_hkl,pftp_hkl,buco :: MAT{CPX}*
+       YU,S,R,Z,PZP,PPZPP :: MAT{REAL}*
+       M :: MAT{REAL}*
+       P2,Ap,Ep,PP,c2P :: VEC{REAL}*
+
+      k_max = size(k_pts,1)
+      ! the method is for the PCE corr is sfs
+      met=1
+
+      m_out.create(.n_prim,.n_prim)
+      .get_n_gcm(m_out,n_gcm)  
+      R.create(.n_prim,.n_prim)
+      .make_primitive_overlap_matrix(R)
+      S.create(n_gcm,n_gcm)
+      S=ZERO 
+      .get_da_gcm_now(R,S,m_out,n_gcm) 
+      R.destroy 
+
+      YU.create(n_gcm,n_gcm)
+      Ap.create(n_gcm)
+      Ep.create(n_gcm)
+      P2.create(n_gcm)
+
+     .make_DKH_mxs(YU,Ap,Ep,P2)
+
+     Z.create(n_gcm,n_gcm)
+     PZP.create(n_gcm,n_gcm)
+     .make_DKH_mxs2(Z,PZP,YU)
+     
+     if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+      WARN(" The use_ppzpp seems to give larger value of density at nucleus")
+       PPZPP.create(n_gcm,n_gcm)
+       .make_DKH_mxs4(PPZPP,YU)
+     end if
+
+!     M.create(.n_prim,.n_bf)
+!     buco.create(.n_bf,.n_prim)
+!     .make_normalised_contraction_mx(M)
+!     MM.create(.n_prim,.n_bf)
+!     MM=M
+!     M.destroy
+     ft_hkl.create(.n_bf,.n_bf)
+!     GG.create(.n_prim,.n_prim)
+!     pftp_hkl.create(.n_prim,.n_prim)
+     do n = 1,k_max
+        ft_hkl=ZERO
+  !      GG=ZERO
+   !    pftp_hkl=ZERO
+ !       buco=ZERO
+! here it comes babes
+! point for point the density will be on and on calculated
+! I am sincerely sorry, but the code comparing to its non-relativistic
+! counterpart is really not effective :(
+       .make_PCE_off(ft_hkl,YU,Ap,Ep,P2,k_pts(n,1),k_pts(n,2),k_pts(n,3),m_out,n_gcm,S,Z,PZP,met,PPZPP)    
+!       buco.to_product_of(MM,GG,dagger_a=TRUE)
+
+!       ft_hkl.to_product_of(buco,MM)
+
+       .make_part_and_therm_smear(ft_hkl)
+
+        g=(ZERO,ZERO) !???
+   
+        do i=1,.n_bf
+           do j=1,.n_bf
+               g = g + D(i,j)*ft_hkl(i,j)  !????? cmpx matrix ??? perhaps the cpx parts is not needed BUT!!!!
+           end do           
+        end do           
+
+            stdout.flush
+            stdout.put(n)
+            stdout.put(k_pts(n,1))
+            stdout.put(k_pts(n,2))
+            stdout.put(k_pts(n,3))
+            stdout.put(real(g))
+
+        sf(n)=g
+     end do
+  !   MM.destroy
+  !   buco.destroy
+       ! unfortunatelly the PCE corrected orbitals lose phase :(
+     if(.scfdata.DK2_PCE AND .scfdata.using_ppzpp)then
+       PPZPP.destroy
+     end if
+
+       ft_hkl.destroy
+       S.destroy
+       Z.destroy
+       PZP.destroy
+       GG.destroy
+       YU.destroy
+       Ap.destroy
+       Ep.destroy
+       P2.destroy
+!       c2P.destroy
+!       PP.destroy
+       m_out.destroy
+    
+   end
+
+   make_primitive_ft_matrix(ft,h1,h2,h3)
+   ! Calculate the primitive ft matrix for a given hkl
+      ft :: MAT{CPX}, OUT
+      h1,h2,h3 :: REAL, IN 
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(ft.is_square, "ft must be square")
+   ENSURE(ft.dim1==.n_prim, "wrong size, ft")
+     
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     ft_ab :: MAT{CPX}*
+     nps,Z,a,b,fa,la,fb,lb,c :: INT
+     G :: GAUSSIAN2
+     atom :: ATOM*
+     p,t :: REAL 
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+  !    p.create(sh.a.n_cc,sh.b.n_cc)
+  !    .make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+  !    t.create(k_max,sh.a.n_cc,sh.b.n_cc)
+  !    .thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+  !    ! sh.make_ft_fast(ft_ab,k_pts,t,p)
+  !      sh.make_ft(ft_ab,k_pts,t,p)
+  !   ! Calculate the primitive integrals
+     nps = frst.dim
+  !   ft = ZERO
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+           
+ !         partitioning and thermal smearing
+           p=ONE
+           t=ONE
+            
+            ft_ab.create(la-fa+1,lb-fb+1)
+            
+            if ( (fa-la)==0 AND (fb-lb)==0 ) then 
+              G.make_normalised_ft_00(ft_ab,h1,h2,h3)
+            else                             
+              G.make_normalised_ft_v2(ft_ab,h1,h2,h3) ! cleaner newer version
+            end if
+
+            !perhaps the thermal smearing should come after building
+            !the whole sf-matrix
+            ft(fa:la,fb:lb)=ft_ab*p*t
+           
+            ft_ab.destroy
+           
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     ! ft.symmetric_reflect
+     ! Make a hermitian matrix
+      ft.make_hermitian
+
+     ! Debug, turn on with debug_on "key"
+     .put_debug(ft,  "primitive ft matrix")
+
+     ! Test
+   ! .make_fd_DKH_matrix(T,SOx,SOy,SOz)
+
+   end
+
+   make_primitive_pftp_matrix(ft,h1,h2,h3)
+   ! Calculate the primitive ft matrix for a given hkl
+      ft :: MAT{CPX}, OUT
+      h1,h2,h3 :: REAL, IN 
+!   ENSURE(.atom.created,  "no atom list")
+!   ENSURE(.basis_info_made, "no basis info")
+   ENSURE(ft.is_square, "ft must be square")
+   ENSURE(ft.dim1==.n_prim, "wrong size, ft")
+     
+     frst,last,at,l :: VEC{INT}*
+     ex :: VEC{REAL}*
+     ft_ab :: MAT{CPX}*
+     nps,Z,a,b,fa,la,fb,lb,c :: INT
+     G :: GAUSSIAN2
+     atom :: ATOM*
+     p,t :: REAL 
+     ! Make the indexing arrays
+     .atom.make_primitive_limits(frst,last,at,l,ex)
+
+  !    p.create(sh.a.n_cc,sh.b.n_cc)
+  !    .make_partition_factors(p,sh,atom_a,atom_b,is_zero)
+  !    t.create(k_max,sh.a.n_cc,sh.b.n_cc)
+  !    .thermal_smearing_correction(t,k_pts,atom_a,atom_b,sh)
+  !    ! sh.make_ft_fast(ft_ab,k_pts,t,p)
+  !      sh.make_ft(ft_ab,k_pts,t,p)
+  !   ! Calculate the primitive integrals
+     nps = frst.dim
+  !   ft = ZERO
+     do a = 1,nps
+        G.a.set_l(l(a))
+        G.a.set_pos(.atom(at(a)).pos)
+        G.a.set_ex(ex(a))
+        fa = frst(a); la = last(a)
+        do b = 1,a
+           G.b.set_l(l(b))
+           G.b.set_pos(.atom(at(b)).pos)
+           G.b.set_ex(ex(b))
+           fb = frst(b); lb = last(b)
+           
+ !         partitioning and thermal smearing
+           p=ONE
+           t=ONE
+            
+            ft_ab.create(la-fa+1,lb-fb+1)
+            
+!           if ( (fa-la)==0 AND (fb-lb)==0 ) then 
+!             G.make_normalised_ft_00(ft_ab,h1,h2,h3)
+!           else                             
+              G.make_normalised_pftp_v2(ft_ab,h1,h2,h3) ! cleaner newer version
+!           end if
+
+            !perhaps the thermal smearing should come after building
+            !the whole sf-matrix
+            ft(fa:la,fb:lb)=ft_ab*p*t
+           
+            ft_ab.destroy
+           
+        end
+     end
+
+     ! Clean up indexing arrays
+     ex.destroy; l.destroy; at.destroy
+     last.destroy; frst.destroy
+
+     ! Make a symmetric matrix
+     ! ft.symmetric_reflect
+     ! Make a hermitian matrix
+      ft.make_hermitian
+
+     ! Debug, turn on with debug_on "key"
+     .put_debug(ft,  "primitive ft matrix")
+
+     ! Test
+   ! .make_fd_DKH_matrix(T,SOx,SOy,SOz)
+
+   end
+
+   make_part_and_therm_smear(ft)
+   ! Calculate the primitive ft matrix for a given hkl
+      ft :: MAT{CPX}, INOUT
+
+      
+
+   end
+
+!!! IOTC
+
+   test_IOTC
+   ! Calculate the primitive ft matrix for a given hkl
+   H :: MAT{REAL}*
+
+   H.create(.n_bf,.n_bf)
+   .make_r_IOTC_matrix(H)
+   H.destroy
+   
+   end
+
+   make_r_IOTC_matrix(H)
+   ! the 1electron IOTC hamiltonian
+   !
+        H :: MAT{REAL}
+        c,alpha,alpha2,alpha3,alpha4 :: REAL  
+        i,j,k,l,n_gcm :: INT     
+        SOx,SOy,SOz,R :: MAT{REAL}*
+        sSOx,sSOy,sSOz,ZXX,PZPXX,YU :: MAT{REAL}*
+        A,B,S,Y,T,U,Z,PZP :: MAT{REAL}*
+        D,WW,ppZpp,O :: MAT{REAL}*
+        m_out :: MAT{INT}*
+        sZ,sPZP :: MAT{REAL}*
+        F,Yr,M,buco :: MAT{REAL}* 
+        P2,p,ep,bp,E,Ap :: VEC{REAL}*
+
+!!! analysis of the primitive basis set via the overap matrix
+!!! trying to lower the problem to an general contracted basis set
+!!!  OVERLAP MATRIX !!!
+     R.create(.n_prim,.n_prim)
+    .make_primitive_overlap_matrix(R)
+     m_out.create(.n_prim,.n_prim) 
+    .make_ready_da_gcm_tr2(m_out,n_gcm)  
+!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+! put the overlap matrix into the n_gcm non-redundant space
+     S.create(n_gcm,n_gcm)
+     .get_da_gcm_now(R,S,m_out,n_gcm)  
+     
+     Y.create(n_gcm,n_gcm)
+     Y.to_inverse_sqrt_of(S)
+
+!!!  KINETIC ENERGY MATRIX !!!
+     R=ZERO
+     .make_primitive_kinetic_matrix(R) 
+     T.create(n_gcm,n_gcm)
+! put the kinetic energy matrix into the n_gcm non-redundant space
+     .get_da_gcm_now(R,T,m_out,n_gcm)  
+
+     A.create(n_gcm,n_gcm)
+     A.to_product_of(Y,T)   
+     T.to_product_of(A,Y)              ! T=YTY  kinetic energy in an orthogonal basis
+     U.create(n_gcm,n_gcm)
+     P2.create(n_gcm)
+     T.solve_eigenproblem(P2,U)
+     P2= TWO * P2
+   
+!!!  POTENTIAL ENERGY MATRIX (electron-nucleus) !!!
+     R=ZERO
+     .make_primitive_nuclear_matrix(R)
+     Z.create(n_gcm,n_gcm)
+! put the potential energy matrix into the n_gcm non-redundant space
+     .get_da_gcm_now(R,Z,m_out,n_gcm)  
+
+     A.to_product_of(Y,Z) 
+     Z.to_product_of(A,Y)             ! Z=YZY the electron-nuclei interaction energy in orthonormal basis set 
+     
+     A.to_product_of(U,Z,transpose_a=TRUE)
+     Z.to_product_of(A,U)
+
+!!!  PZP MATRIX  !!!
+     SOx.create(.n_prim,.n_prim)
+     SOy.create(.n_prim,.n_prim)
+     SOz.create(.n_prim,.n_prim)
+     R=ZERO
+         .make_primitive_DKH_matrices(R,SOx,SOy,SOz)
+       SOx.destroy
+       SOy.destroy
+       SOz.destroy
+
+     PZP.create(n_gcm,n_gcm)
+! put the PZP matrix into the n_gcm non-redundant space
+     .get_da_gcm_now(R,PZP,m_out,n_gcm)  
+     A.to_product_of(Y,PZP)  
+     PZP.to_product_of(A,Y)
+
+     A.to_product_of(U,PZP,transpose_a=TRUE)
+     PZP.to_product_of(A,U)
+! the DK3 staff
+   if( .scfdata.using_ppzpp)then
+     ppZpp.create(n_gcm,n_gcm)
+     R=ZERO 
+     .make_primitive_DK3_ppZpp_matrix(R)
+     .get_da_gcm_now(R,ppZpp,m_out,n_gcm)  
+     A=ZERO
+     A.to_product_of(Y,ppZpp) 
+     ppZpp.to_product_of(A,Y)             ! Z=YZY the electron-nuclei interaction energy in orthonormal basis set 
+     A=ZERO
+     A.to_product_of(U,ppZpp,transpose_a=TRUE)
+     ppZpp.to_product_of(A,U)
+   end if 
+
+!!! A-O LETS GO !!!
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+     alpha3= alpha2*alpha
+     alpha4= alpha3*alpha
+ 
+     E.create(n_gcm)
+     Ap.create(n_gcm)
+     ep.create(n_gcm)
+     p.create(n_gcm)
+     bp.create(n_gcm)
+
+     E=ZERO 
+     p=ZERO
+     ep=ZERO
+     Ap=ZERO
+     bp=ZERO
+
+     do i = 1,n_gcm
+
+       E(i)= c * sqrt(P2(i) + c * c)
+       p(i)=sqrt(P2(i))
+       ep(i)=sqrt(ONE+P2(i)*alpha2) 
+       Ap(i)= sqrt( (E(i) + c * c)/(TWO * E(i)) )  
+       bp(i)=ONE/(ep(i)+ONE)
+
+     end  
+
+     do i=1,n_gcm
+       do j=1,n_gcm
+    
+        Z(i,j) = Ap(i)*Z(i,j)*Ap(j)
+        PZP(i,j) = Ap(i)*PZP(i,j)*Ap(j)
+!        PZP(i,j) = c*c*(Ap(i)/(E(i)+c*c))*PZP(i,j)*(Ap(j)/(E(j)+c*c))                                        
+    
+       end
+     end
+
+     if( .scfdata.using_ppzpp)then
+       do i=1,n_gcm
+         do j=1,n_gcm
+
+          ppZpp(i,j) = Ap(i)*ppZpp(i,j)*Ap(j)
+    
+         end do
+       end do
+     end if
+! lets find the transforation matrix
+     Yr.create(n_gcm,n_gcm)
+
+    .find_da_Y_iterative(Yr,PZP,Z,p,bp,ep)
+    .put_debug(Yr,"Y matrix")
+     
+     O.create(n_gcm,n_gcm)
+     O=ZERO
+     do i=1,n_gcm
+       O(i,i)=ONE
+       do j=1,n_gcm
+         do k=1,n_gcm
+         ! 1
+           O(i,j)=O(i,j)+Yr(k,i)*Yr(k,j)
+         ! 2
+         ! O(i,j)=O(i,j)+Yr(k,i)*Yr(k,j)*S(i,j)
+         ! A=ZERO,Y=ZERO
+         ! A.to_product_of(B,O)
+         ! O.to_product_of(A,B,transpose_b=TRUE)
+         ! 3 norm is a number not an matrix  
+         ! n= n + O(i,j)+ UYYr(k,i)*Yr(k,j)*S(i,j)YU
+         end do
+       end do
+     end do
+        
+     A.to_inverse_sqrt_of(O)
+     O=A
+!     do i=1,n_gcm
+!       do j=1,n_gcm
+!           O(i,j)=O(i,j)*S(i,j)
+!       end do
+!     end do  
+!     A.to_product_of(Y,O)  
+!     O.to_product_of(A,Y)
+
+!     A.to_product_of(U,O,transpose_a=TRUE)
+!     O.to_product_of(A,U)
+!    O=ONE
+     A=ZERO
+      
+     F.create(n_gcm,n_gcm)
+! the hamiltonian is gonna be built
+     do i = 1,n_gcm
+     
+!         F(i,i)=P2(i)*bp(i)   ! followin Sadlej, I did not get it yet :(
+         F(i,i)=E(i)-c*c     
+         
+       do j = 1,n_gcm
+       
+         F(i,j)=F(i,j)+Z(i,j)+alpha2*bp(i)*PZP(i,j)*bp(j)
+
+         do k = 1,n_gcm  
+           F(i,j) = F(i,j) + alpha* ( Z(i,k)*bp(k)*p(k)-bp(i)*PZP(i,k)/p(k) )*Yr(k,j)         &
+                           + alpha*Yr(k,i)* ( bp(k)*p(k)*Z(k,j)-PZP(k,j)/p(k)*bp(j) )         &
+!                           + Yr(i,k)*P2(k)/( ONE-ep(k) )*Yr(k,j)
+                           + Yr(k,i)*(-E(k)-c*c )*Yr(k,j)
+         end do
+
+         do k = 1,n_gcm
+           do l = 1,n_gcm
+             if( .scfdata.using_ppzpp)then
+               F(i,j) = F(i,j) + Yr(k,i)* ( PZP(k,l)/p(l)/p(k)         &
+                                          + alpha2*bp(k)/p(k)*ppZpp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
+             else
+               F(i,j) = F(i,j) + Yr(k,i)* ( PZP(k,l)/p(l)/p(k)         &
+                                          + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
+             end if
+           end do
+         end do
+         
+       end do
+     end do
+    .put_debug(F,"F matrix")
+
+     ! normalization<F2>
+     A=matmul(O,matmul(F,O))
+     O.destroy
+     Yr.destroy
+     F=A
+    .put_debug(F,"OFO matrix")
+     A=ZERO
+
+     Z.destroy
+     PZP.destroy
+     if( .scfdata.using_ppzpp)then
+       ppZpp.destroy
+     end if
+ 
+     Ap.destroy 
+     P2.destroy
+     E.destroy
+     p.destroy
+     bp.destroy
+     ep.destroy
+   
+     B.create(n_gcm,n_gcm) 
+     A.to_product_of(S,Y)
+     B.to_product_of(A,U)
+
+     S.destroy
+     Y.destroy
+     U.destroy
+     
+     A=ZERO
+     A.to_product_of(B,F)
+     F.to_product_of(A,B,transpose_b=TRUE)
+    .put_debug(F,"U+YOFOYU matrix")
+
+     A.destroy
+     B.destroy
+
+!!! moving back to tonto style primitive basis sets 
+     R=ZERO
+! put the Fock matrix back to the space .n_prim space
+     .get_back_prim_now(F,R,m_out,n_gcm)  
+     F.destroy
+     m_out.destroy
+
+!!! moving back to contracted basis sets 
+     M.create(.n_prim,.n_bf)
+     .make_normalised_contraction_mx(M)
+     buco.create(.n_bf,.n_prim)
+     buco.to_product_of(M,R,transpose_a=TRUE)
+     R.destroy
+     A.create(.n_bf,.n_bf)
+     A.to_product_of(buco,M)
+    .put_debug(A,"MU+YOFOYUM matrix")
+     M.destroy
+     buco.destroy
+
+     H = A
+     A.destroy
+     .put_debug(H,"core matrix")
+
+   end
+
+   make_gc_IOTC_matrix(H)
+   ! the 1electron IOTC hamiltonian  2C
+   !
+        H :: MAT{CPX}
+
+        c,alpha,alpha2,fac :: REAL  
+        i,j,k,l,n_gcm :: INT     
+        Yr,F,buco,A,B2,M2 :: MAT{CPX}*
+        A2,PAP,ppApp :: MAT{CPX}*
+        SOx,SOy,SOz,R :: MAT{REAL}*
+        sSOx,sSOy,sSOz,YU :: MAT{REAL}*
+        B,S,Y,T,U,Z,PZP,ppZpp :: MAT{REAL}*
+        m_out,mmm :: MAT{INT}*
+        sZ,sPZP :: MAT{REAL}*
+        M,O,Ox,Y0 :: MAT{REAL}* 
+        P2,p,ep,bp,E,Ap :: VEC{REAL}*
+        II :: CPX
+
+     !test
+     mmm.create(.n_prim,.n_prim)
+      .get_n_gcm(mmm,n_gcm)
+     mmm.destroy 
+     if( abs(.n_prim-n_gcm) > 0 OR abs(.n_prim-.n_bf) > 0 )then
+       DIE(" It seems you are using contracted gaussians this do not works for IOTC at gchf level!")
+     end if    
+     
+  !!! n_gcm = .n_prim = .n_bf
+
+! this is actually not needed but I am also using n_gcm 
+     m_out.create(.n_prim,.n_prim) 
+    .make_ready_da_gcm_tr2(m_out,n_gcm) 
+     R.create(.n_prim,.n_prim)
+     S.create(n_gcm,n_gcm)
+     Y.create(n_gcm,n_gcm)
+!!!  OVERLAP MATRIX + Y MX !!!
+     .make_S_Y(S,Y)
+
+!!!  KINETIC ENERGY MATRIX -> U & P2!!!
+     U.create(n_gcm,n_gcm)
+     P2.create(n_gcm)
+     .make_U_P2(U,P2,Y)
+     YU.create(n_gcm,n_gcm)
+     YU.to_product_of(Y,U)
+     Y.destroy
+     U.destroy
+     
+!!!  POTENTIAL ENERGY MATRIX (electron-nucleus) !!!
+     R=ZERO
+    .make_primitive_nuclear_matrix(R)
+     Z.create(n_gcm,n_gcm)
+! put the potential energy matrix into the YU space
+    .make_R_to_YU(R,Z,YU)
+    
+!!!  PZP MATRIX  !!!
+     SOx.create(.n_prim,.n_prim)
+     SOy.create(.n_prim,.n_prim)
+     SOz.create(.n_prim,.n_prim)
+     R=ZERO
+         .make_primitive_DKH_matrices(R,SOx,SOy,SOz)
+
+     PZP.create(n_gcm,n_gcm)
+    .make_R_to_YU(R,PZP,YU)
+     R=ZERO
+    .make_R_to_YU(SOx,R,YU)
+     SOx=R
+     R=ZERO
+    .make_R_to_YU(SOy,R,YU)
+     SOy=R
+     R=ZERO
+    .make_R_to_YU(SOz,R,YU)
+     SOz=R
+     R=ZERO
+! the DK3 staff
+   if( .scfdata.using_ppzpp)then
+     ppZpp.create(n_gcm,n_gcm)
+     R=ZERO 
+    .make_primitive_DK3_ppZpp_matrix(R)
+    .make_R_to_YU(R,ppZpp,YU)
+   end if 
+
+!!! A-O LETS GO !!!
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+ 
+     E.create(2*n_gcm);ep.create(2*n_gcm);p.create(2*n_gcm);bp.create(2*n_gcm)
+     Ap.create(n_gcm)
+
+     E=ZERO;p=ZERO;ep=ZERO;Ap=ZERO;bp=ZERO
+
+     do i = 1,n_gcm
+
+       E(i)= c * sqrt(P2(i) + c * c); E(i+n_gcm)= c * sqrt(P2(i) + c * c)
+       p(i)=sqrt(P2(i)); p(i+n_gcm)=sqrt(P2(i))
+       ep(i)=sqrt(ONE+P2(i)*alpha2); ep(i+n_gcm)=sqrt(ONE+P2(i)*alpha2) 
+       Ap(i)= sqrt( (E(i) + c * c)/(TWO * E(i)) )  
+       bp(i)=ONE/(ep(i)+ONE); bp(i+n_gcm)=ONE/(ep(i)+ONE)
+
+     end  
+
+     do i=1,n_gcm
+       do j=1,n_gcm
+    
+        Z(i,j) = Ap(i)*Z(i,j)*Ap(j)
+        PZP(i,j) = Ap(i)*PZP(i,j)*Ap(j)
+        SOx(i,j) = Ap(i)*SOx(i,j)*Ap(j)
+        SOy(i,j) = Ap(i)*SOy(i,j)*Ap(j)
+        SOz(i,j) = Ap(i)*SOz(i,j)*Ap(j)
+!        PZP(i,j) = c*c*(Ap(i)/(E(i)+c*c))*PZP(i,j)*(Ap(j)/(E(j)+c*c))                                        
+    
+       end
+     end
+
+     if( .scfdata.using_ppzpp)then
+       do i=1,n_gcm
+         do j=1,n_gcm
+
+          ppZpp(i,j) = Ap(i)*ppZpp(i,j)*Ap(j)
+    
+         end do
+       end do
+     end if
+!    .put_debug(PZP,"PZP matrix")
+!    .put_debug(SOx,"SOx matrix")
+!    .put_debug(SOy,"SOy matrix")
+!    .put_debug(SOz,"SOz matrix")
+!    .put_debug(Yr,"Y matrix")
+     
+   A2.create(2*n_gcm,2*n_gcm)
+   A2=ZERO
+     A2.alpha_alpha_plus(Z)
+     A2.beta_beta_plus(Z)
+!   A.make_hermitian   
+    .put_debug(A2,"A matrix")
+   PAP.create(2*n_gcm,2*n_gcm)
+   PAP=ZERO
+     PAP.alpha_alpha_plus(PZP)
+     PAP.beta_beta_plus(PZP)
+ ! i c the HH matrices are pushed to be Hermitian
+ ! would it not be better to use only the Pauli matrices
+ ! which give the sign to the Faa Fab Fbb Fba matrices ???
+     II = (ZERO,ONE)
+     fac= ONE
+     PAP.beta_alpha_plus(SOx,factor=fac*II)
+     PAP.beta_alpha_plus(SOy,factor=-fac)
+     PAP.alpha_alpha_plus(SOz,factor=fac*II)
+     PAP.beta_beta_plus(SOz,factor=-fac*II)
+   PAP.make_hermitian   
+    .put_debug(PAP,"PAP matrix")
+   if( .scfdata.using_ppzpp)then
+   ppApp.create(2*n_gcm,2*n_gcm)
+   ppApp=ZERO
+     ppApp.alpha_alpha_plus(ppZpp)
+     ppApp.beta_beta_plus(ppZpp)
+!    ppApp.beta_alpha_plus(SOx,factor=fac*II)
+!    ppApp.beta_alpha_plus(SOy,factor=-fac)
+!    ppApp.alpha_alpha_plus(SOz,factor=fac*II)
+!    ppApp.beta_beta_plus(SOz,factor=-fac*II)
+!  ppApp.make_hermitian   
+    .put_debug(ppApp,"ppApp matrix")
+       ppZpp.destroy
+   end if
+     Y0.create(n_gcm,n_gcm)
+     Y0=ZERO
+    .find_da_Y_iterative(Y0,PZP,Z,p,bp,ep)
+     Z.destroy
+     PZP.destroy
+     SOx.destroy
+     SOy.destroy
+     SOz.destroy
+    
+! lets find the transforation matrix
+     Yr.create(2*n_gcm,2*n_gcm)
+     Yr=ZERO
+     Yr.alpha_alpha_plus(Y0)
+     Yr.beta_beta_plus(Y0)
+     Y0.destroy
+!      stdout.flush
+!      stdout.text("before make Y ")
+!      stdout.flush
+
+!    .find_da_Y_iterative(Yr,PZP,SOx,SOy,SOz,Z,p,bp,ep)
+    .find_da_Y_iterative(Yr,PAP,A2,p,bp,ep)
+    .put_debug(Yr,"Y matrix")
+     
+!      stdout.flush
+!      stdout.text("before make O ")
+!      stdout.flush
+      
+     A.create(2*n_gcm,2*n_gcm)
+     O.create(2*n_gcm,2*n_gcm)
+     Ox.create(2*n_gcm,2*n_gcm)
+     O=ZERO
+     A=ZERO
+     Ox=ZERO
+     do i=1,2*n_gcm
+       Ox(i,i)=ONE
+       do j=1,2*n_gcm
+     !    do k=1,2*n_gcm
+         ! 1
+     !       A(i,j)=A(i,j)+conjg(Yr(k,i))*Yr(k,j)
+            
+         ! 2
+         ! O(i,j)=O(i,j)+Yr(k,i)*Yr(k,j)*S(i,j)
+         ! A=ZERO,Y=ZERO
+         ! A.to_product_of(B,O)
+         ! O.to_product_of(A,B,transpose_b=TRUE)
+         ! 3 norm is a number not an matrix  
+         ! n= n + O(i,j)+ UYYr(k,i)*Yr(k,j)*S(i,j)YU
+     !    end do
+     !    Ox(i,j)=Ox(i,j)+real(A(i,j))
+       end do
+     end do
+!     ?????   
+     
+!      stdout.flush
+!      stdout.text("before make inverse_sqrt_of(O) ")
+!      stdout.flush
+
+! CHEAT only real part is taken might be really wrong 
+     O.to_inverse_sqrt_of(Ox)
+     Ox.destroy
+!     O=A
+     A=ZERO
+    .put_debug(O,"O matrix")
+     
+!      stdout.flush
+!      stdout.text("before build_da_IOTC_F ")
+!      stdout.flush
+      
+     F.create(2*n_gcm,2*n_gcm)
+     F=ZERO
+! the hamiltonian is gonna be built
+     if( .scfdata.using_ppzpp)then
+!       .build_da_IOTC_F(F,Yr,PZP,SOx,SOy,SOz,Z,p,bp,E,ppZpp)
+       .build_da_IOTC_F(F,Yr,PAP,A2,p,bp,E,ppApp)
+     else  
+!       .build_da_IOTC_F(F,Yr,PZP,SOx,SOy,SOz,Z,p,bp,E)
+       .build_da_IOTC_F(F,Yr,PAP,A2,p,bp,E)
+     end if 
+    .put_debug(F,"F matrix")
+     
+!      stdout.flush
+!      stdout.text("after build_da_IOTC_F ")
+!      stdout.flush
+     A2.destroy
+     PAP.destroy
+     if( .scfdata.using_ppzpp)then
+       ppApp.destroy
+     end if 
+
+     A=ZERO
+     ! normalization
+     A.to_product_of(F,O)
+     F.to_product_of(O,A)
+    .put_debug(F,"OFO matrix")
+!     A=matmul(O,matmul(F,O))
+     O.destroy
+     Yr.destroy
+!     F=A
+!    A=ZERO
+
+     Ap.destroy 
+     P2.destroy
+     E.destroy
+     p.destroy
+     bp.destroy
+     ep.destroy
+   
+     B.create(n_gcm,n_gcm) 
+     B.to_product_of(S,YU)
+     S.destroy
+     YU.destroy
+     B2.create(2*n_gcm,2*n_gcm)
+     B2=ZERO
+     B2.alpha_alpha_plus(B)
+     B2.beta_beta_plus(B)
+     B.destroy
+
+     A=ZERO
+     A.to_product_of(B2,F)
+     F.to_product_of(A,B2,dagger_b=TRUE)
+    .put_debug(F,"U+YOFOYU matrix")
+
+     B2.destroy
+
+     m_out.destroy
+     A=ZERO
+
+!!! moving back to contracted basis sets 
+     M.create(.n_prim,.n_bf)
+     M=ZERO
+     .make_normalised_contraction_mx(M)
+    .put_debug(M,"M matrix")
+!     M2.create(2*.n_prim,2*.n_bf)
+     M2.create(2*.n_prim,2*.n_prim)
+     M2=ZERO
+     M2.alpha_alpha_plus(M)
+     M2.beta_beta_plus(M)
+    .put_debug(M2,"M2 matrix")
+     buco.create(2*.n_prim,2*.n_prim)
+     buco=ZERO
+!     buco.to_product_of(M2,F,transpose_a=TRUE)
+     buco.to_product_of(M2,F,dagger_a=TRUE)
+     A.to_product_of(buco,M2)
+    .put_debug(A,"MU+YOFOYUM matrix")
+     M.destroy
+     F.destroy
+     M2.destroy
+     buco.destroy
+     
+!      stdout.flush
+!      stdout.text("seems the IOTC H(1e) is build ")
+!      stdout.flush
+
+     H = A
+     A.destroy
+     .put_debug(H,"core matrix")
+
+   end
+
+   find_da_Y_iterative(Y,PZP,Z,p,b,ep)
+   ! the iterative solution of the Y matrix for IOTC
+   Y :: MAT{REAL}
+   PZP,Z :: MAT{REAL}, IN
+   p,b,ep :: VEC{REAL}, IN
+   i,j,n_gcm,n :: INT
+   fine :: BIN
+   THRESH,THRESH2,XXX :: REAL
+   Y0,dY :: MAT{REAL}*
+   m_out :: MAT{INT}*
+  
+    fine=FALSE
+    THRESH=1.0d-9
+    THRESH2=1.0d-6
+    n=0
+    m_out.create(.n_prim,.n_prim) 
+   .make_ready_da_gcm_tr2(m_out,n_gcm)  
+    m_out.destroy
+    Y0.create(n_gcm,n_gcm) 
+    Y0=ZERO
+    dY.create(n_gcm,n_gcm) 
+    dY=ZERO
+
+    do
+      if (fine) exit
+     .build_da_Y(Y,Y0,PZP,Z,p,b,ep,n_gcm)
+      dY=Y-Y0
+      Y0=Y
+    ! convergence check  
+      XXX=ZERO
+      do i = 1,n_gcm
+        do j = 1,n_gcm
+          if(abs(dY(i,j))>XXX) XXX=abs(dY(i,j))
+        end do
+      end do
+!      stdout.text("The largest change in the element of the Y matrix=")
+!      stdout.put(XXX)
+!      stdout.flush
+!      stdout.text("The iteration=")
+!      stdout.put(n)
+!      stdout.flush
+    ! output if so    
+      if(XXX<THRESH)then
+        fine=TRUE
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has converged") 
+        stdout.flush
+        stdout.text("The largest change in the element of the Y matrix=")
+        stdout.put(XXX)
+        stdout.flush
+        stdout.text("The number of iteration=")
+        stdout.put(n)
+        stdout.flush
+      end if  
+
+      if(n>200 AND XXX < THRESH2)then
+        fine=TRUE
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has converged only to THRESH2 see the find_da_Y_iterative in molecule.foo") 
+        stdout.flush
+        stdout.text("The largest change in the element of the Y matrix=")
+        stdout.put(XXX)
+        stdout.flush
+        stdout.text("The number of iteration=")
+        stdout.put(n)
+        stdout.flush
+      end if  
+
+      if(n>200 AND XXX > THRESH2)then
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has not converged see the find_da_Y_iterative in molecule.foo") 
+        stdout.flush
+      DIE("Exceeded the number of iterations (n_max=200) uuups !!!")
+      end if
+      
+      n=n+1
+      
+    end do
+
+    Y0.destroy
+    dY.destroy
+    
+   end
+
+   find_da_Y_iterative(Y,PZP,Z,p,b,ep)
+   ! the iterative solution of the Y matrix for IOTC
+   Y :: MAT{CPX}
+   PZP,Z :: MAT{CPX}
+   p,b,ep :: VEC{REAL}, IN
+   i,j,n_gcm,n :: INT
+   fine :: BIN
+   THRESH,THRESH2,XXX,YYY,rcdY :: REAL
+   Y0,dY :: MAT{CPX}*
+   m_out :: MAT{INT}*
+  
+    fine=FALSE
+    THRESH=1.0d-9
+    THRESH2=1.0d-6
+    n=0
+    m_out.create(.n_prim,.n_prim) 
+   .make_ready_da_gcm_tr2(m_out,n_gcm)  
+    m_out.destroy
+    Y0.create(2*n_gcm,2*n_gcm)
+    Y0=ZERO
+    Y0=Y
+    dY.create(2*n_gcm,2*n_gcm) 
+    dY=ZERO
+
+    do
+      if (fine) exit
+     .build_da_Y_2(Y,Y0,PZP,Z,p,b,ep,n_gcm)
+      dY=Y-Y0
+      Y0=Y
+    ! convergence check  
+      XXX=ZERO
+      YYY=ZERO
+      do i = 1,2*n_gcm
+        do j = 1,2*n_gcm
+!        rcdY=sqrt*( real(dY(i,j))*real(dY(i,j))+cmplx(dY(i,j))*cmplx(dY(i,j)) )
+!        if(rcdY>XXX) XXX=rcdY
+          if( abs(  real(dY(i,j))) >XXX ) XXX=abs ( real (dY(i,j) ) )
+          if( abs( aimag(dY(i,j))) >YYY ) YYY=abs ( aimag (dY(i,j) ) )  
+        end do
+      end do
+!      stdout.text("The iteration=")
+!      stdout.put(n)
+!      stdout.flush
+!      stdout.text("The largest change in the element of the real Y matrix=")
+!      stdout.put(XXX)
+!      stdout.flush
+!      stdout.text("The largest change in the element of the imaginary Y matrix=")
+!      stdout.put(YYY)
+!      stdout.flush
+    ! output if so    
+      if(XXX<THRESH AND YYY<THRESH)then
+        fine=TRUE
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has converged") 
+        stdout.flush
+        stdout.text("The number of iteration=")
+        stdout.put(n)
+        stdout.flush
+        stdout.text("The largest change in the element of the real Y matrix=")
+        stdout.put(XXX)
+        stdout.flush
+        stdout.text("The largest change in the element of the imaginary Y matrix=")
+        stdout.put(YYY)
+        stdout.flush
+      end if  
+
+      if(n>200 AND XXX < THRESH2 AND YYY < THRESH2 )then
+        fine=TRUE
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has converged only to THRESH2 see the find_da_Y_iterative in molecule.foo") 
+        stdout.flush
+        stdout.text("The number of iteration=")
+        stdout.put(n)
+        stdout.flush
+        stdout.text("The largest change in the element of the real Y matrix=")
+        stdout.put(XXX)
+        stdout.flush
+        stdout.text("The largest change in the element of the imaginary Y matrix=")
+        stdout.put(YYY)
+        stdout.flush
+      end if  
+
+      if(n>200 AND ( (XXX > THRESH2)OR(YYY>THRESH2) ) )then
+        stdout.text("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX") 
+        stdout.flush
+        stdout.text("The Y has not converged see the find_da_Y_iterative in molecule.foo") 
+        stdout.flush
+      DIE("Exceeded the number of iterations (n_max=200) uuups !!!")
+      end if
+      
+      n=n+1
+      
+    end do
+
+    Y0.destroy
+    dY.destroy
+    
+   end
+
+   build_da_Y(Y,Yr0,PZP,Z,p,b,ep,n_gcm)
+   ! build the IOTC Y matrix 
+   Y :: MAT{REAL}
+   Yr0,PZP,Z :: MAT{REAL}
+   p,b,ep :: VEC{REAL}, IN
+   n_gcm :: INT, IN
+   i,j,k,l :: INT
+   c,alpha,alpha2,alpha3,alpha4 :: REAL
+
+   Y=ZERO
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+     alpha3= alpha2*alpha
+     alpha4= alpha3*alpha
+
+     do i = 1,n_gcm
+       do j = 1,n_gcm
+         
+         Y(i,j) = alpha3*( p(i)*b(i)*Z(i,j)-PZP(i,j)/p(i)*b(j) )   
+         
+         do k = 1,n_gcm  
+           Y(i,j) = Y(i,j) + alpha2* ( PZP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*Z(k,j) )    &
+                             + alpha4* ( p(i)*b(i)*Z(i,k)*b(k)*p(k)*Yr0(k,j)                &
+                                       - Yr0(i,k)*b(k)*PZP(k,j)*b(j)         )                        
+         end do
+
+         do k = 1,n_gcm
+           do l = 1,n_gcm
+             Y(i,j) = Y(i,j) + alpha3* (                                                  &
+                       Yr0(i,k)* ( b(k)*PZP(k,l)/p(l) - Z(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
+           end do
+         end do
+
+         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
+         
+       end do
+     end do
+   
+   end
+
+   build_da_Y_2(Y,Yr0,PAP,A,p,b,ep,n_gcm)
+   ! build the IOTC Y matrix 
+   Y :: MAT{CPX}
+   Yr0,PAP,A :: MAT{CPX}
+   p,b,ep :: VEC{REAL}, IN
+   n_gcm :: INT, IN
+!   A,PAP :: MAT{CPX}* 
+!   ep,p,b :: VEC{REAL}*
+   i,j,k,l :: INT
+   c,alpha,alpha2,alpha3,alpha4,fac :: REAL
+   II :: CPX
+
+   Y=ZERO
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+     alpha3= alpha2*alpha
+     alpha4= alpha3*alpha
+
+!   A.create(2*n_gcm,2*n_gcm)
+!   A=ZERO
+!     A.alpha_alpha_plus(Z)
+!     A.beta_beta_plus(Z)
+!!   A.make_hermitian   
+!    .put_debug(A,"A matrix")
+!   PAP.create(2*n_gcm,2*n_gcm)
+!   PAP=ZERO
+!     PAP.alpha_alpha_plus(PZP)
+!     PAP.beta_beta_plus(PZP)
+ ! i c the HH matrices are pushed to be Hermitian
+ ! would it not be better to use only the Pauli matrices
+ ! which give the sign to the Faa Fab Fbb Fba matrices ???
+!     II = (ZERO,ONE)
+!     fac= ONE
+!     PAP.beta_alpha_plus(SOx,factor=fac*II)
+!     PAP.beta_alpha_plus(SOy,factor=-fac)
+!     PAP.alpha_alpha_plus(SOz,factor=fac*II)
+!     PAP.beta_beta_plus(SOz,factor=-fac*II)
+!   PAP.make_hermitian   
+!    .put_debug(PAP,"PAP matrix")
+
+!   ep.create(2*n_gcm)
+!   p.create(2*n_gcm)
+!   b.create(2*n_gcm)
+
+ !    do i = 1,n_gcm
+ !      ep(i)=epX(i); ep(i+n_gcm)=epX(i)
+ !      p(i)=pX(i); p(i+n_gcm)=pX(i)
+ !      b(i)=bX(i); b(i+n_gcm)=bX(i)
+ !    end do  
+
+     do i = 1,2*n_gcm
+       do j = 1,2*n_gcm
+         
+         Y(i,j) = alpha3*( p(i)*b(i)*A(i,j)-PAP(i,j)/p(i)*b(j) )
+         
+         do k = 1,2*n_gcm  
+           Y(i,j) = Y(i,j) + alpha2* ( PAP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*A(k,j) )    &
+                             + alpha4* ( p(i)*b(i)*A(i,k)*b(k)*p(k)*Yr0(k,j)                &
+                                       - Yr0(i,k)*b(k)*PAP(k,j)*b(j)         )                        
+         end do
+
+         do k = 1,2*n_gcm
+           do l = 1,2*n_gcm
+             Y(i,j) = Y(i,j) + alpha3* (                                                  &
+                       Yr0(i,k)* ( b(k)*PAP(k,l)/p(l) - A(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
+           end do
+         end do
+
+         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
+         
+       end do
+     end do
+    
+!   ep.destroy
+!   p.destroy
+!   b.destroy
+!   A.destroy
+!   PAP.destroy
+   
+   end
+
+   build_da_IOTC_F(F,Yr,PAP,A,p,bp,E,ppApp)
+   ! build the IOTC Y matrix 
+   F :: MAT{CPX}
+   Yr,PAP,A :: MAT{CPX}
+!   PZP,SOx,SOy,SOz,Z :: MAT{REAL}, IN
+   p,bp,E :: VEC{REAL}, IN
+   ppApp :: MAT{CPX}, optional
+!   A,PAP,ppApp :: MAT{CPX}* 
+!   E,p,bp :: VEC{REAL}*
+   i,j,k,l,n_gcm :: INT
+   c,alpha,alpha2,alpha3,alpha4,fac :: REAL
+   II :: CPX
+   
+   F=ZERO
+   n_gcm=.n_prim
+     c = SPEED_OF_LIGHT_AU
+     alpha = ONE/c
+     alpha2= alpha*alpha
+     alpha3= alpha2*alpha
+     alpha4= alpha3*alpha
+
+!   A.create(2*n_gcm,2*n_gcm)
+!   A=ZERO
+!     A.alpha_alpha_plus(Z)
+!     A.beta_beta_plus(Z)
+!   A.make_hermitian   
+!    .put_debug(A,"A matrix")
+!   PAP.create(2*n_gcm,2*n_gcm)
+!   PAP=ZERO
+!     PAP.alpha_alpha_plus(PZP)
+!     PAP.beta_beta_plus(PZP)
+ ! i c the HH matrices are pushed to be Hermitian
+ ! would it not be better to use only the Pauli matrices
+ ! which give the sign to the Faa Fab Fbb Fba matrices ???
+!     II = (ZERO,ONE)
+!     fac= ONE
+!     PAP.beta_alpha_plus(SOx,factor=fac*II)
+!     PAP.beta_alpha_plus(SOy,factor=-fac)
+!     PAP.alpha_alpha_plus(SOz,factor=fac*II)
+!     PAP.beta_beta_plus(SOz,factor=-fac*II)
+!   PAP.make_hermitian   
+!    .put_debug(PAP,"PAP matrix")
+!   if( .scfdata.using_ppzpp)then
+!   ppApp.create(2*n_gcm,2*n_gcm)
+!   ppApp=ZERO
+!     ppApp.alpha_alpha_plus(ppZpp)
+!     ppApp.beta_beta_plus(ppZpp)
+!    ppApp.beta_alpha_plus(SOx,factor=fac*II)
+!    ppApp.beta_alpha_plus(SOy,factor=-fac)
+!    ppApp.alpha_alpha_plus(SOz,factor=fac*II)
+!    ppApp.beta_beta_plus(SOz,factor=-fac*II)
+!  ppApp.make_hermitian   
+!    .put_debug(ppApp,"ppApp matrix")
+!   end if
+   
+ !  E.create(2*n_gcm)
+ !  p.create(2*n_gcm)
+ !  bp.create(2*n_gcm)
+ !    do i = 1,n_gcm
+ !      E(i)=EX(i); E(i+n_gcm)=EX(i)
+ !      p(i)=pX(i); p(i+n_gcm)=pX(i)
+ !      bp(i)=bpX(i); bp(i+n_gcm)=bpX(i)
+ !    end do 
+     
+     do i = 1,2*n_gcm
+     
+!         F(i,i)=P2(i)*bp(i)   ! followin Sadlej, I did not get it yet :(
+         F(i,i)=E(i)-c*c     
+         
+       do j = 1,2*n_gcm
+       
+         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
+
+         do k = 1,2*n_gcm  
+           F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
+                           + alpha*conjg(Yr(k,i))* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         &
+!                           + Yr(i,k)*P2(k)/( ONE-ep(k) )*Yr(k,j)
+                           + conjg(Yr(k,i))*(-E(k)-c*c )*Yr(k,j)
+!test    end do
+
+!test    do k = 1,2*n_gcm
+           do l = 1,2*n_gcm
+             if( .scfdata.using_ppzpp)then
+               F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
+                                          + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
+             else
+               F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
+                                          + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
+             end if
+           end do
+         end do
+         
+       end do
+     end do
+    
+!    E.destroy
+!    p.destroy
+!    bp.destroy
+!    A.destroy
+!    PAP.destroy
+!    if( .scfdata.using_ppzpp)then
+!      ppApp.destroy
+!    end if
+   
+   end
+
+   make_S_Y(S,Y)
+   ! Calculate the primitive ft matrix for a given hkl
+   S,Y :: MAT{REAL}, OUT
+   R :: MAT{REAL}*
+   m_out :: MAT{INT}*
+   n_gcm :: INT
+   
+     R.create(.n_prim,.n_prim)
+    .make_primitive_overlap_matrix(R)
+     m_out.create(.n_prim,.n_prim) 
+    .make_ready_da_gcm_tr2(m_out,n_gcm) 
+!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+! put the overlap matrix into the n_gcm non-redundant space
+    .get_da_gcm_now(R,S,m_out,n_gcm)  
+     Y.to_inverse_sqrt_of(S)
+
+     m_out.destroy
+     R.destroy
+   
+   end
+
+   make_U_P2(U,P2,Y)
+   ! Calculate the primitive ft matrix for a given hkl
+   U :: MAT{REAL}, OUT
+   P2 :: VEC{REAL}, OUT
+   Y :: MAT{REAL}, IN
+   R,T,A :: MAT{REAL}*
+   m_out :: MAT{INT}*
+   n_gcm :: INT
+   
+     R.create(.n_prim,.n_prim)
+    .make_primitive_kinetic_matrix(R) 
+     m_out.create(.n_prim,.n_prim) 
+    .make_ready_da_gcm_tr2(m_out,n_gcm) 
+!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+     T.create(n_gcm,n_gcm)
+! put the kinetic energy matrix into the n_gcm non-redundant space
+    .get_da_gcm_now(R,T,m_out,n_gcm)  
+
+     A.create(n_gcm,n_gcm)
+     A.to_product_of(Y,T)   
+     T.to_product_of(A,Y)              ! T=YTY  kinetic energy in an orthogonal basis
+     T.solve_eigenproblem(P2,U)
+     P2= TWO * P2
+
+     A.destroy
+     T.destroy
+     m_out.destroy
+     R.destroy
+   
+   end
+
+   make_R_to_YU(R,XXX,YU)
+   ! Calculate the primitive ft matrix for a given hkl
+   R :: MAT{REAL}, IN
+   XXX :: MAT{REAL}, OUT
+   YU :: MAT{REAL}, IN
+   A,B :: MAT{REAL}*
+   m_out :: MAT{INT}*
+   n_gcm :: INT
+   
+     m_out.create(.n_prim,.n_prim) 
+    .make_ready_da_gcm_tr2(m_out,n_gcm) 
+!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+     A.create(n_gcm,n_gcm)
+     B.create(n_gcm,n_gcm)
+    .get_da_gcm_now(R,A,m_out,n_gcm)  
+
+     B.to_product_of(YU,A,transpose_a=TRUE)
+     XXX.to_product_of(B,YU)
+
+     A.destroy
+     B.destroy
+     m_out.destroy
+     
+   end
+
+end
 
