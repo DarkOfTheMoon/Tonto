@@ -57,6 +57,8 @@ contains
       .diis.nullify_ptr_part
       nullify(.crystal)
       nullify(.cluster)
+      nullify(.cluster_charge)
+      nullify(.cluster_pos)
    end
 
    destroy_ptr_part ::: leaky
@@ -64,6 +66,8 @@ contains
       .diis.destroy_ptr_part
       nullify(.crystal)
       .cluster.destroy
+      .cluster_charge.destroy
+      .cluster_pos.destroy
    end
 
    create_copy(scfdata) ::: leaky
@@ -77,10 +81,18 @@ contains
    copy(scfdata) ::: leaky
    ! Make a copy of the "scfdata" object
       scfdata :: SCFDATA
+
       self = scfdata
+
       .nullify_ptr_part
+
       .diis.copy(scfdata.diis)
-      if (scfdata.crystal.created) .crystal => scfdata.crystal
+      if (scfdata.crystal.created)         .crystal => scfdata.crystal
+
+      if (scfdata.cluster.created)         .cluster.create_copy(scfdata.cluster)
+      if (scfdata.cluster_charge.created)  .cluster_charge.create_copy(scfdata.cluster_charge)
+      if (scfdata.cluster_pos.created)     .cluster_pos.create_copy(scfdata.cluster_pos)
+
    end
 
 !   delete_diis_archives
@@ -137,10 +149,7 @@ contains
       .penalty                 = ZERO
       .old_penalty             = ZERO
       .kappa                   = ZERO
-     .zero_oo_constraint_block = FALSE
-
-      ! Cluster of charges 
-      .cluster_radius          = SCFDATA_CLUSTER_RADIUS
+      .zero_oo_constraint_block = FALSE
 
       ! Initial guess options
       .initial_density         = "core" ! This shouldn't be changed; else atom SCF goes forever
@@ -221,11 +230,13 @@ contains
       .using_PIE               = FALSE
 
       ! Cluster switches
-      .using_cluster_charges      = FALSE
-      .using_SC_cluster_charges   = FALSE
+      .using_cluster_charges   = FALSE
+      .using_SC_cluster_charges= FALSE
+      .cluster_radius          = SCFDATA_CLUSTER_RADIUS
+      .save_cluster_charges    = FALSE
       .using_local_Lorentz_fields = FALSE
 
-      .delete_scf_archives        = TRUE
+      .delete_scf_archives     = TRUE
 
    end
 
@@ -588,14 +599,16 @@ contains
          case ("lambda_step=                 "); stdin.read(.lambda_step)
          case ("level_shift=                 "); stdin.read(.level_shift)
          case ("level_shift_finish=          "); stdin.read(.level_shift_finish)
+         case ("linear_dependence_shift=     "); stdin.read(.linear_dependence_shift)
+         case ("linear_dependence_tol=       "); stdin.read(.linear_dependence_tol)
          case ("min_iterations=              "); .read_min_iterations
          case ("max_iterations=              "); .read_max_iterations
          case ("max_update_stepsize=         "); stdin.read(.max_update_stepsize)
          case ("mo_diis=                     "); .read_MO_diis
          case ("mo_gradient_stepsize=        "); stdin.read(.MO_gradient_stepsize)
          case ("output=                      "); stdin.read(.output)
-         case ("linear_dependence_shift=     "); stdin.read(.linear_dependence_shift)
-         case ("linear_dependence_tol=       "); stdin.read(.linear_dependence_tol)
+         case ("put_cluster                  "); .put_cluster
+         case ("put_cluster_charges          "); .put_cluster_charges
          case ("quantization_axis=           "); stdin.read(.quantization_axis)
          case ("relativity_kind=             "); .read_relativity_kind
          case ("scf_kind=                    "); .read_kind
@@ -613,8 +626,8 @@ contains
          case ("use_bs_term=                 "); stdin.read(.using_bs_term)
          case ("use_bs_t_term=               "); stdin.read(.using_bs_t_term)
          case ("use_cphf_diis=               "); .read_CPHF_diis
-         case ("use_cluster_charges=         "); stdin.read(.using_cluster_charges)
-         case ("use_sc_cluster_charges=      "); stdin.read(.using_SC_cluster_charges)
+         case ("use_cluster_charges=         "); .read_cluster_charges
+         case ("use_sc_cluster_charges=      "); .read_SC_cluster_charges
          case ("use_damping=                 "); stdin.read(.using_damping)
          case ("use_delta_build=             "); .read_delta_build
          case ("use_direct_scf=              "); .read_direct
@@ -638,7 +651,6 @@ contains
          case ("use_previous_diis_info=      "); stdin.read(.using_previous_diis_info)
          case ("use_pfon=                    "); stdin.read(.using_pFON)
          case ("use_so_fdff=                 "); stdin.read(.using_SO_FDFF)
-!         case ("use_so_coupling=             "); stdin.read(.using_SO_coupling)
          case ("xc_atom_separation_cutoff=   "); stdin.read(.XC_atom_separation_cutoff)
          case ("zero_oo_constraint_block=    "); stdin.read(.zero_oo_constraint_block)
          case default;           UNKNOWN(word)
@@ -742,7 +754,9 @@ contains
 
    read_initial_density
    ! Read the initial density guess
+
       stdin.read(.initial_density)
+
       select case (.initial_density)
          case("core                ")
          case("fock                ")
@@ -758,11 +772,18 @@ contains
          case("complex_general     ")
          case default;  UNKNOWN(.initial_density)
       end
+
+      ! Need to reset set this
+      .initial_mos = " "
+
    end
 
    read_initial_mos
-   ! Read the initial density guess
+   ! Read the initial MO guess. This controls whether densities are
+   ! read in ...
+
       stdin.read(.initial_mos)
+
       select case (.initial_mos)
          case("existing            ")
          case("restricted          ")
@@ -775,6 +796,10 @@ contains
          case("complex_general     ")
          case default;   UNKNOWN(.initial_mos)
       end
+
+      ! Reset this
+      .initial_density = "--using MO's--"
+
    end
 
    read_initial_Us
@@ -894,6 +919,17 @@ contains
       sh4 :: SHELL1QUARTET
       stdin.read(.eri_primitive_pair_cutoff)
       sh4.set_pair_cutoff(.eri_primitive_pair_cutoff)
+   end
+
+   read_cluster_charges
+   ! Read whether to use cluster charges
+      stdin.read(.using_cluster_charges)
+   end
+
+   read_SC_cluster_charges
+   ! Read whether to use SC cluster charges
+      stdin.read(.using_SC_cluster_charges)
+      .using_cluster_charges = .using_SC_cluster_charges
    end
 
 !  *****
@@ -1458,6 +1494,46 @@ contains
       out.put(.penalty)
       out.put(.energy)
       out.put(.kinetic_energy)
+   end
+
+   put_cluster
+   ! Put the cluster out
+   ENSURE(.cluster.created,"no cluster!")
+      .cluster.put
+   end
+
+   put_cluster_charges
+   ! Put the cluster charges out
+   ENSURE(.cluster_charge.created,"no cluster_charge array")
+   ENSURE(.cluster_pos.created,"no cluster_pos array")
+
+      n,i,k :: INT
+
+      n = .cluster_charge.dim/3
+
+      stdout.flush
+      stdout.text("Cluster monopole charges and positions:")
+      stdout.flush
+
+      stdout.dash(int_fields=1,real_fields=4)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("pos")
+      stdout.flush
+
+      k = 1
+      do i = 1,n
+         stdout.put(k)
+         stdout.put(.cluster_charge(k))
+         stdout.put(.cluster_pos(1,k))
+         stdout.put(.cluster_pos(2,k))
+         stdout.put(.cluster_pos(3,k))
+         stdout.flush
+         k = k + 3
+      end
+
+      stdout.dash(int_fields=1,real_fields=4)
+
    end
 
 end 
