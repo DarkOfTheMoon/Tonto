@@ -286,7 +286,7 @@ contains
 
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts
-   ! .atom.destroy ! Never destroy this, just nullify
+   !  .atom.destroy ! Never destroy this, just nullify
       .atom_Z.destroy
       .atom_pos.destroy
       .atom_zeta.destroy
@@ -1461,9 +1461,8 @@ contains
 
 
    no_of_points_for_row(p) result (res) ::: private
-   ! Return the number of points in the (radial x spherical) grid, assuming that
-   ! the atom is in period "p". Sometimes the most extreme radial points may be
-   ! culled, based on the atoms most diffuse basis function exponent. See below.
+   ! Return the number of points in the (radial x spherical) grid,
+   ! assuming that the atom is in period "p". 
       p   :: INT, IN
       res :: INT
    ENSURE(p>=0 AND p<=7,"p out of range")
@@ -1496,16 +1495,20 @@ contains
    ! the atom scale factor, and the kind of radial grid.
       a :: INT, IN
       res :: INT
+
    ENSURE(.radial_grid.created,"no radial_grid")
    ENSURE(.lebedev_grid.created,"no lebedev_grid")
    ENSURE(.atom_Z.created,"no atom_Z array")
    ENSURE(.atom_lowest_exponents.created,"no atom_lowest_exponents array")
    ENSURE(.atom_zeta.created,"no atom_zeta scale factors")
+
       lebedev_grid :: LEBEDEV*
       radial_grid :: QUADRATURE*
       p,nr,i :: INT
       r_max,s,r :: REAL
+
       r_max = .r_max_for_atom(a)
+
       p  = period(.atom_Z(a))
       radial_grid => .radial_grid(p)
       nr = .radial_grid(p).n_points
@@ -1521,6 +1524,7 @@ contains
          DIE_IF(lebedev_grid.destroyed,"no lebedev_grid")
          res = res + lebedev_grid.n_points
       end
+
    end
 
    apply_pruning_scheme(lebedev_grid,i,nr,scheme) ::: private
@@ -1738,6 +1742,24 @@ contains
       end
    end
 
+   max_no_of_points_per_atom result (res)
+   ! Return the maximum number of points in the DFT integration grid
+   ! required to integrate any atom. This number of points does *not*
+   ! take into account grid compression, but it *does* take into
+   ! account the atoms lowest exponent.
+      res :: INT
+   ENSURE(.finalized,"not finalized; use set_grid_data")
+   ENSURE(.atom.created,"no atom array")
+   ENSURE(.unique_atom_for.created,"no unique_atom_for array")
+   ENSURE(.atom_weights.created,"no atom_weights array")
+      a,u :: INT
+      res = 0    
+      do a = 1,.atom.dim    
+         u = .unique_atom_for(a)
+         res = max(res,.atom_weights(u).element.dim)
+      end
+   end
+
 !   no_of_fat_points result (res)
 !   ! Calculate the total number of points in the total grid over all atoms (i.e.
 !   ! not just the number of points in the reference atom grid).
@@ -1756,18 +1778,60 @@ contains
    ! negligible in value.
       a :: INT, IN
       r_max :: REAL
+
    ENSURE(.atom_lowest_exponents.created,"no atom_lowest_exponents array")
+
       alpha,cutoff :: REAL
-      alpha = ONE/.atom_lowest_exponents(a)
-      cutoff = .basis_function_cutoff
-      if (cutoff<=ZERO) then; r_max = huge(ONE)
-      else;    r_max = sqrt(-alpha*log(cutoff)) ! <<< .basis_function_cutoff defines r_max !!!
+
+      if (.atom.created) then
+         r_max = .atom(a).r_max(.basis_function_cutoff)
+      else
+         alpha = ONE/.atom_lowest_exponents(a)
+         cutoff = .basis_function_cutoff
+         if (cutoff<=ZERO) then; r_max = huge(ONE)
+         else;    r_max = sqrt(-alpha*log(cutoff)) ! <<< .basis_function_cutoff defines r_max !!!
+         end
       end
    end
 
 !  *****************************
 !  Full grid generation routines
 !  *****************************
+
+   make_grid(pt,wt,atom_a) ::: leaky
+   ! Make the DFT integration grid ("pt","wt") for an atom "atom_a".
+   ! Atom grids must have been made by calling .set_grid_data
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT
+
+   ENSURE(.finalized,"radial and angular grids are unmade; use set_grid_data")
+   ENSURE(.atom_points.created,"no atom_Z array")
+
+      u,n_pt,n :: INT
+      a1,a2,a3 :: REAL
+
+      ! Get no. of points
+      u    = .unique_atom_for(atom_a)
+      n_pt = .atom_weights(u).element.dim
+
+      ! Create pt and *assign* weight
+      pt.create(n_pt,3)              
+      wt.create(n_pt)              
+      pt = .atom_points(u).element  ! ... leaky !
+      wt = .atom_weights(u).element ! ... leaky !
+
+      ! Displace pt
+      a1 = .atom_pos(atom_a,1)
+      a2 = .atom_pos(atom_a,2)
+      a3 = .atom_pos(atom_a,3)
+      do n = 1,n_pt
+          pt(n,1) = pt(n,1) + a1
+          pt(n,2) = pt(n,2) + a2
+          pt(n,3) = pt(n,3) + a3
+      end
+
+   end
 
    make_grid(pt,wt,compress,weight_is_0) ::: leaky
    ! Make the DFT integration grid ("pt","wt") for a given list of "atoms".
@@ -2029,7 +2093,98 @@ contains
       end
    end
 
-!  Prune two-atom grids, for basis function matrix element integrations
+!  Prune grids
+
+   prune_grid(pt,wt,atom_a) ::: leaky
+   ! Prune an integration grid (pt,wt) by removing all points where
+   ! the corresponding weight is less than .basis_function_cutoff.
+      pt :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+
+      r1,r2,r3 :: VEC{REAL}*
+      n_pt, i,k,u,f :: INT
+
+      ! Allocate map array
+      n_pt = wt.dim
+
+      ! Efficient point coordinates
+      r1 => pt(:,1)
+      r2 => pt(:,2)
+      r3 => pt(:,3)
+
+      ! Copy only significant points
+      k = 0
+      do i = 1,n_pt
+         if (wt(i)<.basis_function_cutoff) cycle
+         k     = k + 1
+         r1(k) = r1(i)
+         r2(k) = r2(i)
+         r3(k) = r3(i)
+         wt(k) = wt(i)
+      end
+
+      ! Shrink the grid
+      pt.shrink(k,3)
+      wt.shrink(k)
+
+   end
+
+   prune_grid(pt,wt,grid,atom_a) ::: leaky
+   ! Prune an integration grid (pt,wt) by removing all points where
+   ! the corresponding weight is less than .basis_function_cutoff.
+   ! Also return the corresponding basis function "grid".
+      pt,grid :: MAT{REAL}*
+      wt :: VEC{REAL}*
+      atom_a :: INT, IN
+
+      r1,r2,r3 :: VEC{REAL}*
+      map :: VEC{INT}*
+      n_pt,nb, i,k,u,f :: INT
+
+      ! Allocate map array
+      n_pt = wt.dim
+      map.create(n_pt)
+
+      ! Efficient point coordinates
+      r1 => pt(:,1)
+      r2 => pt(:,2)
+      r3 => pt(:,3)
+
+      ! Copy only significant points
+      k = 0
+      do i = 1,n_pt
+         if (wt(i)<.basis_function_cutoff) cycle
+         k     = k + 1
+         map(k)= i
+         r1(k) = r1(i)
+         r2(k) = r2(i)
+         r3(k) = r3(i)
+         wt(k) = wt(i)
+      end
+
+      ! Shrink the grid
+      pt.shrink(k,3)
+      wt.shrink(k)
+      map.shrink(k)
+
+      ! New counters
+      n_pt = k
+      nb   = .atom(atom_a).basis.n_bf
+
+      ! Copy the bf grid
+      grid.create(n_pt,nb)
+      u = .unique_atom_for(atom_a) 
+      do f = 1,nb
+      do k = 1,n_pt
+         grid(k,f) = .atom_grid0(u)[map(k),f]
+      end
+      end
+
+      ! Clean
+      map.destroy
+
+   end
 
    prune_pair_grid(pt,wt,atoms) ::: leaky
    ! Prune a two-atom grid of points which are too small when the basis
