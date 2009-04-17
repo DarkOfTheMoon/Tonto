@@ -77,6 +77,7 @@ contains
       nullify(.atom_kind)
       nullify(.unique_atom)
       nullify(.overlapping_atoms)
+      nullify(.overlapping_atoms_for_atom)
       nullify(.scfdata)
       nullify(.orbital_energies)
       nullify(.molecular_orbitals)
@@ -145,6 +146,7 @@ contains
       .atom_kind.destroy
       .unique_atom.destroy
       .overlapping_atoms.destroy
+      .overlapping_atoms_for_atom.destroy
       .scfdata.destroy
       .orbital_energies.destroy
       .molecular_orbitals.destroy
@@ -274,6 +276,7 @@ contains
       if (mol.atom_kind.created)                  .atom_kind.create_copy(mol.atom_kind)
       if (mol.unique_atom.created)                .unique_atom.create_copy(mol.unique_atom)
       if (mol.overlapping_atoms.created)          .overlapping_atoms.create_copy(mol.overlapping_atoms)
+      if (mol.overlapping_atoms_for_atom.created) .overlapping_atoms_for_atom.create_copy(mol.overlapping_atoms_for_atom)
       if (mol.first_basis_fn_for_atom.created)    .first_basis_fn_for_atom.create_copy(mol.first_basis_fn_for_atom)
       if (mol.last_basis_fn_for_atom.created)     .last_basis_fn_for_atom.create_copy(mol.last_basis_fn_for_atom)
       if (mol.scfdata.created)                    .scfdata.create_copy(mol.scfdata)
@@ -313,6 +316,7 @@ contains
       .n_bf = 0
       .atom_info_made = FALSE
       .basis_name = " "
+      .use_spherical_basis = FALSE
       .slaterbasis_name = " "
       .coppensbasis_name = " "
       .basis_info_made = FALSE
@@ -1128,25 +1132,57 @@ contains
       d :: VEC{REAL}(3)
       r :: REAL
       a,b,ab,n_atom_pairs :: INT
+
       n_atom_pairs = .no_of_atom_pairs
+
+      ! Overlapping atoms pair array
       .overlapping_atoms.destroy
       .overlapping_atoms.create(n_atom_pairs)
+
+      ! Overlapping atoms list array
+      .overlapping_atoms_for_atom.destroy
+      .overlapping_atoms_for_atom.create(.n_atom)
+
+      ! Make the maximum radii
       r_max.create(.n_atom)
       do a = 1,.n_atom
          ! sqrt because we are dealing with overlaps
-         r_max(a) = .atom(a).r_max(sqrt(.becke_grid.rho_cutoff))
-       ! stdout.show("r_max "//a.to_str.trim//"=",r_max(a))
+         r_max(a) = .atom(a).r_max(.becke_grid.basis_function_cutoff)
       end 
+      .put_debug(r_max,"make_overlapping_atoms: r_max")
+
+      ! Make the overlapping atom arrays
       do ab = 1,n_atom_pairs
          a = (1+int(sqrt(EIGHT*ab-SEVEN)))/2
          b = ab - a*(a-1)/2
          d = .atom(a).pos - .atom(b).pos
          r = sqrt(dot_product(d,d))
-         if (r>(r_max(a)+r_max(b))) then; .overlapping_atoms(ab) = FALSE
-         else;                            .overlapping_atoms(ab) = TRUE
+         if (r>(r_max(a)+r_max(b))) then
+            .overlapping_atoms(ab) = FALSE
+         else 
+            .overlapping_atoms(ab) = TRUE
          end
       end
+
+      ! Make the overlapping atom arrays
+      do a = 1,.n_atom
+         .overlapping_atoms_for_atom(a).element.append(a)
+         do b = 1,a-1
+            d = .atom(a).pos - .atom(b).pos
+            r = sqrt(dot_product(d,d))
+            if (r>(r_max(a)+r_max(b))) cycle
+            .overlapping_atoms_for_atom(a).element.append(b)
+            .overlapping_atoms_for_atom(b).element.append(a)
+         end
+      end
+
       r_max.destroy
+
+      ! Reorder the lists
+      do a = 1,.n_atom
+         .overlapping_atoms_for_atom(a).element.sort
+      end 
+
    end
 
 !  ******************
@@ -1193,14 +1229,43 @@ contains
 !  ***********
 !  Shell pairs
 !  ***********
+
+!   get_shell_pair(shell,a,b,fa,la,fb,lb) ::: leaky
+!   ! Get the SHELL2 object "shell" correponding to the pair index "index"
+!   ! Also return the basis function start indices "fa", "la", etc ...
+!   ! This version does not precompute gaussian pair information
+!   ! and is useful for numerical DFT integration routines.
+!      a,b :: INT, IN
+!      shell :: SHELL2, OUT
+!      fa,la,fb,lb :: INT, OUT
+!
+!      aa,sa,bb,sb :: INT
+!
+!      fa = .first_basis_fn_for_shell(a)
+!      fb = .first_basis_fn_for_shell(b)
+!      la = .last_basis_fn_for_shell(a)
+!      lb = .last_basis_fn_for_shell(b)
+!      aa = .atom_for_shell(a)
+!      bb = .atom_for_shell(b)
+!      sa = .basis_shell_for_shell(a)
+!      sb = .basis_shell_for_shell(b)
+!
+!      shell.set_from(.precomputed_basis_shellpair(sa,sb),.atom(aa).pos,.atom(bb).pos,aa==bb)
+!
+!      .put_debug(shell,"get_shell_pair: shell")
+!
+!   end
 !
 !   get_shell_pair(shell,index,fa,la,fb,lb) ::: leaky
 !   ! Get the SHELL2 object "shell" correponding to the pair index "index"
 !   ! Also return the basis function start indices "fa", "la", etc ...
+!   ! This version does not precompute gaussian pair information
+!   ! and is useful for numerical DFT integration routines.
 !      index :: INT, IN
 !      shell :: SHELL2, OUT
 !      fa,la,fb,lb :: INT, OUT
 !      a,b,aa,sa,bb,sb :: INT
+!
 !      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
 !      b  = index - a*(a-1)/2
 !      fa = .first_basis_fn_for_shell(a)
@@ -1209,32 +1274,37 @@ contains
 !      lb = .last_basis_fn_for_shell(b)
 !      aa = .atom_for_shell(a)
 !      bb = .atom_for_shell(b)
-!      sa = .atom_shell_for_shell(a)
-!      sb = .atom_shell_for_shell(b)
-!      shell.copy(.atom(aa).basis.shell(sa), .atom(bb).basis.shell(sb), &
-!                 .atom(aa).pos, .atom(bb).pos )
+!      sa = .basis_shell_for_shell(a)
+!      sb = .basis_shell_for_shell(b)
+!
+!      shell.set_from(.precomputed_basis_shellpair(sa,sb),.atom(aa).pos,.atom(bb).pos,aa==bb,skip=FALSE)
+!
+!      .put_debug(shell,"get_shell_pair: shell")
+!
 !   end
 !
 !   get_shell_pair(shell,index,fa,la,fb,lb,atom_a,atom_b) ::: leaky
 !   ! Get the SHELL2 object "shell" correponding to the pair index "index"
 !   ! Also return the basis function start indices "fa", "la", etc ...
-!   ! Plus the atoms the shells are located on, "atom_a" and "atom_b".
-!     index :: INT, IN
-!     shell :: SHELL2, OUT
-!     fa,la,fb,lb,atom_a,atom_b :: INT, OUT
-!     a,b,sa,sb :: INT
-!     a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
-!     b  = index - a*(a-1)/2
-!     fa = .first_basis_fn_for_shell(a)
-!     fb = .first_basis_fn_for_shell(b)
-!     la = .last_basis_fn_for_shell(a)
-!     lb = .last_basis_fn_for_shell(b)
-!     atom_a = .atom_for_shell(a)
-!     atom_b = .atom_for_shell(b)
-!     sa = .atom_shell_for_shell(a)
-!     sb = .atom_shell_for_shell(b)
-!     shell.copy(.atom(atom_a).basis.shell(sa), .atom(atom_b).basis.shell(sb), &
-!                .atom(atom_a).pos, .atom(atom_b).pos )
+!   ! This version does not precompute gaussian pair information
+!   ! and is useful for numerical DFT integration routines.
+!      index :: INT, IN
+!      shell :: SHELL2, OUT
+!      fa,la,fb,lb,atom_a,atom_b :: INT, OUT
+!      a,b,sa,sb :: INT
+!      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+!      b  = index - a*(a-1)/2
+!      fa = .first_basis_fn_for_shell(a)
+!      fb = .first_basis_fn_for_shell(b)
+!      la = .last_basis_fn_for_shell(a)
+!      lb = .last_basis_fn_for_shell(b)
+!      atom_a = .atom_for_shell(a)
+!      atom_b = .atom_for_shell(b)
+!      sa = .basis_shell_for_shell(a)
+!      sb = .basis_shell_for_shell(b)
+!
+!      shell.set_from(.precomputed_basis_shellpair(sa,sb),.atom(atom_a).pos,.atom(atom_b).pos,atom_a==atom_b,FALSE)
+!
 !   end
 
    get_precomputed_shell_pair(shell,index,fa,la,fb,lb) ::: leaky
@@ -1269,6 +1339,7 @@ contains
       shell :: SHELL2, OUT
       fa,la,fb,lb,atom_a,atom_b :: INT, OUT
       a,b,sa,sb :: INT
+
       a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
       b  = index - a*(a-1)/2
       fa = .first_basis_fn_for_shell(a)
@@ -1279,7 +1350,9 @@ contains
       atom_b = .atom_for_shell(b)
       sa = .basis_shell_for_shell(a)
       sb = .basis_shell_for_shell(b)
+
       shell.set_and_precompute_from(.precomputed_basis_shellpair(sa,sb),.atom(atom_a).pos,.atom(atom_b).pos,atom_a==atom_b,FALSE)
+
    end
 
 !  *********************
@@ -2016,9 +2089,9 @@ contains
    end
 
    make_ao_density_matrix(D) ::: leaky
-   ! Make the AO (spin independent) density matrix from the existing density
-   ! matrix. The result is placed in the "restricted" part of the density
-   ! matrix. NOTE: The density matrix is archived.
+   ! Make the AO (spin independent) density matrix from the existing
+   ! density matrix. The result is placed in the "restricted" part of
+   ! the density matrix. 
       D :: OPMATRIX*
 
    ENSURE(.basis_info_made, "no basis info")
@@ -2590,6 +2663,11 @@ contains
    ! it has been set.
    end
 
+   put_debug(X,name) ::: get_from(DEBUG, TYPE=>VEC{INT})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
    put_debug(X,name) ::: get_from(DEBUG, TYPE=>VEC{REAL})
    ! Put *array* "X" to output, with descriptor "name", if the debug switch for
    ! it has been set.
@@ -2643,9 +2721,9 @@ contains
          if (small<=tol) then
             n = count(abs(.overlap_eigenvalues) <= tol)
             WARN(" ")
-            WARN("Basis is linearly dependent to "//trim(small.to_str("e15.8")))
-            WARN("The tolerance is set to "//trim(tol.to_str("e15.8")))
+            WARN("Smallest cartesian overlap eigenvalue is "//trim(small.to_str("e15.8")))
             WARN("There are "//trim(n.to_str)//" linear dependent functions")
+            WARN("The overlap tolerance is set to "//trim(tol.to_str("e15.8")))
             WARN(" ")
          end
       end
@@ -2713,10 +2791,14 @@ contains
    end
 
    make_overlap_sqrt(S_sqrt) ::: leaky
-   ! Get the overlap matrix. If eigenvalues are too close to zero they
-   ! are exactly zeroed out ...
-
+   ! Get "S_sqrt", the sqrt overlap matrix 
       S_sqrt :: MAT{REAL}
+
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_values")
+   ENSURE(S_sqrt.is_square,"non-square S_qrt")
+   ENSURE(S_sqrt.dim1==.overlap_eigenvectors.dim1,"wrong shape for S_sqrt")
+
       tol :: REAL
 
       if (.overlap_matrix.destroyed) .get_overlap_matrix
@@ -2731,12 +2813,13 @@ contains
    end
 
    make_overlap_inverse_sqrt(S_inv) ::: leaky
-   ! Get the overlap matrix. If eigenvalues are zero they are shifted
-   ! to very high values.
+   ! Get "S_inv", the inverse sqrt overlap matrix 
       S_inv :: MAT{REAL}
 
+   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+   ENSURE(.overlap_eigenvalues.created,"no overlap_values")
    ENSURE(S_inv.is_square,"non-square S_inv")
-   ENSURE(S_inv.dim1==.n_bf,"wrong size for S_inv")
+   ENSURE(S_inv.dim1==.overlap_eigenvectors.dim1,"wrong shape for S_sqrt")
 
       tol :: REAL
 
@@ -3649,7 +3732,7 @@ contains
 
       ! Make the core matrix here (relativistic vs non-rel)
       select case (.scfdata.relativity_kind)
-         case ("douglas-kroll-hess","dkh"); .make_r_DKH_matrix(H)
+         case ("douglas-kroll-hess","dkh"); .make_r_DKH_matrix2(H)
          case ("iotc");                     .make_r_IOTC_matrix(H)
          case default;                      .make_r_core_matrix(H)
       end
@@ -6825,6 +6908,89 @@ contains
       end
    end
 
+!   make_cartesian_to_sph_mx(U) ::: leaky
+!   ! Make the cartesian to spherical transformation matrix "U" for the
+!   ! entire basis set.
+!      U :: MAT{REAL}*
+!
+!   ENSURE(.basis_info_made, "no basis info")
+!
+!      n_sph_bf,L,fc,lc,fs,ls,s :: INT
+!      UU :: VEC{MAT_{REAL}}*
+!
+!      ! No of spherical basis functions
+!      n_sph_bf = .atom.no_of_sph_basis_functions
+!
+!      ! Create the U matrix here -- leaky
+!      U.create(.n_bf,n_sph_bf)
+!      U = ZERO
+!
+!      !Assign it
+!      ls = 0
+!      do s = 1,.n_shell
+!         L  = .angular_moment_for_shell(s)
+!         fc = .first_basis_fn_for_shell(s)
+!         lc =  .last_basis_fn_for_shell(s)
+!         fs = ls + 1
+!         ls = ls + 2*L + 1
+!         UU => GAUSSIAN_DATA::spherical_harmonics_for
+!         U(fc:lc,fs:ls) = UU(L).element
+!      end
+!
+!      .put_debug(U,"make_cartesian_to_sph_mx: U")
+!
+!   end
+!
+!   make_primitive_to_sph_mx(U) ::: leaky
+!   ! Make the cartesian primitive to spherical transformation matrix
+!   ! "U" for the entire basis set.
+!      U :: MAT{REAL}*
+!
+!   ENSURE(.basis_info_made, "no basis info")
+!
+!      n_sph_bf,nps, L,fc,lc,fs,ls,s :: INT
+!      frst,last,at,lmom :: VEC{INT}*
+!      ex :: VEC{REAL}*
+!      UU :: VEC{MAT_{REAL}}*
+!
+!      ! No of spherical basis functions
+!      n_sph_bf = .atom.no_of_sph_primitives
+!
+!      ! Create the U matrix here -- leaky
+!      U.create(.n_prim,n_sph_bf)
+!      U = ZERO
+!
+!      ! Make the indexing arrays
+!      .atom.make_primitive_limits(frst,last,at,lmom,ex)
+!      nps = .atom.no_of_primitive_shells
+!
+!      .put_debug(lmom,"make_primitive_to_sph_mx: lmom")
+!      .put_debug(frst,"make_primitive_to_sph_mx: frst")
+!      .put_debug(last,"make_primitive_to_sph_mx: last")
+!
+!      !Assign it
+!      ls = 0
+!      do s = 1,nps
+!         L  = lmom(s)
+!         fc = frst(s)
+!         lc = last(s)
+!         fs = ls + 1
+!         ls = ls + 2*L + 1
+!         UU => GAUSSIAN_DATA::spherical_harmonics_for
+!         U(fc:lc,fs:ls) = UU(L).element
+!      end
+!
+!      ! Clean
+!      lmom.destroy
+!      ex.destroy
+!      at.destroy
+!      last.destroy
+!      frst.destroy
+!
+!      .put_debug(U,"make_primitive_to_sph_mx: U")
+!
+!   end
+
 !  ************
 !  I/O routines
 !  ************
@@ -8023,7 +8189,10 @@ contains
       if (.crystal.created)     .put_crystal
       if (.cluster.created)     .put_cluster
       if (.becke_grid.created)  .put_becke_grid
-      if (.overlapping_atoms.created AND .atom.created) .put_overlapping_atoms
+      if (.overlapping_atoms.created AND .atom.created) then
+         .put_overlapping_atoms
+         .put_overlapping_atoms_4_atom
+      end
    end
 
    put_atoms
@@ -8177,6 +8346,31 @@ contains
             if (NOT .is_overlapping_atom(i,j)) cycle
             k = k + 1
             stdout.put(j)
+            if (mod(k,25)==0) stdout.flush
+         end
+            if (mod(k,25)/=0) stdout.flush
+      end
+      stdout.unsave
+   end
+
+   put_overlapping_atoms_4_atom
+   ! Out out the .atom_group info array
+   ENSURE(.overlapping_atoms.created,"no overlapping_atoms")
+   ENSURE(.atom.created,"no atoms")
+      i,j,k :: INT
+      stdout.save
+      stdout.set_int_width(4)
+      stdout.set_n_fields(25)
+      stdout.set_use_labels(FALSE)
+      stdout.text(" ")
+      stdout.text("Overlapping atoms for atom:")
+      stdout.text(" ")
+      do i = 1,.atom.dim
+         stdout.put(i)
+         k = 1
+         do j = 1,.overlapping_atoms_for_atom(i).element.dim
+            k = k + 1
+            stdout.put(.overlapping_atoms_for_atom(i)[j])
             if (mod(k,25)==0) stdout.flush
          end
             if (mod(k,25)/=0) stdout.flush
@@ -8855,6 +9049,360 @@ contains
 !
 !   end
 
+! Hirshfeld atom info
+   
+   make_Hirshfeld_atom_info2(output) ::: leaky
+   ! Make the H structure factors efficiently
+      output :: BIN, optional
+   ENSURE(.density_matrix.created,"no density matrix")
+   ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
+
+      Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
+      r1,r2,r3, ga,gb :: VEC{REAL}*
+      ra :: VEC{REAL}(3)
+      overlapping_atom :: VEC{INT}*
+      skip,skipab,skipa,skipb :: VEC{BIN}*
+      D,pt,grida,gridb,bf_save :: MAT{REAL}*
+      sha :: SHELL1
+      bf_skip :: VEC{VEC_{BIN}}*
+      bf_grid :: VEC{MAT_{REAL}}*
+      cutoff, n_e,q,m1,m2,m3,c1,c2,c3, Dab, fac,val :: REAL
+      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+      sa,fa,la,na,ba, sb,fb,lb, a,b,i,j,n :: INT
+      out :: BIN
+
+      ! Make the AO density matrix
+      .make_ao_density_matrix
+      ENSURE(.density_matrix.created("restricted"), "no restricted density matrix")
+
+      ! Density matrix
+      D => .density_matrix.restricted
+
+      ! Set up grids, atomic densities -- leaky
+      .set_up_Hirshfeld_info(skip_NOs=TRUE) 
+ 
+      ! Basis function cutoff
+      cutoff = .becke_grid.basis_function_cutoff
+!     cutoff = ZERO
+
+      ! Max no of becke grid points per atom
+      n_pt = .becke_grid.max_no_of_points_per_atom
+    ! stdout.show("maximum n_pt = ",n_pt)
+
+      ! Atom "a" displaced points and skip switches
+      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
+      a2.create(n_pt)
+      skip.create(n_pt)
+      skipab.create(n_pt)
+
+      ! Total no of electrons
+      n_e = ZERO
+
+      ! Loop over integration atoms "c"
+      do c = 1,.n_atom
+
+         ! Overlapping atoms
+         overlapping_atom => .overlapping_atoms_for_atom(c).element
+
+         ! Get the Becke grid for atom "c"
+         .becke_grid.make_grid(pt,wt,c)
+         n_pt = pt.dim1
+
+         ! Make stockholder weight function "Wc" for atom "c"
+         Wc.create(n_pt)
+         .make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+!        .make_stockholder_atom_grid(Wc,c,pt)
+
+         ! Incorporate integration weight
+         wt = Wc*wt
+         Wc.destroy
+
+         ! Prune the grid, get saved bf grid bf_save, new n_pt -- leaky
+         .becke_grid.prune_grid(pt,wt,bf_save,c)
+         n_pt = pt.dim1
+
+       ! stdout.show("atom c      = ",c)
+       ! stdout.show("pruned n_pt = ",n_pt)
+
+         ! Integration points
+         r1 => pt(:,1) 
+         r2 => pt(:,2) 
+         r3 => pt(:,3)
+
+         ! Basis function grid and skip list
+         bf_skip.create(.n_shell)
+         bf_grid.create(.n_shell)
+
+         ! Atom c position
+         c1 = .atom(c).pos(1)
+         c2 = .atom(c).pos(2)
+         c3 = .atom(c).pos(3)
+
+         ! Charges and dipoles
+         q  = ZERO
+         m1 = ZERO
+         m2 = ZERO
+         m3 = ZERO
+
+         ! Loop c-overlapping atoms "oa"
+         do ca = 1,overlapping_atom.dim
+
+            oa  = overlapping_atom(ca)
+            fsa = .first_shell_for_atom(oa)
+            lsa =  .last_shell_for_atom(oa)
+            fba = .first_basis_fn_for_atom(oa)
+            ra  = .atom(oa).pos
+
+            ! Make the displaced points for atom "oa" 
+            ATOM::make_displaced_pts(.atom(oa),xa,ya,za,a2,skip,pt,n_pt,cutoff) 
+          ! stdout.show("atom a = ",a)
+          ! stdout.text("skip:")
+          ! stdout.put(skip,"column")
+
+            ! Loop shells on atom a
+            do sa = fsa,lsa
+
+               fa = .first_basis_fn_for_shell(sa)
+               la =  .last_basis_fn_for_shell(sa)
+               na = la - fa + 1
+               ba = .basis_shell_for_shell(sa)
+
+               ! Set shell "sa"
+               sha = .precomputed_basis_shellpair(ba,1).a
+               sha.pos = ra
+
+               ! Make shell "sa" skipa list
+               skipa.create(n_pt)
+               SHELL1::make_skip_list(sha,skipa,n_keep,a2,skip,n_pt,cutoff) 
+
+!              if (n_keep<n_pt) then
+!              stdout.show("shell sa = ",sa)
+!              stdout.show("n_keep   = ",n_keep)
+!              stdout.show("n_pt     = ",n_pt)   
+!            ! stdout.text("skipa:")
+!            ! stdout.put(skipa,"column")
+!              end
+
+               ! Next shell "sa" if no sig. points
+               if (n_keep==0) then
+                  skipa.destroy
+                  cycle
+               end
+
+               ! Assign the "sa" skipa list
+               bf_skip(sa).element => skipa
+
+               ! Make/copy the "sa" basis function grida
+               grida.create(n_keep,na)
+!              if (FALSE) then
+               if (oa==c) then
+                  do a = 1,na
+                     i = 0
+                     do n = 1,n_pt
+                        if (skipa(n)) cycle
+                        i = i + 1
+                        grida(i,a) = bf_save(n,a+fa-fba)
+                     end
+                  end
+               else
+                  SHELL1::make_skip_grid(sha,grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+               end
+               bf_grid(sa).element => grida
+
+             ! stdout.text("grida:")
+             ! stdout.put(grida)
+
+               ! Loop c-overlapping atoms b
+               do cb = 1,ca
+
+                  ob  = overlapping_atom(cb)
+                  fsb = .first_shell_for_atom(ob) 
+                  lsb =  .last_shell_for_atom(ob)
+
+                  ! Loop shells on atom b
+                  do sb = fsb,min(lsb,sa)
+
+                     if (bf_skip(sb).element.destroyed) cycle
+
+                     fb = .first_basis_fn_for_shell(sb)
+                     lb = .last_basis_fn_for_shell(sb)
+
+                     ! Set the "sb" basis function grid
+                     skipb => bf_skip(sb).element 
+                     gridb => bf_grid(sb).element 
+
+                   ! stdout.text("skipb:")
+                   ! stdout.put(skipb,"column")
+                   ! stdout.text("gridb:")
+                   ! stdout.put(gridb)
+
+                     ! How many points in common?
+                     skipab(1:n_pt) = skipa OR skipb
+                     n_keep = count(NOT skipab(1:n_pt))
+                     if (n_keep==0) cycle
+
+                     ! Factor
+                     fac = TWO
+                     if (sa==sb) fac = ONE
+
+                     ! Make the ab bf product
+                     do a = fa,la
+                        ga => grida(:,a-fa+1)
+                        do b = fb,min(lb,a)
+                           gb  => gridb(:,b-fb+1)
+                           Dab = fac*D(a,b)
+                           i = 0; j = 0
+                           do n = 1,n_pt
+                              if (NOT skipa(n)) i = i + 1
+                              if (NOT skipb(n)) j = j + 1
+                              if (skipab(n)) cycle
+                              val = ga(i)*gb(j)*wt(n)*Dab
+                              n_e = n_e + val
+                              q   = q   + val
+                              m1  = m1  + val * (r1(n)-c1)
+                              m2  = m2  + val * (r2(n)-c2)
+                              m3  = m3  + val * (r3(n)-c3)
+                           end
+                        end
+                     end
+
+                  end ! -- loops sa,sb
+               end
+            end       ! -- lops ca,cb
+         end
+
+         ! Assign the charges and d[poles
+         .atom(c).charge    = -q + .atom(c).atomic_number 
+         .atom(c).dipole(1) = -m1
+         .atom(c).dipole(2) = -m2
+         .atom(c).dipole(3) = -m3
+            
+         ! Clean up
+         bf_save.destroy
+         bf_grid.destroy
+         bf_skip.destroy
+         wt.destroy
+         pt.destroy
+
+      end
+
+      ! Clean up
+      skipab.destroy
+      skip.destroy
+      a2.destroy
+      za.destroy; ya.destroy; xa.destroy
+
+      ! Check integration accuracy
+      out = TRUE
+      if (present(output)) out = output
+      if (out) then
+      stdout.flush
+      stdout.text("Making Hirshfeld atom info ...")
+      stdout.flush
+      stdout.show("Check: no. of electrons        = ",n_e)
+      end
+
+   end
+
+   put_Hirshfeld_atom_info2 ::: leaky
+   ! Put the Hirshfeld charges
+   ENSURE(.basis_info_made,"no basis info")
+   ENSURE(.atom.created,"no atom list")
+      e_dipole,n_dipole,t_dipole :: VEC{REAL}(3)
+      ed,nd,td :: REAL
+      a :: INT
+
+      ! Make and set the atom properties first ...
+      .make_Hirshfeld_atom_info2
+
+      ! Calculate dipole contributions
+      e_dipole = ZERO
+      n_dipole = ZERO
+      do a = 1,.n_atom
+         e_dipole = e_dipole + .atom(a).dipole
+         n_dipole = n_dipole + .atom(a).charge*.atom(a).pos
+      end
+      t_dipole = e_dipole + n_dipole
+      ed = e_dipole.norm
+      nd = n_dipole.norm
+      td = t_dipole.norm
+
+      ! Write results in au
+      stdout.flush
+      stdout.text("Hirshfeld charges and dipole moments (au):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.put("/au")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).charge)
+         stdout.put(.atom(a).dipole(1))
+         stdout.put(.atom(a).dipole(2))
+         stdout.put(.atom(a).dipole(3))
+         ed = .atom(a).dipole.norm
+         stdout.put(ed)
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      stdout.text("Distributed dipole moments:")
+      stdout.flush
+      stdout.show("Total electronic dipole magnitude/au    =",ed)
+      stdout.show("Total nuclear dipole magnitude/au       =",nd)
+      stdout.show("Total dipole magnitude/au               =",td)
+
+      ! Write results in Debye
+      stdout.flush
+      stdout.text("Hirshfeld charges and dipole moments (Debye):")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.tab(int_fields=1)
+      stdout.put("q")
+      stdout.put("mu_x")
+      stdout.put("mu_y")
+      stdout.put("mu_z")
+      stdout.put("|mu|")
+      stdout.flush
+      stdout.put("Atom",int_width=TRUE)
+      stdout.tab(real_fields=1)
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.put("/Debye")
+      stdout.flush
+      stdout.dash(int_fields=1,real_fields=5)
+      do a = 1,.n_atom
+         stdout.put(.atom(a).label,int_width=TRUE)
+         stdout.put(.atom(a).charge)
+         stdout.put(.atom(a).dipole(1).to_units("debye"))
+         stdout.put(.atom(a).dipole(2).to_units("debye"))
+         stdout.put(.atom(a).dipole(3).to_units("debye"))
+         ed = .atom(a).dipole.norm
+         stdout.put(ed.to_units("debye"))
+         stdout.flush
+      end
+      stdout.dash(int_fields=1,real_fields=5)
+      stdout.flush
+      stdout.show("Total electronic dipole magnitude/Debye =",ed.to_units("debye"))
+      stdout.show("Total nuclear dipole magnitude/Debye    =",nd.to_units("debye"))
+      stdout.show("Total dipole magnitude/Debye            =",td.to_units("debye"))
+
+   end
+
    make_Hirshfeld_atom_info(output) ::: leaky
    ! Make the Hirshfeld atom properties
       output :: BIN, optional
@@ -9145,6 +9693,9 @@ contains
       ! Set up atomic ANO interpolators ... leaky
       .make_ANO_interpolators
 
+      ! Make the overlapping atom lists if not there
+      .make_overlapping_atoms
+
       if (present(skip_NOs)) then
       if (skip_NOs) return
       end
@@ -9153,6 +9704,7 @@ contains
       .assign_NOs_to_MOs
 
    end
+
 
    put_quadrupole
    ! Put out the quadrupole to stdout
@@ -10642,7 +11194,7 @@ contains
      end
 
      ! Shift linear dependence
-      if (.scfdata.created) .shift_dependence_from_r(C)
+!    if (.scfdata.created) .shift_dependence_from_r(C)
 
      ! Clean up
      Fconjg.destroy
@@ -10707,6 +11259,315 @@ contains
       k_pts.destroy
       fac_times_alpha.destroy
    end
+   
+!   make_r_H_constraint(CC)
+!   ! Make the constraint matrix "CC" for restricted wavefunction fitting
+!   ! using Hirshfeld atoms to treat thermal smearing
+!      CC :: MAT{REAL}, INOUT
+!
+!      ft_ab_eq,ft_ab :: MAT3{CPX}*
+!      Fc,fac_times_alpha,Fconjg :: VEC{CPX}*
+!      Fm,Fexp,Fsig,alpha, Wc,WW,wt, xa,ya,za,a2 :: VEC{REAL}*
+!      tf, k1,k2,k3, u1,u2,u3, r1,r2,r3, rx,ry,rz :: VEC{REAL}*
+!      ra,rb :: VEC{REAL}(3)
+!      overlapping_atom :: VEC{INT}*
+!      skipa,skipab,skipsa,skipsb :: VEC{BIN}*
+!      k_pts,kU,pt,gridsa,gridsb,gridab, ga,gb :: MAT{REAL}*
+!      sha :: SHELL1
+!      bf_skip :: VEC{VEC_{BIN}}*
+!      bf_grid :: VEC{MAT_{REAL}}*
+!      val :: CPX
+!      fac,cutoff,rf, kx,ky,kz :: REAL
+!      n_refl,n_k,n_pt,n_keep, c,ca,cb, a,fa,la, b,fb,lb :: INT
+!      sa,fsa,lsa,nsa,bsa, sb,fsb,lsb,nsb,bsb, i,j,k,n :: INT
+! 
+!      ! Number of reflections
+!      n_refl = .crystal.n_refl
+! 
+!      ! Normalising factor for chi^2
+!      fac = TWO/max(n_refl - .crystal.n_param,1)
+! 
+!      ! Space for chi^2 normaliser times per-reflection extinction correction 
+!      fac_times_alpha.create(n_refl)
+! 
+!      ! Per-reflection extinction correction
+!      alpha.create(n_refl)
+!      alpha = .crystal.extinction_correction
+! 
+!      ! Calculated complex structure factors
+!      Fc.create(n_refl)
+!      Fc = .crystal.F_calc
+! 
+!      ! Magnitudes of the SF's
+!      Fm.create(n_refl)
+!      Fm = max(abs(Fc),TOL(10))
+! 
+!      ! Experimental SF'd and sigma's
+!      Fexp.create(n_refl);  Fexp = .crystal.F_exp
+!      Fsig.create(n_refl);  Fsig = .crystal.F_sigma
+! 
+!      ! Make a useful intermediate
+!      fac_times_alpha.create(n_refl)
+!      fac_times_alpha = fac * alpha * (alpha * Fm - Fexp) / (Fsig * Fsig * Fm)
+! 
+!      ! Clean up
+!      Fsig.destroy; Fexp.destroy
+!      Fm.destroy
+!      alpha.destroy
+! 
+!      ! Conjugate structure factors
+!      Fc = conjg(Fc)
+!      Fconjg => Fc
+! 
+!      ! No of reflections needed to get SF's
+!      ! accounting for crystal symmetry
+!      n_k = .crystal.n_unique_SF_k_pts
+! 
+!      ! Actual unique k points
+!      k_pts.create(n_k,3)
+!      .crystal.make_unique_SF_k_pts(k_pts)
+! 
+!      ! Symmetry generated K points and SF's
+!      sf_eq.create(n_k)
+! 
+!      ! k^T U for all k points
+!      kU.create(n_k,3)
+! 
+!      ! Temperature factor for all k points
+!      tf.create(n_k)
+! 
+!      ! Basis function cutoff
+!      cutoff = .becke_grid.basis_function_cutoff
+! 
+!      ! Make list of symmetry non-equivalent symops
+!      ! and the necessary k points
+!      k_pts.create(n_k,3)
+!      .crystal.make_unique_SF_k_pts(k_pts)
+!      k1 => k_pts(:,1)
+!      k2 => k_pts(:,2)
+!      k3 => k_pts(:,3)
+!
+!      ! Max no of becke grid points per atom
+!      n_pt = .becke_grid.max_no_of_points_per_atom
+!
+!      ! Space for atom "a" displaced points
+!      xa.create(n_pt); ya.create(n_pt); za.create(n_pt); a2.create(n_pt)
+!      skipa.create(n_pt)
+!
+!      ! Create space for gathered info
+!      skipab.create(n_pt)
+!
+!      ! Make the constraint
+!      CC = ZERO
+!
+!      ! Loop over integration atoms "c"
+!      do c = 1,.n_atom
+!
+!         ! Get the Becke grid for atom "c"
+!         .becke_grid.make_grid(pt,wt,c)
+!
+!         ! No of pts in *this* atom "a" grid
+!         n_pt = pt.dim1
+!
+!         ! Overlapping atoms
+!         overlapping_atom => .overlapping_atoms_for_atom(c).element.dim
+!
+!         ! Make stockholder weight function "Wc" for atom "c"
+!         Wc.create(n_pt)
+!         .make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+!
+!         ! Incorporate integration weight
+!         Wc = Wc*wt
+!
+!         ! Make k^T U^C
+!         kU = matmul(k_pts,.atom(c).thermal_tensor)
+!
+!         ! Temperature factor for this atom for all k_pts
+!         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+!         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
+!
+!         ! Temperature factor for this atom for all k_pts
+!         tf = exp(-HALF*(u1*k1+u2*k2+u3*k3))
+!
+!         ! Repetition factor for this atom
+!         rf = ONE/.crystal.repetition_factor(a)
+!
+!         ! Basis function grid and skip list
+!         bf_skip.create(.n_shell)
+!         bf_grid.create(.n_shell)
+!
+!         ! Loop c-overlapping atoms a
+!         do ca = 1,.overlapping_atom.dim
+!
+!            a  = overlapping_atom(ca)
+!            fa = .first_basis_fn_for_atom(a) - 1
+!            la =  .last_basis_fn_for_atom(a)
+!            ra = .atom(a).pos
+!
+!            ! Make the displaced points for atom "a"
+!            .atom(a).make_displaced_points(xa,ya,za,a2,skipa,pt,n_pt,cutoff) 
+!
+!            ! Loop shells on atom a
+!            do sa = fa,la
+!
+!               fsa = .first_basis_fn_for_shell(sa)
+!               lsa = .last_basis_fn_for_shell(sa)
+!               nsa = lsa - fsa + 1
+!               bsa = .basis_shell_for_shell(sa)
+!
+!               ! Set shell "sa"
+!               sha = .precomputed_basis_shellpair(bsa,1).a
+!               sha.pos = ra
+!
+!               ! Make shell "sa" skip list
+!               skipsa.create(n_pt)
+!               sha.make_skip_list(skipsa,n_keep,a2,skipa,n_pt,cutoff) 
+!
+!               ! Next shell "sa" if no sig. points
+!               if (n_keep==0) then
+!                  skipsa.destroy
+!                  cycle
+!               else
+!                  bf_skip(sa).element => skipsa
+!               end
+!
+!               ! Make the "sa" basis function grid
+!               gridsa.create(n_keep,nsa)
+!               sha.make_grid(gridsa,xa,ya,za,a2,skipsa)
+!               bf_grid(sa).element => gridsa
+!
+!               ! Loop c-overlapping atoms b
+!               do cb = 1,ca
+!
+!                  b  = overlapping_atom(cb)
+!                  fb = .first_basis_fn_for_atom(b) - 1
+!                  lb =  .last_basis_fn_for_atom(b)
+!                  rb = .atom(b).pos
+!
+!                  ! Loop shells on atom b
+!                  do sb = fb,min(la,lb)
+!
+!                     if (bf_skip(sb).element.destroyed) cycle
+!
+!                     fsb = .first_basis_fn_for_shell(sb)
+!                     lsb = .last_basis_fn_for_shell(sb)
+!                     bsb = .basis_shell_for_shell(sb)
+!
+!                     ! Set the "sb" basis function grid
+!                     skipsb => bf_skip(sb).element 
+!                     gridsb => bf_grid(sb).element 
+!
+!                     ! How many points in common?
+!                     skipab(1:n_pt) = skipsa OR skipsb
+!                     n_keep = count(NOT skipab(1:n_pt))
+!                     if (n_keep==0) cycle
+!
+!                     ! Create space for matrix elements
+!                     ft_ab.create([1,n_refl],[fsa,lsa],[fsb,lsb])
+!                     ft_ab_eq.create([1,n_k],[fsa,lsa],[fsb,lsb])
+!
+!                     ! Create space for gathered info
+!                     gridab.create(n_keep)
+!                     rx.create(n_keep); ry.create(n_keep); rz.create(n_keep)
+!                     WW.create(n_keep)
+!
+!                     ! Gather up ab bf product data
+!                     do a = 1,nsa
+!                        ga => gridsa(:,a)
+!                        do b = 1,nsb
+!                           gb => gridsb(:,b)
+!
+!                           i = 0; j = 0; k = 0
+!                           do n = 1,n_pt
+!                              if (NOT skipsa(n)) i = i + 1
+!                              if (NOT skipsb(n)) j = j + 1
+!                              if (skip(n)) cycle
+!                              k = k + 1
+!                              gridab(k,a,b) = ga(i)*gb(j)
+!                           end
+!
+!                        end
+!                     end
+!
+!                     ! Gather up other data
+!                     k = 0
+!                     do n = 1,n_pt
+!                        if (skip(n)) cycle
+!                        k = k + 1
+!                        rx(k) = r1(n)
+!                        ry(k) = r2(n)
+!                        rz(k) = r3(n)
+!                        WW(k) = Wc(n)
+!                     end
+!
+!                     ! Make the (unique) matrix elements
+!                     do a = fsa,lsa
+!                     do b = fsb,min(lsb,i)
+!
+!                        do k = 1,n_k
+!                           kx = k1(k); ky = k2(k); kz = k3(k)
+!                           val = (ZERO,ZERO)
+!                           do n = 1,n_keep
+!                              kr = kx*rx(n)+ky*ry(n)+kz*rz(n)
+!                              val = val + WW(n)*gridab(n,a,b)*(cos(kr),sin(kr))
+!                           end
+!                           val = val * rf
+!                           ft_ab_eq(k,a,b) = val * tf(k)
+!                        end
+!
+!                     end
+!                     end
+!
+!                     ! Clean up
+!                     WW.destroy
+!                     rz.destroy; ry.destroy; rx.destroy
+!                     gridab.destroy
+!      
+!                     ! Sum the (unique) matrix elements
+!                     .crystal.sum_ft_ints(ft_ab,ft_ab_eq)
+!      
+!                     ! Make the constraint term
+!                     do a = fsa,lsa
+!                     do b = fsb,min(lsb,i)
+!                        C(a,b) = C(a,b) &
+!                               + sum(fac_times_alpha(:) &
+!                               * ( real(ft_ab(:,a,b)) *  real(Fconjg(:)) &
+!                               -  aimag(ft_ab(:,a,b)) * aimag(Fconjg(:))))
+!                     end
+!                     end
+!          
+!                     ! Clean up
+!                     ft_ab_eq.destroy
+!                     ft_ab.destroy
+!      
+!                  end
+!               end
+!            end
+!         end
+!            
+!         ! Clean up
+!         bf_grid.destroy; bf_skip.destroy
+!         Wc.destroy
+!         pt.destroy
+!
+!      end
+!
+!      ! Clean up
+!      skipab.destroy
+!      skipa.destroy
+!      a2.destroy; za.destroy; ya.destroy; xa.destroy
+!      tf.destroy; kU.destroy; k_pts.destroy
+!
+!
+!      ! Shift linear dependence
+!      if (.scfdata.created) .shift_dependence_from_r(C)
+!
+!      ! Clean up
+!      k_pts.destroy
+!      Fc.destroy
+!      fac_times_alpha.destroy
+!
+!   end
 
 !   save_constraint_for_diis
 !   ! ?
@@ -10917,9 +11778,10 @@ contains
       G = F
       .put_debug(G,"MO_r_eigen_update: Fock matrix before shifting dependence")
 
-      ! Remove linear dependence from F
-      .shift_dependence_from_r(G)
-      .put_debug(G,"MO_r_eigen_update: Fock matrix after shifting dependence")
+!      ! Remove linear depepndence
+!      .shift_dependence_from_r(G)
+!      .put_debug(G,"MO_r_eigen_update: Fock matrix after shifting dependence")
+!
 
       ! Change F into old MO basis, G
       G.change_basis_using(MO)
@@ -10945,9 +11807,9 @@ contains
       G.to_product_of(MO,U)
       .put_debug(G,"MO_r_eigen_update: MO's after update")
 
-      ! Project linear dependence
-      .left_project_dependence_r(G)
-      .put_debug(G,"MO_r_eigen_update: MO's after removing linear dependence")
+!      ! Project linear dependence
+!      .left_project_dependence_r(G)
+!      .put_debug(G,"MO_r_eigen_update: MO's after removing linear dependence")
 
       ! Finished
       MO = G
@@ -10966,81 +11828,94 @@ contains
 
    shift_dependence_from_r(F)
    ! Level shift the linear dependence in AO matrix "F" using overlap
-   ! eigenvectors with small eigenvalue.
-   ! WARNING: this routine assumed overlap_eigenvalues are ordered 
+   ! eigenvectors "evec" with small eigenvalue "eval".
+   ! WARNING: this routine assumes eval's are ordered 
    ! smallest to largest.
       F :: MAT{REAL}
 
    ENSURE(.scfdata.created,"no scfdata")
-   ENSURE(.overlap_matrix.created,"no overlap_matrix")
    ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
    ENSURE(.overlap_eigenvalues.created,"no overlap_eigenvalues")
-   ENSURE(F.is_square,"F not square")
    ENSURE(F.dim1==.n_bf,"wrong size, F")
 
       n :: INT
       tol,shift :: REAL
 
-      ! Return if all overlap matrix eigenvalues are big enough
+      ! Get no of vectors smaller than "tol"
       tol = .scfdata.linear_dependence_tol
-      n   = .overlap_eigenvalues.index_of_first_greater_than(tol)
+      n   = .overlap_eigenvalues.index_of_first_greater_than(tol) - 1
+
+      ! Decouple and shift the small eigenvectors to high energy
+      shift = .scfdata.linear_dependence_shift
+      .decouple_and_shift_r(F,.overlap_eigenvectors,n,shift)
+
+   end
+
+   decouple_and_shift_r(F,evec,n,shift)
+   ! In "F", decouple the first "n" eigenvectors "evec" and shift them
+   ! to eigenvalue "shift". NOTE: ensure "evec" is orthonormal.
+      F :: MAT{REAL}
+      evec :: MAT{REAL}, IN
+      n :: INT, IN
+      shift  :: REAL, IN
+
+      ! Return if no vectores to shift/decouple
       if (n==1) return
 
       ! Change to the eigenvector basis
-      F.change_basis_using(.overlap_eigenvectors)
+      F.change_basis_using(evec)
 
-      ! Decouple the linear dependencies
-      F(:n-1,n:) = ZERO
-      F(n:,:n-1) = ZERO
+      ! Decouple the vectors
+      F(:n,n+1:) = ZERO
+      F(n+1:,:n) = ZERO
 
-      ! Shift the small eigenvectors to high energy
-      shift = .scfdata.linear_dependence_shift
-      F(:n-1,:n-1).set_diagonal_to(shift)
+      ! Shift the first n eigenvectors
+      F(:n,:n).set_diagonal_to(shift)
 
       ! Revert from the eigenvector basis
-      F.back_transform_using(.overlap_eigenvectors)
+      F.back_transform_using(evec)
 
    end
 
-   left_project_dependence_r(MO)
-   ! Left project the linear dependence from an "MO" like matrix
-   ! WARNING: this routine assumed overlap_eigenvalues are ordered 
-   ! smallest to largest.
-      MO :: MAT{REAL}
-
-   ENSURE(.scfdata.created,"no scfdata")
-   ENSURE(.overlap_matrix.created,"no overlap_matrix")
-   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
-   ENSURE(.overlap_eigenvalues.created,"no overlap_eigenvalues")
-   ENSURE(MO.is_square,"MO not square")
-   ENSURE(MO.dim1==.n_bf,"wrong size, MO")
-
-      P,W :: MAT{REAL}*
-      n,i :: INT
-      tol :: REAL
-
-      ! Return if all overlap matrix eigenvalues are big enough
-      tol = .scfdata.linear_dependence_tol
-      n   = .overlap_eigenvalues.index_of_first_greater_than(tol)
-      if (n==1) return
-
-      ! Set the projector
-      P.create(.n_bf,.n_bf)
-      P.to_unit_matrix
-      do i = 1,n-1
-         P.plus_outer_product_of(.overlap_eigenvectors(:,i),-ONE) 
-      end
-
-      ! Project it now
-      W.create(.n_bf,.n_bf)
-      W = MO
-      MO.to_product_of(P,W)
-
-      ! Clean up
-      W.destroy
-      P.destroy
-
-   end
+!   left_project_dependence_r(MO)
+!   ! Left project the linear dependence from an "MO" like matrix
+!   ! WARNING: this routine assumed overlap_eigenvalues are ordered 
+!   ! smallest to largest.
+!      MO :: MAT{REAL}
+!
+!   ENSURE(.scfdata.created,"no scfdata")
+!   ENSURE(.overlap_matrix.created,"no overlap_matrix")
+!   ENSURE(.overlap_eigenvectors.created,"no overlap_eigenvectors")
+!   ENSURE(.overlap_eigenvalues.created,"no overlap_eigenvalues")
+!   ENSURE(MO.is_square,"MO not square")
+!   ENSURE(MO.dim1==.n_bf,"wrong size, MO")
+!
+!      P,W :: MAT{REAL}*
+!      n,i :: INT
+!      tol :: REAL
+!
+!      ! Return if all overlap matrix eigenvalues are big enough
+!      tol = .scfdata.linear_dependence_tol
+!      n   = .overlap_eigenvalues.index_of_first_greater_than(tol)
+!      if (n==1) return
+!
+!      ! Set the projector
+!      P.create(.n_bf,.n_bf)
+!      P.to_unit_matrix
+!      do i = 1,n-1
+!         P.plus_outer_product_of(.overlap_eigenvectors(:,i),-ONE) 
+!      end
+!
+!      ! Project it now
+!      W.create(.n_bf,.n_bf)
+!      W = MO
+!      MO.to_product_of(P,W)
+!
+!      ! Clean up
+!      W.destroy
+!      P.destroy
+!
+!   end
 
    shift_linear_dependence_in_ngcm_from(F,Fnew)
    ! Level shift the linear dependence in AO matrix "F" using overlap
@@ -12236,13 +13111,17 @@ contains
       .orbital_energies.create(.n_bf,"restricted")
       .molecular_orbitals.destroy
       .molecular_orbitals.create(.n_bf,"restricted")
-!   LBXXX at 4.3.2009 ???
-!      .get_core_matrix
+
+      ! Get core and overlap
       .get_r_core_matrix
       .get_overlap_matrix
 
       ! Get the guess orbitals
-      .make_r_core_guess(.orbital_energies.restricted,.molecular_orbitals.restricted)
+      .make_r_guess_from(.core_matrix.restricted, &
+                         .orbital_energies.restricted, &
+                         .molecular_orbitals.restricted)
+      .put_debug(.molecular_orbitals.restricted,"make_r_core_guess: molecular_orbitals")
+      .put_debug(.orbital_energies.restricted,"make_r_core_guess: orbital_energies")
 
       ! Convert the orbitals to the right kind
       orb_kind = .scfdata.orbital_energies_kind
@@ -12257,36 +13136,92 @@ contains
 
    end
 
-   make_r_core_guess(MO_energies,MO)
-   ! Do a real core scf for the molecular orbital energies  "MO_energies"
-   ! and the molecular_orbitals "MO"
-      MO_energies :: VEC{REAL}
-      MO :: MAT{REAL}
-   ENSURE(.core_matrix.created("restricted"),"no core_matrix")
-   ENSURE(.overlap_matrix.created,"no overlap_matrix")
-      R,H :: MAT{REAL}* DEFAULT_NULL
+   make_r_guess_from(fock_matrix,MO_energies,MO) ::: private
+   ! Make initial "MO's" and "MO_energies" from a given "fock_matrix"
+   ! ... for cartesian basis functions
+      fock_matrix :: MAT{REAL}, target, IN
+      MO :: MAT{REAL}, OUT
+      MO_energies :: VEC{REAL}, OUT
 
-      ! Space
-      H.create(.n_bf,.n_bf)
-      R.create(.n_bf,.n_bf) 
+      F,R,H :: MAT{REAL}* DEFAULT_NULL
+      n :: INT
+
+      n = .n_bf
 
       !  H~ = S^-1/2 H S^-1/2
-      !  c  = S^-1/2 c~
+      F.create(n,n)
+      R.create(n,n) 
       .make_overlap_inverse_sqrt(R)
-      .core_matrix.restricted.change_basis_to(H,R)
-      if (.scfdata.created) .shift_dependence_from_r(H)
+      fock_matrix.change_basis_to(F,R)
 
-      H.solve_eigenproblem(MO_energies,MO)
-      .put_debug(MO_energies,"make_r_core_guess: MO energies after core guess eigenproblem")
+      if (.scfdata.created) &
+      .shift_dependence_from_r(F)
 
-      H.to_product_of(R,MO)
-      MO = H
+      !  Solve for c~
+      F.solve_eigenproblem(MO_energies,MO)
+      .put_debug(MO_energies,"make_r_cart_guess_from: MO_energies")
+
+      !  c  = S^-1/2 c~
+      F.to_product_of(R,MO)
+      MO = F
 
       ! Clean
       R.destroy
-      H.destroy
+      F.destroy
 
    end
+
+!   make_r_core_guess(MO_energies,MO)
+!   ! Do a real core scf for the molecular orbital energies  "MO_energies"
+!   ! and the molecular_orbitals "MO"
+!      MO_energies :: VEC{REAL}
+!      MO :: MAT{REAL}
+!
+!   ENSURE(.core_matrix.created("restricted"),"no core_matrix")
+!
+!      core,U,R,H :: MAT{REAL}* DEFAULT_NULL
+!      n_sph :: INT
+!
+!      ! Make space the right size
+!      if (.use_spherical_basis) then
+!
+!         n_sph = .atom.no_of_sph_basis_functions
+!         H.create(n_sph,n_sph)
+!         R.create(n_sph,n_sph) 
+!
+!         core.create(n_sph,n_sph)
+!         .make_cartesian_to_sph_mx(U)
+!         .core_matrix.restricted.change_basis_to(core,U)
+!         U.destroy
+!
+!      else
+!
+!         H.create(.n_bf,.n_bf)
+!         R.create(.n_bf,.n_bf) 
+!
+!         core => .core_matrix.restricted
+!
+!      end
+!
+!      !  H~ = S^-1/2 H S^-1/2
+!      .make_overlap_inverse_sqrt(R)
+!      core.change_basis_to(H,R)
+!      if (.scfdata.created) .shift_dependence_from_r(H)
+!
+!      !  Solve for c~
+!      H.solve_eigenproblem(MO_energies,MO)
+!      .put_debug(MO_energies,"make_r_core_guess: MO energies after core guess eigenproblem")
+!
+!      !  c  = S^-1/2 c~
+!      H.to_product_of(R,MO)
+!      MO = H
+!
+!      ! Clean
+!      if (.use_spherical_basis) core.destroy
+!      R.destroy
+!      H.destroy
+!
+!   end
 
    make_promolecule_guess ::: leaky
    ! Make a ".density matrix" and fock matrix from the sum of atomic densities.
@@ -12660,13 +13595,16 @@ contains
    ! Destroy .fock_matrix afterwards
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.fock_matrix.created(.scfdata.spinorbital_kind),"need an initial fock matrix")
+
       orb_kind :: STR
       e :: VEC{REAL}*
       MO,F :: MAT{REAL}*
       MOc,Fc :: MAT{CPX}*
 
+      ! Clean
       .molecular_orbitals.destroy
       .orbital_energies.destroy
+      ! Get core and overlap
       .get_overlap_matrix
 
       orb_kind = .scfdata.scf_kind
@@ -12679,7 +13617,8 @@ contains
            e  => .orbital_energies.restricted
            MO => .molecular_orbitals.restricted
            F  => .fock_matrix.restricted
-           .make_r_fock_guess(e,MO,F)
+         ! .make_r_fock_guess(e,MO,F)
+           .make_r_guess_from(F,e,MO)
         case ("uhf","uks","xray_uhf","xray_uks", &
               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
            .orbital_energies.create(.n_bf,"unrestricted")
@@ -12687,11 +13626,13 @@ contains
            e  => .orbital_energies.alpha
            MO => .molecular_orbitals.alpha
            F  => .fock_matrix.alpha
-           .make_r_fock_guess(e,MO,F)
+         ! .make_r_fock_guess(e,MO,F)
+           .make_r_guess_from(F,e,MO)
            e  => .orbital_energies.beta
            MO => .molecular_orbitals.beta
            F  => .fock_matrix.beta
-           .make_r_fock_guess(e,MO,F)
+         ! .make_r_fock_guess(e,MO,F)
+           .make_r_guess_from(F,e,MO)
         case ("gchf")
            .orbital_energies.create(.n_bf,"general")
            .molecular_orbitals.create(.n_bf,"general_complex")
@@ -12711,35 +13652,38 @@ contains
       .make_scf_density_matrix
    end
 
-   make_r_fock_guess(MO_energies,MO,fock_matrix)
-   ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-   ! a given real restricted "fock_matrix".
-      MO_energies :: VEC{REAL}
-      MO,fock_matrix :: MAT{REAL}
-   ENSURE(.overlap_matrix.created,"no overlap matrix")
-      R,H :: MAT{REAL}*
-
-      ! R = S^-1/2
-      R.create(.n_bf,.n_bf)
-      .make_overlap_inverse_sqrt(R)
-
-      ! H = Fock matrix
-      H.create(.n_bf,.n_bf)
-      H = fock_matrix
-
-      ! H = S^-1/2 F S^-1/2
-      H.change_basis_using(R)
-      if (.scfdata.created) .shift_dependence_from_r(H)
-      H.solve_eigenproblem(MO_energies,MO)
-      .put_debug(MO_energies,"make_r_fock_guess: MO energies")
-
-      ! c = S^-1/2 c~
-      H.to_product_of(R,MO)
-      MO = H
-
-      H.destroy
-      R.destroy
-   end
+!   make_r_fock_guess(MO_energies,MO,fock_matrix)
+!   ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
+!   ! a given real restricted "fock_matrix".
+!      MO_energies :: VEC{REAL}
+!      MO,fock_matrix :: MAT{REAL}
+!   ENSURE(.overlap_matrix.created,"no overlap matrix")
+!      R,H :: MAT{REAL}*
+!
+!      ! R = S^-1/2
+!      R.create(.n_bf,.n_bf)
+!      .make_overlap_inverse_sqrt(R)
+!
+!      ! H = Fock matrix
+!      H.create(.n_bf,.n_bf)
+!      H = fock_matrix
+!
+!      ! H = S^-1/2 F S^-1/2
+!      H.change_basis_using(R)
+!      if (.scfdata.created) .shift_dependence_from_r(H)
+!      H.solve_eigenproblem(MO_energies,MO)
+!      .put_debug(MO_energies,"make_r_fock_guess: MO energies")
+!      .put_debug(MO,"make_r_fock_guess: MO's in S^-1/2 basis")
+!
+!      ! c = S^-1/2 c~
+!      H.to_product_of(R,MO)
+!      MO = H
+!      .put_debug(MO,"make_r_fock_guess: MO's")
+!
+!      H.destroy
+!      R.destroy
+!
+!   end
 
    make_gc_fock_guess(MO_energies,MO,fock_matrix)
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
@@ -13193,7 +14137,7 @@ contains
         .add_core_hamiltonian(F.restricted)
       end
 
-      if (.scfdata.created) .shift_dependence_from_r(F.restricted)
+!     if (.scfdata.created) .shift_dependence_from_r(F.restricted)
 
    end
 
@@ -16123,18 +17067,25 @@ contains
    add_XC_matrix(K) ::: leaky
    ! Add the DFT exchange correlation matrix to "K".
       K :: OPMATRIX*
+
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
    ENSURE(.density_matrix.created, "no density matrix")
    ENSURE(.density_matrix.any_created, "no density matrix")
    ENSURE(K.created,"K not created")
    ENSURE(K.created(.scfdata.spinorbital_kind),"appropriate part of K not created")
+      ! Get core and overlap
       genre :: STR
+
       ! Ensure the NO's exist so we can calculate the density for the XC part
       genre = .scfdata.spinorbital_kind
       if (.molecular_orbitals.all_destroyed) then; .make_natural_orbitals(genre) !  leaky
       else;                                        .assign_NOs_to_MOs
       end
+      .put_debug(.natural_orbitals.restricted,"add_XC_matrix: restricted natural_orbitals")
+      .put_debug(.natural_orbitals.alpha,"add_XC_matrix: alpha natural_orbitals")
+      .put_debug(.natural_orbitals.beta,"add_XC_matrix: alpha natural_orbitals")
+
       ! Now add the contribution
       select case (.scfdata.scf_kind)
         case ("rks","xray_rks")
@@ -16144,19 +17095,26 @@ contains
         case default
            DIE("unknown DFT SCF kind, "//trim(.scfdata.scf_kind))
       end
+
    end
 
    add_XC_matrix(K)
    ! Calculate the exchange correlation matrix numerically.
       K :: MAT{REAL}
+
    ENSURE(.scfdata.created,"no scfdata")
    ENSURE(.scfdata.is_DFT_calculation,"this is not a DFT calculation")
+
       E :: REAL
+
       if (.scfdata.using_GGA_functional) then; .add_GGA_XC_matrix(K,E)
       else;                                    .add_LDA_XC_matrix(K,E)
       end
+
       .scfdata.dft_energy_correction = E
+
       .put_debug(E,"add_XC_matrix: K")
+
    end
 
    add_LDA_XC_matrix(K,E)
@@ -29109,6 +30067,72 @@ contains
 
    end
 
+!   make_ready_da_gcm_tr3(M,ns) ::: leaky
+!   ! this routine works better than the previous
+!   ! but worked only for one atom
+!   ! I (LBxxx) have edited it at 3.oct.2008 
+!   ! the cycle if the gaussians are at different nuclei should work 
+!   ! TESTED !!!! & CALLED 
+!   !
+!      M :: MAT{REAL}*
+!      ns :: INT
+!
+!      map :: VEC{VEC_(INT}}*
+!      Ga,Gb :: GAUSSIAN
+!      frst,last,at,l :: VEC{INT}*
+!      nps,a,b,i,j :: INT
+!      same :: BIN
+!
+!      ! Make the indexing arrays
+!      .atom.make_primitive_limits(frst,last,at,l,ex)
+!
+!      ! Find the map from unique to same gaussians
+!      map.create(0)
+!      ns = 0
+!      do a = 1,nps
+!        Ga.set_l(l(a))
+!        Ga.set_pos(.atom(at(a)).pos)
+!        Ga.set_ex(ex(a))
+!        same = FALSE
+!        do b = 1,nps
+!           Gb.set_l(l(b))
+!           Gb.set_pos(.atom(at(b)).pos)
+!           Gb.set_ex(ex(b))
+!           if (Gb.same_as(Ga)) cycle
+!           same = TRUE
+!           exit
+!        end
+!
+!        if (same) then
+!           map(b).element.append(a)
+!        else
+!           ns = ns + 1
+!           map.expand(1)
+!           map(ns).element.append(a)
+!        end
+!
+!      end
+!
+!      ! Make the M matrix
+!      M.create(ns,.n_prim)
+!      M = ZERO
+!      ns = 0
+!      do i = 1,ns
+!      do j = 1,map(i).element.dim
+!         M(i,map(i)[j]) = ONE
+!      end
+!      end
+!
+!      ! Clean
+!      map.destroy
+!      l.destroy
+!      ex.destroy
+!      at.destroy
+!      last.destroy
+!      frst.destroy
+!
+!   end
+
    get_da_gcm_now(M,M_gcm,m_out,n_gcm)  
    ! This routine is thought for the S,T,Z,PZP primitive integrals matrices
    ! meaning of variables
@@ -29587,7 +30611,247 @@ end if
 
      H = A
      A.destroy
-     .put_debug(H,"make_r_DKH_matrix")
+     .put_debug(H,"make_r_DKH_matrix: H")
+
+   end
+
+   make_r_DKH_matrix2(H)
+   ! the 1electron dkh hamiltonian
+   ! in the case of a scalar dkh calculation this routine should be called
+   ! this routine is really long I should make it shorter using "subroutines"
+   ! but I am lazy in the moment to do so (me=LBxxx)
+   !
+        H :: MAT{REAL}
+        c,TOL :: REAL  
+        n_small,i,j :: INT     
+        SOx,SOy,SOz,R :: MAT{REAL}*
+        sSOx,sSOy,sSOz,ZXX,PZPXX,YU :: MAT{REAL}*
+        A,B,S,Y,T,U,Z,PZP :: MAT{REAL}*
+        evec,D,WW,ppZpp :: MAT{REAL}*
+        m_out :: MAT{INT}*
+        sZ,sPZP :: MAT{REAL}*
+        F, M,buco :: MAT{REAL}* 
+        eval,P2,P,E,Ap :: VEC{REAL}*
+
+      ! Primitive overlap matrix, S
+      S.create(.n_prim,.n_prim)
+      .make_primitive_overlap_matrix(S)
+
+      ! Overlap eigenvectors
+      Y.create(.n_prim,.n_prim)
+      T.create(.n_prim,.n_prim)
+      evec.create(.n_prim,.n_prim)
+      eval.create(.n_prim)
+      S.solve_eigenproblem(eval,evec)
+
+      ! Psuedo-inverse sqrt of overlap, Y
+      tol = .scfdata.linear_dependence_tol
+      Y.to_inverse_sqrt_of(eval,evec,tol,n_small)
+      eval.destroy
+
+      ! Kinetic energy matrix, T
+      .make_primitive_kinetic_matrix(T) 
+
+      ! Change T to orthogonal basis
+      T.change_basis_using(Y)
+
+      ! Decouple T from linear dependencies
+      .decouple_and_shift_r(T,evec,n_small,ZERO)
+      evec.destroy
+
+      ! Momentum^2 eigenvalues in orthogonal basis
+      U.create(.n_prim,.n_prim)
+      P2.create(.n_prim)
+      T.solve_eigenproblem(P2,U)
+      P2 = TWO*P2
+      P2(1:n_small) = ZERO
+      .put_debug(P2,"make_r_DKH_matrix2: P2")
+      .put_debug(U,"make_r_DKH_matrix2: U")
+      .put_debug(matmul(transpose(U),U),"make_r_DKH_matrix2: U^T U")
+
+      ! Electron-nucleus matrix, Z
+      Z.create(.n_prim,.n_prim)
+      .make_primitive_nuclear_matrix(Z)
+
+      ! Change Z to orthogonal basis
+      Z.change_basis_using(Y)
+      Z.change_basis_using(U)
+
+      ! PZP matrix
+      PZP.create(.n_prim,.n_prim)
+      SOx.create(.n_prim,.n_prim)
+      SOy.create(.n_prim,.n_prim)
+      SOz.create(.n_prim,.n_prim)
+      .make_primitive_DKH_matrices(PZP,SOx,SOy,SOz)
+      SOx.destroy
+      SOy.destroy
+      SOz.destroy
+
+      ! Change PZP to orthogonal basis, then momentum basis
+      PZP.change_basis_using(Y)
+      PZP.change_basis_using(U)
+      .put_debug(PZP,"make_r_DKH_matrix2: PZP")
+
+      !!! A-O LETS GO !!!
+      c = SPEED_OF_LIGHT_AU
+ 
+      F.create(.n_prim,.n_prim)
+      E.create(.n_prim)
+      Ap.create(.n_prim)
+ 
+      F  = ZERO  
+      Ap = ZERO  
+      do i = 1,.n_prim
+         E(i)   = c * sqrt(P2(i) + c*c)
+         if (i<=n_small) cycle ! skip small eigenvalues
+         F(i,i) = E(i) - c*c
+         Ap(i)  = sqrt( (E(i) + c*c)/(TWO*E(i)) )  
+      end  
+ 
+      A.create(.n_prim,.n_prim)
+      B.create(.n_prim,.n_prim)
+      A = ZERO
+      B = ZERO
+      do i = n_small+1,.n_prim
+      do j = n_small+1,.n_prim
+          A(i,j) = Ap(i)*Z(i,j)*Ap(j)
+          B(i,j) = c*c * (Ap(i)/(E(i)+c*c)) * PZP(i,j) * (Ap(j)/(E(j)+c*c))
+      end
+      end
+ 
+      Z   = A
+      PZP = B
+
+      if (.scfdata.DK1) then
+         F = F + Z + PZP
+      end
+
+      if (.scfdata.DK2) then
+
+         A = ZERO  
+         B = ZERO
+         do i = n_small+1,.n_prim ! skip small eigenvalues
+            B(i,i) = (c*P2(i)*c) / ( (c*c + E(i)) * (c*c + E(i)) )
+            A(i,i) = ONE/B(i,i)
+         end
+ 
+         sZ.create(.n_prim,.n_prim)
+         sPZP.create(.n_prim,.n_prim)
+ 
+         sZ = ZERO
+         sPZP = ZERO
+         do i = n_small+1,.n_prim
+         do j = n_small+1,.n_prim
+            sZ(i,j)   = Z(i,j)/(E(i)+E(j)) 
+            sPZP(i,j) = PZP(i,j)/(E(i)+E(j)) 
+         end
+         end
+ 
+         T =     matmul(Z, matmul(B,sZ) )
+         T = T + matmul(sZ, matmul(B,Z) )
+         T = T - matmul(PZP,sZ) 
+         T = T - matmul(sZ,PZP) 
+         T = T - matmul(Z,sPZP) 
+         T = T - matmul(sPZP,Z) 
+         T = T + matmul(PZP, matmul(A,sPZP) ) 
+         T = T + matmul(sPZP, matmul(A,PZP) )
+ 
+       ! if(.scfdata.using_SO_FDFF) then
+       !   .make_SO_fdff(T)
+       ! end if
+
+         F = F + HALF*T
+
+         if (.scfdata.DK3) then
+
+            ! W1W1
+            D.create(.n_prim,.n_prim)
+            WW.create(.n_prim,.n_prim)
+            WW =    - matmul(sZ, matmul(B,sZ) )
+            WW = WW - matmul(sPZP, matmul(A,sPZP) ) 
+            WW = WW + matmul(sPZP,sZ) 
+            WW = WW + matmul(sZ,sPZP) 
+ 
+            D = Z + PZP
+            T = HALF*(matmul(WW,D)+matmul(D,WW))
+            WW.destroy
+ 
+            if (.scfdata.using_ppzpp) then
+ 
+               ppZpp.create(.n_prim,.n_prim)
+               .make_primitive_DK3_ppZpp_mx(ppZpp)
+               ppZpp.change_basis_using(Y)
+               ppZpp.change_basis_using(U)
+ 
+               D = ZERO
+               do i = n_small+1,.n_prim
+               do j = n_small+1,.n_prim
+                  D(i,j) = Ap(i)*(c**4)/( (E(i)+c*c)**2)*ppZpp(i,j)*Ap(j)/( (E(j)+c*c)**2 ) 
+               end
+               end
+               ppZpp.destroy 
+ 
+               D = D + PZP
+               T = T - matmul(sPZP,matmul(A,matmul(D,sZ)))
+               T = T - matmul(sZ,matmul(D, matmul(A,sPZP)))
+               T = T + matmul(sPZP,matmul(A, matmul(D, matmul(A,sPZP))))
+               T = T + matmul(sZ,matmul(D,sZ))
+            else
+               T = T - matmul(sPZP,matmul(A,matmul(PZP,sZ)))
+               T = T - matmul(sZ,matmul(PZP, matmul(A,sPZP)))
+               T = T - matmul(sPZP,matmul(Z,matmul(B,sZ)))
+               T = T - matmul(sZ,matmul(B, matmul(Z,sPZP)))
+               T = T + matmul(sPZP,matmul(A, matmul(PZP, matmul(A,sPZP))))
+               T = T + matmul(sPZP,matmul(Z,sPZP))
+               T = T + matmul(sZ,matmul(PZP,sZ))
+               T = T + matmul(sZ,matmul(B, matmul(Z, matmul(B,sZ))))
+            end 
+ 
+            F = F + T
+ 
+            D.destroy
+
+         end ! DK3
+
+         sPZP.destroy
+         sZ.destroy
+
+      end ! DK2
+
+      Z.destroy
+      PZP.destroy
+
+      Ap.destroy 
+      P2.destroy
+      E.destroy
+
+      T.destroy
+
+      ! Make B = S^(1/2) . momentum eigenvectors
+      A.to_product_of(S,Y)
+      B.to_product_of(A,U)
+
+      S.destroy
+      Y.destroy
+      U.destroy
+
+      ! Back transform using B
+      F.back_transform_using(B)
+
+      A.destroy
+      B.destroy
+
+      ! Moving back to contracted basis sets 
+      M.create(.n_prim,.n_bf)
+      .make_normalised_contraction_mx(M)
+
+      ! Change back into contracted basis
+      F.change_basis_to(H,M)
+
+      M.destroy
+      F.destroy
+
+      .put_debug(H,"make_r_DKH_matrix2: H")
 
    end
 
@@ -32726,16 +33990,13 @@ end if
       genre :: STR
 
       Fc.create(.crystal.n_refl)
-      Fc=(ZERO,ZERO)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
 
-      .crystal.assign_xray
       .crystal.make_unique_SF_k_pts(k_pts)
       .make_ao_density_matrix
       genre = .density_matrix.spinorbital_kind
 
       sf_eq.create(k_pts.dim1)
-      sf_eq=(ZERO,ZERO)
 !      if (genre.includes("complex")) then
 !        .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
 !      else
@@ -32780,13 +34041,11 @@ end if
       Fc.create(.crystal.n_refl)
       k_pts.create(.crystal.n_unique_SF_k_pts,3)
 
-      .crystal.assign_xray
       .crystal.make_unique_SF_k_pts(k_pts)
       .make_ao_density_matrix
       genre = .density_matrix.spinorbital_kind
 
       sf_eq.create(k_pts.dim1)
-      sf_eq=(ZERO,ZERO)
 !      if (genre.includes("complex")) then
 !        .make_ft(sf_eq,.density_matrix.restricted_complex,k_pts)
 !      else
