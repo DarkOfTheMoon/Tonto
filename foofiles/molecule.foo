@@ -6435,11 +6435,15 @@ contains
    ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
    ENSURE(.density_matrix.created, "no density matrix")
       .crystal.assign_xray
-      .make_x_structure_factors_p
+      if (.crystal.thermal_smearing_model=="hirshfeld") then
+         .make_H_structure_factors
+      else
+         .make_x_structure_factors_p
+      end
    end
 
    make_xf_structure_factors
-   ! Make the free X-ray structure factors for this molecule.
+   ! Make the *free* X-ray structure factors for this molecule.
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.xray_r_free_data.created, "no x-ray R-free reflection data")
    ENSURE(.density_matrix.created, "no density matrix")
@@ -6608,8 +6612,10 @@ contains
 !  Hirshfeld structure factors
 !  ***************************
    
-   make_H_structure_factors ::: leaky
+   make_H_structure_factors(output) ::: leaky
    ! Make the H structure factors efficiently
+      output :: BIN, optional
+
    ENSURE(.density_matrix.created,"no density matrix")
    ENSURE(.density_matrix.restricted.created,"no restricted density matrix")
 
@@ -6621,12 +6627,14 @@ contains
       skipa0,skipab,skipa,skipb :: VEC{BIN}*
       D,DD,k_pts,kU,pt,grida,gridb,bf_save :: MAT{REAL}*
       sha :: SHELL1
+      sh2 :: SHELL2
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       sf  :: CPX
       schwarz_cutoff,cutoff,rf, k1k,k2k,k3k,kr, P_max,Dab, fac, n_e,val :: REAL
       n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na,ba, sb,fb,lb,nb, ab, a,b,i,j,k,n :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as,bs, ab, a,b,i,j,k,n :: INT
+      out :: BIN
  
       ! Number of reflections
       n_refl = .crystal.n_refl
@@ -6649,6 +6657,7 @@ contains
 
       ! Density matrix
       D => .density_matrix.restricted
+      .put_debug(D,"make_H_structure_factors: D")
 
       ! Make max_P and overlap matrix for schwarz-like test
     ! schwarz_cutoff = .scfdata.eri_schwarz_cutoff
@@ -6672,6 +6681,7 @@ contains
       skipab.create(n_pt)
 
       ! Make the constraint
+      n_e = ZERO
       sf_eq = ZERO
 
       ! Loop over integration atoms "c"
@@ -6704,7 +6714,7 @@ contains
          Wc.destroy
 
          ! Prune the grid with new "wt", get saved bf grid bf_save, 
-         ! and new no of points, n_pt -- leaky
+         ! and new no of points, n_pt 
          .becke_grid.prune_grid(pt,wt,bf_save,c)
          n_pt = pt.dim1
 
@@ -6735,10 +6745,10 @@ contains
                fa = .first_basis_fn_for_shell(sa)
                la =  .last_basis_fn_for_shell(sa)
                na = la - fa + 1
-               ba = .basis_shell_for_shell(sa)
+               as = .basis_shell_for_shell(sa)
 
                ! Set shell "sa"
-               sha = .precomputed_basis_shellpair(ba,1).a
+               sha = .precomputed_basis_shellpair(as,1).a
                sha.pos = ra
 
                ! Make shell "sa" skip list
@@ -6785,20 +6795,18 @@ contains
                      ! No significant points
                      if (bf_skip(sb).element.destroyed) cycle
 
-                   ! ! Schwarz test -- does not work
-                   ! ab = max(sa,sb)
-                   ! ab = HALF*ab*(ab-1) + min(sa,sb)
-                   ! P_max = max_P(ab)
-                   ! if (P_max < TOL(20)) then
-                   !    cycle
-                   ! else if (P_max*.max_S(ab) < schwarz_cutoff) then
-                   !    cycle
-                   ! end
-
                      ! Shell b limits
                      fb = .first_basis_fn_for_shell(sb)
                      lb = .last_basis_fn_for_shell(sb)
                      nb = lb - fb + 1
+                     bs = .basis_shell_for_shell(sb)
+
+                     ! Skip test 
+                   ! sh2.set_and_precompute_from(.precomputed_basis_shellpair(as,bs),ra,rb,oa==ob,skip=FALSE)
+                   ! if (sh2.skip_ft(cutoff)) then
+                   !    sh2.destroy_ptr_part
+                   !    cycle
+                   ! end
 
                      ! Set the "sb" basis function grid
                      skipb => bf_skip(sb).element 
@@ -6826,7 +6834,6 @@ contains
                               if (NOT skipb(n)) j = j + 1
                               if (skipab(n)) cycle
                               val    = ga(i)*gb(j)*Dab
-                              n_e    = n_e + val
                               rho(n) = rho(n) + val
                            end
                         end
@@ -6844,6 +6851,7 @@ contains
 
          ! Weight the atom "c" density
          rho = rho*wt
+         n_e = n_e + sum(rho)
 
          ! Make the (unique) matrix elements
          do k = 1,n_k
@@ -6875,10 +6883,14 @@ contains
       kU.destroy; k_pts.destroy
 
       ! Check integration accuracy
+      out = FALSE
+      if (present(output)) out = output
+      if (out) then
       stdout.flush
       stdout.text("Making Hirshfeld structure factors ...")
       stdout.flush
       stdout.show("Check: no. of electrons        = ",n_e)
+      end
 
       ! Parallel
       if (DO_IN_PARALLEL) then
@@ -7972,89 +7984,6 @@ contains
          end
       end
    end
-
-!   make_cartesian_to_sph_mx(U) ::: leaky
-!   ! Make the cartesian to spherical transformation matrix "U" for the
-!   ! entire basis set.
-!      U :: MAT{REAL}*
-!
-!   ENSURE(.basis_info_made, "no basis info")
-!
-!      n_sph_bf,L,fc,lc,fs,ls,s :: INT
-!      UU :: VEC{MAT_{REAL}}*
-!
-!      ! No of spherical basis functions
-!      n_sph_bf = .atom.no_of_sph_basis_functions
-!
-!      ! Create the U matrix here -- leaky
-!      U.create(.n_bf,n_sph_bf)
-!      U = ZERO
-!
-!      !Assign it
-!      ls = 0
-!      do s = 1,.n_shell
-!         L  = .angular_moment_for_shell(s)
-!         fc = .first_basis_fn_for_shell(s)
-!         lc =  .last_basis_fn_for_shell(s)
-!         fs = ls + 1
-!         ls = ls + 2*L + 1
-!         UU => GAUSSIAN_DATA::spherical_harmonics_for
-!         U(fc:lc,fs:ls) = UU(L).element
-!      end
-!
-!      .put_debug(U,"make_cartesian_to_sph_mx: U")
-!
-!   end
-!
-!   make_primitive_to_sph_mx(U) ::: leaky
-!   ! Make the cartesian primitive to spherical transformation matrix
-!   ! "U" for the entire basis set.
-!      U :: MAT{REAL}*
-!
-!   ENSURE(.basis_info_made, "no basis info")
-!
-!      n_sph_bf,nps, L,fc,lc,fs,ls,s :: INT
-!      frst,last,at,lmom :: VEC{INT}*
-!      ex :: VEC{REAL}*
-!      UU :: VEC{MAT_{REAL}}*
-!
-!      ! No of spherical basis functions
-!      n_sph_bf = .atom.no_of_sph_primitives
-!
-!      ! Create the U matrix here -- leaky
-!      U.create(.n_prim,n_sph_bf)
-!      U = ZERO
-!
-!      ! Make the indexing arrays
-!      .atom.make_primitive_limits(frst,last,at,lmom,ex)
-!      nps = .atom.no_of_primitive_shells
-!
-!      .put_debug(lmom,"make_primitive_to_sph_mx: lmom")
-!      .put_debug(frst,"make_primitive_to_sph_mx: frst")
-!      .put_debug(last,"make_primitive_to_sph_mx: last")
-!
-!      !Assign it
-!      ls = 0
-!      do s = 1,nps
-!         L  = lmom(s)
-!         fc = frst(s)
-!         lc = last(s)
-!         fs = ls + 1
-!         ls = ls + 2*L + 1
-!         UU => GAUSSIAN_DATA::spherical_harmonics_for
-!         U(fc:lc,fs:ls) = UU(L).element
-!      end
-!
-!      ! Clean
-!      lmom.destroy
-!      ex.destroy
-!      at.destroy
-!      last.destroy
-!      frst.destroy
-!
-!      .put_debug(U,"make_primitive_to_sph_mx: U")
-!
-!   end
 
 !  ************
 !  I/O routines
@@ -11519,6 +11448,7 @@ contains
    initialise_constrained_scf ::: leaky
    ! Initialise the constrained SCF procedure
    ENSURE(.scfdata.created,"no scfdata")
+   ENSURE(.crystal.created,"no scfdata")
 
       if (.scfdata.using_cluster_charges) &
         .Hirshfeld_atom_info_made = FALSE
@@ -11526,7 +11456,11 @@ contains
       .get_core_matrix
       .get_overlap_matrix
 
-      .initialise_DFT_grids
+      ! Leaky
+      if (.scfdata.is_DFT_calculation OR .crystal.thermal_smearing_model=="hirshfeld") &
+         .set_up_Hirshfeld_info(skip_NOs=TRUE) 
+      ! .initialise_DFT_grids
+
       .get_initial_guess
       .make_fock_matrix
       .make_constraint_data
@@ -11550,10 +11484,6 @@ contains
        .becke_grid.set_grid_data
       end
       .make_overlapping_atoms
-   ! .becke_grid.put
-   ! .becke_grid.put_atom_info
-   ! .becke_grid.put_radial_angular_grids
-   ! .becke_grid.put_unique_atom_grids
    end
 
 !   test_average_energy
@@ -12397,20 +12327,32 @@ contains
    ! PND structure factors, or whatever data are to be used in the constrained
    ! wavefunction procedure
    ENSURE(.scfdata.created,"no scfdata")
+
       scf_kind :: STR
+
       scf_kind = .scfdata.scf_kind
+
       select case (scf_kind)
-         case ("xray_rhf","xray_rks","xray_uhf","xray_uks"); .make_x_structure_factors
-                      if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
-         case ("pnd_uhf","pnd_uks");                         .make_n_structure_factors
-                      if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
-         case ("xray_pnd_uhf","xray_pnd_uks");               .make_x_structure_factors
-                                                             .make_n_structure_factors
-                      if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
-                      if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+
+         case ("xray_rhf","xray_rks","xray_uhf","xray_uks"); 
+            .make_x_structure_factors
+            if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
+
+         case ("pnd_uhf","pnd_uks");                         
+            .make_n_structure_factors
+            if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+
+         case ("xray_pnd_uhf","xray_pnd_uks");               
+            .make_x_structure_factors
+            .make_n_structure_factors
+            if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
+            if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+
          case default
             DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
+
       end
+
    end
 
    add_constraint_to_fock_matrix
@@ -12419,14 +12361,28 @@ contains
       ENSURE(.scfdata.created,"no scf data")
       ENSURE(.fock_matrix.created,"no fock matrix")
       ENSURE(.fock_matrix.any_created,"no fock matrix")
+
       C :: OPMATRIX*
+
       C.create(.n_bf,.scfdata.spinorbital_kind)
-      .make_constraint(C)
-      ! Now add in the contribution
-      .fock_matrix.plus_scaled(C,.scfdata.lambda)
+
+      if (.scfdata.lambda.is_zero) then
+
+         C.set_to_zero
+
+      else
+
+         .make_constraint(C)
+         .fock_matrix.plus_scaled(C,.scfdata.lambda)
+
+      end
+
       ! Save the constraint matrix for acceleration of multiple fits
       .archive(C,"constraint_matrix")
+
+      ! Clean up
       C.destroy
+
    end
 
    make_constraint(C)
@@ -12598,13 +12554,14 @@ contains
       k_pts,kU,pt,grida,gridb,bf_save, CC :: MAT{REAL}*
       gridab :: MAT3{REAL}*
       sha :: SHELL1
+      sh2 :: SHELL2
       bf_ind  :: VEC{VEC_{INT}}*
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       val  :: CPX
       fac,schwarz_cutoff,cutoff,rf, k1k,k2k,k3k,kr, P_max :: REAL
       n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na,ba, sb,fb,lb,nb, ab, a,b,i,j,k,n,p :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as,bs, ab, a,b,i,j,k,n,p :: INT
  
       ! Number of reflections
       n_refl   = .crystal.n_refl
@@ -12740,10 +12697,10 @@ contains
                fa = .first_basis_fn_for_shell(sa)
                la =  .last_basis_fn_for_shell(sa)
                na = la - fa + 1
-               ba = .basis_shell_for_shell(sa)
+               as = .basis_shell_for_shell(sa)
 
                ! Set shell "sa"
-               sha = .precomputed_basis_shellpair(ba,1).a
+               sha = .precomputed_basis_shellpair(as,1).a
                sha.pos = ra
 
                ! Make shell "sa" skip list
@@ -12790,20 +12747,18 @@ contains
                      ! No significant points
                      if (bf_skip(sb).element.destroyed) cycle
 
-                   ! ! Schwarz test -- does not work
-                   ! ab = max(sa,sb)
-                   ! ab = HALF*ab*(ab-1) + min(sa,sb)
-                   ! P_max = max_P(ab)
-                   ! if (P_max < TOL(20)) then
-                   !    cycle
-                   ! else if (P_max*.max_S(ab) < schwarz_cutoff) then
-                   !    cycle
-                   ! end
-
                      ! Shell b limits
                      fb = .first_basis_fn_for_shell(sb)
                      lb = .last_basis_fn_for_shell(sb)
                      nb = lb - fb + 1
+                     bs = .basis_shell_for_shell(sa)
+
+                     ! Skip test 
+                   ! sh2.set_and_precompute_from(.precomputed_basis_shellpair(as,bs),ra,rb,oa==ob,skip=FALSE)
+                   ! if (sh2.skip_ft(cutoff)) then
+                   !    sh2.destroy_ptr_part
+                   !    cycle
+                   ! end
 
                      ! Set the "sb" basis function grid
                      skipb => bf_skip(sb).element 
@@ -12823,7 +12778,7 @@ contains
                      gridab.create(n_keep,na,nb)
 
                      ! Make mapper arrays
-                     p = 0
+                     p = 0; i = 0; j = 0
                      do n = 1,n_pt
                         if (NOT skipa(n)) i = i + 1
                         if (NOT skipb(n)) j = j + 1
@@ -14648,58 +14603,6 @@ contains
       F.destroy
 
    end
-
-!   make_r_core_guess(MO_energies,MO)
-!   ! Do a real core scf for the molecular orbital energies  "MO_energies"
-!   ! and the molecular_orbitals "MO"
-!      MO_energies :: VEC{REAL}
-!      MO :: MAT{REAL}
-!
-!   ENSURE(.core_matrix.created("restricted"),"no core_matrix")
-!
-!      core,U,R,H :: MAT{REAL}* DEFAULT_NULL
-!      n_sph :: INT
-!
-!      ! Make space the right size
-!      if (.use_spherical_basis) then
-!
-!         n_sph = .atom.no_of_sph_basis_functions
-!         H.create(n_sph,n_sph)
-!         R.create(n_sph,n_sph) 
-!
-!         core.create(n_sph,n_sph)
-!         .make_cartesian_to_sph_mx(U)
-!         .core_matrix.restricted.change_basis_to(core,U)
-!         U.destroy
-!
-!      else
-!
-!         H.create(.n_bf,.n_bf)
-!         R.create(.n_bf,.n_bf) 
-!
-!         core => .core_matrix.restricted
-!
-!      end
-!
-!      !  H~ = S^-1/2 H S^-1/2
-!      .make_overlap_inverse_sqrt(R)
-!      core.change_basis_to(H,R)
-!      if (.scfdata.created) .shift_dependence_from_r(H)
-!
-!      !  Solve for c~
-!      H.solve_eigenproblem(MO_energies,MO)
-!      .put_debug(MO_energies,"make_r_core_guess: MO energies after core guess eigenproblem")
-!
-!      !  c  = S^-1/2 c~
-!      H.to_product_of(R,MO)
-!      MO = H
-!
-!      ! Clean
-!      if (.use_spherical_basis) core.destroy
-!      R.destroy
-!      H.destroy
-!
-!   end
 
    make_promolecule_guess ::: leaky
    ! Make a ".density matrix" and fock matrix from the sum of atomic densities.
@@ -36656,9 +36559,6 @@ end if
  !  H.create(.n_bf,.n_bf)
  !  .make_r_IOTC_matrix(H)
  !  H.destroy
-
-! .n_bf    =  .atom.no_of_sph_basis_functions
-! .n_prim  =  .atom.no_of_sph_primitives
 
       UU => GAUSSIAN_DATA::spherical_harmonics_for
 
