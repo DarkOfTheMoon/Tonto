@@ -3966,7 +3966,7 @@ contains
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
 
-      Z,Dx,Dy,Dz :: MAT{REAL}*
+      Z,W,Dx,Dy,Dz :: MAT{REAL}*
 
       .make_kinetic_matrix(H)
 
@@ -3974,12 +3974,15 @@ contains
       .make_nuclear_matrix(Z)
 
       if (NOT .E_field.is_zero) then
+         W.create(.n_bf,.n_bf)
          Dx.create(.n_bf,.n_bf)
          Dy.create(.n_bf,.n_bf)
          Dz.create(.n_bf,.n_bf)
          .get_dipole_matrices(Dx,Dy,Dz)
-         Z = Z + Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
-         Dz.destroy; Dy.destroy; Dx.destroy
+         W = Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
+         .put_debug(W,"make_r_core_matrix: W")
+         Z = Z + W
+         Dz.destroy; Dy.destroy; Dx.destroy; W.destroy
       end
 
       H = H + Z
@@ -4809,6 +4812,284 @@ contains
       .put_debug(Z,"make_Lorentz_core: Z")
  
    end
+
+!   make_Lorentz_core2(Z,output) ::: leaky
+!   ! Add the local electric fields "F"  to the core matrix, made from
+!   ! the Lorentz factor tensors
+!      Z :: MAT{REAL}, target
+!      output :: BIN, optional
+!
+!   ENSURE(.basis_info_made,"no basis info")
+!   ENSURE(.atom.created,"no atom list")
+!   ENSURE(.crystal.created,"no crystal")
+!
+!      Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
+!      r1,r2,r3, ga,gb, p1,p2,p3,ww :: VEC{REAL}*
+!      ra :: VEC{REAL}(3)
+!      overlapping_atom, pi,pj :: VEC{INT}*
+!      skipa0,skipab, skipa,skipb :: VEC{BIN}*
+!      F,ZZ,pt,grida,gridb,bf_save :: MAT{REAL}*
+!      sha :: SHELL1
+!      bf_skip :: VEC{VEC_{BIN}}*
+!      bf_grid :: VEC{MAT_{REAL}}*
+!      cutoff, c1,c2,c3, F1,F2,F3,mu_c, fac,val :: REAL
+!      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
+!      sa,fa,la,na, sb,fb,lb,nb, as,bs, a,b,i,j,k,n,p :: INT
+!      out :: BIN
+!
+!      out = TRUE
+!      if (present(output)) out = output
+!
+!      ! Make the local Lorentz fields at every atom
+!      F.create(3,.n_atom)
+!      .crystal.make_Lorentz_fields(F)
+!      .put_debug(transpose(F),"make_Lorentz_core: F")
+!
+!      ! Set up grids, atomic densities, overlapping_atoms -- leaky
+!      .set_up_Hirshfeld_info(skip_NOs=TRUE) 
+! 
+!      ! Basis function cutoff
+!      cutoff = .becke_grid.basis_function_cutoff
+!
+!      ! Max no of becke grid points per atom
+!      n_pt = .becke_grid.max_no_of_points_per_atom
+!
+!      ! Atom "a" displaced points and skip switches
+!      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
+!      a2.create(n_pt)
+!      skipa0.create(n_pt)
+!      skipab.create(n_pt)
+!
+!      ! Initialise
+!      mu_c = ZERO
+!      Z = ZERO
+!
+!      ! Loop over integration atoms "c"
+!      parallel do c = 1,.n_atom
+!
+!         ! Overlapping atoms
+!         overlapping_atom => .overlapping_atoms_for_atom(c).element
+!
+!         ! Get the Becke grid for atom "c"
+!         .becke_grid.make_grid(pt,wt,c)
+!         n_pt = pt.dim1
+!
+!         ! Make stockholder weight function "Wc" for atom "c"
+!         ! If using interpolatators, then on overlapping atoms 
+!         ! are used ... otherwise nothing is skipped
+!         Wc.create(n_pt)
+!         if (.use_interpolators) then
+!            .make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
+!         else
+!            .make_stockholder_atom_grid(Wc,c,pt)
+!         end
+!
+!         ! Incorporate integration weight
+!         wt = Wc*wt
+!         Wc.destroy
+!
+!         ! Prune the grid with new "wt", get saved bf grid bf_save, 
+!         ! and new no of points, n_pt -- leaky
+!         .becke_grid.prune_grid(pt,wt,bf_save,c)
+!         n_pt = pt.dim1
+!
+!         ! Integration points
+!         r1 => pt(:,1) 
+!         r2 => pt(:,2) 
+!         r3 => pt(:,3)
+!
+!         ! Basis function grid and skip list
+!         bf_skip.create(.n_shell)
+!         bf_grid.create(.n_shell)
+!
+!         ! Atom "c" position, fields at "c"
+!         c1 = .atom(c).pos(1)
+!         c2 = .atom(c).pos(2)
+!         c3 = .atom(c).pos(3)
+!         F1 = ZERO
+!         F2 = ZERO
+!         F3 = 0.001d0
+!
+!         ! Nuclear dipole contribution
+!         mu_c = mu_c - .atom(c).atomic_number*(c1*F1+c2*F2+c3*F3)
+!
+!         ! Loop c-overlapping atoms "oa"
+!         do ca = 1,overlapping_atom.dim
+!
+!            oa  = overlapping_atom(ca)
+!            fsa = .first_shell_for_atom(oa)
+!            lsa =  .last_shell_for_atom(oa)
+!            fba = .first_basis_fn_for_atom(oa)
+!            ra  = .atom(oa).pos
+!
+!            ! Make the displaced points for atom "oa" 
+!            ATOM::make_displaced_pts(.atom(oa),xa,ya,za,a2,skipa0,pt,n_pt,cutoff) 
+!
+!            ! Loop shells on atom a
+!            do sa = fsa,lsa
+!
+!               fa = .first_basis_fn_for_shell(sa)
+!               la =  .last_basis_fn_for_shell(sa)
+!               na = la - fa + 1
+!               as = .basis_shell_for_shell(sa)
+!
+!               ! Set shell "sa"
+!               sha = .precomputed_basis_shellpair(as,1).a
+!               sha.pos = ra
+!
+!               ! Make shell "sa" skipa list
+!               skipa.create(n_pt)
+!               SHELL1::make_skip_list(sha,skipa,n_keep,a2,skipa0,n_pt,cutoff) 
+!
+!               ! Next shell "sa" if no sig. points
+!               if (n_keep==0) then
+!                  skipa.destroy
+!                  cycle
+!               end
+!
+!               ! Assign the "sa" skipa list
+!               bf_skip(sa).element => skipa
+!
+!               ! Make/copy the "sa" basis function grida
+!               ! This must be copied since skipa could be TRUE
+!               grida.create(n_keep,na)
+!               if (oa==c) then
+!                  do a = 1,na
+!                     i = 0
+!                     do n = 1,n_pt
+!                        if (skipa(n)) cycle
+!                        i = i + 1
+!                        grida(i,a) = bf_save(n,a+fa-fba)
+!                     end
+!                  end
+!               else
+!                  SHELL1::make_skip_grid(sha,grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
+!               end
+!               bf_grid(sa).element => grida
+!
+!               ! Loop c-overlapping atoms b
+!               do cb = 1,ca
+!
+!                  ob  = overlapping_atom(cb)
+!                  fsb = .first_shell_for_atom(ob) 
+!                  lsb =  .last_shell_for_atom(ob)
+!
+!                  ! Loop shells on atom b
+!                  do sb = fsb,min(lsb,sa)
+!
+!                     if (bf_skip(sb).element.destroyed) cycle
+!
+!                     ! Shell b limits
+!                     fb = .first_basis_fn_for_shell(sb)
+!                     lb = .last_basis_fn_for_shell(sb)
+!                     nb = lb - fb + 1
+!                     bs = .basis_shell_for_shell(sb)
+!
+!                     ! Set the "sb" basis function grid
+!                     skipb => bf_skip(sb).element 
+!                     gridb => bf_grid(sb).element 
+!
+!                     ! How many points in common?
+!                     skipab(1:n_pt) = skipa OR skipb
+!                     n_keep = count(NOT skipab(1:n_pt))
+!                     if (n_keep==0) cycle
+!
+!                     ! Density block
+!                     ZZ => Z(fa:la,fb:lb)
+!
+!                     if (na*nb==1) then
+!
+!                        ! Add density contribution to rho
+!                        ga => grida(:,1)
+!                        gb => gridb(:,1)
+!                        i = 0; j = 0
+!                        val = ZERO
+!                        do n = 1,n_pt
+!                           if (NOT skipa(n)) i = i + 1
+!                           if (NOT skipb(n)) j = j + 1
+!                           if (skipab(n)) cycle
+!                           fac = ga(i)*gb(j)*wt(n)
+!                           val = val + fac * (r1(n)*F1 + r2(n)*F2 + r3(n)*F3)
+!                        end
+!                        ZZ(1,1) = ZZ(1,1) + val
+!
+!                     else
+!
+!                        ! Create space for gathered index info
+!                        pi.create(n_keep); pj.create(n_keep); ww.create(n_keep)
+!                        p1.create(n_keep); p2.create(n_keep); p3.create(n_keep)
+!      
+!                        ! Make mapper arrays
+!                        p = 0; i = 0; j = 0
+!                        do n = 1,n_pt
+!                           if (NOT skipa(n)) i = i + 1
+!                           if (NOT skipb(n)) j = j + 1
+!                           if (skipab(n)) cycle
+!                           p = p + 1
+!                           pi(p) = i
+!                           pj(p) = j
+!                           ww(p) = wt(n)
+!                           p1(p) = r1(n)
+!                           p2(p) = r2(n)
+!                           p3(p) = r3(n)
+!                        end
+!   
+!                        ! Add density contribution to rho
+!                        do a = 1,na
+!                           ga => grida(:,a)
+!                           do b = 1,nb
+!                              gb  => gridb(:,b)
+!                              val = ZERO
+!                              do p = 1,n_keep
+!                                 i = pi(p)
+!                                 j = pj(p)
+!                                 fac = ga(i)*gb(j)*ww(p)
+!                                 val = val + fac * (p1(p)*F1 + p2(p)*F2 + p3(p)*F3)
+!                              end
+!                              ZZ(a,b) = ZZ(a,b) + val
+!                           end
+!                        end
+!   
+!                        ! Clean up
+!                        p3.destroy; p2.destroy; p1.destroy
+!                        ww.destroy; pj.destroy; pi.destroy
+!
+!                     end
+!
+!                  end ! -- loops sa,sb
+!               end
+!            end       ! -- lops ca,cb
+!         end
+!
+!         ! Clean up
+!         bf_save.destroy
+!         bf_grid.destroy
+!         bf_skip.destroy
+!         wt.destroy
+!         pt.destroy
+!
+!      end ! -- integration atom c
+!
+!      ! Clean up
+!      skipab.destroy
+!      skipa0.destroy
+!      a2.destroy
+!      za.destroy; ya.destroy; xa.destroy
+!      F.destroy
+!
+!      ! Parallel
+!      if (DO_IN_PARALLEL) then
+!        PARALLEL_SYMMETRIC_SUM(Z)
+!      else
+!         Z.symmetric_reflect
+!      end
+!
+!      ! Add the nuclear contribution
+!    ! Z = Z + mu_c*.overlap_matrix
+!
+!      .put_debug(Z,"make_Lorentz_core: Z")
+! 
+!   end
 
 !  ***********************
 !  Dipole moment integrals
