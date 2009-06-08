@@ -3967,6 +3967,7 @@ contains
    ENSURE(.atom.created,  "no atom list")
 
       Z,W,Dx,Dy,Dz :: MAT{REAL}*
+      mu :: VEC{REAL}(3)
 
       .make_kinetic_matrix(H)
 
@@ -3974,15 +3975,27 @@ contains
       .make_nuclear_matrix(Z)
 
       if (NOT .E_field.is_zero) then
+
+         ! Get electronic contribution
          W.create(.n_bf,.n_bf)
          Dx.create(.n_bf,.n_bf)
          Dy.create(.n_bf,.n_bf)
          Dz.create(.n_bf,.n_bf)
          .get_dipole_matrices(Dx,Dy,Dz)
-         W = Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
+         W  = Dx*.E_field(1) + Dy*.E_field(2) + Dz*.E_field(3)
+         Dz.destroy; Dy.destroy; Dx.destroy
+
+         ! Get nuclear contribution
+         .get_overlap_matrix
+         mu = .nuclear_dipole_moment
+         W  = W - dot_product(mu,.E_field)*.overlap_matrix
+
          .put_debug(W,"make_r_core_matrix: W")
+
+         ! Add it to core
          Z = Z + W
-         Dz.destroy; Dy.destroy; Dx.destroy; W.destroy
+         W.destroy
+
       end
 
       H = H + Z
@@ -4557,14 +4570,23 @@ contains
       cutoff, c1,c2,c3, F1,F2,F3,mu_c, fac,val :: REAL
       n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as,bs, a,b,i,j,k,n,p :: INT
+      cluster :: CLUSTER*
       out :: BIN
 
       out = TRUE
       if (present(output)) out = output
 
+      ! Set up the cluster ... leaky
+      cluster.create(.crystal)
+      cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
+      cluster.set_generation_method("within_radius")
+      cluster.defragment= FALSE
+      cluster.radius = 0.0d0
+      cluster.make_info ! leaky
+
       ! Make the local Lorentz fields at every atom
       F.create(3,.n_atom)
-      .crystal.make_Lorentz_fields(F)
+      cluster.make_Lorentz_fields(F)
       .put_debug(transpose(F),"make_Lorentz_core: F")
 
       ! Set up grids, atomic densities, overlapping_atoms -- leaky
@@ -11939,9 +11961,18 @@ contains
          ! Make atomic charges and dipoles
          if  (NOT .Hirshfeld_atom_info_made) .make_Hirshfeld_atom_info
 
-         ! Make Lorentz field
+         ! Set up the cluster ... leaky
          LF.create(3,.n_atom)
-         .crystal.make_Lorentz_fields(LF)
+         cluster.create(.crystal)
+         cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
+         cluster.set_generation_method("within_radius")
+         cluster.defragment= TRUE
+         cluster.radius = 10.0d0
+         if (.scfdata.created) cluster.radius = .scfdata.cluster_radius
+         cluster.make_info ! leaky
+
+         ! Make Lorentz field ... does not need full cluster
+         cluster.make_Lorentz_fields(LF)
 
          ! Make Xtal electric field
          xtal => electronic
@@ -11996,15 +12027,6 @@ contains
          stdout.show("RMS value for molecular    E field = ",mol_rms)
          stdout.show("RMS value for environment  E field = ",LF_rms)
          stdout.show("RMS value for Xtal (total) E field = ",xtal_rms)
-
-         ! Set up the cluster ... leaky
-         cluster.create(.crystal)
-         cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
-         cluster.set_generation_method("within_radius")
-         cluster.defragment= TRUE
-         cluster.radius = 20.0d0
-         if (.scfdata.created) cluster.radius = .scfdata.cluster_radius
-         cluster.make_info ! leaky
 
          ! Make the cluster charges
          n_charges = cluster.n_atoms - cluster.n_fragment_atoms
@@ -12088,6 +12110,7 @@ contains
          ! Clean up
          pos.destroy; charge.destroy
          cluster.destroy
+         LF.destroy
 
       end
 
