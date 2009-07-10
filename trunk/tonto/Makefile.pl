@@ -35,6 +35,7 @@ my $show_defaults = 0;
 my ($tmp1,$tmp2);
 
 my %vendors = (                                # This contains a list of string
+'PATHSCALE'  => 'PathScale',                   # identifiers for each vendor.
 'LAHEY'      => 'Lahey',                       # identifiers for each vendor.
 'FUJITSU'    => '(?<!Lahey\/)Fujitsu',
 'COMPAQ'     => 'Compaq',
@@ -116,7 +117,7 @@ if (defined $FC && $FC ne '') {
   }
 } else {
   ($FC,$FULLFC) = 
-  &check_for_programs('mpif90','lf95','frtvpp','ifort','ifc','efc',
+  &check_for_programs('pathf95','mpif90','lf95','frtvpp','ifort','ifc','efc',
              'frt','xlf90','pgf90','f95','f90','g95','g90','gfortran');
 }
 &print_result($FULLFC);
