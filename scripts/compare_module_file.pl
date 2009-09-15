@@ -36,6 +36,7 @@ my (%compiler_array);
   "IBM-xlf90-on-AIX"       =>  IBM_xlf90_on_AIX,
   "INTEL-ifc-on-LINUX"     =>  INTEL_ifc_on_LINUX,
   "INTEL-ifort-on-LINUX"   =>  INTEL_ifort_on_LINUX,
+  "INTEL-ifort-on-DARWIN"   =>  INTEL_ifort_on_DARWIN,
   "LAHEY-lf95-on-LINUX"    =>  LAHEY_lf95_on_LINUX,
   "MIPSPRO-f90-on-IRIX64"  =>  MIPSPRO_f90_on_IRIX64,
   "WORKSHOP-f90-on-SUNOS"  =>  WORKSHOP_f90_on_SUNOS,
@@ -203,6 +204,11 @@ sub INTEL_ifc_on_LINUX {
 sub INTEL_ifort_on_LINUX {
   # version 8.0.
   push @skip_array,(45,46,47,48);
+}
+
+sub INTEL_ifort_on_DARWIN {
+  # version 10.0.
+  push @skip_array,(49,50,51,52);
 }
 
 sub LAHEY_lf95_on_LINUX {
