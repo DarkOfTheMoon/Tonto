@@ -1,4 +1,3 @@
-for (@ARGV) {
-  -d && do { rmdir; }
-}
+use File::Path qw(rmtree);
+rmtree(@ARGV);
 exit 0;

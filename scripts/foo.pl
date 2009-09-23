@@ -10,8 +10,8 @@
 #
 # Usage :
 # 
-# perl -w ./foo.pl  [ -fortran file.f95 [-fortran_int file.int] [-fortran_use file.use] ]
-#                   [-html_short short.html -html_long long.html] [-types types.foo] 
+# perl -w ./foo.pl  -fortran file.f95 [-types types.foo] 
+#                   [-html_short short.html -html_long long.html] 
 #                   [-routine_calls file.rcf] [-used_routines file.usd]
 #                   [-stack] [-timer] [-no_generic] [-no_unknown] [-no_system] [-tidy]
 #                   [dir/]file.foo
@@ -25,16 +25,6 @@
 #                          find any required inherited foo modules.
 # 
 # -fortran file.f95        is the generated fortran90+ file.
-# 
-# -fortran_int file.int    is the generated fortran90+ generic interface file; if
-#                          not supplied and -fortran supplied, defaults to "file.int" 
-#                          where "file" is the head part of argument "file.foo". 
-#                          Note that -fortran must be supplied.
-# 
-# -fortran_use file.use    is the generated fortran90+ USE file; if not supplied
-#                          and -fortran is supplied, defaults to "file.int" where
-#                          "file" is the head part of argument "file.foo". Note
-#                          that -fortran must be supplied.
 # 
 # -types types.foo         specifies the foo types file, containing all type
 #                          definitions; if not supplied, defaults to "dir/types.foo" 
@@ -70,6 +60,13 @@
 # -no_system               specifies that the SYSTEM module *not* be used by
 #                          default, in the outputted fortran source.
 #
+# -no_mod_use              specifies that module use statements be suppressed 
+#                          as far as possible; put local-routine use statement 
+#                          instead.
+#
+# -no_mod_only             specifies that no only: qualifiers are used
+#                          with module use statements; the whole
+#                          module is used
 #                       
 # -tidy                    specfies that a tidied up version of file.foo,
 #                          called "file.tidy", will be produced. The tidied
@@ -107,6 +104,8 @@ my $getfile = "";             # The inheritance file.
 my $fortranfile = "";         # The .fortran file produced
 my $fortranintfile = "";      # The .int file produced
 my $fortranusefile = "";      # The .use file produced
+my $fortran_volume = "";      # The fortran volume e.g. for windows
+my $includedir = "";          # Directory where the .use and .int files are put
 my $routcallfile= "";         # The .rcf file produced
 my $usdfile = "";             # The .usd file produced, for eliminating unused routines
 my $htmlshortfile = "";       # This is the short .html file produced
@@ -133,6 +132,8 @@ my $do_timer = 0;             # Set TRUE if START_TIMER/STOP_TIMER macros are to
 my $do_unknown = 1;           # Set TRUE if UNKNOWN construct is made
 my $do_generic = 1;           # Set TRUE if generic interfaces are to be used
 my $do_system  = 1;           # Set TRUE if SYSTEM module is always to be used
+my $do_mod_use = 1;           # Set TRUE if module use statements are used
+my $do_mod_only = 1;          # Set TRUE if module use-only statements are to be used
 my $do_routine_calls = 0;     # Set TRUE if routine calls are to be stored
 my $do_tidy    = 0;           # Set TRUE if preprocessor will tidy code
 my $do_usd = 0;               # Set TRUE if eliminatinmg unused routines AND the .usd file exists 
@@ -415,8 +416,7 @@ sub analyse_command_arguments {
        if (/^-/) {
            /^-types\b/          && do { $typesfile      = shift; next; };
            /^-fortran\b/        && do { $fortranfile    = shift; next; };
-           /^-fortran_int\b/    && do { $fortranintfile = shift; next; };
-           /^-fortran_use\b/    && do { $fortranusefile = shift; next; };
+           /^-incdir\b/         && do { $includedir     = shift; next; };
            /^-html_short\b/     && do { $htmlshortfile  = shift; next; };
            /^-html_long\b/      && do { $htmllongfile   = shift; next; };
            /^-generic\b/        && do { $do_generic     = 1;     next; };
@@ -429,6 +429,8 @@ sub analyse_command_arguments {
            /^-no_unknown\b/     && do { $do_unknown     = 0;     next; };
            /^-system\b/         && do { $do_system      = 1;     next; };
            /^-no_system\b/      && do { $do_system      = 0;     next; };
+           /^-no_mod_use\b/     && do { $do_mod_use     = 0;     next; };
+           /^-no_mod_only\b/    && do { $do_mod_only    = 0;     next; };
            /^-routine_calls\b/  && do { $routcallfile   = shift; next; };
            /^-used_routines\b/  && do { $usdfile        = shift; next; };
            /^-tidy\b/           && do { $do_tidy        = 1;     next; };
@@ -478,14 +480,15 @@ sub analyse_command_arguments {
    ($foofile_volume,$foofile_directory,$file) = File::Spec->splitpath($foofile);
    
    if ($do_fortran) {
-      if ($fortranintfile eq "") { $fortranintfile = $foofile_head_name . ".int"; }
-      if ($fortranusefile eq "") { $fortranusefile = $foofile_head_name . ".use"; }
+      my($fortran_directory,$file);
+      ($fortran_volume,$fortran_directory,$file) = File::Spec->splitpath($fortranfile);
+      if ($includedir ne '') { $fortran_directory = $includedir; }
+      $fortranintfile = File::Spec->catpath($fortran_volume,$fortran_directory,$foofile_head_name . ".int"); 
+      $fortranusefile = File::Spec->catpath($fortran_volume,$fortran_directory,$foofile_head_name . ".use"); 
    } else {
-      if ($fortranintfile ne '' || $fortranusefile ne '') {
-           warn "\n Error : must specify -fortran option";
-           $argerr=1;
-           goto ERROR;
-      }
+        warn "\n Error : must specify -fortran option";
+        $argerr=1;
+        goto ERROR;
    }
    
    if ($typesfile eq "") { 
@@ -538,9 +541,9 @@ sub analyse_command_arguments {
    
    Usage :
  
-   perl -w ./foo.pl  [ -fortran file.f95 [-fortran_int file.int] [-fortran_use file.use] ]
+   perl -w ./foo.pl  -fortran file.f95 [-types types.foo] 
  
-                     [-html_short short.html -html_long long.html] [-types types.foo] 
+                     [-html_short short.html -html_long long.html] 
  
                      [-routine_calls file.rcf] [-used_routines file.usd]
 
@@ -557,16 +560,6 @@ sub analyse_command_arguments {
                             find any required inherited foo modules.
    
    -fortran file.f95        is the generated fortran90+ file.
-   
-   -fortran_int file.int    is the generated fortran90+ generic interface file; if
-                            not supplied and -fortran supplied, defaults to "file.int" 
-                            where "file" is the head part of argument "file.foo". 
-                            Note that -fortran must be supplied.
-   
-   -fortran_use file.use    is the generated fortran90+ USE file; if not supplied
-                            and -fortran is supplied, defaults to "file.int" where
-                            "file" is the head part of argument "file.foo". Note
-                            that -fortran must be supplied.
    
    -types types.foo         specifies the foo types file, containing all type
                             definitions; if not supplied, defaults to "dir/types.foo" 
@@ -601,8 +594,15 @@ sub analyse_command_arguments {
 
    -no_system               specifies that the SYSTEM module *not* be used by
                             default, in the outputted fortran source.
+ 
+   -no_mod_use              specifies that module use statements be suppressed 
+                            as far as possible; put local-routine use statement 
+                            instead.
+ 
+   -no_mod_only             specifies that no only: qualifiers are used
+                            with module use statements; the whole
+                            module is used
 
-                         
    -tidy                    specfies that a tidied up version of file.foo,
                             called "file.tidy", will be produced. The tidied
                             file has the recommended 3 space indent, and ENSURE
@@ -1537,6 +1537,14 @@ sub scope_has_interface {
 }
 
 ################################################################################
+# Return TRUE if the scope is within an interface  somewhere in the scope stack
+sub scope_within_interface {
+   my @has_interface = grep(/interface/,@scope[0..($#scope-1)]);
+   if ($#has_interface>=0) { return 1; }
+   else                    { return undef; }
+}
+
+################################################################################
 # Return TRUE if the scope is WITHIN a routine interface
 sub is_new_routine_scope {
    if (defined $newscopeunit && (
@@ -1835,6 +1843,18 @@ sub check_for_first_active_line {
           $_[0] !~ 'DIE_IF'  ) {
              $routine{$name}{first_active_line} = 1;  
              $routine{$name}{in_routine_body} = 1;  
+      }
+
+      if (defined $routine{$name}{first_noncomment_line} &&
+                  $routine{$name}{first_noncomment_line} == 1) {
+             $routine{$name}{first_noncomment_line} = undef; # Stop looking
+      }
+      elsif (
+          defined $routine{$name}{first_noncomment_line} && 
+                  $routine{$name}{first_noncomment_line} == 0 && ( # This is set to 0 if in a routine
+          $_[0] =~ '^\s*[a-zA-Z.]' || 
+          $_[0] =~ '^\s*#' ) ) { # WARNING: active line if preprocessor directive
+             $routine{$name}{first_noncomment_line} = 1;  
       }
 
 }
@@ -2283,10 +2303,9 @@ sub fortran_dump_interface {
 
 
 ################################################################################
-# Dump the USE file
+# Dump the USE file, possibly for every procedure
 
 sub fortran_dump_use {
-  my ($first,$ftime,$fpara,$rout);
 
   -f $fortranusefile && unlink($fortranusefile);
 
@@ -2294,74 +2313,77 @@ sub fortran_dump_use {
 
   open(USEFILE,">".$fortranusefile);
 
-  # Everyone must use TYPES and SYSTEM.
+  # Everyone must use TYPES 
   if ($module_full_name ne 'TYPES')  {
-    print USEFILE "   use TYPES_MODULE";
-    if ($module_full_name ne 'SYSTEM')  {
-      if ($do_system eq 1) {
-      print USEFILE "\n   use SYSTEM_MODULE";
-      }
-    }
+     print USEFILE "   use TYPES_MODULE";
+     if ($do_system eq 1) {
+     if ($module_full_name ne 'SYSTEM')  {
+        if ($do_mod_use) {
+           print USEFILE "   use SYSTEM_MODULE";
+        }
+        elsif ($oldscopeunit eq 'program') {
+           print USEFILE "   use SYSTEM_MODULE";
+        }  
+        elsif ($oldscopeunit ne 'module') { # is routine
+           print USEFILE "   use SYSTEM_MODULE";
+        }  
+     }  
+     }  
   }
+
+  return if ($do_mod_use eq 0 && $oldscopeunit eq 'module' );
+
+  my ($rout);
 
   # Loop over the TONTO modules $mod to which the called routines belong
   foreach my $mod (sort keys %called_routines) { 
 
-      print USEFILE " ";
-
-      if ($mod eq 'SYSTEM' || $mod eq 'TYPES') {next;}
-      $first = 0;
-      $ftime = 0;
-      $fpara = 0;
+      if ($mod eq 'SYSTEM' || $mod eq 'TYPES') { next; }
 
       # Loop over all routines $rout called which belong to module $mod
       # The name $rout may be overloaded, of course. 
       foreach $rout (sort keys %{$called_routines{$mod}}) {
+
          # This is the mangled fortran module name of the called routine
          my $fort_mod = $called_routines{$mod}{$rout}{fortran_mod_name};
          my $fort_typ = $called_routines{$mod}{$rout}{fortran_type_name};
          my $fort_fun = $called_routines{$mod}{$rout}{non_generic_call};
          my $fort_dat = $called_routines{$mod}{$rout}{module_data};
-         if ($mod eq "TEXTFILE" && $first==0 && $mod ne $module_full_name) {
-            print USEFILE "   use TEXTFILE_MODULE, only: stdin";
-            print USEFILE "   use TEXTFILE_MODULE, only: stdout";
-            print USEFILE "   use TEXTFILE_MODULE, only: stderr";
-            $first = 1;
-         }
 
-         if ($mod eq "TIME" && $ftime==0 && $mod ne $module_full_name) {
-            print USEFILE "   use TIME_MODULE, only: std_time";
-            $ftime = 1;
-         }
+         if ($mod eq "unknown") { next; }
 
-         if ($mod ne "unknown" && $mod ne $module_full_name) {
-            if ($do_generic) {
-               if (defined $fort_fun and $fort_fun==1) {
-                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
-               } else {
-                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
-               }
-            } else {
-               if (defined $fort_dat and $fort_dat==1) {
-                  print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
-               } else {
-                  print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
+         if ($mod ne $module_full_name) {
+
+            if ($do_mod_only eq 0) { # Use the whole module
+               print USEFILE "   use ${fort_mod}_MODULE";
+               last;
+            }
+            else {                   # Use only: routine $rout
+               if ($do_generic) {
+                  if    (defined $fort_fun and $fort_fun==1) {
+                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                  }
+                  elsif (defined $fort_dat and $fort_dat==1) {
+                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                  } 
+                  else {
+                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
+                  }
+               } 
+               else {
+                  if (defined $fort_dat and $fort_dat==1) {
+                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                  } else {
+                     print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
+                  }
                }
             }
-         } elsif ($mod eq "unknown") {
-            if ($do_generic) {
-               if (defined $fort_fun and $fort_fun==1) {
-                  print USEFILE "!  use ${fort_mod}_MODULE, only: ${rout}";
-               } else {
-                  print USEFILE "!  use ${fort_mod}_MODULE, only: ${rout}_";
-               }
-            } else {
-                  print USEFILE "!  use ${fort_mod}_MODULE, only: ?_${rout}";
-            }
-         }
+         } 
       }
   }
+
   close USEFILE;
+
 }
 
 
@@ -2697,8 +2719,7 @@ sub do_new_module_scope {
 # Process new 'module' scope to Fortran.
 sub fortran_do_new_module_scope {
   $fortran_out  = "module ${module_fort_name}_MODULE";
-  $fortran_out .= "\n\n" . 
-                  "#  include \"${fortranusefile}\"";
+  $fortran_out .= "\n\n" . "#  include \"${fortranusefile}\"";
 }
 
 ################################################################################
@@ -3151,6 +3172,8 @@ sub fortran_do_new_end_scope {
      } else {
            $fortran_out =~ s/(\s*)end */$1end $oldscopeunit/; 
      }
+
+     # Prepend STACK in rare case (missing routine body)
      $pre_out = "";
      if ( $do_stack eq 1 &&
           ! defined $routine{$name}{pure} &&
@@ -3159,6 +3182,25 @@ sub fortran_do_new_end_scope {
         $pre_out  = "   STACK(\"$module_full_name:${routine{$name}{real_name}}\")\n";
      }
      $fortran_out = $pre_out . $fortran_out;
+
+     # Prepend self declaration in rare case (missing routine body)
+     if (defined $routine{$current_rout_name}{first_noncomment_line} &&
+                 $routine{$current_rout_name}{first_noncomment_line} eq 0) {
+         $routine{$current_rout_name}{first_noncomment_line} = 1;
+     }
+     &fortran_prepend_self_decl;
+     if ($#scope<=2) { &fortran_prepend_use_decl; }
+
+     # Dump the use file here
+     if ($do_mod_use eq 0 && $#scope <= 2) {
+        my ($saved_fortranusefile);
+        $saved_fortranusefile = $fortranusefile;
+        $fortranusefile = $foofile_head_name . "_" .  $current_rout_name . ".use";
+        $fortranusefile = File::Spec->catpath($fortran_volume,$includedir,$fortranusefile); 
+        &fortran_dump_use;
+        $fortranusefile = $saved_fortranusefile;
+        undef %called_routines;
+     }
   } 
 
   elsif ($oldscopeunit eq 'array type') {
@@ -3313,7 +3355,22 @@ sub html_do_new_module_interface_scope {
 ################################################################################
 # Process new 'interface'.
 sub do_new_routine_interface_scope {
-   if ($do_html) { &html_do_new_routine_interface_scope; }
+   if ($do_fortran) { &prepend_self_before_interface; }
+   if ($do_html)    { &html_do_new_routine_interface_scope; }
+}
+
+################################################################################
+# Special prepend for interface as first declaration
+sub prepend_self_before_interface {
+
+     # Prepend self declaration in rare case (missing routine body)
+     if (defined $routine{$current_rout_name}{first_noncomment_line} &&
+                 $routine{$current_rout_name}{first_noncomment_line} eq 0) {
+         $routine{$current_rout_name}{first_noncomment_line} = 1;
+     }
+     &fortran_prepend_self_decl;
+     &fortran_prepend_use_decl; 
+
 }
 
 ################################################################################
@@ -3693,7 +3750,75 @@ sub fortran_do_routine_scope {
       &fortran_process_error_management;
       &fortran_store_ensure_statements;
       $fortran_out .= $comment; 
+      &fortran_prepend_self_decl;
+      if (! &scope_has_interface) { &fortran_prepend_use_decl; }
    }
+
+
+}
+
+################################################################################
+# Prepend USE declarations
+
+sub fortran_prepend_use_decl {
+
+   if (defined $routine{$current_rout_name}{first_noncomment_line} &&
+               $routine{$current_rout_name}{first_noncomment_line}) {
+        if ($skip_fortran_out) {
+           $fortran_out = '';
+           $skip_fortran_out = 0;
+        }
+        my ($pre,$usefile);
+        if ($scopeunit eq 'program' || $scopeunit eq 'module') { 
+           $usefile = $foofile_head_name . ".use"; 
+           $pre = "#  include \"${usefile}\"";
+           if ($fortran_out ne '') { $fortran_out = $pre . "\n" .  $fortran_out; } 
+           else                    { $fortran_out = $pre; }
+        }
+        elsif ($do_mod_use eq 0) { 
+           $usefile = $foofile_head_name . "_" .  $current_rout_name . ".use"; 
+           $pre = "#  include \"${usefile}\"";
+           if ($fortran_out ne '') { $fortran_out = $pre . "\n" .  $fortran_out; } 
+           else                    { $fortran_out = $pre; }
+        }
+
+        # Stop looking
+        $routine{$current_rout_name}{first_noncomment_line} = undef; 
+
+   }
+
+}
+
+################################################################################
+# Prepend self declaration 
+
+sub fortran_prepend_self_decl {
+
+   if (defined $routine{$current_rout_name}{first_noncomment_line} &&
+               $routine{$current_rout_name}{first_noncomment_line}) {
+      if ( ! (defined $routine{$current_rout_name}{functional} || 
+              defined $routine{$current_rout_name}{routinal} ||
+              defined $routine{$current_rout_name}{selfless})) {
+        if ($skip_fortran_out) {
+           $fortran_out = '';
+           $skip_fortran_out = 0;
+        }
+        my ($pre);
+        $pre = $routine{$current_rout_name}{indent};
+        $pre = "${pre}${module_self_decl} :: self";
+        if ($fortran_out ne '') { $fortran_out = $pre . "\n" . $fortran_out; }
+        else                    { $fortran_out = $pre; }
+      }
+      #  print "nam=",$current_rout_name;
+      #  print "lin=",$fortran_out;
+      #  print "fun=",$routine{$current_rout_name}{functional};
+      #  print "rut=",$routine{$current_rout_name}{routinal};
+      #  print "slf=",$routine{$current_rout_name}{selfless};
+      #  print "fnc=",$routine{$current_rout_name}{first_noncomment_line};
+      #  print "skp=",$skip_fortran_out;
+      # $routine{$current_rout_name}{first_noncomment_line} = undef; # Stop looking
+   }
+
 }
 
 ################################################################################
@@ -3918,8 +4043,9 @@ sub fortran_do_routine_body {
      &fortran_process_return;
      &fortran_process_case_statements;
      &fortran_add_stack_macro; 
-   
      $fortran_out .= $comment; 
+     &fortran_prepend_self_decl;
+     if (! &scope_has_interface) { &fortran_prepend_use_decl; }
   }
 
 }
@@ -3966,21 +4092,6 @@ sub fortran_do_program_scope {
   &fortran_process_case_statements;
   &fortran_add_include_files;
   &fortran_change_use_statements;
-
-#  &fortran_add_default_initialisation;
-#  &fortran_change_variable_declarations;
-#
-#  ######## lines that contain a dot. ###########
-#  $fortran_out = &dots_to_fortran($fortran_out);
-#  ######## lines that contain a dot. ###########
-#
-#  &fortran_process_case_statements;
-#  &fortran_process_error_management;
-#  &fortran_add_include_files;
-#  &fortran_change_use_statements;
-#  &fortran_change_square_brackets;
-#  $fortran_out = &fortran_convert_array_of_arrays($fortran_out);
-#  $fortran_out = &module_colon_to_fortran($fortran_out);
 
   $fortran_out .= $comment; 
 }
@@ -4518,11 +4629,11 @@ sub fortran_do_new_routine_scope {
 
   $fortran_out = "${pre}${attr}${rout_type} ${mod}${real_name}${args}${result}";
 
-  if ( ! (defined $routine{$name}{functional} || 
-          defined $routine{$name}{routinal} ||
-          defined $routine{$name}{selfless})) {
-    $fortran_out .= "\n${pre}${module_self_decl} :: self";
-  }
+  # if ( ! (defined $routine{$name}{functional} || 
+  #         defined $routine{$name}{routinal} ||
+  #         defined $routine{$name}{selfless})) {
+  #   $fortran_out .= "\n${pre}${module_self_decl} :: self";
+  # }
 }
 
 ################################################################################
@@ -4746,15 +4857,43 @@ sub dots_to_fortran {
       if ($pre =~ m'((?:;|^|\))\s*)$'o) {$call = 'call ';}
       else                              {$call = '';}
 
+   # print "arg       = $arg";
+   # print "rout      = $rout";
+   # print "has_field = " . &has_field($arg, $rout);
+
       if (&has_field($arg, $rout)) {              # $rout is a type field component
+
          if ($name_readonly && $post =~ '^ *=[^=]') {
             my $argg = $arg;
             $argg =~ s/self%/./;
             $argg =~ s/%/./g;
             &report_error("can't set readonly component \"$rout\" in variable \"$argg\"");
          }
+
          # $i does not change if we change the dot to a %.
          $X = join('',$pre,$arg,'%',$rout,$post);
+
+         # Special globals
+         if ($arg eq 'stdout') {
+            $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
+         } 
+         if ($arg eq 'stdin') {
+            $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
+         } 
+         elsif ($arg eq 'stderr') {
+            $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
+         } 
+         elsif ($arg eq 'std_time') {
+            $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
+            $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
+            $called_routines{TIME}{std_time}{module_data}  = 1;
+         } 
 
       } else {                                    # $rout is a routine call ...
 
@@ -4819,8 +4958,33 @@ sub dots_to_fortran {
           if (! defined $fortran_mod_name) {
              &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
           }
+
+         # Special globals
+         if ($arg eq 'stdout') {
+            $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
+         } 
+         if ($arg eq 'stdin') {
+            $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
+         } 
+         elsif ($arg eq 'stderr') {
+            $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
+            $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
+         } 
+         elsif ($arg eq 'std_time') {
+            $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
+            $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
+            $called_routines{TIME}{std_time}{module_data}  = 1;
+         } 
+
+         # Add called routines
           $called_routines{$arg_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
           $called_routines{$arg_type}{$rout}{fortran_type_name} = $fortran_type_name;
+
           if ($do_routine_calls && $pass==2) {
              my $call = "$arg_type:$rout";
              my $short_name = $routine{$current_rout_name}{short_name};
@@ -4831,6 +4995,7 @@ sub dots_to_fortran {
                 push @{$routine_calls{$short_name}}, $call;
              }
           }
+
           if ($do_generic) {                      # Underscore, always generic
             $underscore = '_';
           } else {
@@ -4839,6 +5004,7 @@ sub dots_to_fortran {
             $rout = $fortran_mod_name . '_' . $rout;
             $underscore = '';
           }
+
         }
 
         # check for other arguments to the function call.
@@ -5503,6 +5669,10 @@ sub analyse_rout_name {
 
     # Start looking for the first active line of code
     $routine{$name}{first_active_line} = 0; 
+
+    # Start looking for the first noncomment line
+    $routine{$name}{first_noncomment_line} = 0; 
+    $routine{$name}{found_first_noncomment_line} = 0; 
 
     # Analyse routine attributes (after the ::: specifier)
     if ($attr ne '') {

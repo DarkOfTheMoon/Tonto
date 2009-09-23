@@ -32,11 +32,12 @@ my (%compiler_array);
   "FUJITSU-f90-on-LINUX"   =>  FUJITSU_f90_on_LINUX,
   "FUJITSU-f95-on-LINUX"   =>  FUJITSU_f95_on_LINUX,
   "GNU-g95-on-DARWIN"      =>  GNU_g95_on_DARWIN,
+  "GNU-g95-on-LINUX"       =>  GNU_g95_on_LINUX,
   "IBM-xlf-on-AIX"         =>  IBM_xlf_on_AIX,
   "IBM-xlf90-on-AIX"       =>  IBM_xlf90_on_AIX,
   "INTEL-ifc-on-LINUX"     =>  INTEL_ifc_on_LINUX,
   "INTEL-ifort-on-LINUX"   =>  INTEL_ifort_on_LINUX,
-  "INTEL-ifort-on-DARWIN"   =>  INTEL_ifort_on_DARWIN,
+  "INTEL-ifort-on-DARWIN"  =>  INTEL_ifort_on_DARWIN,
   "LAHEY-lf95-on-LINUX"    =>  LAHEY_lf95_on_LINUX,
   "MIPSPRO-f90-on-IRIX64"  =>  MIPSPRO_f90_on_IRIX64,
   "WORKSHOP-f90-on-SUNOS"  =>  WORKSHOP_f90_on_SUNOS,
@@ -165,7 +166,14 @@ sub FUJITSU_f95_on_LINUX {
 
 sub GNU_g95_on_DARWIN {
   # version 2005-10-20
-  push @skip_array,(23,24,25,27,28,29,31,32,34,35,37,38,40,41,43,44,45,46);
+  # no special comparison needed
+# push @skip_array,(23,24,25,27,28,29,31,32,34,35,37,38,40,41,43,44,45,46);
+}
+
+sub GNU_g95_on_LINUX {
+  # version ? copied
+  # no special comparison needed
+# push @skip_array,(23,24,25,27,28,29,31,32,34,35,37,38,40,41,43,44,45,46);
 }
 
 sub IBM_xlf_on_AIX {
