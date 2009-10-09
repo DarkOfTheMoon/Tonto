@@ -753,6 +753,60 @@ contains
 
    end
 
+!   best_item result (res) ::: private
+!   ! Return the index of the best item which should be kept in the DIIS
+!   ! archive when the procedure is reset.
+!      res :: INT
+!   ENSURE(.lhs_tag/=" ","no lhs tag specified")
+!   ENSURE(.kept>0,"no stored vectors")
+!      lhs :: MAT{REAL}*
+!      diag,rhs :: VEC{REAL}*
+!      dim :: INT
+!      dim = .dimension
+!      select case (.lhs_tag)
+!         case("lhs,diis,restricted","lhs,ddiis,restricted","lhs,diis,unrestricted")
+!            .get_old_r_lhs(lhs)
+!            diag.create(dim)
+!            lhs.put_diagonal_to(diag)            ! the error vector lengths^2
+!            res = diag(1:dim-1).index_of_smallest_value   
+!            diag.destroy
+!            lhs.destroy
+!         case("lhs,ddiis,unrestricted")
+!            .get_old_u_lhs(lhs)
+!            rhs.create(2*dim)
+!            lhs.put_diagonal_to(rhs)            ! the error vector lengths^2
+!            diag.create(dim)
+!            diag = sum(reshape(rhs,[dim,2]),dim=2)
+!            res = diag(1:dim-1).index_of_smallest_value 
+!            if (res>dim) res = res - dim
+!            diag.destroy
+!            rhs.destroy
+!            lhs.destroy
+!         case("lhs,ediis,restricted")
+!          ! res = .oldest_item
+!            .get_old_r_rhs(rhs)
+!            diag.create(dim)
+!            res = diag(1:dim-1).index_of_minimum 
+!            diag.destroy
+!            rhs.destroy
+!         case("lhs,ediis,unrestricted")
+!          ! res = .oldest_item
+!            .get_old_u_rhs(rhs)
+!            diag.create(dim)
+!            diag = sum(reshape(rhs,[dim,2]),dim=2)
+!            res = diag(1:dim-1).index_of_maximum 
+!            diag.destroy
+!            rhs.destroy
+!         case default
+!            .get_old_lhs(lhs)
+!            diag.create(dim)
+!            lhs.put_diagonal_to(diag)            ! the error vector lengths^2
+!            res = diag(1:dim-1).index_of_smallest_value   
+!            diag.destroy
+!            lhs.destroy
+!      end
+!   end
+
    best_item result (res) ::: private
    ! Return the index of the best item which should be kept in the DIIS
    ! archive when the procedure is reset.
@@ -764,14 +818,14 @@ contains
       dim :: INT
       dim = .dimension
       select case (.lhs_tag)
-         case("lhs,diis,restricted","lhs,ddiis,restricted")
+         case("lhs,diis,restricted","lhs,ddiis,restricted","lhs,diis,unrestricted")
             .get_old_r_lhs(lhs)
             diag.create(dim)
             lhs.put_diagonal_to(diag)            ! the error vector lengths^2
             res = diag(1:dim-1).index_of_smallest_value   
             diag.destroy
             lhs.destroy
-         case("lhs,diis,unrestricted","lhs,ddiis,unrestricted")
+         case("lhs,ddiis,unrestricted")
             .get_old_u_lhs(lhs)
             rhs.create(2*dim)
             lhs.put_diagonal_to(rhs)            ! the error vector lengths^2
@@ -1621,7 +1675,7 @@ contains
       ! Now solve the DIIS equations
       if (.solve_equations) then 
 
-         ! Solve here
+         ! Solve here <<< RESTRICTED
          coeff.create(dim)
          .solve_r_diis_equations(lhs,rhs,coeff)
 
@@ -1637,7 +1691,110 @@ contains
          C.destroy
          coeff.destroy
       end
+
       rhs.destroy; lhs.destroy
+
+   end
+
+   u2_fdiis ::: private
+   ! Unrestricted DIIS extrapolation of the fock matrix ".F". ".D" is the density
+   ! matrix which generated ".F". ".S" is the overlap matrix. This assumes that
+   ! the DIIS object has been repeatedly called, previously, so that it has all
+   ! the previous information on disk. 
+   ENSURE(.archive.file_name/=" ","no archive name specified")
+   ENSURE(.F.created,"no Fock matrix")
+   ENSURE(.D.created,"no density matrix")
+   ENSURE(.J.created,"no coulomb matrix")
+   ENSURE(.F.created("unrestricted"),"no Fock matrix")
+   ENSURE(.D.created("unrestricted"),"no density matrix")
+   ENSURE(.J.created("unrestricted"),"no coulomb matrix")
+   ENSURE(.S.created,"no overlap matrix")
+   ENSURE(.energy.dim==2,"no UHF energies")
+   ENSURE(.energy.dim==2,"must have two UHF energies")
+   ENSURE(.F.n_bf==.S.dim1,"Incompatible F and S")
+   ENSURE(.D.n_bf==.S.dim1,"Incompatible D and S")
+      C :: OPMATRIX*
+      lhs :: MAT{REAL}*
+      rhs,coeff,coeff_a,coeff_b :: VEC{REAL}*
+      dim,old,best :: INT
+      e :: VEC{REAL}(2)
+
+      ! Increment iteration
+      .iteration = .iteration + 1
+
+      ! Proceed only if beyond the .saved_iteration
+      if (.saved_iteration<=0) return
+
+      ! Replace this index in the DIIS system
+      .lhs_tag = "lhs,diis,unrestricted" 
+      ! WARNING: need to modify .best_item routine if using this
+      ! WARNING: need to modify .worst_item routine if using this
+      .new = .next_replacement(best)
+      dim = .dimension
+
+      ! If stuck, replace with the best items and remake LHS
+      if (best/=0) then
+         C.create(.F.n_bf,.F.spinorbital_kind)
+         .read_item(C,.F_tag,best)
+         .save_item(C,.F_tag,1)
+         .read_item(C,.D_tag,best)
+         .save_item(C,.D_tag,1)
+         .read_item(C,.J_tag,best)
+         .save_item(C,.J_tag,1)
+         C.destroy
+         old = 1
+         .read_item(e(1),.e_tag.trim//","//best.to_str.trim//",alpha")
+         .save_item(e(1),.e_tag.trim//","// old.to_str.trim//",alpha")
+         .read_item(e(2),.e_tag.trim//","//best.to_str.trim//",beta")
+         .save_item(e(2),.e_tag.trim//","// old.to_str.trim//",beta")
+         .remake_u_diis_lhs 
+         if (.genre=="ediis+diis") .remake_u_ediis_system
+      end
+
+      ! Store fock, density, J, and energy on disk
+      .save_item(.F,.F_tag,.new,genre="unrestricted") 
+      .save_item(.D,.D_tag,.new,genre="unrestricted")
+      .save_item(.J,.J_tag,.new,genre="unrestricted")   
+      .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
+      .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
+
+      ! Make normal DIIS system and save to disk
+      nullify(lhs); nullify(rhs)
+      if (.genre=="ediis+diis") then
+      .make_u_ediis_system(lhs,rhs) 
+      rhs.destroy; lhs.destroy
+      end
+
+      ! Make normal DIIS system and save to disk
+      .make_u2_diis_system(lhs,rhs) 
+
+      ! Update number of items kept on disk
+      .update_kept
+
+      ! Now solve the DIIS equations
+      if (.solve_equations) then               
+
+         ! Solve here
+         coeff.create(2*dim)
+         .solve_u_diis_equations(lhs,rhs,coeff)
+         coeff_a => coeff.alpha
+         coeff_b => coeff.beta
+
+         ! Construct the interpolation
+         C.create(.F.n_bf,"unrestricted")
+         .F.alpha = ZERO; .F.beta = ZERO
+         do old = 1,dim-1                      ! Construct the interpolation
+            .read_item(C,.F_tag,old)           ! Use "C" as work space for old "F"
+            .F.alpha = .F.alpha + coeff_a(old)*C.alpha
+            .F.beta  = .F.beta  + coeff_b(old)*C.beta
+         end
+         C.destroy
+         coeff.destroy
+
+      end
+
+      rhs.destroy; lhs.destroy
+
    end
 
    gc_fdiis ::: private
@@ -1859,65 +2016,6 @@ contains
 !      rhs.destroy; lhs.destroy
 !   end
 
-!   u2_fdiis ::: private
-!   ! Unrestricted DIIS extrapolation of the fock matrix ".F". ".D" is the density
-!   ! matrix which generated ".F". ".S" is the overlap matrix. This assumes that
-!   ! the DIIS object has been repeatedly called, previously, so that it has all
-!   ! the previous information on disk. 
-!   ENSURE(.archive.file_name/=" ","no archive name specified")
-!   ENSURE(.F.created,"no Fock matrix")
-!   ENSURE(.D.created,"no density matrix")
-!   ENSURE(.J.created,"no coulomb matrix")
-!   ENSURE(.F.created("unrestricted"),"no Fock matrix")
-!   ENSURE(.D.created("unrestricted"),"no density matrix")
-!   ENSURE(.J.created("unrestricted"),"no coulomb matrix")
-!   ENSURE(.S.created,"no overlap matrix")
-!   ENSURE(.energy.dim==2,"no UHF energies")
-!   ENSURE(.energy.dim==2,"must have two UHF energies")
-!   ENSURE(.F.n_bf==.S.dim1,"Incompatible F and S")
-!   ENSURE(.D.n_bf==.S.dim1,"Incompatible D and S")
-!      C :: OPMATRIX*
-!      lhs :: MAT{REAL}*
-!      rhs,coeff,coeff_a,coeff_b :: VEC{REAL}*
-!      dim,old :: INT
-!      .iteration = .iteration + 1
-!      if (.saved_iteration<=0) return
-!      .new = .next_replacement                 ! Replace this index in the DIIS system
-!      dim = .dimension
-!      .save_item(.F,.F_tag,.new,genre="unrestricted") ! Replace the old fock & error pair on disk
-!      .save_item(.D,.D_tag,.new,genre="unrestricted")
-!      .save_item(.J,.J_tag,.new,genre="unrestricted")   
-!      .save_item(.energy(1),.e_tag.trim//","//.new.to_str.trim//",alpha")
-!      .save_item(.energy(2),.e_tag.trim//","//.new.to_str.trim//",beta")
-!      nullify(lhs); nullify(rhs)
-!      .make_u_ediis_system(lhs,rhs)            ! Need to make and save to disk
-!      rhs.destroy; lhs.destroy
-!      .make_u2_diis_system(lhs,rhs)            ! Need to make this and save it to disk
-!      .update_kept
-!      if (.solve_equations) then               ! Now solve the DIIS equations
-!         coeff.create(2*dim)
-!         .solve_u_diis_equations(lhs,rhs,coeff)
-!!  stdout.text("lhs:")
-!!  stdout.put(lhs)
-!!  stdout.text("rhs:")
-!!  stdout.put(rhs)
-!!  stdout.text("coeff:")
-!!  stdout.put(coeff)
-!         coeff_a => coeff.alpha
-!         coeff_b => coeff.beta
-!         C.create(.F.n_bf,"unrestricted")
-!         .F.alpha = ZERO; .F.beta = ZERO
-!         do old = 1,dim-1                      ! Construct the interpolation
-!            .read_item(C,.F_tag,old)           ! Use "C" as work space for old "F"
-!            .F.alpha = .F.alpha + coeff_a(old)*C.alpha
-!            .F.beta  = .F.beta  + coeff_b(old)*C.beta
-!         end
-!         C.destroy
-!         coeff.destroy
-!      end
-!      rhs.destroy; lhs.destroy
-!   end
-
    make_r_diis_system(lhs,rhs) ::: private, leaky
    ! Make the restricted DIIS left hand side matrix, "lhs", and the right hand
    ! side, "rhs". "dimv" is the dimension of the DIIS vector. We replace only
@@ -2019,6 +2117,67 @@ contains
 
       ! Save LHS to disk for next time
       .save_item(lhs,.lhs_tag)
+   end
+
+   make_u2_diis_system(lhs,rhs) ::: private, leaky
+   ! Make the unrestricted DIIS left hand side matrix, "lhs", and the right hand
+   ! side, "rhs". "dimv" is the dimension of the DIIS vector. We replace only
+   ! column/row ".new" in the alpha-alpha and beta-beta part of the old DIIS
+   ! "lhs". The DIIS "lhs" matrix is saved to disk and reused next time.
+      lhs :: MAT{REAL}*
+      rhs :: VEC{REAL}*
+   ENSURE(lhs.destroyed,"lhs exists")
+   ENSURE(rhs.destroyed,"rhs exists")
+      F,D,C_new,C_old :: OPMATRIX*
+      lhs_aa,lhs_bb :: MAT{REAL}*
+      rhs_a,rhs_b :: VEC{REAL}*
+      dimv,dim,old :: INT
+      e :: REAL
+
+      ! Get the saved LHS
+      .lhs_tag = "lhs,diis,unrestricted" 
+      .get_old_u_lhs(lhs)     ! <<<<<<<< Unrestricted, Leaky here
+      lhs_aa => lhs.alpha_alpha
+      lhs_bb => lhs.beta_beta
+
+      dimv = .S.dim1
+      dim = .dimension
+      rhs.create(2*dim); rhs = ZERO
+      rhs_a => rhs.alpha
+      rhs_b => rhs.beta
+      F.create(dimv,"unrestricted")
+      D.create(dimv,"unrestricted")
+      C_new.create(dimv,"unrestricted")
+      C_old.create(dimv,"unrestricted")
+
+      ! Make the new error vector
+      .make_diis_commutator(C_new,.F,.D,.S)
+
+      ! Calculate the lower triangle of the DIIS matrix
+      do old = 1,dim-1  
+         .read_item(F,.F_tag,old)
+         .read_item(D,.D_tag,old)
+         .make_diis_commutator(C_old,F,D,.S)
+         ! The column or row .new is the one we are replacing....
+         lhs_aa(max(.new,old),min(.new,old)) = -C_new.alpha.dot(C_old.alpha)
+         lhs_bb(max(.new,old),min(.new,old)) = -C_new.beta.dot(C_old.beta)
+         ! The max and min are because we are doing only the lower triangle
+         ! We will symmetric reflect later.... 
+         lhs_aa(dim,old) = ONE      ! Here we set the auxiliary row on the bottom
+         lhs_bb(dim,old) = ONE 
+      end
+      C_old.destroy; C_new.destroy
+      D.destroy; F.destroy
+
+      rhs_a(dim) = ONE              ! Set the last element
+      rhs_b(dim) = ONE 
+      lhs_aa(dim,dim) = ZERO        ! And here we set the corner
+      lhs_bb(dim,dim) = ZERO 
+      lhs.symmetric_reflect
+
+      ! Save LHS to disk for next time
+      .save_item(lhs,.lhs_tag) 
+
    end
 
    make_gc_diis_system(lhs,rhs) ::: private, leaky
@@ -2161,56 +2320,6 @@ contains
 !      .save_item(lhs,.lhs_tag)
 !      stdout.flush
 !      stdout.text("  IN make_gc_diis_system END")
-!   end
-
-!   make_u2_diis_system(lhs,rhs) ::: private, leaky
-!   ! Make the unrestricted DIIS left hand side matrix, "lhs", and the right hand
-!   ! side, "rhs". "dimv" is the dimension of the DIIS vector. We replace only
-!   ! column/row ".new" in the alpha-alpha and beta-beta part of the old DIIS
-!   ! "lhs". The DIIS "lhs" matrix is saved to disk and reused next time.
-!      lhs :: MAT{REAL}*
-!      rhs :: VEC{REAL}*
-!   ENSURE(lhs.destroyed,"lhs exists")
-!   ENSURE(rhs.destroyed,"rhs exists")
-!      F,D,C_new,C_old :: OPMATRIX*
-!      lhs_aa,lhs_bb :: MAT{REAL}*
-!      rhs_a,rhs_b :: VEC{REAL}*
-!      dimv,dim,old :: INT
-!      e :: REAL
-!      .lhs_tag = "lhs,diis,unrestricted" ! Get the saved LHS
-!      .get_old_u_lhs(lhs)                ! Leaky here
-!      lhs_aa => lhs.alpha_alpha
-!      lhs_bb => lhs.beta_beta
-!      dimv = .S.dim1
-!      dim = .dimension
-!      rhs.create(2*dim); rhs = ZERO
-!      rhs_a => rhs.alpha
-!      rhs_b => rhs.beta
-!      F.create(dimv,"unrestricted")
-!      D.create(dimv,"unrestricted")
-!      C_new.create(dimv,"unrestricted")
-!      C_old.create(dimv,"unrestricted")
-!      .make_diis_commutator(C_new,.F,.D,.S)
-!      do old = 1,dim-1              ! Calculate the DIIS matrix
-!         .read_item(F,.F_tag,old)
-!         .read_item(D,.D_tag,old)
-!         .make_diis_commutator(C_old,F,D,.S)
-!         ! The column or row .new is the one we are replacing....
-!         lhs_aa(max(.new,old),min(.new,old)) = -C_new.alpha.dot(C_old.alpha)
-!         lhs_bb(max(.new,old),min(.new,old)) = -C_new.beta.dot(C_old.beta)
-!         ! The max and min are because we are doing only the lower triangle
-!         ! We will symmetric reflect later.... 
-!         lhs_aa(dim,old) = ONE      ! Here we set the auxiliary row on the bottom
-!         lhs_bb(dim,old) = ONE 
-!      end
-!      C_old.destroy; C_new.destroy
-!      D.destroy; F.destroy
-!      rhs_a(dim) = ONE              ! Set the last element
-!      rhs_b(dim) = ONE 
-!      lhs_aa(dim,dim) = ZERO        ! And here we set the corner
-!      lhs_bb(dim,dim) = ZERO 
-!      lhs.symmetric_reflect
-!      .save_item(lhs,.lhs_tag)      ! Now save it ...
 !   end
 
    remake_diis_lhs(genre)
@@ -3684,13 +3793,16 @@ contains
    ! has eigenvalues between 0 and 1.
       lhs :: MAT{REAL}
       rhs,solution :: VEC{REAL}
+
    ENSURE(lhs.is_square,"lhs must be square")
    ENSURE(lhs.dim1==rhs.dim,"lhs and rhs are incompatible")
    ENSURE(lhs.dim1==solution.dim,"lhs and solution are incompatible")
    ENSURE(rhs.dim.is_even,"rhs must have an even dimension")
+
       plist :: VEC{INT}*
       dim,k :: INT
       fail :: BIN
+
       if (.force_convexity) then
          dim = rhs.dim/2
          plist.create(2*dim); plist = [(k,k=1,2*dim)] 
@@ -3706,6 +3818,7 @@ contains
       else
          lhs.solve_linear_equation(rhs,solution)  ! Solve diis equations
       end
+
    end
 
 !   solve_gc_diis_equations(lhs,rhs,solution,emin)
