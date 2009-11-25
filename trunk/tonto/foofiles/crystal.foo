@@ -3150,13 +3150,58 @@ contains
       pdbfile.unsave
    end
 
+   make_cif_errors(delta_p)
+   ! Make the errors "delta_p" for cif file output (positions and
+   ! ADP's) after a refinement. This is done in crystal axis system;
+   ! ADP's are in bohr^2; the conversion to angstrom^2 units for ADP's
+   ! is done at output time.
+      delta_p :: VEC{REAL}
+
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric unit atoms")
+   ENSURE(delta_p.dim==9*.asymmetric_unit_atom.dim,"wrong size, delta_p")
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.covariance_matrix.created,"no covariance_matrix")
+
+      n_atom, a,b,i,j :: INT
+      T,C :: MAT{REAL}*
+
+      ! No of asymmteric atoms
+      n_atom = .asymmetric_unit_atom.dim
+
+      ! The covariance matrix transform
+      T.create(9,9)
+      T = ZERO
+      T(1:3,1:3) = .unit_cell.inverse_matrix
+      T(4:9,4:9).to_tensor_change_basis_of(.unit_cell.reciprocal_U_matrix,reorder=TRUE)
+
+      ! Standard deviations and covariances 
+      ! in crystal coordinates
+      C.create(9*n_atom,9*n_atom)
+      i = 0
+      do a = 1,n_atom
+         j = 0
+         do b = 1,n_atom
+            .data.covariance_matrix(i+1:i+9,j+1:j+9).back_transform_to(C(i+1:i+9,j+1:j+9),T)
+            j = j + 9
+         end
+         i = i + 9
+      end
+      C.put_diagonal_to(delta_p)
+
+      ! Clean
+      C.destroy
+      T.destroy
+
+   end
+
    put_cif(basis,scf_type)
    ! cif file header generation
    ! Put unit cell information 
       basis,scf_type :: STR
 
       refinement :: BIN
-      Z :: INT
+      Z,n_atom :: INT
+      delta_p :: VEC{REAL}*
 
       ! Spacegroup information
       stdout.flush
@@ -3178,14 +3223,27 @@ contains
 
       ! Put refinement information
       refinement = FALSE
+      nullify (delta_p)
       if (.data.created) then
       if (.data.delta_p.created) then
+      if (.data.covariance_matrix.created) then
+
          refinement = TRUE
+
+         ! Write the details
          stdout.flush
          stdout.text("# ------------------")
          stdout.text("# Refinement details")
          stdout.text("# ------------------")
          .data.put_cif(basis,scf_type)
+
+         ! Standard deviations and covariances
+         n_atom = .asymmetric_unit_atom.dim
+         delta_p.create(9*n_atom)
+         .make_cif_errors(delta_p)
+         delta_p = sqrt(delta_p)
+
+      end
       end
       end
 
@@ -3195,9 +3253,10 @@ contains
       stdout.text("# Coordinates and ADP's")
       stdout.text("# ---------------------")
       .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
-      if (refinement) then; .asymmetric_unit_atom.put_cif_with_errors(.data.delta_p,.unit_cell)
+      if (refinement) then; .asymmetric_unit_atom.put_cif_with_errors(delta_p)
       else;                 .asymmetric_unit_atom.put_cif
       end
+      delta_p.destroy
       .asymmetric_unit_atom.change_axis_system_to("cartesian",.unit_cell)
 
       ! Put the reflection data
@@ -3242,12 +3301,8 @@ contains
       ENSURE(.data.covariance_matrix.created,"no covariance_matrix")
       ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom list")
 
-    ! x :: VEC{REAL}(6)   = [1,2,3,1,1,2]
-    ! y :: VEC{REAL}(6)   = [1,2,3,2,3,3]
-      map :: VEC{REAL}(6) = [1,4,2,5,6,3]
+      n_atom :: INT
       delta_p :: VEC{REAL}*
-      cov_r,cov_U,tr,rcu :: MAT{REAL}*
-      a,p,q,i,j,k,l,ij,kl,kk,ll :: INT
 
       ! Cell line
       stdout.flush
@@ -3265,45 +3320,10 @@ contains
       ! Change axis system to crystal
       .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
 
-      ! Get transformation matrix for U parameters
-      rcu.create(3,3)
-      tr.create(6,6)
-      rcu = .unit_cell.reciprocal_U_matrix
-      tr  = ZERO
-      ij = 0
-      do i = 1,3
-      do j = 1,i
-         ij = ij + 1
-         p = map(ij)
-         do k = 1,3
-         do l = 1,3
-            kk = max(k,l)
-            ll = min(k,l)
-            kl = kk*(kk-1)/2 + ll
-            q  = map(kl)
-            tr(p,q) = tr(p,q) + rcu(i,k)*rcu(j,l)
-         end
-         end
-      end
-      end
-
-      ! Change sigmas (delta's) for coordinates
-      cov_U.create(6,6)
-      cov_r.create(3,3)
-      delta_p.create_copy(.data.delta_p)
-      p = 0
-      do a = 1,.n_asymmetric_unit_atoms
-         ! Transformation position sigmas
-         cov_r = .data.covariance_matrix(p+1:p+3,p+1:p+3)
-         cov_r.back_transform_using(.unit_cell.inverse_matrix)
-         cov_r.put_diagonal_to(delta_p(p+1:p+3))
-         ! Transformation ADP sigmas
-         cov_U = .data.covariance_matrix(p+4:p+9,p+4:p+9)
-         cov_U.back_transform_using(tr)
-         cov_U.put_diagonal_to(delta_p(p+4:p+9))
-         ! Increment parameters, p
-         p = p + 9
-      end
+      ! Standard deviations and covariances
+      n_atom = .asymmetric_unit_atom.dim
+      delta_p.create(9*n_atom)
+      .make_cif_errors(delta_p)
       delta_p = sqrt(delta_p)
 
       ! Dump the data
@@ -3314,10 +3334,6 @@ contains
 
       ! Clean up
       delta_p.destroy
-      cov_r.destroy
-      cov_U.destroy
-      tr.destroy
-      rcu.destroy
 
    end
 
@@ -3328,12 +3344,7 @@ contains
       ENSURE(.data.covariance_matrix.created,"no covariance_matrix")
       ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom list")
 
-    ! x :: VEC{REAL}(6)   = [1,2,3,1,1,2]
-    ! y :: VEC{REAL}(6)   = [1,2,3,2,3,3]
-      map :: VEC{REAL}(6) = [1,4,2,5,6,3]
       delta_p :: VEC{REAL}*
-      cov_r,cov_U,tr,rcu :: MAT{REAL}*
-      a,p,q,i,j,k,l,ij,kl,kk,ll :: INT
 
       ! Cell line
       stdout.flush
@@ -3348,49 +3359,13 @@ contains
       stdout.put(.unit_cell.angle(3).to_units("degree"))
       stdout.flush
 
+      ! Get errors in crystal coordinates
+      delta_p.create(9*.n_asymmetric_unit_atoms)
+      .make_cif_errors(delta_p)
+      delta_p = sqrt(delta_p)
+
       ! Change axis system to crystal
       .asymmetric_unit_atom.change_axis_system_to("crystal",.unit_cell)
-
-      ! Get transformation matrix for U parameters
-      rcu.create(3,3)
-      tr.create(6,6)
-      rcu = .unit_cell.reciprocal_U_matrix
-      tr  = ZERO
-      ij = 0
-      do i = 1,3
-      do j = 1,i
-         ij = ij + 1
-         p = map(ij)
-         do k = 1,3
-         do l = 1,3
-            kk = max(k,l)
-            ll = min(k,l)
-            kl = kk*(kk-1)/2 + ll
-            q  = map(kl)
-            tr(p,q) = tr(p,q) + rcu(i,k)*rcu(j,l)
-         end
-         end
-      end
-      end
-
-      ! Change sigmas (delta's) for coordinates
-      cov_U.create(6,6)
-      cov_r.create(3,3)
-      delta_p.create_copy(.data.delta_p)
-      p = 0
-      do a = 1,.n_asymmetric_unit_atoms
-         ! Transformation position sigmas
-         cov_r = .data.covariance_matrix(p+1:p+3,p+1:p+3)
-         cov_r.back_transform_using(.unit_cell.inverse_matrix)
-         cov_r.put_diagonal_to(delta_p(p+1:p+3))
-         ! Transformation ADP sigmas
-         cov_U = .data.covariance_matrix(p+4:p+9,p+4:p+9)
-         cov_U.back_transform_using(tr)
-         cov_U.put_diagonal_to(delta_p(p+4:p+9))
-         ! Increment parameters, p
-         p = p + 9
-      end
-      delta_p = sqrt(delta_p)
 
       ! Dump the data
       .asymmetric_unit_atom.put_excel_with_errors(delta_p,.data.temperature)
@@ -3400,10 +3375,6 @@ contains
 
       ! Clean up
       delta_p.destroy
-      cov_r.destroy
-      cov_U.destroy
-      tr.destroy
-      rcu.destroy
 
    end
 
