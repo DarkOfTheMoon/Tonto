@@ -4919,6 +4919,7 @@ contains
         case ("pointgroup=                   "); .read_pointgroup
         case ("put                           "); .put
         case ("put_1e_properties             "); .put_1e_properties
+        case ("put_accurate_cif              "); .MAIN:put_accurate_cif
         case ("put_all_bonds                 "); .put_all_bonds
         case ("put_atom_coord_info           "); .atom.put_coord_info(FALSE)
         case ("put_all_atom_coord_info       "); .atom.put_coord_info(TRUE)
@@ -5440,6 +5441,62 @@ contains
          end
       end
       .crystal.put_cif(.basis_name,scf_type)
+
+      ! Clean up
+      stdout.revert
+
+   end
+
+   put_accurate_cif
+   ! Prints out an accurate cif file
+   ENSURE(.crystal.created, "No crystal")
+   ENSURE(.atom.created, "No atom")
+
+      scf_type :: STR
+      mass,radius :: REAL
+
+      ! Create the cif file
+      stdout.redirect("stdout.accurate.cif")
+      stdout.open(for="write")
+
+      ! Put the header information
+      stdout.text("# ------------------------")
+      stdout.text("# TONTO generated CIF file")
+      stdout.text("# ------------------------")
+      stdout.flush 
+      stdout.text("data_"//trim(.name))
+      stdout.flush 
+      stdout.text("_audit_creation_date               "//trim(std_time.current_date_YMD_str))
+      stdout.text("_audit_creation_method             'Tonto v"//TONTO_VERSION//" ($Rev$)'")
+      stdout.flush 
+      stdout.text("# --------------------")
+      stdout.text("# Chemical information")
+      stdout.text("# --------------------")
+      stdout.flush 
+      stdout.text("_chemical_name_common              "//trim(.name))
+      stdout.text("_chemical_formula_moiety           '"//trim(.atom.chemical_formula(with_spaces=TRUE))//"'")
+      stdout.text("_chemical_formula_sum              '"//trim(.atom.chemical_formula(with_spaces=TRUE))//"'")
+      mass = .atom.mass
+      stdout.text("_chemical_formula_weight           "//trim(mass.to_str("f8.2")))
+      stdout.text("_chemical_compound_source          'see text'")
+      stdout.text("_chemical_absolute_configuration   unk")
+
+      ! Put the crystal information
+      scf_type = " "
+      if (.scfdata.created) then
+         scf_type = .scfdata.scf_kind
+         if (.scfdata.is_DFT_calculation) then
+            scf_type = trim(scf_type)//" "// &
+                       trim(.scfdata.dft_exchange_functional)// &
+                       trim(.scfdata.dft_correlation_functional)
+         end
+         if (.scfdata.using_cluster_charges) then
+            radius = .scfdata.cluster_radius.to_units("angstrom")
+            scf_type = trim(scf_type)//" using cluster charges, radius="// &
+                       trim(radius.to_str("f5.1"))//" angstrom"
+         end
+      end
+      .crystal.put_accurate_cif(.basis_name,scf_type)
 
       ! Clean up
       stdout.revert
@@ -9552,6 +9609,7 @@ stdout.flush
       sf_n :: MAT{CPX}*
       n_p,n_atom :: INT
       chi2_increased,finished :: BIN
+      cm :: MAT{REAL}*
 
       ! Set up grids, atomic densities, and NO's (leaky)
       .set_up_Hirshfeld_info
@@ -9569,6 +9627,7 @@ stdout.flush
       .crystal.data.delta_p = ZERO
       .crystal.data.covariance_matrix.create(n_p,n_p)
       .crystal.data.correlation_matrix.create(n_p,n_p)
+      .crystal.data.fragment_covariance_matrix.create(9*.n_atom,9*.n_atom)
  
       ! Get the initial parameters
       .MAIN:get_asym_atom_params_into(X)
@@ -9611,11 +9670,19 @@ stdout.flush
       ! Correct parameter errors
       .MAIN:uniq_to_asym_atom_shifts(.crystal.data.delta_p)
 
+      ! Set the final geometry and ADP's and covariance matrix
+      .MAIN:set_from_asym_atom_params(X)
+
       ! Banner and finalise refinement
       .crystal.finalise_refinement
 
-      ! Set the final geometry and ADP's
-      .MAIN:set_from_asym_atom_params(X)
+      ! Print out bond length, angle, torsion tables with errors
+      cm.create(3*.n_atom,3*.n_atom)
+      .crystal.data.fragment_covariance_matrix.put_sub_blocks_to(cm,9,3)
+      .atom.put_bond_length_table(cm)
+      .atom.put_bond_angle_table(cm)
+      .atom.put_torsion_angle_table(cm)
+      cm.destroy
 
       ! Reset the becke grid geometry
       .becke_grid.set_atom_info(.atom.atomic_number &
@@ -10576,295 +10643,6 @@ stdout.flush
  
    end
 
-!   get_asym_atom_param_shifts(X,dX,chi2,n_e,max_shift,max_allowed_shift) ::: private
-!   ! Given a set of atom parameters "X" (positions and ADP's),
-!   ! evaluate the shifts "dX" by solving the normal equations.
-!      X  :: VEC{REAL}, IN
-!      dX :: VEC{REAL}, OUT
-!      chi2 :: REAL, OUT
-!      n_e  :: REAL, OUT
-!      max_shift :: REAL, optional, OUT
-!      max_allowed_shift :: REAL, optional, IN
-!
-!   ENSURE(present(max_shift) EQV present(max_allowed_shift),"max_shift, max_allowed_shift not both present")
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.created,"no atom list")
-!   ENSURE(.crystal.created, "no crystal")
-!   ENSURE(.crystal.data.created, "no reflection data")
-!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
-!   ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
-!   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no crystal unique_atom_for_frag_atom")
-!   ENSURE(.crystal.asym_unit_atom_for_frag_atom.created,"no crystal asym_unit_atom_for_frag_atom")
-!   ENSURE(NOT .crystal.correct_dispersion, "dispersion is not corrected yet")
-!   ENSURE(.density_matrix.created, "no density matrix")
-!   ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
-!   ENSURE(X.dim==9*.crystal.asymmetric_unit_atom.dim, "wrong size, X")
-!
-!      k_pt,pt,kU :: MAT{REAL}*
-!      sf_d,dF :: MAT{CPX}*
-!      sf_e,Fc :: VEC{CPX}*
-!      wt,rho,Wa, u1,u2,u3,k1,k2,k3,r1,r2,r3 :: VEC{REAL}*
-!      k1k,k2k,k3k,kr,rf,tf,fac :: REAL
-!      n_refl,n_k,n_p,n_pt,a,u,k,i,base :: INT
-!      sf,sf2,II :: CPX
-!
-!      ! Constants
-!      II = cmplx(ZERO,ONE)
-!      n_refl = .crystal.n_refl
-!      n_k = .crystal.n_unique_SF_k_pts
-!      n_p = 9*.crystal.asymmetric_unit_atom.dim
-!
-!      ! Set atom positions and ADP's
-!      .MAIN:set_from_asym_atom_params(X)
-!    ! .scf
-!    ! .cleanup_scf
-!
-!      ! Set up grids, atomic densities, and NO's
-!    ! .set_up_Hirshfeld_info
-!
-!      ! Structure factors and derivatives
-!      dF.create(n_refl,n_p)  ! Derivative structure factors
-!      sf_d.create(n_k,n_p)   ! Derivative symmetry generated SF's
-!      Fc.create(n_refl)      ! Structure factors
-!      sf_e.create(n_k)       ! Symmetry generated SF's
-!      k_pt.create(n_k,3)     ! K points
-!      kU.create(n_k,3)       ! K times thermal tensors
-!
-!      ! Make the symmetry generated k's
-!      .crystal.make_unique_SF_k_pts(k_pt)
-!      k1 => k_pt(:,1)
-!      k2 => k_pt(:,2)
-!      k3 => k_pt(:,3)
-!
-!      ! Make the structure factors and derivatives
-!      sf_e = ZERO
-!      n_e = ZERO
-!      u = -1
-!      do a = 1,.n_atom
-!         if (a/=.crystal.unique_atom_for_frag_atom(a)) cycle
-!         u = u + 1
-!         .becke_grid.make_grid(pt,wt,[a])
-!         n_pt = pt.dim1
-!         Wa.create(n_pt)
-!         rho.create(n_pt)
-!         .make_density_grid(rho,pt)
-!         .make_stockholder_atom_grid(Wa,a,pt)
-!         Wa = rho*Wa*wt
-!         rf = ONE/.crystal.asym_atom_rep_factor(a) ! WRONG
-!         n_e = n_e + rf*sum(Wa)
-!         kU = matmul(k_pt,.atom(a).thermal_tensor)
-!         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
-!         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
-!         ! Do SF part
-!         do k = 1,n_k
-!            k1k = k1(k); k2k = k2(k); k3k = k3(k)
-!            sf = ZERO
-!            do i = 1,n_pt ! integrate over all space
-!               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
-!               sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
-!            end
-!            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-!            sf = sf * rf * tf
-!            sf_e(k) = sf_e(k) + sf
-!         end
-!         ! Do derivative SF if needed
-!         base = 9*u
-!         do k = 1,n_k
-!            k1k = k1(k); k2k = k2(k); k3k = k3(k)
-!            sf = ZERO
-!            do i = 1,n_pt ! integrate over all space
-!               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
-!               sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
-!            end
-!            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-!            sf = sf * rf * tf
-!            sf_d(k,base+1) = II*k1k*sf
-!            sf_d(k,base+2) = II*k2k*sf
-!            sf_d(k,base+3) = II*k3k*sf
-!            sf2 = HALF*sf
-!            sf_d(k,base+4) = -k1k*k1k*sf2
-!            sf_d(k,base+5) = -k2k*k2k*sf2
-!            sf_d(k,base+6) = -k3k*k3k*sf2
-!            sf_d(k,base+7) = -k1k*k2k*sf 
-!            sf_d(k,base+8) = -k1k*k3k*sf 
-!            sf_d(k,base+9) = -k2k*k3k*sf 
-!         end
-!         rho.destroy; Wa.destroy
-!         wt.destroy; pt.destroy
-!      end
-!      kU.destroy; k_pt.destroy
-!
-!      ! Sum the symmetry equivalent SF's
-!      .crystal.sum_unique_sf(Fc,sf_e)
-!      sf_e.destroy
-!
-!      ! Set the calculated SF's
-!      .crystal.set_F_calc(Fc)
-!      Fc.destroy
-!
-!      ! Make chi2
-!      .crystal.make_F_predicted
-!      chi2 = .crystal.F_chi2
-!    
-!      ! Get the derivative SF's, unique atoms only
-!      .crystal.sum_unique_sf_derivs_t(dF,sf_d)
-!      sf_d.destroy
-! 
-!      ! Get the unique atom shifts, dX
-!      .crystal.solve_normal_equations(dX,dF,max_shift,max_allowed_shift)
-!      dF.destroy
-!
-!      ! Change dX to asym atom shifts
-!      .MAIN:uniq_to_asym_atom_params(dX)
-! 
-!   end
-
-!   get_asym_atom_param_shifts(X,dX,chi2,n_e,max_shift,max_allowed_shift) ::: private
-!   ! Given a set of atom parameters "X" (positions and ADP's),
-!   ! evaluate the shifts "dX" by solving the normal equations.
-!      X  :: VEC{REAL}, IN
-!      dX :: VEC{REAL}, OUT
-!      chi2 :: REAL, OUT
-!      n_e :: REAL, OUT
-!      max_shift :: REAL, optional, OUT
-!      max_allowed_shift :: REAL, optional, IN
-!
-!   ENSURE(present(max_shift) EQV present(max_allowed_shift),"max_shift, max_allowed_shift not both present")
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.created,"no atom list")
-!   ENSURE(.crystal.created, "no crystal")
-!   ENSURE(.crystal.data.created, "no reflection data")
-!   ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
-!   ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
-!   ENSURE(.crystal.unique_atom_for_frag_atom.created,"no crystal unique_atom_for_frag_atom")
-!   ENSURE(.crystal.asym_unit_atom_for_frag_atom.created,"no crystal asym_unit_atom_for_frag_atom")
-!   ENSURE(NOT .crystal.correct_dispersion, "dispersion is not corrected yet")
-!   ENSURE(.density_matrix.created, "no density matrix")
-!   ENSURE(.density_matrix.restricted.created, "no restricted density matrix")
-!   ENSURE(X.dim==9*.crystal.asymmetric_unit_atom.dim, "wrong size, X")
-!
-!      k_pt,pt,kU :: MAT{REAL}*
-!      sf_d,dF :: MAT{CPX}*
-!      sf_e,Fc :: VEC{CPX}*
-!      wt,rho,Wa, u1,u2,u3,k1,k2,k3,r1,r2,r3 :: VEC{REAL}*
-!      k1k,k2k,k3k,kr,rf,tf,fac :: REAL
-!      n_refl,n_k,n_p,n_pt,a,u,k,i,base :: INT
-!      sf,sf2,II :: CPX
-!
-!      ! Constants
-!      II = cmplx(ZERO,ONE)
-!      n_refl = .crystal.n_refl
-!      n_k = .crystal.n_unique_SF_k_pts
-!      n_p = 9*.crystal.asymmetric_unit_atom.dim
-!
-!      ! Set atom positions and ADP's
-!      .MAIN:set_from_asym_atom_params(X)
-!    ! .scf
-!    ! .cleanup_scf
-!
-!      ! Set up grids, atomic densities, and NO's
-!      .set_up_Hirshfeld_info
-!
-!      ! Structure factors and derivatives
-!      dF.create(n_refl,n_p)  ! Derivative structure factors
-!      sf_d.create(n_k,n_p)   ! Derivative symmetry generated SF's
-!      Fc.create(n_refl)      ! Structure factors
-!      sf_e.create(n_k)       ! Symmetry generated SF's
-!      k_pt.create(n_k,3)     ! K points
-!      kU.create(n_k,3)       ! K times thermal tensors
-!
-!      ! Make the symmetry generated k's
-!      .crystal.make_unique_SF_k_pts(k_pt)
-!      k1 => k_pt(:,1)
-!      k2 => k_pt(:,2)
-!      k3 => k_pt(:,3)
-!
-!      ! Make the structure factors and derivatives
-!      sf_e = ZERO
-!      n_e = ZERO
-!      u = -1
-!      do a = 1,.n_atom
-!         rf = .crystal.repetition_factor(a)
-!         if (rf.equals(ZERO)) cycle
-!         rf = ONE/rf
-!         .becke_grid.make_grid(pt,wt,[a])
-!         n_pt = pt.dim1
-!         Wa.create(n_pt)
-!         rho.create(n_pt)
-!         .make_density_grid(rho,pt)
-!         .make_stockholder_atom_grid(Wa,a,pt)
-!         Wa = rho*Wa*wt
-!         n_e = n_e + rf*sum(Wa)
-!         kU = matmul(k_pt,.atom(a).thermal_tensor)
-!         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
-!         r1 => pt(:,1); r2 => pt(:,2); r3 => pt(:,3)
-!         ! Do SF part
-!         do k = 1,n_k
-!            k1k = k1(k); k2k = k2(k); k3k = k3(k)
-!            sf = ZERO
-!            do i = 1,n_pt ! integrate over all space
-!               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
-!               sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
-!            end
-!            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-!            sf = sf * rf * tf
-!            sf_e(k) = sf_e(k) + sf
-!         end
-!         ! Do derivative SF if needed
-!         if (a==.crystal.unique_atom_for_frag_atom(a)) then
-!         u = u + 1
-!         base = 9*u
-!         do k = 1,n_k
-!            k1k = k1(k); k2k = k2(k); k3k = k3(k)
-!            sf = ZERO
-!            do i = 1,n_pt ! integrate over all space
-!               kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
-!               sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
-!            end
-!            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-!            sf = sf * rf * tf
-!            sf_d(k,base+1) = II*k1k*sf
-!            sf_d(k,base+2) = II*k2k*sf
-!            sf_d(k,base+3) = II*k3k*sf
-!            sf2 = HALF*sf
-!            sf_d(k,base+4) = -k1k*k1k*sf2
-!            sf_d(k,base+5) = -k2k*k2k*sf2
-!            sf_d(k,base+6) = -k3k*k3k*sf2
-!            sf_d(k,base+7) = -k1k*k2k*sf 
-!            sf_d(k,base+8) = -k1k*k3k*sf 
-!            sf_d(k,base+9) = -k2k*k3k*sf 
-!         end
-!         end
-!         rho.destroy; Wa.destroy
-!         wt.destroy; pt.destroy
-!      end
-!      kU.destroy; k_pt.destroy
-!
-!      ! Sum the symmetry equivalent SF's
-!      .crystal.sum_unique_sf(Fc,sf_e)
-!      sf_e.destroy
-!
-!      ! Set the calculated SF's
-!      .crystal.set_F_calc(Fc)
-!      Fc.destroy
-!
-!      ! Make chi2
-!      .crystal.make_F_predicted
-!      chi2 = .crystal.F_chi2
-!    
-!      ! Get the derivative SF's, unique atoms only
-!      .crystal.sum_unique_sf_derivs_t(dF,sf_d)
-!      sf_d.destroy
-! 
-!      ! Get the unique atom shifts dX
-!      .crystal.solve_normal_equations(dX,dF,max_shift,max_allowed_shift)
-!      dF.destroy
-!
-!      ! Change shifts to asym atom shifts
-!      .MAIN:uniq_to_asym_atom_params(dX)
-! 
-!   end
-
    get_asym_atom_params_into(X) ::: private
    ! Get the asymmetric atom positions and ADP's "X" from the unique
    ! atoms in the .atom list. Also set the positions and ADP's for the
@@ -10937,17 +10715,23 @@ stdout.flush
    ! Set the positions and ADP's for the .crystal.asymmetric_unit_atom's 
    ! and also the .atom's from the asymmetric atom parameter vector "X".  
    ! Symmetry is used to copy these ADP's and positions into the .atom list.  
+   ! Also define the fragment covariance matrix.
       X :: VEC{REAL}, IN
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.asymmetric_unit_atom.created,"no crystal asymmetric unit atoms")
    ENSURE(.crystal.asym_unit_atom_for_frag_atom.created,"no crystal asym_unit_atom_for_frag_atom")
    ENSURE(.crystal.asym_symop_for_frag_atom.created,"no crystal asym_symop_for_frag_atom")
    ENSURE(.crystal.frag_atom_for_asym_unit_atom.created,"no crystal frag_atom_for_asym_unit_atom")
+   ENSURE(.crystal.data.created,"no crystal data")
+   ENSURE(.crystal.data.covariance_matrix.created,"no covariance_matrix")
+   ENSURE(.crystal.data.fragment_covariance_matrix.created,"no ragment_covariance_matrix")
    ENSURE(all(.crystal.frag_atom_for_asym_unit_atom>0),"fragment does not generate unit cell")
    ENSURE(X.dim==9*.crystal.asymmetric_unit_atom.dim, "wrong size, X")
 
-      n_atom,base,f,a,s :: INT
+      n_atom,base,f,a,s, f1,a1,s1,f2,a2,s2, i1,i2,j1,j2 :: INT
+      cov,fcov :: MAT{REAL}*
       therm,DM :: MAT{REAL}(3,3)
+      T1,T2 :: MAT{REAL}(9,9)
       seitz :: MAT3{REAL}*
       atom :: VEC{ATOM}*
 
@@ -10973,17 +10757,50 @@ stdout.flush
       end
 
       ! Copy the asym atom ADP's out to all .atom's
-      seitz => .crystal.transposed_xyz_seitz_matrices    ! transposed !
+      seitz => .crystal.xyz_seitz_matrices
       DM = .crystal.unit_cell.direct_matrix
       do f = 1,.n_atom 
          a = .crystal.asym_unit_atom_for_frag_atom(f)
          s = .crystal.asym_symop_for_frag_atom(f)
-         .atom(f).pos = matmul(atom(a).pos,seitz(:,:,s)) &
+         .atom(f).pos = matmul(seitz(:,:,s),atom(a).pos) &
                       + matmul(DM,.crystal.asym_shift_for_frag_atom(:,f))
          therm = atom(a).thermal_tensor                  ! This must be in cartesian axes
-         therm.change_basis_using(seitz(:,:,s))          ! Use R^T to change U tensor basis
+         therm.back_transform_using(seitz(:,:,s))        ! Use R^T to change U tensor basis
          .atom(f).thermal_tensor = therm                  
       end
+
+      ! Copy the asymmetric atom covariances out to all 
+      ! .atom's in the fragment
+      fcov => .crystal.data.fragment_covariance_matrix
+      cov  => .crystal.data.covariance_matrix
+      do f1 = 1,.n_atom 
+         a1 = .crystal.asym_unit_atom_for_frag_atom(f1)
+         s1 = .crystal.asym_symop_for_frag_atom(f1)
+         T1 = ZERO
+         T1(1:3,1:3) = seitz(:,:,s1)
+         T1(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s1))
+         i1 = (f1-1)*9
+         j1 = (a1-1)*9
+         do f2 = 1,.n_atom 
+            a2 = .crystal.asym_unit_atom_for_frag_atom(f2)
+            s2 = .crystal.asym_symop_for_frag_atom(f2)
+            T2 = ZERO
+            T2(1:3,1:3) = seitz(:,:,s2)
+            T2(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s2))
+            i2 = (f2-1)*9
+            j2 = (a2-1)*9
+            cov(j1+1:j1+9,j2+1:j2+9).back_transform_to(fcov(i1+1:i1+9,i2+1:i2+9),T1,T2)
+         end
+      end
+
+      if (.debugging("set_from_asym_atom_params")) then
+         stdout.text("cov:")
+         stdout.put(cov)
+         stdout.text("fcov:")
+         stdout.put(fcov)
+      end
+
+      ! Clean
       seitz.destroy
 
    end
