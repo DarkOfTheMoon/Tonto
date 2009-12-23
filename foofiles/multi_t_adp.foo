@@ -174,7 +174,7 @@ contains
 
       .fit_method                 =  "second-order-least-squares"
 
-      .V_expansion_order          = MULTI_T_V_EXPANSION_ORDER
+      .V_expansion_order          = MULTI_T_ADP_V_EXPANSION_ORDER
 
       .use_V_linear_term          = TRUE
       .use_translations           = TRUE
@@ -234,6 +234,7 @@ contains
    set_tol_shift_convergence(val)
    ! Set "val", the tolerance for deciding when the normal equations
    ! are converged.
+      val :: REAL
       stdin.read(val)
       ENSURE(val>ZERO,"tol_near_0 must be positive")
       .tol_shift_convergence = val
@@ -251,7 +252,7 @@ contains
       .use_librations = val
    end
 
-   set_V_linear_term(val)
+   set_use_V_linear_term(val)
    ! Set whether to use the linear term in fitting the
    ! volume of the unit cell.
       val :: BIN
@@ -452,7 +453,7 @@ contains
       .set_use_translations(val)
    end
 
-   read_use_fixed_H_mode
+   read_use_fixed_H_modes
    ! Read whether tyo use fixed H modes
    ! i.e. "epsilon" tesnors for H atoms
       val :: BIN
@@ -738,6 +739,8 @@ contains
       translations,librations :: BIN
       n_internal :: INT
 
+      n :: INT
+
       ! Mode count
       n = 0
 
@@ -760,7 +763,7 @@ contains
       ! Make librational modes
       if (n_internal>0) then
          .L.expand(.n3N,n_internal)
-         .initialise_random_internal(.L(:,n+1:n+n_internal))
+         .initialise_random_internal(.L(:,n+1:n+n_internal),n_internal)
          n = n + n_internal
          DIE_IF(n>.n3N,"too many initial normal modes!")
       end
@@ -887,7 +890,7 @@ contains
 
    set_model_parameters_from(X) 
    ! Set the model parameters from parameter vector "X".
-      X :: VEC{REAL}(.n_total_parameters), OUT
+      X :: VEC{REAL}(.n_total_parameters), IN
 
       g,i,p :: INT
 
@@ -924,7 +927,8 @@ contains
    ENSURE(.unit_cell.created,"no unit_cells")
    ENSURE(.temperature.created,"no temperatures")
 
-      X,Y,M :: MAT{REAL}*
+      Y :: VEC{REAL}*
+      X,M :: MAT{REAL}*
       n,fi, t,i,j :: INT
 
       ! Expansion order
@@ -1025,6 +1029,7 @@ contains
       res :: REAL
 
       del :: REAL
+      t :: INT
 
       res = ZERO
       do t = 1,.n_T
@@ -1036,8 +1041,8 @@ contains
 
    put_unit_cell_volumes
    ! Put the unit cell volumes and fitting results
-   ENSURE(.V_coeff,"no .V_coeffs")
-   ENSURE(.Delta_V_on_V,"no .Delta_V_on_V")
+   ENSURE(.V_coeff.created,"no .V_coeffs")
+   ENSURE(.Delta_V_on_V.created,"no .Delta_V_on_V")
 
       coeff :: VEC{REAL}*
       t :: INT
@@ -1112,11 +1117,12 @@ contains
    ENSURE(.initialised,"no initial guess")
    ENSURE(.V_coeff.created,"no V_coeff's")
 
-      LL :: REAL
+      LL,fac :: REAL
       XX,X0,dX, GG :: VEC{REAL}*
-      HH,covariance_matrix :: MAT{REAL}*
+      HH :: MAT{REAL}*
       MM :: MAT3{REAL}*
-      nL,nw,nG,nt :: INT
+      np,nt :: INT
+      finished,chi2_increased :: BIN
 
 
       ! Constants
@@ -1140,10 +1146,12 @@ contains
       .put_model_parameters_into(X0) 
 
       ! Banner and initialise refinement
-      .put_banner
+      .put_iteration_header
 
       ! Begin refinement loop
       .iteration = 0
+      .n_ind_params = .n_independent_parameters
+      .chi2_old = huge(ONE)
 
       do
  
@@ -1160,7 +1168,7 @@ contains
          dX = -dX
    
          ! Set the number of independent parameters
-         .n_independent_params = dX.dim - .n_near_0 
+         .n_ind_params = dX.dim - .n_near_0 
 
          ! Set parameters
          XX = X0 + dX
@@ -1191,7 +1199,7 @@ contains
          ! Renormalise shift if too big
          if (.max_shift>.max_allowed_shift) then
             fac = .max_allowed_shift/.max_shift
-            shifts = fac * shifts
+            dX = fac * dX
          end
    
          if (.debugging("solve_normal_equations")) then 
@@ -1260,7 +1268,7 @@ contains
    
       ! Make weighted Delta's
       Welta.create(.n6N,.n_T)
-      .make_Welta(Welta) 
+      .make_Welta(Welta,Delta) 
 
       ! Evaluate the Lagrangian
       LL = .Lagrangian(Delta,Welta)
@@ -1310,7 +1318,7 @@ contains
       HH.symmetric_reflect
 
       !!! Mixed parameter-data derivatives !!!
-      MM = -(TW0/(.n6N - .n_independent_parameters)) * d_Welta
+      MM = -(TWO/(.n6N - .n_independent_parameters)) * d_Welta
 
       ! Clean
       d_Welta.destroy
@@ -1330,34 +1338,13 @@ contains
 
    end
 
-   initialise_refinement(n_p)
-   ! Ininitalise the refienement. Set the number of parameters to
-   ! "n_p, put out the banner.
-      n_p :: INT, IN
-
-      ! Set the # of parameters. Used for getting the correct
-      ! chi^2 statistic
-      .n_param = n_p
-
-      ! Turn on refinement. This switch is for turning off code
-      ! which resets the # of parameters
-      .refine_structure = TRUE
-
-      ! Initially chi^2 is as big as you can get
-      .chi2_old = huge(ONE)
-
-      ! Beginning of the iterations
-      .iteration = 0
-
-   end
-
    put_refinement_params
    ! Put the refinement parameters
 
       stdout.flush
-      stdout.text("****************************")
-      stdout.text("Crystal structure refinement")
-      stdout.text("****************************")
+      stdout.text("**************************")
+      stdout.text("ADP normal mode refinement")
+      stdout.text("**************************")
       stdout.flush
       stdout.text("Initialisation for modes:")
       stdout.show("Use translations            =",.use_translations)
@@ -1383,16 +1370,15 @@ contains
       stdout.text("****************")
 
       stdout.flush
-      stdout.dash(int_fields=3,real_fields=4)
+      stdout.dash(int_fields=3,real_fields=3)
       stdout.put("Iter",int_width=TRUE)
       stdout.put("chi2")
-      stdout.put("R")
-      stdout.put("R_w")
-      stdout.put("Max Shft")
-      stdout.put("n_param",int_width=TRUE)
+      stdout.put("MaxShft")
+      stdout.put("MaxShft/ESD")
+      stdout.put("n_ind_params",int_width=TRUE)
       stdout.put("n_near_0",int_width=TRUE)
       stdout.flush
-      stdout.dash(int_fields=3,real_fields=4)
+      stdout.dash(int_fields=3,real_fields=3)
 
    end
 
@@ -1402,10 +1388,9 @@ contains
       ! Iteration results
       stdout.put(.iteration)
       stdout.put(.chi2)
-      stdout.put(.F_r_factor)
-      stdout.put(.F_weighted_r_factor)
       stdout.put(.max_shift)
-      stdout.put(.n_param)
+      stdout.put(.max_shift_on_esd)
+      stdout.put(.n_ind_params)
       stdout.put(.n_near_0)
       stdout.flush
 
@@ -1417,7 +1402,7 @@ contains
       finished,converged,too_many_iters :: BIN
 
       ! Table footer
-      stdout.dash(int_fields=3,real_fields=4)
+      stdout.dash(int_fields=3,real_fields=3)
 
       stdout.flush
       stdout.text("******************")
@@ -1436,7 +1421,7 @@ contains
       end
 
       ! Put final fitting statistics
-      stdout.show("# of fit parameters, N_p    =", .n_param)
+      stdout.show("# of fit parameters, N_p    =", .n_ind_params)
       stdout.show("chi^2(N_p)                  =",.chi2)
       stdout.show("Goodness of fit (N_p)       =", sqrt(.chi2))
 
@@ -1495,6 +1480,7 @@ contains
 
    n_independent_parameters result (res) ::: pure
    ! Return the number of independent parameters in the model
+   ! Zero eigenvalues are not accounted for yet ...
       self :: IN
       res :: INT
 
@@ -1510,7 +1496,7 @@ contains
 
    omega_bar(i,t) result (res)
    ! The omega bar value for mode "i" at temperature of data set "t"
-      t :: INT, IN
+      i,t :: INT, IN
       res :: REAL
 
    ENSURE(.Delta_V_on_V.created,"no Delta_V_on_V")
@@ -1533,10 +1519,7 @@ contains
       res :: REAL
 
    ENSURE(.omega.created,"no omega")
-   ENSURE(.omega_bar.created,"no omega_bar")
-   ENSURE(.unit_cell.created,"no unit_cell's")
    ENSURE(.omega.dim==.n_modes,"wrong size, omega")
-   ENSURE(.omega_bar.dim==.n_modes,"wrong size, omega_bar")
    ENSURE(i>=1,"wrong i value")
    ENSURE(i<=.n_modes,"wrong i value")
    ENSURE(t>=1,"wrong t value")
@@ -1545,7 +1528,7 @@ contains
       wb,val :: REAL
 
       wb  = .omega_bar(i,t)
-      val = HALF*wb/(TWO*BOLTZMAN_SI*.temperature(i)/HARTREE_SI)
+      val = HALF*wb/(TWO*BOLTZMANN_SI*.temperature(i)/HARTREE_SI)
       res = (HALF/wb) * cosh(val)/sinh(val)
 
    end
@@ -1579,7 +1562,7 @@ contains
       end
 
       ! Get the delta: subtract observed ADP
-      ab = HALF*a*(a-1) + b 
+      ab = a*(a-1)/2 + b 
       res = res - .ADP(t).element(ab,c)
 
    end
@@ -1610,9 +1593,10 @@ contains
 
    end
 
-   make_Welta(Welta)
+   make_Welta(Welta,Delta)
    ! Make "Welta" the weighted Delta elements for all temperatures "t"
       Welta :: MAT{REAL}(.n6N,.n_T), OUT
+      Delta :: MAT{REAL}(.n6N,.n_T), IN
 
       t :: INT
 
@@ -1692,7 +1676,7 @@ contains
    
       ! Make weighted Delta's
       Welta.create(.n6N,.n_T)
-      .make_Welta(Welta) 
+      .make_Welta(Welta,Delta) 
 
       ! Work it out
       res = .the_chi2(Delta,Welta)
@@ -1734,7 +1718,7 @@ contains
       t :: INT
       fac :: REAL
 
-      fac = TW0/(.n6N - .n_independent_parameters)
+      fac = TWO/(.n6N - .n_independent_parameters)
 
       ! Loop over temperatures "t"
       do t = 1,.n_T
@@ -1776,7 +1760,7 @@ contains
       do p = 1,.n_modes
       do q = 1,p
          pq = pq + 1
-         GG(gi) = GG(gi) + .d_C_d_lambda(p,q) 
+         GG(pq) = GG(pq) + .d_C_d_lambda(p,q) 
       end
       end
 
@@ -1791,12 +1775,12 @@ contains
       t :: INT
       fac :: REAL
 
-      fac = TW0/(.n6N - .n_independent_parameters)
+      fac = TWO/(.n6N - .n_independent_parameters)
 
       ! Loop over temperatures "t"
       do t = 1,.n_T
 
-         HH.plus_scaled_product_of(d_Delta(:,:,t),d_Welta(:,:,t),transpose_b=TRUE,fac)
+         HH.plus_scaled_product_of(d_Delta(:,:,t),d_Welta(:,:,t),fac,transpose_b=TRUE)
 
       end
 
@@ -1837,19 +1821,19 @@ contains
    ! Make "d_Delta" the derivative of Delta wrt w(i)
       d_Delta :: MAT3{REAL}(.n_modes,.n6N,.n_T), OUT
 
-      t,d,m,n,mn, i :: INT
+      t,a,b,c,ab, i :: INT
 
       ! Loop over temperatures "t"
       do t = 1,.n_T
 
          ! Get the derivative Delta for temp "t"
-         mn = 0
-         do d = 1,.n_atom
-         do m = 1,3
-         do n = 1,m
-            mn = mn + 1
+         ab = 0
+         do c = 1,.n_atom
+         do a = 1,3
+         do b = 1,a
+            ab = ab + 1
             do i = 1,.n_modes
-               DDel(i,mn,t) = .d_U_d_w(m,n,d,t,i) 
+               d_Delta(i,ab,t) = .d_U_d_w(a,b,c,t,i) 
             end
          end
          end
@@ -1877,6 +1861,7 @@ contains
             do i = 1,.n_modes
                d_Delta(i,mn,t) = .d_U_d_G(m,n,d,t,i) 
             end
+         end
          end
          end
 
@@ -1975,7 +1960,7 @@ contains
       wb,arg,kT, c,s :: REAL
 
       wb  = .omega_bar(i,t)
-      kT  = BOLTZMAN_SI*.temperature(t)/HARTREE_SI
+      kT  = BOLTZMANN_SI*.temperature(t)/HARTREE_SI
       arg = HALF*wb/(TWO*kT)
       c   = cosh(arg)
       s   = sinh(arg)
@@ -2360,7 +2345,6 @@ contains
    add_d2_C_d_L_d_lambda(HH) 
    ! Add hessian "HH" to the derivative of the Lagrangian 
    ! wrt L(g,i) and lambda(p,q)
-      HH :: MAT{REAL}
       HH :: MAT{REAL}(.n_modes.triangle_number,.n3N*.n_modes)
 
       g,i,gi, p,q,pq :: INT
@@ -2480,7 +2464,7 @@ contains
       wb,arg,kT, c,s :: REAL
 
       wb  = .omega_bar(i,t)
-      kT  = BOLTZMAN_SI*.temperature(t)/HARTREE_SI
+      kT  = BOLTZMANN_SI*.temperature(t)/HARTREE_SI
       arg = HALF*wb/(TWO*kT)
       c   = cosh(arg)
       s   = sinh(arg)
@@ -2526,7 +2510,7 @@ contains
 
       fac :: REAL
 
-      fac = .d_wb_d_G(i)
+      fac = .d_wb_d_G(i,t)
       res = .d2_amplitude_d2_wb(i,t) * fac*fac
 
    end
@@ -2640,7 +2624,6 @@ contains
    ! gamma_G(i)
       i,t :: INT, IN
       res :: REAL
-      fac :: REAL
 
       res = .d2_amplitude_d2_wb(i,t) * .d_wb_d_w(i,t) * .d_wb_d_G(i,t) &
           + .d_amplitude_d_wb(i,t) * .d2_wb_d_w_d_G(t)
