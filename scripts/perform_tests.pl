@@ -19,9 +19,6 @@ use strict;
 use English;
 use File::Copy ('copy');
 
-# my $testdir = "../tests";
-# my $program = "../INTEL-ifc-on-LINUX/run_molecule.exe";
-# my $cmp     = "perl -w ./compare_output.pl";
 my $testdir = "";
 my $program = "";
 my $cmp     = "";
@@ -32,7 +29,7 @@ my $cmp     = "";
 
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
 
-# Get the job directories (i.e. those with IO descriptor files)
+# Get the job directories (i.e. those with stdin and stdout files)
 
 my $dir = "";
 my $job = "";
@@ -47,12 +44,6 @@ foreach $job (readdir(TESTDIR)) {
 }
 closedir(TESTDIR);
 
-# foreach $job (@jobs) {
-#    print "$job\n";
-# }
-
-# exit;
-
 # Counters for the test suite
 
 my $failed = 0;
@@ -66,55 +57,71 @@ if ($njobs>0) {
   print "Running tests in directory \"$testdir\":\n\n"
 }
 
-# Main loop over tests
+# Main loop over test jobs
 
 foreach my $job (@jobs) {
 
-# print "running \"$job\" ... ";
+   # Set stdin and stdout 
 
-  # Set stdin and stdout 
+   my $input  = "";
+   my @input  = ( "stdin"  );
+   my $output = "";
+   my @output = ( "stdout" );
+   my $delete = "";
+   my @delete = ( );
 
-  my $input = "";
-  my @input = ( "stdin" );
-  my $output = "";
-  my @output = ( "stdout" );
+   # Read extra input and output files from IO file.
+   # Read files to delete at end of job
 
-  # Read extra input and output files from IO file.
-
-  if (open(TEST,"< $testdir/$job/IO")) {
-     while (<TEST>) {
-       if (m/input\s*:\s+(.+)/)  { push (@input,$1); }
-       if (m/output\s*:\s+(.+)/) { push (@output,$1); }
-     }
-  }
-
-  # Copy the input files to the current directory.
-
-  foreach $input (@input) {
-    copy("$testdir/$job/$input",$input);
-  }
-
-  # Run the program.
-
-  my $status = "";
-  if (system($program) != 0) {
-    $failed++;
-    $status = "program failed";
-  } else {
-    my $ok = 1;
-    foreach my $output (@output) {
-      $ok = ($ok && ! system("$cmp $testdir/$job/$output $output"));
-    }
-    if ($ok) {
-      $agreed++; $status = "passed";
-    } else {
-      $disagreed++; $status = "FAILED";
-      foreach my $output (@output) {
-        copy($output,"$testdir/$job/$output".".bad");
+   if (open(TEST,"< $testdir/$job/IO")) {
+      while (<TEST>) {
+        if (m/input\s*:\s+(.+)/)  { push (@input, $1); }
+        if (m/output\s*:\s+(.+)/) { push (@output,$1); }
+        if (m/delete\s*:\s+(.+)/) { push (@delete,$1); }
       }
-    }
+   }
 
-  }
+   # Copy the input files to the current directory.
+
+   foreach $input (@input) {
+     copy("$testdir/$job/$input",$input);
+   }
+
+   # Run the program.
+
+   my $status = "";
+
+   if (system($program) != 0) {
+      $failed++;
+      $status = "program failed";
+
+   } else {
+
+      my $ok = 1;
+      my $passed = 1;
+
+      # Loop over output files for comparison
+      foreach my $output (@output) {
+
+         $ok = ! system("$cmp $testdir/$job/$output $output");
+
+         # Copy failed output files back
+         if (! $ok) {
+            copy($output,"$testdir/$job/$output".".bad");
+         }
+
+         $passed = $passed && $ok;
+
+      }
+
+      # Has job passed?
+      if ($passed) {
+        $agreed++; $status = "passed";
+      } else {
+        $disagreed++; $status = "FAILED";
+      }
+
+   }
 
 format STDOUT_TOP =
 Test name                               Status
@@ -130,8 +137,9 @@ write;
   # the test description file.  Any other files created by the test job should
   # be deleted by the test job.
 
-  foreach $input (@input) { unlink $input; }
+  foreach $input  (@input)  { unlink $input; }
   foreach $output (@output) { unlink $output; }
+  foreach $delete (@delete) { unlink $delete; }
 
 }
 
