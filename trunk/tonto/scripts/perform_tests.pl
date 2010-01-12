@@ -103,7 +103,7 @@ foreach my $job (@jobs) {
       # Loop over output files for comparison
       foreach my $output (@output) {
 
-         $ok = ! system("$cmp $testdir/$job/$output $output");
+         $ok = -e $output && ! system("$cmp $testdir/$job/$output $output");
 
          # Copy failed output files back
          if (! $ok) {
