@@ -26,15 +26,12 @@ my $cmp     = "";
 &analyse_arguments(@ARGV);
 
 # Open the test suite directory
-
 opendir(TESTDIR,$testdir) || die "cannot open directory $testdir";
 
 # Get the job directories (i.e. those with stdin and stdout files)
-
 my $dir = "";
 my $job = "";
 my @jobs = ();
-
 foreach $job (readdir(TESTDIR)) {
    $dir = "$testdir/$job";
    next if ($job eq "..");
@@ -45,12 +42,12 @@ foreach $job (readdir(TESTDIR)) {
 closedir(TESTDIR);
 
 # Counters for the test suite
-
 my $failed = 0;
 my $agreed = 0;
 my $disagreed = 0;
 my $njobs = $#jobs+1;
 
+# Banner
 if ($njobs>0) {
   print "\n";
   print "Using the program \"$program\".\n";
@@ -58,11 +55,9 @@ if ($njobs>0) {
 }
 
 # Main loop over test jobs
-
 foreach my $job (@jobs) {
 
    # Set stdin and stdout 
-
    my $input  = "";
    my @input  = ( "stdin"  );
    my $output = "";
@@ -72,22 +67,20 @@ foreach my $job (@jobs) {
 
    # Read extra input and output files from IO file.
    # Read files to delete at end of job
-
    if (open(TEST,"< $testdir/$job/IO")) {
       while (<TEST>) {
-        if (m/input\s*:\s+(.+)/)  { push (@input, $1); }
-        if (m/output\s*:\s+(.+)/) { push (@output,$1); }
-        if (m/delete\s*:\s+(.+)/) { push (@delete,$1); }
+        if (m/input\s*:\s+(\S+)/)  { push (@input, $1); }
+        if (m/output\s*:\s+(\S+)/) { push (@output,$1); }
+        if (m/delete\s*:\s+(\S+)/) { push (@delete,$1); }
       }
    }
 
    # Copy the input files to the current directory.
-
    foreach $input (@input) {
      copy("$testdir/$job/$input",$input);
    }
 
-   # Run the program.
+   # Run the program on the test job
 
    my $status = "";
 
@@ -102,9 +95,6 @@ foreach my $job (@jobs) {
       # Loop over output files for comparison
       foreach my $output (@output) {
 
-         # Get rid of trailing spaces
-         $output =~ s/\s+//g;
-
          # cmp returns 0 if they are equal
          # So $ok is 1 (true) if they are equal
          my $ok;
@@ -115,6 +105,7 @@ foreach my $job (@jobs) {
             copy($output,"$testdir/$job/$output".".bad");
          }
 
+         # Has it passed?
          $passed = $passed && $ok;
 
       }
@@ -138,10 +129,9 @@ $job,                                   $status
 .
 write;
 
-  # Delete the test files.  These are the input and output files read in from
-  # the test description file.  Any other files created by the test job should
-  # be deleted by the test job.
-
+  # Delete the test files.  These are the input and output files read
+  # in from the test description file. Also delete other files created
+  # by the test job as specified.
   foreach $input  (@input)  { unlink $input; }
   foreach $output (@output) { unlink $output; }
   foreach $delete (@delete) { unlink $delete; }
@@ -149,7 +139,6 @@ write;
 }
 
 # Print the summary
-
 print "\nSummary:\n";
 print "There are $njobs tests;\n";
 if ($agreed>0)    {print "  $agreed gave correct results.\n";}
@@ -165,7 +154,6 @@ sub analyse_arguments {
    $argerr=1 if (@args==0);
 
    # Extract the command line arguments
-   
    while (@_) {
      $arg = shift;
      $_ = $arg;
