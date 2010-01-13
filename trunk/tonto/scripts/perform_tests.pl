@@ -93,16 +93,21 @@ foreach my $job (@jobs) {
 
    if (system($program) != 0) {
       $failed++;
-      $status = "program failed";
+      $status = "program crashed";
 
    } else {
 
-      my $ok = 1;
       my $passed = 1;
 
       # Loop over output files for comparison
       foreach my $output (@output) {
 
+         # Get rid of trailing spaces
+         $output =~ s/\s+//g;
+
+         # cmp returns 0 if they are equal
+         # So $ok is 1 (true) if they are equal
+         my $ok;
          $ok = -e $output && ! system("$cmp $testdir/$job/$output $output");
 
          # Copy failed output files back

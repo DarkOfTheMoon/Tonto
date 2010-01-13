@@ -98,7 +98,7 @@ sub compare {
     # print "line1:$line1\n";
     # print "line2:$line2\n";
 
-      return (0) if ( $line1 ne   $line2); # Lines differ, not same
+      return (0) if ($line1 ne $line2); # Lines differ, not same
 
    }
 
