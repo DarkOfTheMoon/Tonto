@@ -3932,12 +3932,12 @@ contains
 
       ! If using self consistent cluster charges, 
       ! destroy core matrix to force a re-build
-      destroy_core = .scfdata.using_SC_cluster_charges OR .scfdata.using_SC_Lorentz_fields 
-      if (destroy_core) then
-      if  (NOT .Hirshfeld_atom_info_made) then
-         .core_matrix.destroy
-      end
-      end
+    ! destroy_core = .scfdata.using_SC_cluster_charges OR .scfdata.using_SC_Lorentz_fields 
+    ! if (destroy_core) then
+    ! if  (NOT .Hirshfeld_atom_info_made) then
+    !    .core_matrix.destroy
+    ! end
+    ! end
 
       ! Return if already there
       if (.core_matrix.created("restricted")) return
@@ -3972,10 +3972,9 @@ contains
          .make_pt_charge_matrix(Z) ! leaky
          H = H + Z
          Z.destroy
-      end
 
       ! Add Lorentz fields if needed 
-      if (.scfdata.using_SC_Lorentz_fields) then
+      else if (.scfdata.using_SC_Lorentz_fields) then
          if  (NOT .Hirshfeld_atom_info_made) then
             ENSURE(.crystal.created,"no crystal")
             .make_Hirshfeld_atom_info(output=FALSE)
@@ -3985,6 +3984,8 @@ contains
          H = H + Z
          Z.destroy
       end
+
+      .put_debug(H,"get_r_core_matrix: H")
 
    end
 
@@ -4586,9 +4587,10 @@ contains
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
    ENSURE(.crystal.created,"no crystal")
+   ENSURE(.Hirshfeld_atom_info_made,"no Hirshfeld charges and dipoles")
 
       Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
-      r1,r2,r3, ga,gb, p1,p2,p3,ww :: VEC{REAL}*
+      rF,r1,r2,r3, ga,gb, pF,ww :: VEC{REAL}*
       ra :: VEC{REAL}(3)
       overlapping_atom, pi,pj :: VEC{INT}*
       skipa0,skipab, skipa,skipb :: VEC{BIN}*
@@ -4596,30 +4598,20 @@ contains
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
-      cutoff, c1,c2,c3, F1,F2,F3,mu_c, fac,val :: REAL
+      cutoff, fac,val :: REAL
       n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as,bs, a,b,i,j,k,n,p :: INT
-      cluster :: CLUSTER*
       out :: BIN
 
       out = TRUE
       if (present(output)) out = output
 
-      ! Set up the cluster ... leaky
-      cluster.create(.crystal)
-      cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
-      cluster.set_generation_method("within_radius")
-      cluster.defragment= FALSE
-      cluster.radius = 0.0d0
-      cluster.make_info ! leaky
+      ! Set up grids, atomic densities, overlapping_atoms -- leaky
+      .set_up_Hirshfeld_info(skip_NOs=TRUE) 
 
       ! Make the local Lorentz fields at every atom
       F.create(3,.n_atom)
-      cluster.make_Lorentz_fields(F)
-      .put_debug(transpose(F),"make_Lorentz_core: F")
-
-      ! Set up grids, atomic densities, overlapping_atoms -- leaky
-      .set_up_Hirshfeld_info(skip_NOs=TRUE) 
+      .make_Lorentz_fields(F) 
  
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -4634,7 +4626,6 @@ contains
       skipab.create(n_pt)
 
       ! Initialise
-      mu_c = ZERO
       Z = ZERO
 
       ! Loop over integration atoms "c"
@@ -4670,20 +4661,13 @@ contains
          r2 => pt(:,2) 
          r3 => pt(:,3)
 
+         ! r.F for each grid point
+         rF.create(n_pt)
+         rF = r1*F(1,c) + r2*F(2,c) + r3*F(3,c)
+
          ! Basis function grid and skip list
          bf_skip.create(.n_shell)
          bf_grid.create(.n_shell)
-
-         ! Atom "c" position, fields at "c"
-         c1 = .atom(c).pos(1)
-         c2 = .atom(c).pos(2)
-         c3 = .atom(c).pos(3)
-         F1 = F(1,c)
-         F2 = F(2,c)
-         F3 = F(3,c)
-
-         ! Nuclear dipole contribution
-         mu_c = mu_c - .atom(c).atomic_number*(c1*F1+c2*F2+c3*F3)
 
          ! Loop c-overlapping atoms "oa"
          do ca = 1,overlapping_atom.dim
@@ -4781,7 +4765,7 @@ contains
                            if (NOT skipb(n)) j = j + 1
                            if (skipab(n)) cycle
                            fac = ga(i)*gb(j)*wt(n)
-                           val = val + fac * (r1(n)*F1 + r2(n)*F2 + r3(n)*F3)
+                           val = val + fac * rF(n)
                         end
                         ZZ(1,1) = ZZ(1,1) + val
 
@@ -4789,7 +4773,7 @@ contains
 
                         ! Create space for gathered index info
                         pi.create(n_keep); pj.create(n_keep); ww.create(n_keep)
-                        p1.create(n_keep); p2.create(n_keep); p3.create(n_keep)
+                        pF.create(n_keep)
       
                         ! Make mapper arrays
                         p = 0; i = 0; j = 0
@@ -4801,9 +4785,7 @@ contains
                            pi(p) = i
                            pj(p) = j
                            ww(p) = wt(n)
-                           p1(p) = r1(n)
-                           p2(p) = r2(n)
-                           p3(p) = r3(n)
+                           pF(p) = rF(n)
                         end
    
                         ! Add density contribution to rho
@@ -4816,14 +4798,14 @@ contains
                                  i = pi(p)
                                  j = pj(p)
                                  fac = ga(i)*gb(j)*ww(p)
-                                 val = val + fac * (p1(p)*F1 + p2(p)*F2 + p3(p)*F3)
+                                 val = val + fac * pF(p)
                               end
                               ZZ(a,b) = ZZ(a,b) + val
                            end
                         end
    
                         ! Clean up
-                        p3.destroy; p2.destroy; p1.destroy
+                        pF.destroy
                         ww.destroy; pj.destroy; pi.destroy
 
                      end
@@ -4837,6 +4819,7 @@ contains
          bf_save.destroy
          bf_grid.destroy
          bf_skip.destroy
+         rF.destroy
          wt.destroy
          pt.destroy
 
@@ -4856,290 +4839,73 @@ contains
          Z.symmetric_reflect
       end
 
-      ! Add the nuclear contribution
-    ! Z = Z + mu_c*.overlap_matrix
-
       .put_debug(Z,"make_Lorentz_core: Z")
  
    end
 
-!   make_Lorentz_core2(Z,output) ::: leaky
-!   ! Add the local electric fields "F"  to the core matrix, made from
-!   ! the Lorentz factor tensors
-!      Z :: MAT{REAL}, target
-!      output :: BIN, optional
-!
-!   ENSURE(.basis_info_made,"no basis info")
-!   ENSURE(.atom.created,"no atom list")
-!   ENSURE(.crystal.created,"no crystal")
-!
-!      Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
-!      r1,r2,r3, ga,gb, p1,p2,p3,ww :: VEC{REAL}*
-!      ra :: VEC{REAL}(3)
-!      overlapping_atom, pi,pj :: VEC{INT}*
-!      skipa0,skipab, skipa,skipb :: VEC{BIN}*
-!      F,ZZ,pt,grida,gridb,bf_save :: MAT{REAL}*
-!      sha :: SHELL1
-!      bf_skip :: VEC{VEC_{BIN}}*
-!      bf_grid :: VEC{MAT_{REAL}}*
-!      cutoff, c1,c2,c3, F1,F2,F3,mu_c, fac,val :: REAL
-!      n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-!      sa,fa,la,na, sb,fb,lb,nb, as,bs, a,b,i,j,k,n,p :: INT
-!      out :: BIN
-!
-!      out = TRUE
-!      if (present(output)) out = output
-!
-!      ! Make the local Lorentz fields at every atom
-!      F.create(3,.n_atom)
-!      .crystal.make_Lorentz_fields(F)
-!      .put_debug(transpose(F),"make_Lorentz_core: F")
-!
-!      ! Set up grids, atomic densities, overlapping_atoms -- leaky
-!      .set_up_Hirshfeld_info(skip_NOs=TRUE) 
-! 
-!      ! Basis function cutoff
-!      cutoff = .becke_grid.basis_function_cutoff
-!
-!      ! Max no of becke grid points per atom
-!      n_pt = .becke_grid.max_no_of_points_per_atom
-!
-!      ! Atom "a" displaced points and skip switches
-!      xa.create(n_pt); ya.create(n_pt); za.create(n_pt)
-!      a2.create(n_pt)
-!      skipa0.create(n_pt)
-!      skipab.create(n_pt)
-!
-!      ! Initialise
-!      mu_c = ZERO
-!      Z = ZERO
-!
-!      ! Loop over integration atoms "c"
-!      parallel do c = 1,.n_atom
-!
-!         ! Overlapping atoms
-!         overlapping_atom => .overlapping_atoms_for_atom(c).element
-!
-!         ! Get the Becke grid for atom "c"
-!         .becke_grid.make_grid(pt,wt,bf_save,c)
-!         n_pt = pt.dim1
-!
-!         ! Make stockholder weight function "Wc" for atom "c"
-!         ! If using interpolatators, then on overlapping atoms 
-!         ! are used ... otherwise nothing is skipped
-!         Wc.create(n_pt)
-!         if (.use_interpolators) then
-!            .make_stockholder_atom_grid(Wc,c,pt,overlapping_atom)
-!         else
-!            .make_stockholder_atom_grid(Wc,c,pt)
-!         end
-!
-!         ! Incorporate integration weight
-!         wt = Wc*wt
-!         Wc.destroy
-!
-!         ! Prune the grid with new "wt", get saved bf grid bf_save, 
-!         ! and new no of points, n_pt -- leaky
-!         .becke_grid.prune_grid(pt,wt,bf_save,c)
-!         n_pt = pt.dim1
-!
-!         ! Integration points
-!         r1 => pt(:,1) 
-!         r2 => pt(:,2) 
-!         r3 => pt(:,3)
-!
-!         ! Basis function grid and skip list
-!         bf_skip.create(.n_shell)
-!         bf_grid.create(.n_shell)
-!
-!         ! Atom "c" position, fields at "c"
-!         c1 = .atom(c).pos(1)
-!         c2 = .atom(c).pos(2)
-!         c3 = .atom(c).pos(3)
-!         F1 = ZERO
-!         F2 = ZERO
-!         F3 = 0.001d0
-!
-!         ! Nuclear dipole contribution
-!         mu_c = mu_c - .atom(c).atomic_number*(c1*F1+c2*F2+c3*F3)
-!
-!         ! Loop c-overlapping atoms "oa"
-!         do ca = 1,overlapping_atom.dim
-!
-!            oa  = overlapping_atom(ca)
-!            fsa = .first_shell_for_atom(oa)
-!            lsa =  .last_shell_for_atom(oa)
-!            fba = .first_basis_fn_for_atom(oa)
-!            ra  = .atom(oa).pos
-!
-!            ! Make the displaced points for atom "oa" 
-!            ATOM::make_displaced_pts(.atom(oa),xa,ya,za,a2,skipa0,pt,n_pt,cutoff) 
-!
-!            ! Loop shells on atom a
-!            do sa = fsa,lsa
-!
-!               fa = .first_basis_fn_for_shell(sa)
-!               la =  .last_basis_fn_for_shell(sa)
-!               na = la - fa + 1
-!               as = .basis_shell_for_shell(sa)
-!
-!               ! Set shell "sa"
-!               sha = .precomputed_basis_shellpair(as,1).a
-!               sha.pos = ra
-!
-!               ! Make shell "sa" skipa list
-!               skipa.create(n_pt)
-!               SHELL1::make_skip_list(sha,skipa,n_keep,a2,skipa0,n_pt,cutoff) 
-!
-!               ! Next shell "sa" if no sig. points
-!               if (n_keep==0) then
-!                  skipa.destroy
-!                  cycle
-!               end
-!
-!               ! Assign the "sa" skipa list
-!               bf_skip(sa).element => skipa
-!
-!               ! Make/copy the "sa" basis function grida
-!               ! This must be copied since skipa could be TRUE
-!               grida.create(n_keep,na)
-!               if (oa==c) then
-!                  do a = 1,na
-!                     i = 0
-!                     do n = 1,n_pt
-!                        if (skipa(n)) cycle
-!                        i = i + 1
-!                        grida(i,a) = bf_save(n,a+fa-fba)
-!                     end
-!                  end
-!               else
-!                  SHELL1::make_skip_grid(sha,grida,n_keep,na,xa,ya,za,a2,skipa,n_pt)
-!               end
-!               bf_grid(sa).element => grida
-!
-!               ! Loop c-overlapping atoms b
-!               do cb = 1,ca
-!
-!                  ob  = overlapping_atom(cb)
-!                  fsb = .first_shell_for_atom(ob) 
-!                  lsb =  .last_shell_for_atom(ob)
-!
-!                  ! Loop shells on atom b
-!                  do sb = fsb,min(lsb,sa)
-!
-!                     if (bf_skip(sb).element.destroyed) cycle
-!
-!                     ! Shell b limits
-!                     fb = .first_basis_fn_for_shell(sb)
-!                     lb = .last_basis_fn_for_shell(sb)
-!                     nb = lb - fb + 1
-!                     bs = .basis_shell_for_shell(sb)
-!
-!                     ! Set the "sb" basis function grid
-!                     skipb => bf_skip(sb).element 
-!                     gridb => bf_grid(sb).element 
-!
-!                     ! How many points in common?
-!                     skipab(1:n_pt) = skipa OR skipb
-!                     n_keep = count(NOT skipab(1:n_pt))
-!                     if (n_keep==0) cycle
-!
-!                     ! Density block
-!                     ZZ => Z(fa:la,fb:lb)
-!
-!                     if (na*nb==1) then
-!
-!                        ! Add density contribution to rho
-!                        ga => grida(:,1)
-!                        gb => gridb(:,1)
-!                        i = 0; j = 0
-!                        val = ZERO
-!                        do n = 1,n_pt
-!                           if (NOT skipa(n)) i = i + 1
-!                           if (NOT skipb(n)) j = j + 1
-!                           if (skipab(n)) cycle
-!                           fac = ga(i)*gb(j)*wt(n)
-!                           val = val + fac * (r1(n)*F1 + r2(n)*F2 + r3(n)*F3)
-!                        end
-!                        ZZ(1,1) = ZZ(1,1) + val
-!
-!                     else
-!
-!                        ! Create space for gathered index info
-!                        pi.create(n_keep); pj.create(n_keep); ww.create(n_keep)
-!                        p1.create(n_keep); p2.create(n_keep); p3.create(n_keep)
-!      
-!                        ! Make mapper arrays
-!                        p = 0; i = 0; j = 0
-!                        do n = 1,n_pt
-!                           if (NOT skipa(n)) i = i + 1
-!                           if (NOT skipb(n)) j = j + 1
-!                           if (skipab(n)) cycle
-!                           p = p + 1
-!                           pi(p) = i
-!                           pj(p) = j
-!                           ww(p) = wt(n)
-!                           p1(p) = r1(n)
-!                           p2(p) = r2(n)
-!                           p3(p) = r3(n)
-!                        end
-!   
-!                        ! Add density contribution to rho
-!                        do a = 1,na
-!                           ga => grida(:,a)
-!                           do b = 1,nb
-!                              gb  => gridb(:,b)
-!                              val = ZERO
-!                              do p = 1,n_keep
-!                                 i = pi(p)
-!                                 j = pj(p)
-!                                 fac = ga(i)*gb(j)*ww(p)
-!                                 val = val + fac * (p1(p)*F1 + p2(p)*F2 + p3(p)*F3)
-!                              end
-!                              ZZ(a,b) = ZZ(a,b) + val
-!                           end
-!                        end
-!   
-!                        ! Clean up
-!                        p3.destroy; p2.destroy; p1.destroy
-!                        ww.destroy; pj.destroy; pi.destroy
-!
-!                     end
-!
-!                  end ! -- loops sa,sb
-!               end
-!            end       ! -- lops ca,cb
-!         end
-!
-!         ! Clean up
-!         bf_save.destroy
-!         bf_grid.destroy
-!         bf_skip.destroy
-!         wt.destroy
-!         pt.destroy
-!
-!      end ! -- integration atom c
-!
-!      ! Clean up
-!      skipab.destroy
-!      skipa0.destroy
-!      a2.destroy
-!      za.destroy; ya.destroy; xa.destroy
-!      F.destroy
-!
-!      ! Parallel
-!      if (DO_IN_PARALLEL) then
-!        PARALLEL_SYMMETRIC_SUM(Z)
-!      else
-!         Z.symmetric_reflect
-!      end
-!
-!      ! Add the nuclear contribution
-!    ! Z = Z + mu_c*.overlap_matrix
-!
-!      .put_debug(Z,"make_Lorentz_core: Z")
-! 
-!   end
+   make_Lorentz_fields(F) 
+   ! Make the local Lorentz electric fields "F" at each atom site due
+   ! to the crystal environment calculated from the charges and
+   ! dipoles on each atom (so the Hirshfeld or other charges and
+   ! dipoles need to be made). Only monopole and dipole contributions
+   ! are made.
+      F :: MAT{REAL}
+
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.Hirshfeld_atom_info_made,"no Hirshfeld charges and dipoles")
+   ENSURE(F.dim1==3,"wromg dim1, F")
+   ENSURE(F.dim2==.n_atom,"wromg dim1, F")
+
+      cluster :: CLUSTER*
+
+      ! Set up the cluster ... leaky
+      cluster.create(.crystal)
+      cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
+      cluster.set_generation_method("within_radius")
+      cluster.defragment= FALSE
+      cluster.radius = 0.0d0
+      cluster.make_info ! leaky
+
+      ! Make the local Lorentz fields at every atom
+      cluster.make_Lorentz_fields(F)
+      cluster.destroy
+
+      .put_debug(transpose(F),"make_Lorentz_fields: F")
+
+   end
+
+   make_Lorentz_interactions(I0,I1) 
+   ! Make the local Lorentz interactions terms with charges and
+   ! dipoles due to dipoles ONLY on the atoms in the crystal
+   ! environment (so the Hirshfeld or other charges and dipoles need
+   ! to be made).  A minus sign is neede when combined.
+      I0 :: VEC{REAL}
+      I1 :: MAT{REAL}
+
+   ENSURE(.atom.created,"no atom list")
+   ENSURE(.crystal.created,"no crystal")
+   ENSURE(.Hirshfeld_atom_info_made,"no Hirshfeld charges and dipoles")
+   ENSURE(I1.dim1==3,"wrong dim1, I2")
+   ENSURE(I1.dim2==.n_atom,"wrong dim2, I2")
+   ENSURE(I0.dim ==.n_atom,"wrong dim, I0")
+
+      cluster :: CLUSTER*
+
+      ! Set up the cluster ... leaky
+      cluster.create(.crystal)
+      cluster.set_fragment_geometry(.atom.coordinates,cartesian=TRUE)
+      cluster.set_generation_method("within_radius")
+      cluster.defragment= FALSE
+      cluster.radius = 0.0d0
+      cluster.make_info ! leaky
+
+      ! Make the local Lorentz interactions with charges
+      ! and dipoles at every atom
+      cluster.make_Lorentz_interactions(I0,I1)
+      cluster.destroy
+
+   end
 
 !  ***********************
 !  Dipole moment integrals
@@ -15844,9 +15610,6 @@ contains
       else;                                             .MO_eigen_update
       end
 
-      if (.scfdata.using_SC_cluster_charges) .Hirshfeld_atom_info_made = FALSE
-      if (.scfdata.using_SC_Lorentz_fields)  .Hirshfeld_atom_info_made = FALSE
-
    end
 
    MO_eigen_update
@@ -16461,9 +16224,12 @@ contains
       res :: REAL
 
    ENSURE(.scfdata.created, "no scf data")
+   ENSURE(.atom.created, "no atoms")
 
-      g :: INT
+      g,a :: INT
       scf_kind :: STR
+      I0 :: VEC{REAL}*
+      I1 :: MAT{REAL}*
 
       scf_kind = .scfdata.scf_kind
       select case (scf_kind)
@@ -16479,6 +16245,21 @@ contains
       ! Add finite field
       if (NOT .E_field.is_zero) &
       res = res - dot_product(.nuclear_dipole_moment,.E_field)
+
+      ! Add finite local Lorentz fields
+      ! Only dipole contributions are done
+      ! The charge-charge terms are missing
+      if (.scfdata.using_SC_Lorentz_fields) then
+         I0.create(.n_atom)
+         I1.create(3,.n_atom)
+         .make_Lorentz_interactions(I0,I1)
+         do a = 1,.n_atom
+            res = res - .atom(a).charge*I0(a)
+            res = res - dot_product(.atom(a).dipole,I1(:,a))
+         end
+         I1.destroy
+         I0.destroy
+      end
 
    end
 
@@ -17819,7 +17600,6 @@ contains
            e  => .orbital_energies.restricted
            MO => .molecular_orbitals.restricted
            F  => .fock_matrix.restricted
-         ! .make_r_fock_guess(e,MO,F)
            .make_r_guess_from(F,e,MO)
            .put_debug(e, "make_fock_guess: e")
            .put_debug(MO,"make_fock_guess: MO")
@@ -17831,14 +17611,12 @@ contains
            e  => .orbital_energies.alpha
            MO => .molecular_orbitals.alpha
            F  => .fock_matrix.alpha
-         ! .make_r_fock_guess(e,MO,F)
            .make_r_guess_from(F,e,MO)
            .put_debug(e, "make_fock_guess: ea")
            .put_debug(MO,"make_fock_guess: MOa")
            e  => .orbital_energies.beta
            MO => .molecular_orbitals.beta
            F  => .fock_matrix.beta
-         ! .make_r_fock_guess(e,MO,F)
            .make_r_guess_from(F,e,MO)
            .put_debug(e, "make_fock_guess: eb")
            .put_debug(MO,"make_fock_guess: MOb")
@@ -17871,39 +17649,6 @@ contains
       end
 
    end
-
-!   make_r_fock_guess(MO_energies,MO,fock_matrix)
-!   ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
-!   ! a given real restricted "fock_matrix".
-!      MO_energies :: VEC{REAL}
-!      MO,fock_matrix :: MAT{REAL}
-!   ENSURE(.overlap_matrix.created,"no overlap matrix")
-!      R,H :: MAT{REAL}*
-!
-!      ! R = S^-1/2
-!      R.create(.n_bf,.n_bf)
-!      .make_overlap_inverse_sqrt(R)
-!
-!      ! H = Fock matrix
-!      H.create(.n_bf,.n_bf)
-!      H = fock_matrix
-!
-!      ! H = S^-1/2 F S^-1/2
-!      H.change_basis_using(R)
-!      if (.scfdata.created) .shift_dependence_from_r(H)
-!      H.solve_eigenproblem(MO_energies,MO)
-!      .put_debug(MO_energies,"make_r_fock_guess: MO energies")
-!      .put_debug(MO,"make_r_fock_guess: MO's in S^-1/2 basis")
-!
-!      ! c = S^-1/2 c~
-!      H.to_product_of(R,MO)
-!      MO = H
-!      .put_debug(MO,"make_r_fock_guess: MO's")
-!
-!      H.destroy
-!      R.destroy
-!
-!   end
 
    make_gc_fock_guess(MO_energies,MO,fock_matrix)
    ! Make/guess the orbital energies "MO_energies" and orbitals "MO" from
@@ -18079,46 +17824,55 @@ contains
 
       dP,dF :: OPMATRIX*
       genre :: STR
-      do_delta_build,DFT_calculation :: BIN
-      delta_archive,archive :: ARCHIVE
+      delta_build :: BIN
+      dP_archive,archive :: ARCHIVE
 
       ! Create space
       .fock_matrix.destroy
       .fock_matrix.create(.n_bf)
 
-      ! Determine genre
-      genre = .density_matrix.spinorbital_kind
-
-      ! If DFT, store the Hartree matrix only
-      DFT_calculation = .scfdata.is_DFT_calculation
-      if (DFT_calculation) then; archive.set(.name,"hartree_matrix",genre)
-      else;                      archive.set(.name,"fock_matrix",genre)   
+      ! Update 1e hamiltonian if required
+      if (.scfdata.using_SC_cluster_charges OR .scfdata.using_SC_Lorentz_fields) then
+         .core_matrix.destroy
+         .Hirshfeld_atom_info_made = FALSE
       end
 
       ! Determine whether to use a delta fock matrix build
-      delta_archive.set(.name,"delta_density_matrix",genre)
-      do_delta_build = .scfdata.do_delta_build AND delta_archive.exists AND archive.exists
+      genre = .density_matrix.spinorbital_kind
+      dP_archive.set(.name,"delta_density_matrix",genre)
+      delta_build = .scfdata.do_delta_build AND dP_archive.exists AND archive.exists
 
-      ! Make the fock matrix.
-      ! For DFT, DO NOT do exchange correlation part,
-      ! It does not work with delta build
-      if (do_delta_build) then         
+      ! Make the fock matrix
+      if (NOT delta_build) then         
+
+        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12,xc=FALSE)
+
+      ! Make the 2e delta fock matrix.
+      else
+
+        ! DO NOT do exchange correlation part,
+        ! It does not work with delta build
         dF.create(.n_bf)              
         dP.create(.n_bf)
-        delta_archive.read(dP)
+        dP_archive.read(dP)
         .make_fock_matrix(dP,dF,core=FALSE,r12=r12,xc=FALSE)
         dP.destroy
+
+        ! Add on to the last Hartree matrix and store
+        archive.set(.name,"hartree_matrix",genre)
         archive.read(.fock_matrix)
         .fock_matrix.plus(dF)
+        archive.write(.fock_matrix) 
         dF.destroy
-      else
-        .make_fock_matrix(.density_matrix,.fock_matrix,core,r12,xc=FALSE)
+
+        ! Add the one electron part
+        .get_core_matrix
+        .fock_matrix.plus(.core_matrix)
+
       end
 
       ! Now explicitly do the XC part if needed.
-      ! Archive the hartree_matrix for delta build, if needed.
-      if (DFT_calculation) then        
-        if (.scfdata.using_delta_build) archive.write(.fock_matrix) 
+      if (.scfdata.is_DFT_calculation) then        
         if (.debugging("make_fock_matrix: dft density_matrix")) then
         if (genre=="restricted") then
            .put_debug(.density_matrix.restricted,"make_fock_matrix: dft density_matrix")
@@ -18364,23 +18118,24 @@ contains
         J.create(.n_bf,.n_bf)
         K.create(.n_bf,.n_bf)
         if (do_direct) then
-          if(.use_spherical_basis) then
-            .make_r_JK_direct(J,K,P.restricted)
-          else
-            .make_r_JK_direct2(J,K,P.restricted)
+          if(.use_spherical_basis) then; .make_r_JK_direct(J,K,P.restricted)
+          else;                          .make_r_JK_direct2(J,K,P.restricted)
           end  
-        else;                .make_r_JK_disk(J,K,P.restricted)
+        else;                            .make_r_JK_disk(J,K,P.restricted)
         end
         F.restricted = J - HALF*K
         K.destroy
         J.destroy
+        .put_debug(F.restricted,"make_r_fock: 2e F")
       else
         F.restricted = ZERO
       end
 
+
       if (add_core) then
         .get_core_matrix
         .add_core_hamiltonian(F.restricted)
+        .put_debug(F.restricted,"make_r_fock: F")
       end
 
 !     if (.scfdata.created) .shift_dependence_from_r(F.restricted)
