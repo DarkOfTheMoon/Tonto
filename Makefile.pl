@@ -29,6 +29,7 @@ my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operatin
 my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
 my $REAL_KIND = 8;                    # The default real kind
+my $CPX_KIND = 8;                 # The default complex kind
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -118,7 +119,7 @@ if (defined $FC && $FC ne '') {
 } else {
   ($FC,$FULLFC) = 
   &check_for_programs('pathf95','mpif90','lf95','frtvpp','ifort','ifc','efc',
-             'frt','xlf90','pgf90','f95','f90','g95','g90','gfortran');
+             'frt','xlf90','pgf90','f95','f90','g95','g90','gfortran','nagfor');
 }
 &print_result($FULLFC);
 
@@ -147,6 +148,10 @@ if ($FC ne '') {
   print STDERR "Determining Fortran default double precision kind ...";
   &get_default_double_precision_kind;
   &print_result($REAL_KIND);
+
+  print STDERR "Determining Fortran default double complex kind ...";
+  &get_default_double_complex_kind;
+  &print_result($CPX_KIND);
 
   print STDERR "Options for your compiler are in $PLATFORM_INFO_FILE\n";
   &check_siteconfig;
@@ -273,6 +278,27 @@ sub get_default_double_precision_kind {
      $REAL_KIND =~s/\W+//g;
   } 
   unlink("realtest.map","realtest","realtest.f90","realtest.out","realtest.exe","realtest.o","realtest.obj");
+}
+
+################################################################################
+sub get_default_double_complex_kind {
+  my($COMPLEXTEST);
+  unlink("complextest.map","complextest","complextest.f90","complextest.out","complextest.exe","complextest.o","complextest.obj");
+  open(COMPLEXTEST,">","complextest.f90");
+  print COMPLEXTEST "program main\n";
+  print COMPLEXTEST "  print *,kind((1.0d0,1.0d0))\n";
+  print COMPLEXTEST "end program\n";
+  close(COMPLEXTEST);
+  system("${FC} -o complextest.exe complextest.f90 > /dev/null 2>&1");
+  if ( -x 'complextest.exe') { system("./complextest.exe > complextest.out"); }
+  if ( -x 'complextest')     { system("./complextest     > complextest.out"); }
+  if (open(COMPLEXTEST,"<","complextest.out")) {
+     $CPX_KIND = <COMPLEXTEST>;
+     chomp($CPX_KIND);
+     $CPX_KIND =~s/\s+//g;
+     $CPX_KIND =~s/\W+//g;
+  } 
+  unlink("complextest.map","complextest","complextest.f90","complextest.out","complextest.exe","complextest.o","complextest.obj");
 }
 
 ################################################################################
@@ -403,6 +429,7 @@ sub do_substitutions_into_Makefile {
     s/\@INT_KIND\@/$INT_KIND/g;
     s/\@BIN_KIND\@/$BIN_KIND/g;
     s/\@REAL_KIND\@/$REAL_KIND/g;
+    s/\@CPX_KIND\@/$CPX_KIND/g;
     print OUTFILE;
   }
   close(OUTFILE);
