@@ -3826,7 +3826,7 @@ contains
       charge,dipole :: VEC{REAL}*
       pos,L0,L1 :: MAT{REAL}* 
       fac :: REAL
-      n_atom,dim, u,a,s, fa,la :: INT
+      n_atom,dim, u,a,s, fu,lu :: INT
 
       ! Get the unit cell molecule atom info
       .get_uc_molecule_info(mol,pos,charge,dipole,frag_atom) 
@@ -3842,12 +3842,13 @@ contains
       L1 = fac*L1
 
       ! Assign electric fields
-      la = 0
       do a = 1,.n_fragment_atoms
-         u  = frag_atom(a) ! map to the actual frag atom in 1st molecule
-         fa = la + 1
-         la = la + 3
-         F(:,u) = matmul(L0(fa:la,:),charge) + matmul(L1(fa:la,:),dipole)
+         u = frag_atom.index_of_value(a) ! map to unit cell atom
+         DIE_IF(u==0,"fragment atom "//trim(a.to_str)//" not found in cell")
+         lu = 3*(u-1)
+         fu = lu + 1
+         lu = lu + 3
+         F(:,a) = matmul(L0(fu:lu,:),charge) + matmul(L1(fu:lu,:),dipole)
       end
 
       .put_debug(charge,"make_Lorentz_fields: charge")
@@ -3883,7 +3884,7 @@ contains
       charge,dipole :: VEC{REAL}*
       pos,L0,L1 :: MAT{REAL}* 
       fac :: REAL
-      n_atom,dim, u,a,s, fa,la :: INT
+      n_atom,dim, u,a,s, fu,lu :: INT
 
       ! Get the unit cell molecule atom info
       .get_uc_molecule_info(mol,pos,charge,dipole,frag_atom) 
@@ -3900,13 +3901,14 @@ contains
 
       ! Assign charge and dipole interactions
       ! Needs a minus sign when combined
-      la = 0
       do a = 1,.n_fragment_atoms
-         u  = frag_atom(a) ! map to the actual frag atom in 1st molecule
-         fa = la + 1
-         la = la + 3
-         I0(u)   = dot_product(dipole,L0(:,a))
-         I1(:,u) = matmul(dipole,L1(:,fa:la))
+         u = frag_atom.index_of_value(a) ! map to unit cell atom
+         DIE_IF(u==0,"fragment atom "//trim(a.to_str)//" not found in cell")
+         lu = 3*(u-1)
+         fu = lu + 1
+         lu = lu + 3
+         I0(a)   = dot_product(dipole,L0(:,u))
+         I1(:,a) = matmul(dipole,L1(:,fu:lu))
       end
 
       ! Clean up
@@ -4095,6 +4097,67 @@ contains
 
    end
 
+!   get_uc_molecule_info(mol,pos,charge,dipole,frag_atom) ::: leaky
+!   ! Get the unit cell molecule information for a distributed local field factor
+!   ! (LFF) calculation. "coc" are the molecular center of charges.
+!      mol :: VEC{INT}*
+!      pos :: MAT{REAL}*
+!      charge,dipole :: VEC{REAL}*
+!      frag_atom :: VEC{INT}*
+!
+!   ENSURE(.crystal.created,"no crystal")
+!   ENSURE(.crystal.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+!
+!      n_atom,n_mol,n,n3,m,u :: INT
+!      charge0,dipole0 :: VEC{REAL}*
+!      mol0 :: VEC{INT}*
+!      pos0 :: MAT{REAL}*
+!
+!      ! Create the info arrays
+!      n_mol  = .crystal.n_unit_cell_mols
+!      n_atom = .crystal.n_unit_cell_atoms
+!      mol.create(n_atom)
+!      pos.create(3,n_atom)
+!      charge.create(n_atom)
+!      dipole.create(3*n_atom)
+!      frag_atom.create(.crystal.n_fragment_atoms)
+!
+!
+!      ! Set n_atom to the # of atoms in one molecule
+!      DIE_IF(mod(n_atom,n_mol)/=0,"# of unit cell atoms is not divisible by number of molecules")
+!      n_atom = n_atom/n_mol
+!
+!      n  = 0
+!      n3 = 0
+!      do m = 1,n_mol
+!
+!         ! Find atom "u" on molecule "m", defragment, get the info
+!         do u = 1,.crystal.n_unit_cell_atoms
+!
+!            if (.crystal.unit_cell_mol_for_atom(u)/=m) cycle
+!
+!            mol(n+1:n+n_atom) = m
+!            pos0     => pos(:,n+1:n+n_atom)
+!            charge0  => charge(n +1:n +  n_atom)
+!            dipole0  => dipole(n3+1:n3+3*n_atom)
+!
+!            if (m==1) then
+!               .do_defragment_uc_atom(u,pos0,charge0,dipole0,frag_atom)
+!            else
+!               .do_defragment_uc_atom(u,pos0,charge0,dipole0)
+!            end
+!
+!            exit
+!
+!         end
+!
+!         n  = n  +   n_atom
+!         n3 = n3 + 3*n_atom
+!
+!      end
+!
+!   end
+
    get_uc_molecule_info(mol,pos,charge,dipole,frag_atom) ::: leaky
    ! Get the unit cell molecule information for a distributed local field factor
    ! (LFF) calculation. "coc" are the molecular center of charges.
@@ -4108,7 +4171,7 @@ contains
 
       n_atom,n_mol,n,n3,m,u :: INT
       charge0,dipole0 :: VEC{REAL}*
-      mol0 :: VEC{INT}*
+      occ_list,mol0,frag_atom0 :: VEC{INT}*
       pos0 :: MAT{REAL}*
 
       ! Create the info arrays
@@ -4118,15 +4181,13 @@ contains
       pos.create(3,n_atom)
       charge.create(n_atom)
       dipole.create(3*n_atom)
-      frag_atom.create(.crystal.n_fragment_atoms)
+      frag_atom.create(n_atom)
 
-
-      ! Set n_atom to the # of atoms in one molecule
-      DIE_IF(mod(n_atom,n_mol)/=0,"# of unit cell atoms is not divisible by number of molecules")
-      n_atom = n_atom/n_mol
-
+      ! Counters
       n  = 0
       n3 = 0
+
+      ! Loop over molecules m
       do m = 1,n_mol
 
          ! Find atom "u" on molecule "m", defragment, get the info
@@ -4134,21 +4195,32 @@ contains
 
             if (.crystal.unit_cell_mol_for_atom(u)/=m) cycle
 
-            mol(n+1:n+n_atom) = m
-            pos0     => pos(:,n+1:n+n_atom)
-            charge0  => charge(n +1:n +  n_atom)
-            dipole0  => dipole(n3+1:n3+3*n_atom)
+            ! Get the occ list for molecule m
+            occ_list.create(1)
+            occ_list(1) = 5 + 5*10 + 5*100 + u*1000
+            .do_defragment(occ_list)
 
-            if (m==1) then
-               .do_defragment_uc_atom(u,pos0,charge0,dipole0,frag_atom)
-            else
-               .do_defragment_uc_atom(u,pos0,charge0,dipole0)
-            end
+            ! No of atoms in molecule m
+            n_atom = occ_list.dim
+
+            ! Assign
+            mol(n+1:n+n_atom) = m
+            pos0       => pos(:,n+1:n+n_atom)
+            charge0    => charge(n +1:n +  n_atom)
+            dipole0    => dipole(n3+1:n3+3*n_atom)
+            frag_atom0 => frag_atom(n +1:n +  n_atom)
+
+            ! Get the info
+            .extract_atom_info(occ_list,pos0,charge0,dipole0,frag_atom0)
+
+            ! Clean
+            occ_list.destroy
 
             exit
 
          end
 
+         ! Increment
          n  = n  +   n_atom
          n3 = n3 + 3*n_atom
 
