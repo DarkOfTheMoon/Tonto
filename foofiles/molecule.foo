@@ -6914,6 +6914,7 @@ contains
    ENSURE(.crystal.created, "no crystal")
    ENSURE(.crystal.reflection_data_exists, "no reflection data")
    ENSURE(.crystal.spacegroup.centrosymmetric, "must be a centrosymmetric crystal")
+      DIE_IF(NOT .crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
       .crystal.assign_pnd  ! <------------ Assign PND data here
       if (.crystal.thermal_smearing_model=="hirshfeld") then
          .make_H_Sz_structure_factors
@@ -9386,7 +9387,13 @@ contains
    read_group_charges ::: leaky
    ! Read in the .group_charges array
    ENSURE(.group_charges.destroyed,"charges already exist")
+      i :: INT
       stdin.read_intvec_ptr(.group_charges)
+                  stdout.put_text("group charges =")
+                  do i = 1,.group_charges.dim
+                     stdout.put(.group_charges(i))
+                  end
+
       if (.atom_group.created) then
         ENSURE(.group_charges.dim==.atom_group.dim,"wrong size, group_charges")
       end
@@ -10271,15 +10278,7 @@ contains
 
    put
    ! Put all the available molecule information on file "out"
-      stdout.flush
-      stdout.text("Molecule information:")
-      stdout.flush
-      stdout.show("Name                   =",.name)
-      stdout.show("Charge                 =",.charge)
-      stdout.show("Multiplicity           =",.mult)
-      stdout.show("Applied E Field        =",.E_field(1),.E_field(2),.E_field(3))
-      stdout.show("Applied B Field        =",.B_field(1),.B_field(2),.B_field(3))
-      stdout.show("B field Gauge origin   =",.gauge_origin)
+      .put_basics
       if (.atom.created)        .put_atoms
       if (.atom_group.created)  .put_atom_groups
       if (.pointgroup.created)  .put_pointgroup
@@ -10290,6 +10289,19 @@ contains
          .put_overlapping_atoms
          .put_overlapping_atoms_4_atom
       end
+   end
+
+   put_basics
+   ! Put all the available molecule information on file "out"
+      stdout.flush
+      stdout.text("Molecule information:")
+      stdout.flush
+      stdout.show("Name                   =",.name)
+      stdout.show("Charge                 =",.charge)
+      stdout.show("Multiplicity           =",.mult)
+      stdout.show("Applied E Field        =",.E_field(1),.E_field(2),.E_field(3))
+      stdout.show("Applied B Field        =",.B_field(1),.B_field(2),.B_field(3))
+      stdout.show("B field Gauge origin   =",.gauge_origin)
    end
 
    put_atoms
@@ -10414,12 +10426,14 @@ contains
          do i = 1,.group_charges.dim
             stdout.put(.group_charges(i))
          end
+         stdout.flush
       end
       if (.mos_per_group.created) then
          stdout.put_text("mos_per_group =")
          do i = 1,.mos_per_group.dim
             stdout.put(.mos_per_group(i))
          end
+         stdout.flush
       end
       stdout.unsave
    end
@@ -13488,6 +13502,7 @@ contains
       mol.atom(1).pos = (/ZERO,ZERO,ZERO/)
 
       ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
       mol.set_defaults                      
 
       ! Don't remake ANO data if there
@@ -13543,19 +13558,22 @@ contains
       ! WARNING: dont destroy ptr parts of mol.atom 
       mol.atom.create(size(.atom_group(n).element))
       mol.atom = .atom(.atom_group(n).element) 
+      mol.atom.group = 0                       
 
       ! Set default molecule e.g. the name, atom_info
+      ! and default multiplicity ...
       mol.set_defaults
       mol.name  =  trim(.name) // "_group_" // trim(n.to_str) ! Set .name after .set_defaults
+      if (.group_charges.created) then
+         mol.charge = .group_charges(n)
+         mol.mult = mol.default_multiplicity
+         mol.set_atom_info
+      end
 
       ! Don't remake ANO data if there
       mol.ANO_data_made = .ANO_data_made       
       mol.ANO_interpolators_made = .ANO_interpolators_made 
       mol.interpolators_made = .interpolators_made 
-
-      ! Set group info
-      mol.atom.group = 0                       ! No group for these atoms
-      if (.group_charges.created) mol.charge = .group_charges(n)
 
       ! Copy the basis set and set the basis info
       ! WARNING: dont destroy basis of mol !
@@ -14549,13 +14567,13 @@ contains
 
          case ("pnd_uhf","pnd_uks");                         
             .make_n_structure_factors
-            if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+            if (.crystal.pnd_r_free_data.created)  .make_nf_structure_factors
 
          case ("xray_pnd_uhf","xray_pnd_uks");               
             .make_x_structure_factors
             .make_n_structure_factors
             if (.crystal.xray_r_free_data.created) .make_xf_structure_factors
-            if (.crystal.pnd_r_free_data.created)  .make_xf_structure_factors
+            if (.crystal.pnd_r_free_data.created)  .make_nf_structure_factors
 
          case default
             DIE("unknown wavefunction fitting kind, "//scf_kind.trim)
@@ -14627,7 +14645,11 @@ contains
 
          case ("pnd_uhf","pnd_uks")
             .crystal.assign_pnd
-            .make_pnd_constraint(C.alpha)
+            if (.crystal.thermal_smearing_model=="hirshfeld") then
+               .make_H_r_constraint(C.alpha) ! This is NOT correct 22/3/10, dylan
+            else
+               .make_pnd_constraint(C.alpha)
+            end
             C.beta = -C.alpha
 
          case ("xray_pnd_uhf","xray_pnd_uks")
@@ -14659,15 +14681,15 @@ contains
 
      n_unique = .crystal.n_unique_SF_k_pts
      n_refl = .crystal.n_refl
+     fac = TWO/max(n_refl - .crystal.n_param,1)
+
+     fac_times_alpha.create(n_refl)
 
      Fcr.create(n_refl)
      Fci.create(n_refl)
 
      Fc.create(n_refl)
      Fc = .crystal.F_calc
-
-     fac = TWO/max(n_refl - .crystal.n_param,1)
-     fac_times_alpha.create(n_refl)
 
      alpha.create(n_refl)
      alpha = .crystal.extinction_correction
@@ -15443,6 +15465,11 @@ contains
    make_pnd_constraint(C)
    ! Make the constraint matrix "C" for restricted wavefunction fitting.
       C :: MAT{REAL}, INOUT
+
+   ENSURE(.crystal.created,"no crystal info")
+   ENSURE(.crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
+   DIE_IF(NOT .crystal.spacegroup.centrosymmetric,"crystal must be centrosymmetric")
+
       k_pts :: MAT{REAL}*
       ft_ab_eq,ft_ab :: MAT3{CPX}*
       Fc,fac_times_alpha :: VEC{CPX}*
@@ -15450,6 +15477,7 @@ contains
       fac,cutoff :: REAL
       q,fa,la,fb,lb,na,nb,i,j,n_refl,n_unique,atom_a,atom_b :: INT
       sh :: SHELL2
+
 
       n_unique = .crystal.n_unique_SF_k_pts
       n_refl = .crystal.n_refl
@@ -17455,20 +17483,25 @@ contains
 
          ! Copy this group's MO's and occupations
          if (do_MOs) then
-         ms = mf + 1
-         mf = mf + mol.n_bf
-         do a = 1,size(.atom_group(g).element)
-            aa  = .atom_group(g).element(a)
-            faa = .first_basis_fn_for_atom(aa)
-            laa = .last_basis_fn_for_atom(aa)
-            fa  = mol.first_basis_fn_for_atom(a)
-            la  = mol.last_basis_fn_for_atom(a)
-            .molecular_orbitals.restricted(faa:laa,ms:mf) = &
-            .molecular_orbitals.restricted(faa:laa,ms:mf) &
-            + mol.molecular_orbitals.restricted(fa:la,:)
-         end
-         no = mol.n_e/2
-         .occupation_numbers.restricted(ms:ms+no-1) = TWO
+
+            DIE_IF(mol.molecular_orbitals.destroyed,"no MOs")
+            DIE_IF(mol.molecular_orbitals.restricted.destroyed,"no restricted MOs")
+
+            ms = mf + 1
+            mf = mf + mol.n_bf
+            do a = 1,size(.atom_group(g).element)
+               aa  = .atom_group(g).element(a)
+               faa = .first_basis_fn_for_atom(aa)
+               laa = .last_basis_fn_for_atom(aa)
+               fa  = mol.first_basis_fn_for_atom(a)
+               la  = mol.last_basis_fn_for_atom(a)
+               .molecular_orbitals.restricted(faa:laa,ms:mf) = &
+               .molecular_orbitals.restricted(faa:laa,ms:mf) &
+               + mol.molecular_orbitals.restricted(fa:la,:)
+            end
+            no = mol.n_e/2
+            .occupation_numbers.restricted(ms:ms+no-1) = TWO
+
          end
 
        end
