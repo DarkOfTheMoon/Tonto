@@ -1596,30 +1596,30 @@ contains
       atom.get_geometry(.fragment_geometry)
       .unit_cell.change_into_fractional(.fragment_geometry)
 
-      ! If not there, make the asymmetric unit ...
-      if (.asymmetric_unit_geometry.destroyed) then
-          .asymmetric_unit_geometry.create_copy(.fragment_geometry)
-          .n_asymmetric_unit_atoms = .n_fragment_atoms
-      end
-
-      ! Prune asymmetric unit and make the unit cell
-      .make_unit_cell_geometry(.prune_asymmetric_unit,warnings)
+      ! Make asymmetric unit and unit cell geometry from fragment
+      ! geometry ... only they don't already exists
+      if (.asymmetric_unit_geometry.destroyed) &
+         .make_asymmetric_unit(atom,.prune_asymmetric_unit,warnings)
 
       ! Relate fragment atoms to unit cell
-      .make_frag_atom_for_cell_atom
+      .make_frag_atom_for_cell_atom(atom)
 
       ! Make unique fragment atoms
-      .make_unique_frag_atoms 
+      .make_unique_frag_atoms
 
-      ! If not there, copy the asymmetric unit atoms (if we can)
-      if (.asymmetric_unit_atom.destroyed) then
-      if (all(.frag_atom_for_asym_unit_atom/=0)) then
-         .asymmetric_unit_atom.create_copy(atom(.frag_atom_for_asym_unit_atom))
-      end
-      end
+!     ! If not there, copy the asymmetric unit atoms (if we can)
+!     ! If already there assume it is correct
+!     if (.asymmetric_unit_atom.destroyed) then
+!     if (all(.frag_atom_for_asym_unit_atom/=0)) then
+!        .asymmetric_unit_atom.create_copy(atom(.frag_atom_for_asym_unit_atom))
+!     end
+!     end
+
+      ! Sanity check
+      DIE_IF(.asymmetric_unit_atom.destroyed,"no asymmetric_unit_atom list!")
 
       ! Make the unit cell connection table
-      if (.asymmetric_unit_atom.created) .make_unit_cell_connections
+      .make_unit_cell_connections
 
       ! Z factors and zep. factors for SF calculations
       .make_repetition_factors     
@@ -1678,21 +1678,23 @@ contains
 
    end
 
-   make_unit_cell_geometry(prune_asymmetric_unit,warnings) ::: leaky, private
+   make_asymmetric_unit(atom,prune_asymmetric_unit,warnings) ::: leaky, private
    ! Get the all the atom positions in the unit cell. Also make the
    ! symops associated with each unit cell atom when it is made from
    ! the asymmetric unit atoms. If "prune_asymmetric_unit" is present
    ! and true, any non-asymmetric unit atoms are eliminated from the
    ! asymmetric unit. This should always be done.
+      atom :: VEC{ATOM}, IN
       prune_asymmetric_unit,warnings :: BIN, optional
 
-   ENSURE(.asymmetric_unit_geometry.created,"no asymmetric unit geometry") 
-   ENSURE(.n_asymmetric_unit_atoms>0,"no asymmetric unit atoms") 
+   ENSURE(.fragment_geometry.created,"no .fragment_geometry") 
+   ENSURE(.asymmetric_unit_geometry.destroyed,"asymmetric unit exists") 
 
       pa :: VEC{REAL}(3)
       asymmetric_unit_geometry :: MAT{REAL}*
-      n,a,m,s,col :: INT
+      n,a,m,s,col,b :: INT
       prune,warn,found,unique,disorder :: BIN
+      list :: VEC{INT}*
       tol :: REAL
 
       ! Set default options
@@ -1706,12 +1708,20 @@ contains
       .asym_atom_for_unit_cell_atom.destroy
       .symop_for_unit_cell_atom.destroy
 
+      ! Indices of asymmetric unit atoms to be made
+      list.create(atom.dim)
+      list = [(a, a=1,atom.dim)]
+
+      ! Initialise asymmetric unit
+      .asymmetric_unit_geometry.create_copy(.fragment_geometry)
+      .n_asymmetric_unit_atoms = .n_fragment_atoms
+
       ! Take a copy, put it to the unit cell
       asymmetric_unit_geometry.create_copy(.asymmetric_unit_geometry)
       .put_to_unit_cell(asymmetric_unit_geometry)
 
       ! Append new atoms "n" to unit cell
-      nullify(.unit_cell_geometry)
+      .unit_cell_geometry.create(3,0)
 
       ! Tolerances to see if atom positions are the same
       ! --- getting this number wrong can stuff things
@@ -1734,7 +1744,9 @@ contains
             .transform_position(pa,s,to_unit_cell=TRUE)
 
             ! Is the new position already in the asymmetric unit?
+            ! If not, are the atoms at the two sites distinct?
             unique = NOT asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
+            if (NOT unique) unique = atom.are_distinct(list(a),list(col+a))
 
             ! If not new, we may have to prune ...
             if (NOT unique) then
@@ -1751,10 +1763,13 @@ contains
                      .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
                      .asymmetric_unit_geometry.prune_column(m)
                       asymmetric_unit_geometry.prune_column(m)
+                     list.prune_element(m)
 
                      unique = NOT asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
+                     if (NOT unique) unique = atom.are_distinct(list(a),list(col+a))
                      if (unique) exit
                      col = col + a
+
                   end
 
                end
@@ -1762,9 +1777,12 @@ contains
             end ! -- NOT unique
 
             ! Is the new position already in the unit cell?
-            found = FALSE
-            if (.unit_cell_geometry.created) &
-               found = .unit_cell_geometry.has_column(pa,tol)
+            ! If so, is it a distinct atom?
+            found = .unit_cell_geometry.has_column(pa,tol,col)
+            if (found) then
+               b      = .asym_atom_for_unit_cell_atom(col)
+               found  = NOT atom.are_distinct(list(a),list(b))
+            end
 
             if (found) cycle
 
@@ -1783,16 +1801,24 @@ contains
       end
 
       .n_unit_cell_atoms = n
-      asymmetric_unit_geometry.destroy
 
       WARN_IF(warn AND disorder,"This structure may be disordered")
       WARN_IF(warn AND disorder AND prune,"I had to prune redundant atoms from the unit cell")
       ENSURE(.unit_cell_geometry.created,"could not make unit_cell_geometry")
 
+      ! Make the asymmetric unit atom list
+      .asymmetric_unit_atom.create_copy(atom(list))
+
+      ! Clean
+      asymmetric_unit_geometry.destroy
+      list.destroy
+
    end
 
-   make_frag_atom_for_cell_atom ::: leaky, private
+   make_frag_atom_for_cell_atom(atom) ::: leaky, private
    ! Arrays which relate the fragment atoms to the unit cell atoms.
+      atom :: VEC{ATOM}, IN
+
    ENSURE(.fragment_geometry.created,"no .fragment_geometry") 
    ENSURE(.unit_cell_geometry.created,"no .unit_cell_geometry") 
    ENSURE(.asym_atom_for_unit_cell_atom.created,"no .asym_atom_for_unit_cell_atom")
@@ -1836,6 +1862,97 @@ contains
          ! Loop unit cell atoms
          do u = 1,.n_unit_cell_atoms
 
+            a = .asym_atom_for_unit_cell_atom(u)
+
+            pu = .unit_cell_geometry(:,u)
+            found = pu.same_as(pf,tol) &
+               AND NOT .asymmetric_unit_atom(a).is_distinct_from(atom(f))
+
+            ! Match unit cell atom to fragment atom
+            if (NOT found) cycle
+
+            ! Relate unit cell atom and fragment atom
+            ! These are identical by translation.
+            .frag_atom_for_unit_cell_atom(u) = f
+            .unit_cell_atom_for_frag_atom(f) = u
+
+            ! Relate asym unit atom and fragent atom
+            ! Maybe >1 frag atom  matching the asym atom
+            .asym_unit_atom_for_frag_atom(f) = a
+            if (.frag_atom_for_asym_unit_atom(a)==0) &
+                .frag_atom_for_asym_unit_atom(a) = f
+
+
+            exit 
+
+         end
+
+         DIE_IF(NOT found,"fragment atom "//f.to_str.trim//" was not found in the unit cell")
+
+      end
+
+      ! Relate unit cell atom to parent frag atom
+      ! These are identical by a crystal symop.
+      .frag_parent_for_cell_atom.destroy
+      .frag_parent_for_cell_atom.create(.n_unit_cell_atoms)
+      do u = 1,.n_unit_cell_atoms
+         a = .asym_atom_for_unit_cell_atom(u)
+         f = .frag_atom_for_asym_unit_atom(a)
+         .frag_parent_for_cell_atom(u) = f
+      end
+
+   end
+
+   make_frag_atom_for_cell_atom ::: leaky, private
+   ! Arrays which relate the fragment atoms to the unit cell atoms.
+   ! WARNING: this version does not work with disordered atoms
+   ! on the same site
+
+   ENSURE(.fragment_geometry.created,"no .fragment_geometry") 
+   ENSURE(.unit_cell_geometry.created,"no .unit_cell_geometry") 
+   ENSURE(.asym_atom_for_unit_cell_atom.created,"no .asym_atom_for_unit_cell_atom")
+
+      pu,pf :: VEC{REAL}(3)
+      u,c,f,a :: INT
+      found :: BIN
+      tol :: REAL
+
+      ! Tolerances to see if atom positions are the same
+      ! --- getting this number wrong can stuff things
+      tol = TOL(2)/maxval(.unit_cell.length)
+      tol = TOL(3)    
+
+      ! Create the arrays we want
+      .frag_atom_for_unit_cell_atom.destroy
+      .unit_cell_atom_for_frag_atom.destroy
+      .frag_atom_for_asym_unit_atom.destroy
+      .asym_unit_atom_for_frag_atom.destroy
+
+      .frag_atom_for_unit_cell_atom.create(.n_unit_cell_atoms)
+      .unit_cell_atom_for_frag_atom.create(.n_fragment_atoms)
+      .frag_atom_for_asym_unit_atom.create(.n_asymmetric_unit_atoms)
+      .asym_unit_atom_for_frag_atom.create(.n_fragment_atoms)
+
+      ! Initialise
+      .frag_atom_for_unit_cell_atom = 0
+      .unit_cell_atom_for_frag_atom = 0
+      .frag_atom_for_asym_unit_atom = 0
+      .asym_unit_atom_for_frag_atom = 0
+
+      ! Loop over fragment atoms
+      do f = 1,.n_fragment_atoms
+
+         ! Shift fragment atom to unit cell
+         pf = .fragment_geometry(:,f)
+         .put_to_unit_cell(pf)
+
+         found = FALSE
+
+         ! Loop unit cell atoms
+         do u = 1,.n_unit_cell_atoms
+
+            a = .asym_atom_for_unit_cell_atom(u)
+
             pu = .unit_cell_geometry(:,u)
             found = pu.same_as(pf,tol)
 
@@ -1849,7 +1966,6 @@ contains
 
             ! Relate asym unit atom and fragent atom
             ! Maybe >1 frag atom  matching the asym atom
-            a = .asym_atom_for_unit_cell_atom(u)
             .asym_unit_atom_for_frag_atom(f) = a
             if (.frag_atom_for_asym_unit_atom(a)==0) &
                 .frag_atom_for_asym_unit_atom(a) = f
