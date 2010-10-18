@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+# !/usr/bin/perl
 #-------------------------------------------------------------------------------
 #
 # foo.perl
@@ -89,6 +89,7 @@
 use English;            # Get rid of horrible Perl short forms
 use File::Spec ('splitpath','catpath');
 use strict;             # Make sure the scope of all variables is declared.
+use Carp;
 
 $INPUT_RECORD_SEPARATOR  = "\n";
 $OUTPUT_FIELD_SEPARATOR  = ' ';
@@ -291,6 +292,7 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'MAT6'     => ':,:,:,:,:,:',
     'MAT7'     => ':,:,:,:,:,:,:',
 );
+
                                        # Make Tonto intrinsic scalar & array information
                                        # WARNING: ARR{STR} element sizes are special
 my ($scalar_type,$elt_size,$elt_1,$head_name,$array_type);
@@ -337,70 +339,107 @@ push(@all_known_type_names,$array_type);
 
 
 
-#################################################################################
-## >>>>> START START START START
-#################################################################################
+##########################################
+## >>>>> START START START START <<<<<< ##
+##########################################
 
-&analyse_command_arguments(@ARGV); # <------------- Analyse command arguments
+# Analyse command arguments
+&analyse_command_arguments(@ARGV); 
 
-&analyse_types_file;               # <------------- Analyse the types.foo file
+# Analyse the types.foo file
+&analyse_types_file;               
 
+###########################################
+# FIRST PASS: loop over the .foo file lines 
+# and get the procedure interfaces.
+# Is this all?
+###########################################
 $pass = 1;
-open(FOOFILE, $foofile);           # FIRST PASS: loop over the .foo file lines 
-&start_foofile(*FOOFILE,$foofile); # and get the procedure interfaces.
-&start_foofile_scopes;             # Initialize scope information
 
-$do_inherit = 1;                   # Do not follow get_from directives
+# Open foofile
+open(FOOFILE, $foofile);           
 
-LINE: while (<$foohandle>) {       # Loop over .foo lines
+# Update foofile info
+&push_foofile_info_onto_stack(*FOOFILE,$foofile); 
+
+# Initialize scope information
+&start_foofile_scopes;             
+
+# Do *not* follow get_from directives
+$do_inherit = 0;
+
+# Loop over .foo lines
+LINE: while (<$foohandle>) {
     $filelinenum{$foohandle}++;
     &analyse_foo_line;
     last if ($module_is_virtual && ! $do_tidy);
 }
 
-&end_foofile;
+# Finalize foofile info, and close foofile
+&pop_foofile_stack;
 close FOOFILE;
 
-#print "Second pass ...";
+############################################
+# SECOND PASS: Loop over the .foo file lines 
+# This time output the converted code
+############################################
 $pass = 2;
-open(FOOFILE, $foofile);           # SECOND PASS: Loop over the .foo file lines 
-if ($do_routine_calls) { open(RCFILE, ">$routcallfile"); }
-&start_foofile(*FOOFILE,$foofile); # and get the procedure interfaces.
-#$foohandle  = *FOOFILE;            # and generate the fortran/HTML lines
-#$oldhandle  = $foohandle;
 
+# Open foofile
+open(FOOFILE, $foofile);           
+
+# Open routine call file
+if ($do_routine_calls) { open(RCFILE, ">$routcallfile"); }
+
+# Update foofile info
+# Define the foofile handle
+&push_foofile_info_onto_stack(*FOOFILE,$foofile); 
+
+# Initialize and open output files
 if ($do_html)    { &html_start;    }
 if ($do_fortran) { &fortran_start; }
 if ($do_tidy)    { &tidy_start;    }
 
-&start_foofile_scopes;             # Initialize scope information
+# Initialize scope information
+&start_foofile_scopes;             
 
-LINE: while (<$foohandle>) {       # Loop over .foo lines
+# Now follow get_from directives
+$do_inherit = 1;  
+
+# Loop over .foo lines
+LINE: while (<$foohandle>) {       
     $filelinenum{$foohandle}++;
     &analyse_foo_line;
     &process_foo_line; 
     last if ($module_is_virtual && ! $do_tidy);
 }
 
+# Finalize open output files
 if ($do_fortran) { &fortran_end; }
 if ($do_html)    { &html_end;    }
 if ($do_tidy)    { &tidy_end;    }
-close FOOFILE;                     # All done
+
+# Finalize foofile info, and close foofile
+&pop_foofile_stack;
+close FOOFILE; 
+
+# Output the routine call file
 if ($do_routine_calls) { close RCFILE; }
 
-#################################################################################
-## >>>>> END END END END END END
-#################################################################################
+#########################################
+## >>>>> END END END END END END <<<<< ##
+#########################################
 
 
 
-################################################################################
-########################################## Routines ############################
-################################################################################
+##########################
+## >>>>> Routines <<<<< ##
+##########################
 
-###############################################################################
+##############################################################################
 # Analyse argument list for .fortran, .int, .use, types.foo and file.foo files
 # And check that everything is OK, as far as possible.
+##############################################################################
 
 sub analyse_command_arguments {
 
@@ -619,8 +658,9 @@ sub analyse_command_arguments {
      exit 1;
 }
 
-################################################################################
-## Analyse the types.foo file (i.e. $typesfile) for the components of all types
+##############################################################################
+# Analyse the types.foo file (i.e. $typesfile) for the components of all types
+##############################################################################
 
 sub analyse_types_file {
 
@@ -671,8 +711,9 @@ sub analyse_types_file {
 
 }
 
-################################################################################
-## Construct the tonto_type size information.
+############################################
+# Construct the tonto_type size information.
+############################################
 
 sub make_tonto_type_size_info {
 
@@ -698,8 +739,9 @@ sub make_tonto_type_size_info {
    $tonto_type_info{$type_name}{tonto_size} = $size;
 }
 
-################################################################################
+###############################################
 # Construct the tonto_element_size information.
+###############################################
 
 sub make_tonto_element_size_info {
 
@@ -714,10 +756,11 @@ sub make_tonto_element_size_info {
       $tonto_type_info{$type_arg_1}{tonto_size};
 }
 
-################################################################################
+###############################################################################
 # Get the size of each tonto type (works recursively if needed, but this has
 # been disabled in favor of a stored method, which means that this routine must
 # be called in order of increasing type complexity).
+###############################################################################
 
 sub tonto_size {
 
@@ -894,8 +937,9 @@ sub tonto_size {
    return (%info);
 }
 
-################################################################################
+###########################################
 ## Get the Fortran size of each tonto type.
+###########################################
 
 sub fortran_size {
    my ($size) = @_;
@@ -913,7 +957,7 @@ sub fortran_size {
 }
 
 
-################################################################################
+##############################################################################
 # Analyse a variable declaration line $X and add it to the symbol information
 # hash table reference, $var_info. There are four different symbol tables :
 # (1) %{$tonto_type{$type_name}} stores type (and other) information for all
@@ -925,6 +969,7 @@ sub fortran_size {
 #     globally defined variables $var such as "self", "stdin", "tonto", etc. 
 # (4) %local_var_info{$var} stores type (an other) information for all locally
 #     defined variables within a routine or program scope.
+##############################################################################
 
 sub analyse_variable_declaration {
 
@@ -1077,8 +1122,9 @@ sub analyse_variable_declaration {
 }
 
 
-################################################################################
+#####################
 # Analyse a type name
+#####################
 
 sub analyse_type_name {
 
@@ -1250,8 +1296,10 @@ sub analyse_type_name {
   return (%info);
 }
 
-################################################################################
+############################################################################
 # Return whether the given $type_name is a tonto intrinsic scalar type name.
+############################################################################
+
 sub is_intrinsic_scalar_type_name {
    my  $type_name = $_[0];
    if ($type_name =~ /^STR\b({.*})?/  ||
@@ -1262,8 +1310,9 @@ sub is_intrinsic_scalar_type_name {
    else                                 { return 0; }
 }
 
-################################################################################
-# Return whether the given $type_name is a fortran intrinsic type
+######################################################
+# Return whether the argument is a foo array head name
+######################################################
 sub is_array_head_type_name {
    my  $head_name = $_[0];
    if (! defined $head_name)    { return 0; }
@@ -1277,8 +1326,11 @@ sub is_array_head_type_name {
    else                         { return 0; }
 }
 
+#############################
+# Die in a nice way with info
+#############################
+
 sub report_error {
-################################################################################
   my $message = $_[0];
   my @tmpstack = @filestack;
   print STDERR "\nFoo Error:";
@@ -1293,11 +1345,15 @@ sub report_error {
     print STDERR "Method \"$current_rout_name\".";
   }
   print STDERR "\n$message\n";
+  confess("Here is the call stack:\n\n       ");
   exit 1;
 }
 
-################################################################################
-sub start_foofile {
+###########################################################
+# Kepp track of the foofile stack, filename and line number
+###########################################################
+
+sub push_foofile_info_onto_stack {
 
   my $handle = $_[0];
   my $name = $_[1];
@@ -1310,15 +1366,21 @@ sub start_foofile {
 
 }
 
-################################################################################
-sub end_foofile {
+####################################
+# Pop the last foofile off the stack
+####################################
+
+sub pop_foofile_stack {
   $filelinenum{$foohandle} = 0;
   $oldhandle = $foohandle;
   pop @filestack;
   $foohandle = $filestack[$#filestack];
 }
 
-################################################################################
+##################################
+# Initialize scope-tracking arrays
+##################################
+
 sub start_foofile_scopes {
 
   %filelinenum  = ();
@@ -1352,24 +1414,31 @@ sub start_foofile_scopes {
 ################################################################################
 # Analyse a line of foo code, to get all required information. This routine does
 # not produce any fortran or HTML output, it just analyses.
+################################################################################
 
 sub analyse_foo_line {
 
-   chop;         # strip record separator
-
-   $input_line  = $_;              # Get the line
+   # Strip record separator and store the foo line.
+   # Store another copy for inheritance
+   chop;         
+   $input_line  = $_;              
    my $input_inh = $input_line;    # Keep for inheritance
 
+   # Test if the line is blank
    $not_blank = ($input_line =~ '^ *\S' && $input_line !~ '^ *[!]' );
 
+   # Spli off the comment from the line
    my $comment;
    ($input_line,$comment) = &split_by_comment($input_line);
 
-   if ($not_blank) {               # if not blank ...
+   # Only analyse if the line is not blank
+   if ($not_blank) {            
 
-      &find_new_scoping_unit($input_line); # <- Look for a new scoping unit ####
+      # Look for a new scoping unit ####
+      &find_new_scoping_unit($input_line); 
 
-      &check_for_first_active_line($input_line); 
+      # Check for first non-comment line
+      &check_for_first_noncomment_line($input_line); 
 
       ########################################### Found a NEW scope unit #######
       if ($newscopeunitfound) {
@@ -1387,34 +1456,41 @@ sub analyse_foo_line {
          elsif ($newscopeunit eq 'function')       { &analyse_new_routine_scope($input_line); }
       }
 
+      # Only analyse within a scope in 2nd pass
+      elsif ($pass==2) {
       ########################################### Within an EXISTING scope #####
-      elsif ($scopeunit   eq 'program')        { &analyse_module_scope($input_line); }
-      elsif ($scopeunit   eq 'module')         { &analyse_module_scope($input_line); }
-      elsif ($scopeunit   eq 'interface' 
-          && $parentscope eq 'module')         { &analyse_module_interface_scope($input_line); }
-      elsif ($scopeunit   eq 'subroutine')     { &analyse_routine_scope($input_line); }
-      elsif ($scopeunit   eq 'function')       { &analyse_routine_scope($input_line); }
-      elsif ($scopeunit   eq 'interface')      { &analyse_interface_scope($input_line); }
-      elsif ($scopeunit   eq 'type')           { &analyse_type_scope($input_line); }
-      elsif ($scopeunit   eq 'array type')     { &analyse_type_scope($input_line); }
+         if    ($scopeunit   eq 'program')        { &analyse_module_scope($input_line); }
+         elsif ($scopeunit   eq 'module')         { &analyse_module_scope($input_line); }
+         elsif ($scopeunit   eq 'interface' 
+             && $parentscope eq 'module')         { &analyse_module_interface_scope($input_line); }
+         elsif ($scopeunit   eq 'subroutine')     { &analyse_routine_scope($input_line); }
+         elsif ($scopeunit   eq 'function')       { &analyse_routine_scope($input_line); }
+         elsif ($scopeunit   eq 'interface')      { &analyse_interface_scope($input_line); }
+         elsif ($scopeunit   eq 'type')           { &analyse_type_scope($input_line); }
+         elsif ($scopeunit   eq 'array type')     { &analyse_type_scope($input_line); }
+      }
 
-   } else { # Reset scopeunits for blank line or comment line
+   # Reset scopeunits for blank line or comment line
+   } else { 
       $newscopeunit = undef;
       $newscopeunitfound = (defined $newscopeunit);
    }
 
-   if (defined $comment) { $input_line .= $comment; }     # add comment back onto line.
+   # Attach comment back onto line.
+   if (defined $comment) { $input_line .= $comment; }     
 
-                                                   # Store inherited stub
-   if (&in_routine_scope) {
-      if ( defined $current_rout_name && $routine{$current_rout_name}{inherited}
+   # Store $inherited_string stub to match
+   # Only needed if inheritance being used in $pass=2
+   if (   $do_inherit
+       && &in_routine_scope
+       && defined $current_rout_name 
+       && $routine{$current_rout_name}{inherited}
        && ! $routine{$current_rout_name}{being_inherited}) { 
          $inherit_string .= $input_inh . "\n";
          if ($input_inh =~ /^\s*\./) {
             &report_error("in inherited routine $current_rout_name, ".
                    "there appears to be active code :\n\n$input_line");
          }
-      }
    }
 
 }
@@ -1810,11 +1886,13 @@ sub store_ensure_statements {
     }
 }
 
-################################################################################
+##############################################################################
 # Determine whether this is the first active line of a routine, i.e. the first
 # line which is a true code line, and not a variable declaration. 
+# Store in: $routine{$name}{first_noncomment_line}
+##############################################################################
 
-sub check_for_first_active_line {
+sub check_for_first_noncomment_line {
 
    my $name = $current_rout_name;
 
@@ -1885,9 +1963,9 @@ sub analyse_type_scope {
 
 }
 
-############################################################################
-# split the line into it's non-comment and comment parts, if applicable.
-
+#######################################################################
+# Split the line into it's non-comment and comment parts, if applicable
+#######################################################################
 sub split_by_comment {
   my ($x,$y,$i,$left,$right);
   $x = $_[0];
@@ -1910,8 +1988,9 @@ sub split_by_comment {
   }
 }
 
-############################################################################
-# Return whether we are outside of a quoted string.
+##################################################
+# Return whether we are outside of a quoted string
+##################################################
 sub outside_of_string {
   my(@tmp,$i,$y,$in_single,$in_double);
     $i = 0;
@@ -2302,8 +2381,9 @@ sub fortran_dump_interface {
 }
 
 
-################################################################################
+#################################################
 # Dump the USE file, possibly for every procedure
+#################################################
 
 sub fortran_dump_use {
 
@@ -2314,6 +2394,7 @@ sub fortran_dump_use {
   open(USEFILE,">".$fortranusefile);
 
   # Everyone must use TYPES 
+  # Use SYSTEM unless explcitly not requested
   if ($module_full_name ne 'TYPES')  {
      print USEFILE "   use TYPES_MODULE";
      if ($do_system eq 1) {
@@ -2354,29 +2435,43 @@ sub fortran_dump_use {
 
          if ($mod ne $module_full_name) {
 
-            if ($do_mod_only eq 0) { # Use the whole module
+            # If requested, use the whole module if any one procedure 
+            # from the module is used, and get out of here ...
+            if ($do_mod_only eq 0) { 
                print USEFILE "   use ${fort_mod}_MODULE";
                last;
             }
-            else {                   # Use only: routine $rout
+
+            # Otherwise use only the routine $rout from the requested
+            # module ...
+            else {                   
+
                if ($do_generic) {
-                  if    (defined $fort_fun and $fort_fun==1) {
-                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
-                  }
-                  elsif (defined $fort_dat and $fort_dat==1) {
-                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
-                  } 
-                  else {
-                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
-                  }
+                   # For generic module procedure naming trailing underscores 
+                   # are attached EXCEPT for explicitly nongeneric uses via 
+                   # MODULE::rout and explicit references to module data via 
+                   # MODULE::data 
+                   if    (defined $fort_fun and $fort_fun==1) {
+                      print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                   }
+                   elsif (defined $fort_dat and $fort_dat==1) {
+                      print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                   } 
+                   else {
+                      print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}_";
+                   }
                } 
                else {
-                  if (defined $fort_dat and $fort_dat==1) {
-                     print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
-                  } else {
-                     print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
-                  }
+                   # For nongeneric module procedure naming the module name 
+                   # is prepended EXCEPT for explicit references to module data 
+                   # via MODULE::data 
+                   if (defined $fort_dat and $fort_dat==1) {
+                      print USEFILE "   use ${fort_mod}_MODULE, only: ${rout}";
+                   } else {
+                      print USEFILE "   use ${fort_mod}_MODULE, only: ${fort_mod}_${rout}";
+                   }
                }
+
             }
          } 
       }
@@ -2938,8 +3033,9 @@ sub analyse_new_end_scope {
           }
           open(GETFILE, $getfile) || 
             &report_error("can't find \"$getfile\" to inherit routine ...\n\n$inherit_string.");
-            &start_foofile(*GETFILE,$getfile); # and get the procedure interfaces.
-                                      # Remove spaces which don't affect the interface
+            &push_foofile_info_onto_stack(*GETFILE,$getfile); 
+
+          # Remove spaces which don't affect the interface
           my @inherit = split('\n',$inherit_string);
 
         # $inherit[0] =~ s/\s*$//o;
@@ -2992,7 +3088,7 @@ sub analyse_new_end_scope {
               $routine{$name}{being_inherited}) {
 
              close GETFILE;            # close parent file
-             &end_foofile;
+             &pop_foofile_stack;
              undef $routine{$name}{inherited};
              undef $routine{$name}{being_inherited};
              undef $routine{$name}{in_routine_body};
@@ -3120,8 +3216,10 @@ sub html_do_new_end_scope {
 
 }
 
-################################################################################
-# Process the end of new scoping unit into Fortran.
+#########################################
+# Process the "end" keyword into Fortran.
+#########################################
+
 sub fortran_do_new_end_scope {
 
   my($i,$getfile,$found,$name,$pre_out);
@@ -3136,19 +3234,25 @@ sub fortran_do_new_end_scope {
 #print " fortran_out= ",$fortran_out;
 #print "-----------------------> end scope";
 
+  # Eliminate interface routines
   if   (($oldscopeunit eq 'subroutine' || $oldscopeunit eq 'function') 
-      && ! &scope_has_interface) { # need to eliminate interface routines
+         && ! &scope_has_interface) { 
+
+     # No output if explicitly inlined
      if ($routine{$current_rout_name}{inlined_by_foo}) {
         $skip_fortran_out = 1; return;
      }
+
+     # No output if its a template
      if ($routine{$current_rout_name}{template}) {
         $skip_fortran_out = 1; return;
      }
+
+     # Insert UNSTACK call stack popper or CHECK memory checker macros
      my $unstk = "UNSTACK(\"$module_full_name:${routine{$name}{real_name}}\")";
      my $check = "CHECK(\"$module_full_name:${routine{$name}{real_name}}\")";
      if ($do_timer eq 1 && $do_stack eq 1) {
         if    (defined $routine{$name}{pure})  { 
-           # $fortran_out =~ s/end */end $oldscopeunit/; 
            $fortran_out =~ s/(\s*)end */$1STOP_TIMER\n$1end $oldscopeunit/; 
         }
         elsif (defined $routine{$name}{leaky}) { 
@@ -3191,7 +3295,8 @@ sub fortran_do_new_end_scope {
      &fortran_prepend_self_decl;
      if ($#scope<=2) { &fortran_prepend_use_decl; }
 
-     # Dump the use file here
+     # Insert used procedures from the current proceudre use file
+     # Only if required ...
      if ($do_mod_use eq 0 && $#scope <= 2) {
         my ($saved_fortranusefile);
         $saved_fortranusefile = $fortranusefile;
@@ -3242,8 +3347,9 @@ sub fortran_do_new_end_scope {
 
 }
 
-################################################################################
+####################################################
 # The line is the start of a subroutine or function.
+####################################################
 sub analyse_new_routine_scope {
 
   # Expecting a subroutine/function line
@@ -3260,8 +3366,9 @@ sub analyse_new_routine_scope {
   }
 }
 
-################################################################################
+#########################
 # Process a new do scope.
+#########################
 sub do_new_do_scope {
    if ($do_html)    { $html_do_indent = 1; }
 }
@@ -3744,7 +3851,7 @@ sub fortran_do_routine_scope {
       $fortran_out = &module_colon_to_fortran($fortran_out);
       &fortran_change_variable_declarations;
       ######## lines that contain a dot. ###########
-      $fortran_out = &dots_to_fortran($fortran_out);
+      $fortran_out = &convert_dots_to_fortran($fortran_out);
       ######## lines that contain a dot. ###########
       &fortran_change_use_statements;
       &fortran_process_error_management;
@@ -4034,7 +4141,7 @@ sub fortran_do_routine_body {
      $fortran_out = &module_colon_to_fortran($fortran_out);
    
      ######## lines that contain a dot. ###########
-     $fortran_out = &dots_to_fortran($fortran_out);
+     $fortran_out = &convert_dots_to_fortran($fortran_out);
      ######## lines that contain a dot. ###########
    
      # Ad hoc stuff here ...
@@ -4085,7 +4192,7 @@ sub fortran_do_program_scope {
   $fortran_out = &module_colon_to_fortran($fortran_out);
 
   ######## lines that contain a dot. ###########
-  $fortran_out = &dots_to_fortran($fortran_out);
+  $fortran_out = &convert_dots_to_fortran($fortran_out);
   ######## lines that contain a dot. ###########
 
   &fortran_process_error_management;
@@ -4585,14 +4692,16 @@ sub fortran_change_square_brackets {
 
 ################################################################################
 # Generate the routine line. The line is within the scope of a "contains" block.
+################################################################################
 sub do_new_routine_scope {
    if ($do_fortran) {  &fortran_do_new_routine_scope; }
    if ($do_html)    {  &html_do_new_routine_scope; }
 }
 
-################################################################################
+###########################################################################
 # Generate the fortran routine statement. The line is within the scope of a 
 # "contains" block.
+###########################################################################
 sub fortran_do_new_routine_scope {
 
   if ($routine{$current_rout_name}{inlined_by_foo}) {
@@ -4636,7 +4745,7 @@ sub fortran_do_new_routine_scope {
   # }
 }
 
-################################################################################
+############################################################################
 # Convert an explicit module call into Fortran.
 # They look like MODULE:routine(...) or MODULE::routine(...)
 # The former are translated to generic calls.
@@ -4644,6 +4753,7 @@ sub fortran_do_new_routine_scope {
 # For the latter, it is up to the programmer to ensure that the calls are to 
 # public routines.
 # Takes a string as its only argument, and returns the Fortran version.
+############################################################################
 sub module_colon_to_fortran {
 
   my $X = $_[0];
@@ -4801,224 +4911,253 @@ sub module_colon_to_fortran {
 
 }
 
-################################################################################
+#######################################################################
 # Convert the dot notation into Fortran.
 # Takes a string as its only argument, and returns the Fortran version.
-sub dots_to_fortran {
+#######################################################################
+sub convert_dots_to_fortran {
 
+  # The line to work on
   my $X = $_[0];
 
-  # in case of no dots
-  if ($X !~ m'[.]'o) {return $X;} 
+  # Do nothing if there are no dots
+  if ($X !~ m'[.]'o) { return $X; } 
 
-  # skip "include" lines, don't want any filenames changed.
+  # Skip "include" lines, don't want any filenames changed.
   if ($X =~ m'include'o && 
       $X =~ m'^(?:\s*|[#])include\s+[\"\'](?:[^\"\']+)[\"\']'o) {
-    return $X;
+      return $X;
   }
 
-  my($pre,$left,$right,$i);
-  my($rout,$post,$fixedpost,$arg,$call,$underscore,$arg_type);
+  my ($pre,$left,$right,$i);
+  my ($rout,$post,$fixedpost,$arg,$call,$underscore,$arg_type);
   my ($fortran_type_name,$fortran_mod_name,$sub_mod_name);
 
+  # Loop over $i-length substring on the line $X
   $i = 0;
   THIS : while ($i < length $X) {
-    if ((substr $X,$i,1) eq '.') {
-      $left = substr $X,0,$i;
-      $right = substr $X,$i+1;
-      if (! &outside_of_string($left)) { next THIS; }
 
-      # What is to the right of the dot - object feature and other stuff.
-      if ($right !~ /^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)/so) {next THIS};
-      undef $sub_mod_name;
-      if (defined $1) {  # If preceded by a colon this is the submodule name
-         $sub_mod_name = $1; 
-         $sub_mod_name =~ s/:$//; 
-      }
-      $rout = $2;
-      $post = $3;
-      $fixedpost = $3;
+      # Is this the dot character?
+      if ((substr $X,$i,1) eq '.') {
 
-      # Separate out the argument from the previous stuff on the line.
-      $arg = &get_last_foo_object($left);
-      if ($arg eq '') {
-        # if last object is null, then set it to 'self'.
-        $arg = 'self';
-        $pre = $left;
-      } else {
-        $left =~ /(\Q$arg\E)$/;
-        $pre = $PREMATCH;
-      }
+          # Get the left and right of the dot
+          $left  = substr $X,0,$i;
+          $right = substr $X,$i+1;
 
-      # determine if subroutine call or not.
-      # subroutine call must have a new line, semicolon or right-bracket
-      # before it.
-      # round bracket?
-      if ($pre =~ m'((?:;|^|\))\s*)$'o) {$call = 'call ';}
-      else                              {$call = '';}
+          # If we are inside a string keep looking for dot
+          if (! &outside_of_string($left)) { next THIS; }
+    
+          # Decode the right of the dot - or keep looking if not understandable
+          if ($right !~ /^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)/s) { next THIS; }
 
-   # print "arg       = $arg";
-   # print "rout      = $rout";
-   # print "has_field = " . &has_field($arg, $rout);
-
-      if (&has_field($arg, $rout)) {              # $rout is a type field component
-
-         if ($name_readonly && $post =~ '^ *=[^=]') {
-            my $argg = $arg;
-            $argg =~ s/self%/./;
-            $argg =~ s/%/./g;
-            &report_error("can't set readonly component \"$rout\" in variable \"$argg\"");
-         }
-
-         # $i does not change if we change the dot to a %.
-         $X = join('',$pre,$arg,'%',$rout,$post);
-
-         # Special globals
-         if ($arg eq 'stdout') {
-            $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
-         } 
-         if ($arg eq 'stdin') {
-            $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
-         } 
-         elsif ($arg eq 'stderr') {
-            $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
-         } 
-         elsif ($arg eq 'std_time') {
-            $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
-            $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
-            $called_routines{TIME}{std_time}{module_data}  = 1;
-         } 
-
-      } else {                                    # $rout is a routine call ...
-
-        my $done = 0;
-        # Deal with some intrinsics by explicit inlining
-        foreach $i (@tonto_intrinsic_functions) {
-          if ($rout =~ m/^$i$/) {
-            $rout = $i;
-            $underscore = '';
-            $done = 1;
-            last;
+          # Extract the explicit submodule name $1 if any
+          # Remove its trailing colon
+          undef $sub_mod_name;
+          if (defined $1) {  
+             $sub_mod_name = $1; 
+             $sub_mod_name =~ s/:$//; 
           }
-        }
 
-        if (! $done && $rout =~ m'^dim([1234567]?)$'o) {   # Modify dim statements explicitly
-          if (defined $1 && $1 ne '') { $arg .= ",$1"}
-          $rout = 'size';
-          $underscore = '';
-          $done = 1;
-        } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {   
-                                                  # Modify argumentless "created" statements explicitly
-          $rout = 'associated';
-          $underscore = '';
-          $done = 1;
-        } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) { 
-                                                  # Modify argumentless "destroyed" statements explicitly
-          $rout = 'NOT associated';
-          $underscore = '';
-          # We might have introduced a "NOT NOT".
-          if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) {
-            $rout = 'associated';
-          }
-          $done = 1;
-        }
+          # Extract the routine name, and what comes after it
+          $rout = $2;
+          $post = $3;
+          $fixedpost = $3;
+    
+          # Get the argument $arg to left of the dot
+          $arg = &get_the_dotted_object($left);
 
-        # Deal with a "normal" routine
-        if (! $done) {                            # Do a normal routine
-          # add to use list.
-          $arg_type = $local_var_info{$arg}{full_type_name};
-          if (defined $arg_type) {
-             if (defined $sub_mod_name) {         # arg wont be a local_var
-                $arg_type = $arg_type . '.' . $sub_mod_name; 
-                my %info = &analyse_type_name($arg_type);
-                $fortran_type_name = $info{fortran_type_name}; 
-                $fortran_mod_name  = $info{fortran_mod_name}; 
-             } else {
-                $fortran_type_name = $local_var_info{$arg}{fortran_type_name}; 
-                $fortran_mod_name  = $local_var_info{$arg}{fortran_mod_name}; 
-             }
+          # If there is no argument it must be 'self'.
+          # Else, store everything to the left of dotted $arg as $pre
+          if ($arg eq '') {
+              $arg = 'self';
+              $pre = $left;
           } else {
-             $arg_type = &type_of_this($arg);
-             if (defined $sub_mod_name) {         # arg wont be a tonto_type
-                $arg_type = $arg_type . '.' . $sub_mod_name; 
-                my %info = &analyse_type_name($arg_type);
-                $fortran_type_name = $info{fortran_type_name}; 
-                $fortran_mod_name  = $info{fortran_mod_name}; 
-             } else {
-                $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
-                $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
+              $left =~ /(\Q$arg\E)$/;
+              $pre = $PREMATCH;
+          }
+    
+          # Determine if the dot is a subroutine call or not.
+          # It is a call if just before the $arg is a semicolon, 
+          # beginning of line, or close bracket.
+          if ($pre =~ m'((?:;|^|\))\s*)$'o) {$call = 'call ';}
+          else                              {$call = '';}
+    
+       # print "arg       = $arg";
+       # print "rout      = $rout";
+       # print "has_comp  = " . &arg_has_component($arg, $rout);
+    
+          # Check if $rout is a component of $arg
+          if (&arg_has_component($arg, $rout)) {              
+    
+             # Check to see if we are setting a readonly component
+             # Note that $name_readonly is set correctly in 
+             # &arg_has_component and is false in the SELF_TYPE module
+             if ($name_readonly && $post =~ '^ *=[^=]') {
+                my $argg = $arg;
+                $argg =~ s/self%/./;
+                $argg =~ s/%/./g;
+                &report_error("can't set readonly component \"$rout\" in variable \"$argg\"");
              }
-          }
-          if (! defined $fortran_mod_name) {
-             &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
-          }
-
-         # Special globals
-         if ($arg eq 'stdout') {
-            $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
-         } 
-         if ($arg eq 'stdin') {
-            $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
-         } 
-         elsif ($arg eq 'stderr') {
-            $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
-            $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
-         } 
-         elsif ($arg eq 'std_time') {
-            $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
-            $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
-            $called_routines{TIME}{std_time}{module_data}  = 1;
-         } 
-
-         # Add called routines
-          $called_routines{$arg_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
-          $called_routines{$arg_type}{$rout}{fortran_type_name} = $fortran_type_name;
-
-          if ($do_routine_calls && $pass==2) {
-             my $call = "$arg_type:$rout";
-             my $short_name = $routine{$current_rout_name}{short_name};
-           # if (! defined($current_rout_name)) { die "short name not defined"; }
-           # if (! defined($short_name)) { die "short name not defined"; }
-             if (! &routine_calls_this_routine($short_name,$call)) {
-                print RCFILE "   $call";
-                push @{$routine_calls{$short_name}}, $call;
-             }
-          }
-
-          if ($do_generic) {                      # Underscore, always generic
-            $underscore = '_';
+    
+             # Replace the dot with a %.
+             $X = join('',$pre,$arg,'%',$rout,$post);
+    
+             # Add special globals to the called_routines hash for the RCFILE
+             if ($arg eq 'stdout') {
+                $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
+             } 
+             if ($arg eq 'stdin') {
+                $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
+             } 
+             elsif ($arg eq 'stderr') {
+                $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
+                $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
+             } 
+             elsif ($arg eq 'std_time') {
+                $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
+                $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
+                $called_routines{TIME}{std_time}{module_data}  = 1;
+             } 
+    
+          # The $rout must be a routine call on object $arg
           } else {
-          # If no generic interfaces are being used, scrub interface
-          # and place explicit type in front of routine name
-            $rout = $fortran_mod_name . '_' . $rout;
-            $underscore = '';
+    
+              # Replace intrinsic calls by explicit inlining
+              my $done = 0;
+              foreach $i (@tonto_intrinsic_functions) {
+                if ($rout =~ m/^$i$/) {
+                  $rout = $i;
+                  $underscore = '';
+                  $done = 1;
+                  last;
+                }
+              }
+      
+              # Modify dim statements explicitly dimN -> size($arg,N)
+              if      (! $done && $rout =~ m'^dim([1234567]?)$'o) {   
+                if (defined $1 && $1 ne '') { $arg .= ",$1"}
+                $rout = 'size';
+                $underscore = '';
+                $done = 1;
+              # Modify argumentless "created" statements -> associated
+              } elsif ($post !~ '^[(]' && $rout =~ m'^created$'o) {   
+                $rout = 'associated';
+                $underscore = '';
+                $done = 1;
+              # Modify argumentless "destroyeded" statements -> NOT associated
+              } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) { 
+                $rout = 'NOT associated';
+                $underscore = '';
+                # We might have introduced a "NOT NOT".
+                if ($pre =~ s/NOT\s*$// || $pre =~ s/\.NOT\.\s*$//) { $rout = 'associated'; }
+                $done = 1;
+              }
+      
+              # OK, the routine is not an intrinsic
+              # Deal with it as a "normal" routine
+              if (! $done) {  
+
+                  # Get arg type from the local variable table
+                  $arg_type = $local_var_info{$arg}{full_type_name};
+
+                  if (defined $arg_type) {
+                     if (defined $sub_mod_name) {         # arg wont be a local_var
+                        $arg_type = $arg_type . '.' . $sub_mod_name; 
+                        my %info = &analyse_type_name($arg_type);
+                        $fortran_type_name = $info{fortran_type_name}; 
+                        $fortran_mod_name  = $info{fortran_mod_name}; 
+                     } else {
+                        $fortran_type_name = $local_var_info{$arg}{fortran_type_name}; 
+                        $fortran_mod_name  = $local_var_info{$arg}{fortran_mod_name}; 
+                     }
+                  } else {
+                     $arg_type = &type_of_this($arg);
+                     if (defined $sub_mod_name) {         # arg wont be a tonto_type
+                        $arg_type = $arg_type . '.' . $sub_mod_name; 
+                        my %info = &analyse_type_name($arg_type);
+                        $fortran_type_name = $info{fortran_type_name}; 
+                        $fortran_mod_name  = $info{fortran_mod_name}; 
+                     } else {
+                        $fortran_type_name = $tonto_type_info{$arg_type}{fortran_type_name}; 
+                        $fortran_mod_name  = $tonto_type_info{$arg_type}{fortran_mod_name}; 
+                     }
+                  }
+                  if (! defined $fortran_mod_name) {
+                     &report_error("type \"$arg_type\" for variable \"$arg\" was not declared in \"$typesfile\".");
+                  }
+        
+                 # Special globals
+                 if ($arg eq 'stdout') {
+                    $called_routines{TEXTFILE}{stdout}{fortran_mod_name}  = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stdout}{fortran_type_name} = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stdout}{module_data}  = 1;
+                 } 
+                 if ($arg eq 'stdin') {
+                    $called_routines{TEXTFILE}{stdin}{fortran_mod_name}  = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stdin}{fortran_type_name} = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stdin}{module_data}  = 1;
+                 } 
+                 elsif ($arg eq 'stderr') {
+                    $called_routines{TEXTFILE}{stderr}{fortran_mod_name}  = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stderr}{fortran_type_name} = 'TEXTFILE';
+                    $called_routines{TEXTFILE}{stderr}{module_data}  = 1;
+                 } 
+                 elsif ($arg eq 'std_time') {
+                    $called_routines{TIME}{std_time}{fortran_mod_name}  = 'TIME';
+                    $called_routines{TIME}{std_time}{fortran_type_name} = 'TIME';
+                    $called_routines{TIME}{std_time}{module_data}  = 1;
+                 } 
+        
+                 # Add called routines
+                 $called_routines{$arg_type}{$rout}{fortran_mod_name}  = $fortran_mod_name;
+                 $called_routines{$arg_type}{$rout}{fortran_type_name} = $fortran_type_name;
+        
+                 if ($do_routine_calls && $pass==2) {
+                     my $call = "$arg_type:$rout";
+                     my $short_name = $routine{$current_rout_name}{short_name};
+                     if (! &routine_calls_this_routine($short_name,$call)) {
+                         print RCFILE "   $call";
+                         push @{$routine_calls{$short_name}}, $call;
+                     }
+                  }
+        
+                  # If all routines are fully generic add an underscore
+                  # If no generic interfaces are being used, scrub interface
+                  # and place fortran module name, including submodule name,
+                  # in front of routine name, and forget the underscore
+                  if ($do_generic) {
+                       $underscore = '_';
+                  } else {
+                       $rout = $fortran_mod_name . '_' . $rout;
+                       $underscore = '';
+                  }
+      
+              }
+      
+              # check for other arguments to the function call.
+              if ($fixedpost !~ s'^[(]','o)    { $fixedpost = ')' . $fixedpost; }
+      
+              # Construct the dot-expanded fortran from its bits
+              $X = join('',$pre,$call,$rout,$underscore,'(',$arg,$fixedpost);
+  
+              # Increment character counter $i by the length of 
+              # the added portion? Minus 1?
+              $i += (length (join('',$call,$rout,$underscore)) - 1);
+
           }
-
-        }
-
-        # check for other arguments to the function call.
-        if ($fixedpost !~ s'^[(]','o)    { $fixedpost = ')' . $fixedpost; }
-
-        $X = join('',$pre,$call,$rout,$underscore,'(',$arg,$fixedpost);
-        # for a routine call, $i will increase by the length of ${rout} plus
-        # one for the bracket.  If there is no underscore, then decrease by 1.
-        $i += (length (join('',$call,$rout,$underscore)) - 1);
       }
-    }
+
+  # Continue to next character
   } continue {
     $i++;
   }
+
+  # Return corrected line
   return $X;
 
 }
@@ -5057,7 +5196,7 @@ sub dots_to_html {
          $post = $2;
    
          # Separate out the argument from the previous stuff on the line.
-         $arg = &get_last_foo_object($left);
+         $arg = &get_the_dotted_object($left);
          if ($arg eq '') {
             # if last object is null, then set it to 'self'.
             $arg = 'self';
@@ -5089,7 +5228,7 @@ sub dots_to_html {
            $Y = '';
          }
    
-         if (&has_field($arg, $rout)) {              # $rout is a type field component
+         if (&arg_has_component($arg, $rout)) {              # $rout is a type field component
 
             if ($in_comment) {
                $Y .= "</A><A CLASS=\"TYPEFIELD\" HREF=\"${lc_arg_type}_short.html#$rout\">" 
@@ -5126,40 +5265,52 @@ sub dots_to_html {
 # end of the string to the front. During the search we must test to see that
 # brackets are matched. The search ends at the front of the string, or when a
 # non alpha, non dot, non %, non bracket character is encountered.
+###############################################################################
 
-sub get_last_foo_object {
-    my ($i,$this,$char,$ok);
-    $ok = '';
+sub get_the_dotted_object {
+
+    my ($i,$this,$char,$ans);
+
+    # This is the dotted object returned
+    $ans = '';
+
+    # Loop from the end of the string $i
     $i = (length $_[0]) -1;
     while ($i > -1) {
+
+      # Get the substring $this up to $i and the i=th $char
       $this = substr $_[0],$i;
       $char = substr $_[0],$i,1;
-      if (&has_matching_brackets($ok)) { # check for an unmatched opening bracket.
-        if ($char !~ '[\w\.%\)]') {last}
-      }
+
+      # Check for an unmatched opening bracket.
+      last if (&has_matching_brackets($ans) && $char !~ '[\w\.%\)]');
+
       if (! &has_matching_brackets($this)) { # still within closed brackets.
-        $ok = $this;
+        $ans = $this;
         next;
       }
       # from now on the brackets are closed.
       if ($this =~ '^[\w\.%(]') { # part of an object
-        $ok = $this;
+        $ans = $this;
         next;
       } else { # finished.
-        return ($ok);
+        return ($ans);
       }
     } continue {
       $i--;
     }
-    return ($ok);
+
+    return ($ans);
+
 }
 
 ################################################################################
 # Return whether the variable with name $arg has a certain field named $name in
 # its derived type.  If it has the field, the type of the entire variable
 # (including the component field) is added to the local_var_info symbol table.
+################################################################################
 
-sub has_field {
+sub arg_has_component {
 
     my($arg,$name) = @_;
 
@@ -5368,9 +5519,9 @@ sub type_of_this {
   # to dots once and for all at the start of the routine and just have a
   # type_of_this routine (with the optional change if it is really needed).
 
-  # Does it contain derived types?
-  # A call to &has_field will add each component to the local hash table if not
-  # there already.
+  # Does it contain derived type components?
+  # A call to &arg_has_component will add each component 
+  # to the local hash table if not there already.
   if ($arg =~ /(.*)[.](.*?)$/) {
     $i = 0;
     while ($i < length $arg) {
@@ -5378,7 +5529,7 @@ sub type_of_this {
       if ($y eq '.') {
         $left = substr $arg,0,$i;
         $right = substr $arg,$i+1;
-        &has_field($left,$right);
+        &arg_has_component($left,$right);
       }
       $i++;
     }
@@ -5526,11 +5677,13 @@ sub type_of_this {
   return ('unknown');
 }
 
-################################################################################
+#################################################################
 # Analyse a routine name and store all the routine attributes ...
+#################################################################
 
 sub analyse_rout_name {
 
+    # $X is the routine line
     my ($X) = @_;
 
     my ($name,$function,$indent,$args,$result,$result_arg,$attr);
@@ -5656,7 +5809,7 @@ sub analyse_rout_name {
     @old_expand_type = undef;
     @new_expand_type = undef;
 
-    # Store the indent
+    # Store the indentation
     $routine{$name}{indent} = $indent; 
 
     # Is it a function?
@@ -5816,8 +5969,9 @@ sub analyse_rout_name {
 
 }
 
-################################################################################
+#####################################
 # Get the type arguments, if any ....
+#####################################
 
 sub get_all_type_arguments {
 
@@ -5832,28 +5986,30 @@ sub get_all_type_arguments {
    # If so, add them to the list of type args. The order of this list is
    # critical because for inherited types the type substitution occurs in this
    # order. The order is depth first in nested curly brackets.
-      for ($i=1;$i<=$#type_arg;$i++) {
-         %info = &analyse_type_name($type_arg[$i],0);
-         $n_type_arg_args = $info{n_type_args};
-         @type_arg_arg    = @{$info{type_arg}};
-         if ($n_type_arg_args>0) { # Type arg has arguments -- add parent and child args
-            @type_arg_arg = &get_all_type_arguments(\@type_arg_arg);
-            @type_arg = (0,                # 0-thargument not used
-                         @type_arg[1..$i], # Keep previous arguments
-                         @type_arg_arg[1..$#type_arg_arg], # Insert new
-                         @type_arg[($i+1)..$#type_arg]);   # Not yet analysed ...
-            $i += $#type_arg_arg;          # Skip the added arguments
-         } else {                  # This does not, just add its parent
-         }
+   for ($i=1;$i<=$#type_arg;$i++) {
+      %info = &analyse_type_name($type_arg[$i],0);
+      $n_type_arg_args = $info{n_type_args};
+      @type_arg_arg    = @{$info{type_arg}};
+      if ($n_type_arg_args>0) { # Type arg has arguments -- add parent and child args
+         @type_arg_arg = &get_all_type_arguments(\@type_arg_arg);
+         @type_arg = (0,                # 0-thargument not used
+                      @type_arg[1..$i], # Keep previous arguments
+                      @type_arg_arg[1..$#type_arg_arg], # Insert new
+                      @type_arg[($i+1)..$#type_arg]);   # Not yet analysed ...
+         $i += $#type_arg_arg;          # Skip the added arguments
+      } else {                  # This does not, just add its parent
       }
+   }
 
    return (@type_arg);
 
 }
 
-################################################################################
+###############################################################################
 # Return TRUE if a variable with name $name is included in the routine argument
 # list of the current routine.
+###############################################################################
+
 sub routine_has_arg {
     my $name = $_[0];
     my($arg,$has);
@@ -6005,8 +6161,8 @@ sub split_by_first_brackets {
   return ($left_string,$middle_string,$right_string)
 }
 
+# Returns whether the number of "(" equals the number of ")".
 sub has_matching_brackets {
-# This routine returns whether the number of "(" equals the number of ")".
   (($_[0] =~ tr/[(]//) == ($_[0] =~ tr/[)]//));
 }
 
