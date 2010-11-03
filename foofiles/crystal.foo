@@ -78,6 +78,7 @@ contains
       nullify(.asym_atom_stabilizer)
 
       nullify(.unit_cell_connection)
+      nullify(.uc_vdw_connection)
       nullify(.unit_cell_mol_for_atom)
 
       nullify(.stabilizer_symop)
@@ -144,6 +145,7 @@ contains
       .asym_atom_stabilizer.destroy
 
       .unit_cell_connection.destroy
+      .uc_vdw_connection.destroy
       .unit_cell_mol_for_atom.destroy
 
       .stabilizer_symop.destroy
@@ -219,6 +221,7 @@ contains
       if (crystal.asym_atom_stabilizer.created) .asym_atom_stabilizer.create_copy(crystal.asym_atom_stabilizer)
 
       if (crystal.unit_cell_connection.created)   .unit_cell_connection.create_copy(crystal.unit_cell_connection)
+      if (crystal.uc_vdw_connection.created)      .uc_vdw_connection.create_copy(crystal.uc_vdw_connection)
       if (crystal.unit_cell_mol_for_atom.created) .unit_cell_mol_for_atom.create_copy(crystal.unit_cell_mol_for_atom)
 
       if (crystal.stabilizer_symop.created)  .stabilizer_symop.create_copy(crystal.stabilizer_symop)
@@ -1626,6 +1629,7 @@ contains
 
       ! Make the unit cell connection table
       .make_unit_cell_connections
+      .make_uc_vdw_connections
 
       ! Z factors and zep. factors for SF calculations
       .make_repetition_factors     
@@ -2070,7 +2074,9 @@ contains
    ! distinct molecules in the unit cell i.e. those groups of unit
    ! cell atoms which are connected to each other (ignoring/accounting
    ! for translational symmetry).  NOTE: unconnected atoms have a
-   ! nullifed connection lists NOT a zero dimenion one.
+   ! nullifed connection lists NOT a zero dimenion one. NOTE: only
+   ! connections to next-neighboring unit cells are considered
+   ! regardless of the size of covalent radii.
 
    ENSURE(.unit_cell_geometry.created,"no unit_cell in the crystal")
    ENSURE(.frag_parent_for_cell_atom.created,"no frag_parent_for_cell_atom")
@@ -2129,9 +2135,9 @@ contains
 
               ! Gross test for closeness
               pos_j = geom0(:,j)        
-              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
-              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
-              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
+              if (abs(pos_j(1)-pos_i(1))>SEVEN) cycle
+              if (abs(pos_j(2)-pos_i(2))>SEVEN) cycle
+              if (abs(pos_j(3)-pos_i(3))>SEVEN) cycle 
 
               ! It could be close: Set atom_j
               par_j = .asym_atom_for_unit_cell_atom(j) 
@@ -2214,9 +2220,12 @@ contains
 
            end
         end
+
       end
       end
       end
+
+      ! Clean
       geom1.destroy; geom0.destroy
       new.destroy
 
@@ -2232,6 +2241,129 @@ contains
       end
       unique.destroy
       unit_cell_mol_for_atom.destroy
+
+   end
+
+   make_uc_vdw_connections ::: leaky
+   ! From the .asymmetric_unit_atom list make the .uc_vdw_connection
+   ! table. Essentially aame as above with different bond criteria.
+
+   ENSURE(.unit_cell_geometry.created,"no unit_cell in the crystal")
+   ENSURE(.frag_parent_for_cell_atom.created,"no frag_parent_for_cell_atom")
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom list")
+   ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom list")
+
+      vdw :: VEC{VEC_{INT}}*
+      geom0,geom1 :: MAT{REAL}*
+      rcm :: MAT{REAL}(3,3)
+      pos_i,pos_j,offset :: VEC{REAL}(3)
+      i,j,par_i,par_j, h1,h2,h3 :: INT
+      atom_i,atom_j :: ATOM
+
+      ! Create the arrays we want
+      .uc_vdw_connection.destroy
+      .uc_vdw_connection.create(.n_unit_cell_atoms)
+
+      ! Define a new connected atom: its index and 3-element shift
+      vdw.create(1)
+      vdw(1).element.create(4)           
+
+      ! Get unit cell cartesian geometry
+      rcm = .unit_cell.direct_matrix
+      geom0.create(3,.n_unit_cell_atoms)  
+      geom0 = matmul(rcm,.unit_cell_geometry)
+
+      ! First make connections in the unit cell
+      ! and the distinct mols
+      h1 = 0                             
+      h2 = 0                             
+      h3 = 0
+
+        ! Loop over the (0,0,0) unit cell atoms i
+        do i = 1,.n_unit_cell_atoms      
+
+           ! Set atom_i
+           pos_i = geom0(:,i)
+           par_i = .asym_atom_for_unit_cell_atom(i) 
+           atom_i.atomic_number = .asymmetric_unit_atom(par_i).atomic_number
+           atom_i.pos = pos_i
+
+           ! Loop over the (0,0,0) unit cell atoms j
+           do j = i+1,.n_unit_cell_atoms 
+
+              ! Gross test for closeness
+              pos_j = geom0(:,j)        
+              if (abs(pos_j(1)-pos_i(1))>SEVEN) cycle
+              if (abs(pos_j(2)-pos_i(2))>SEVEN) cycle
+              if (abs(pos_j(3)-pos_i(3))>SEVEN) cycle 
+
+              ! It could be close: Set atom_j
+              par_j = .asym_atom_for_unit_cell_atom(j) 
+              atom_j.atomic_number = .asymmetric_unit_atom(par_j).atomic_number
+              atom_j.pos = pos_j
+
+              if (.unit_cell_mol_for_atom(i)==.unit_cell_mol_for_atom(j)) cycle
+              if (NOT atom_i.is_vdw_bonded_to(atom_j)) cycle
+
+              ! Append the bonded atom and the cell it is in ...
+              vdw(1)[:] = [h1,h2,h3,j]; .uc_vdw_connection(i).element.append(vdw)
+              vdw(1)[4] = i;            .uc_vdw_connection(j).element.append(vdw)
+
+           end
+        end
+
+      ! <<< Now make connections to neighbouring cells
+      geom1.create(3,.n_unit_cell_atoms) 
+      do h1 = -1,1                       
+      do h2 = -1,1
+      do h3 = -1,1
+
+        if (h1==0 AND h2==0 AND h3==0) cycle
+
+        ! Get offset unit cell positions
+        offset = matmul(rcm,[h1,h2,h3])
+        geom1 = geom0 + spread(offset,2,.n_unit_cell_atoms)
+
+        ! Loop over (0,0,0) unit cell atoms
+        do i = 1,.n_unit_cell_atoms     
+
+           ! Set atom_i
+           pos_i = geom0(:,i)
+           par_i = .asym_atom_for_unit_cell_atom(i) 
+           atom_i.atomic_number = .asymmetric_unit_atom(par_i).atomic_number
+           atom_i.pos = pos_i
+
+           ! Loop over (h1,h2,h3) unit cell atoms
+           do j = 1,.n_unit_cell_atoms   
+
+              ! Gross test for closeness
+              pos_j = geom1(:,j)        
+              if (abs(pos_j(1)-pos_i(1))>TEN) cycle
+              if (abs(pos_j(2)-pos_i(2))>TEN) cycle
+              if (abs(pos_j(3)-pos_i(3))>TEN) cycle 
+
+              ! It could be close: Set atom_j
+              par_j = .asym_atom_for_unit_cell_atom(j) 
+              atom_j.atomic_number = .asymmetric_unit_atom(par_j).atomic_number
+              atom_j.pos = pos_j
+
+              ! Cycle if not bonded ...
+              if (.unit_cell_mol_for_atom(i)==.unit_cell_mol_for_atom(j)) cycle
+              if (NOT atom_i.is_vdw_bonded_to(atom_j)) cycle
+
+              vdw(1)[:] = [h1,h2,h3,j]
+              .uc_vdw_connection(i).element.append(vdw)
+
+           end
+        end
+
+      end
+      end
+      end
+
+      ! Clean
+      geom1.destroy; geom0.destroy
+      vdw.destroy
 
    end
 
@@ -3128,6 +3260,7 @@ contains
       if (.asymmetric_unit_geometry.created) .put_asymmetric_unit_geometry
       if (.unit_cell_geometry.created)       .put_unit_cell_geometry
       if (.unit_cell_connection.created)     .put_uc_connection_table
+      if (.uc_vdw_connection.created)        .put_uc_vdw_connection_table
 
       if (.fragment_geometry.created)        .put_fragment_data
 
@@ -3603,7 +3736,6 @@ contains
 
    end
 
-
    put_uc_connection_table
    ! Put the .unit_cell_connection table
 
@@ -3668,6 +3800,82 @@ contains
                   stdout.put(.unit_cell_connection(a)[i][1])
                   stdout.put(.unit_cell_connection(a)[i][2])
                   stdout.put(.unit_cell_connection(a)[i][3])
+                  stdout.flush
+   
+               end
+   
+            end
+         end
+      end
+
+      stdout.dash(int_fields=6)
+
+   end
+
+   put_uc_vdw_connection_table
+   ! Put the .unit_cell_connection table
+
+   ENSURE(.uc_vdw_connection.created,"no uc_vdw_connection")
+   ENSURE(.unit_cell_mol_for_atom.created,"no unit_cell_mol_for_atom")
+
+      m,ma,a,i,b :: INT
+      first :: BIN
+
+      stdout.flush
+      stdout.text("Cell VDW atom connection table:")
+      stdout.flush
+      stdout.show("n_unit_cell_mols = ",.n_unit_cell_mols)
+
+      stdout.flush
+      stdout.dash(int_fields=6)
+      stdout.put("UnitCell",int_width=TRUE)
+      stdout.tab(int_fields=1)
+      stdout.put("Joins",int_width=TRUE)
+      stdout.tab(int_fields=1)
+      stdout.put("In Cell",int_width=TRUE)
+      stdout.flush
+
+      stdout.put("Mol.",int_width=TRUE)
+      stdout.put("Atom 1",int_width=TRUE)
+      stdout.put("Atom 2",int_width=TRUE)
+      stdout.put("h",int_width=TRUE)
+      stdout.put("k",int_width=TRUE)
+      stdout.put("l",int_width=TRUE)
+      stdout.flush
+
+      stdout.dash(int_fields=6)
+
+      do m = 1,.n_unit_cell_mols
+
+         stdout.put(m)
+   
+         first = TRUE
+         do a = 1,.uc_vdw_connection.dim
+
+            ma = .unit_cell_mol_for_atom(a)
+            if (ma/=m) cycle
+   
+            if (NOT first) &
+            stdout.tab(int_fields=1)
+            stdout.put(a)
+            first = FALSE
+   
+            if (.uc_vdw_connection(a).element.destroyed) then
+   
+               stdout.flush
+   
+            else
+   
+               do i = 1,.uc_vdw_connection(a).element.dim
+   
+                  if (i>1) &
+                  stdout.tab(int_fields=2)
+   
+                  b = .uc_vdw_connection(a)[i][4]
+                  stdout.put(b)
+                  stdout.put(.uc_vdw_connection(a)[i][1])
+                  stdout.put(.uc_vdw_connection(a)[i][2])
+                  stdout.put(.uc_vdw_connection(a)[i][3])
                   stdout.flush
    
                end
