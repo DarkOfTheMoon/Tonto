@@ -5715,7 +5715,11 @@ sub analyse_rout_name {
     if (defined $5) { $attr = $5; } 
     else            { $attr = ''; }
 
-    # Save the non-unique $short_name, set $current_rout_name
+    # Save the (non-unique) $short_name. It is the name of the
+    # routine as it appears in the foo file, but it is not the
+    # $real_name which appears in tge fortran which may include
+    # an overloaded underscore part. For now, set $current_rout_name 
+    # to be the short name -- it is reset later to $real_name
     my $short_name = $name;
     $current_rout_name = $name;
 
@@ -5738,7 +5742,7 @@ sub analyse_rout_name {
        return;
     }
 
-    # Count the number of times the name is used
+    # Count the number of times the $short_name is used
     if ($#scope<=2 && $attr !~ /^template/ && $attr !~ /inlined_by_foo/ ) { 
        $overload_count{$short_name}++; # This is reset every pass
        if ($pass==1) { $first_overload_count{$short_name}++; }
@@ -5749,9 +5753,14 @@ sub analyse_rout_name {
     # Set the "real name" (the name which IS overloaded with _n)
     # The "real name" is not correct until the second pass.
     my $real_name;
-    if ($#scope > 2) { # Don't worry about routines within interfaces.
+    if ($#scope > 2) { 
+    # Don't worry about routines within interfaces.
           $real_name = $short_name;
     } else {
+    # If this is the second pass ...
+    # The $real_name is the $short_name with the current
+    # overload count _n appended. An overload is detected if
+    # $first_overload_count is defined (cumbersome)
        if (defined $first_overload_count{$short_name} &&
            defined $overload_count{$short_name} &&
            ($first_overload_count{$short_name}>1 || 
