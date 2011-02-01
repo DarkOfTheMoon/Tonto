@@ -143,6 +143,8 @@ contains
       .F_sigma_min            = DIFFRACTION_DATA_F_SIGMA_MIN
       .F_sigma_max            = DIFFRACTION_DATA_F_SIGMA_MAX
       .F_sigma_cutoff         = DIFFRACTION_DATA_F_SIGMA_CUTOFF
+      .F2_sigma_cutoff        = DIFFRACTION_DATA_F2_SIGMA_CUTOFF
+      .show_rejects           = FALSE
       .temperature            = ZERO
       .NKA_T_sequence_no      = 0
 
@@ -269,6 +271,7 @@ contains
         case ("erase_reflection_data       "); .destroy_reflection_data
         case ("exp_scale_factor=           "); .read_exp_scale_factor
         case ("f_exp_min=                  "); .read_f_exp_min
+        case ("f2_sigma_cutoff=            "); .read_f2_sigma_cutoff
         case ("f_sigma_cutoff=             "); .read_f_sigma_cutoff
         case ("f_sigma_min=                "); .read_f_sigma_min
         case ("f_sigma_max=                "); .read_f_sigma_max
@@ -293,6 +296,7 @@ contains
         case ("refine_positions_only=      "); .read_refine_positions_only
         case ("reflection_data=            "); .read_reflection_data
         case ("sf_mixing_parameter=        "); .read_SF_mixing_parameter
+        case ("show_rejects=               "); .read_show_rejects
         case ("synthesize_sigma_i=         "); .read_synthesize_sigma_I
         case ("thermal_smearing_model=     "); .read_thermal_smearing_model
         case ("temperature=                "); .read_temperature
@@ -366,6 +370,17 @@ contains
    ! Read the maximum acceptable value for F_cutoff
       stdin.read(.F_sigma_cutoff)
       ENSURE(.F_sigma_cutoff>ZERO,"cutoff must be positive")
+   end
+
+   read_f2_sigma_cutoff ::: private
+   ! Read the maximum acceptable value for F2_cutoff
+      stdin.read(.F2_sigma_cutoff)
+      ENSURE(.F2_sigma_cutoff>ZERO,"cutoff must be positive")
+   end
+
+   read_show_rejects ::: private
+   ! Read wether to show the rejected reflections
+      stdin.read(.show_rejects)
    end
 
 
@@ -557,37 +572,109 @@ contains
 
    prune_weak_reflections ::: leaky
    ! This routine eliminates all the reflections which have 
-   ! F_exp/F_sigma less than value "val" read from the input.
+   ! F_exp/F_sigma less than .F_sigma_cutoff
       self :: PTR
+      if (.refine_F) then; .prune_weak_Fs
+      else; .prune_weak_F2s
+      end
+   end
+
+   prune_weaklings ::: template
+   ! This routine eliminates all the reflections which have 
+   ! F_exp/F_sigma less than .F_sigma_cutoff
+      self :: PTR
+
    DIE_IF(NOT .reflections.created,"No reflection data")
    DIE_IF(NOT .reflections.have_F_exp,"No experimental data")
-      reflections :: VEC{REFLECTION}*
-      list :: VEC{INT}*
-      n,i :: INT
-!   read_f_sigma_cutoff 
+
+      old_reflections :: VEC{REFLECTION}*
+      good,bad :: VEC{INT}*
+      n_refl,n,i,ib,g,b :: INT
       val :: REAL
-      val = .F_sigma_cutoff
+
+      ! Cutoff
+      val = .CUTOFF
+
+      ! No. of old reflections
+      n_refl = .reflections.n_refl
+
+      ! Find out how many rejects "n" there are
       n = 0
-      do i = 1,.reflections.n_refl
-        WARN_IF(.reflections(i).F_sigma.equals(ZERO), "Zero sigma occured") 
-        if (.reflections(i).F_sigma.equals(ZERO)) cycle
-        if (abs(.reflections(i).F_exp/.reflections(i).F_sigma)<val) cycle
-        n = n + 1
+      do i = 1,n_refl
+         DIE_IF(.reflections(i).SIGMA.equals(ZERO), "Zero sigma occured") 
+         if (abs(.reflections(i).EXP/.reflections(i).SIGMA)<val) cycle
+         n = n + 1
       end
+
       DIE_IF(n==0,"There are no elements less than "//val.to_str.trim)
-      list.create(n)
-      n = 0
-      do i = 1,.reflections.n_refl
-        if (.reflections(i).F_sigma.equals(ZERO)) cycle
-        if (abs(.reflections(i).F_exp/.reflections(i).F_sigma)<val) cycle
-        n = n + 1
-        list(n) = i
+
+      ! Create the "good" and "bad" lists and how many of each
+      good.create(n)
+      bad.create(n_refl-n)
+      g = 0
+      b = 0
+      do i = 1,n_refl
+         if (abs(.reflections(i).EXP/.reflections(i).SIGMA)<val) then
+            b = b + 1
+            bad(b) = i
+         else
+            g = g + 1
+            good(g) = i
+         end
       end
-      reflections => .reflections
+
+      ! Copy the non-rejects
+      old_reflections => .reflections
       .reflections.create(n)
-      .reflections.copy(reflections(list))
-      reflections.destroy
-      list.destroy
+      .reflections.copy(old_reflections(good))
+
+      ! Print out
+      stdout.flush
+      stdout.text("Pruning weak reflections")
+      stdout.text("------------------------")
+      stdout.flush
+      stdout.show("No. of input reflections    =",n_refl)
+      stdout.show("No. of rejected reflections =",b)
+      stdout.show("No. of kept reflections     =",g)
+      stdout.flush
+      if (.show_rejects) then
+         stdout.text("Table of rejects:")
+         stdout.dash(int_fields=3,real_fields=2)
+         stdout.put("h",int_width=TRUE)
+         stdout.put("k",int_width=TRUE)
+         stdout.put("l",int_width=TRUE)
+         stdout.put("EXP")
+         stdout.put("SIGMA")
+         stdout.flush
+         stdout.dash(int_fields=3,real_fields=2)
+         stdout.flush
+         do i = 1,b
+            ib = bad(i)
+            stdout.put(old_reflections(ib).h)
+            stdout.put(old_reflections(ib).k)
+            stdout.put(old_reflections(ib).l)
+            stdout.put(old_reflections(ib).EXP)
+            stdout.put(old_reflections(ib).SIGMA)
+            stdout.flush
+         end
+         stdout.dash(int_fields=3,real_fields=2)
+      end
+
+      ! Clean
+      old_reflections.destroy
+      bad.destroy
+      good.destroy
+
+   end
+
+   prune_weak_Fs ::: get_from(DIFFRACTION_DATA:prune_weaklings, CUTOFF=>F_sigma_cutoff, EXP=>F_exp, SIGMA=>F_sigma), leaky
+   ! This routine eliminates all the reflections which have 
+   ! F_exp/F_sigma less than .F_sigma_cutoff
+   end
+
+   prune_weak_F2s ::: get_from(DIFFRACTION_DATA:prune_weaklings, CUTOFF=>F2_sigma_cutoff, EXP=>F2_exp, SIGMA=>F2_sigma), leaky
+   ! This routine eliminates all the reflections which have 
+   ! F_exp/F_sigma less than .F_sigma_cutoff
    end
 
    zero_negative_F_exp ::: leaky
