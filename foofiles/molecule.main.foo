@@ -262,7 +262,7 @@ contains
       .atom.read_CIF(cif)
 
       ! Set defaults and bases
-      .mult = nint(.default_multiplicity)
+      .spin_multiplicity = .default_spin_multiplicity
       .set_atom_info
       .resolve_basis_info
 
@@ -397,19 +397,19 @@ contains
 
       ! Reset output format
       stdout.save
-      stdout.set_using_fields(FALSE)
       stdout.set_int_width(7)
       stdout.set_real_style("f")
       stdout.set_real_precision(5)
       stdout.set_real_width(12)
+      stdout.set_using_fields(FALSE)
 
       stdout.flush
       stdout.text("Crystal Explorer data")
 
       stdout.flush
       stdout.show("begin CIF ",CX_label)
-      stdout.show("file_name = ",CX_name)
-      stdout.show("data_block_name = ",CX_label)
+      stdout.show("file_name =",CX_name)
+      stdout.show("data_block_name =",CX_label)
       stdout.text("end CIF")
       stdout.flush
 
@@ -509,6 +509,10 @@ contains
 
    end
 
+! *****************
+! Molecule rotation
+! *****************
+
    read_rotate
    ! Rotate the whole molecule using matrix defined by its rotation "axis" and
    ! the "angle" of rotation around that axis, which are both inputted.
@@ -527,10 +531,7 @@ contains
       .MAIN:rotate_by(R)
 
       if (.becke_grid.created) then
-         .becke_grid.set_atom_info(.atom.atomic_number &
-                                  ,.atom.transposed_coordinates &
-                                  ,.atom.minimum_basis_exponents &
-                                  ,.atom) ! leaky
+         .becke_grid.set_atom_info(.atom,.atom.minimum_basis_exponents) ! leaky
          .becke_grid.set_grid_data
       end
 
@@ -628,34 +629,59 @@ contains
    ! densities only.
    ! Checked, 7/2/06; the energy decomposition was checked by manual rotation
    ENSURE(.atom_group.created,"no atom group information")
+
       axis :: VEC{REAL}(3)
       angle :: REAL
+      g :: INT
+
+      stdin.read(g)               ! read group
+      stdin.read(axis)            ! read axis
+      stdin.read_quantity(angle)  ! read angle
+   ENSURE(g>0,"group number must be positive")
+   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+   ENSURE(NOT axis.is_zero,"axis must not be zero")
+
+      .rotate_group(g,axis,angle)
+
+   end
+
+   rotate_group(g,axis,angle) ::: leaky
+   ! Rotate a group "g" of atoms in the molecule using a matrix defined by its
+   ! rotation "axis" and the "angle" of rotation around that axis, which are all
+   ! inputted on the command line. The rotation is performed on the coordinates
+   ! and the group-block diagonal of the density matrix. NOTE: this can be a
+   ! problem for group off-diagonal blocks; this routine works for progroup
+   ! densities only.
+   ! Checked, 7/2/06; the energy decomposition was checked by manual rotation
+      g :: INT
+      axis :: VEC{REAL}(3)
+      angle :: REAL
+
+   ENSURE(.atom_group.created,"no atom group information")
+
       mol :: MOLECULE*
       archive :: ARCHIVE
       R :: MAT{REAL}(3,3)
       v :: VEC{REAL}(3)
       P :: MAT{REAL}*
-      g,i,a :: INT
-      stdin.read(g)      ! read group
-      stdin.read(axis)   ! read axis
-      stdin.read(angle)  ! read angle
-   ENSURE(g>0,"group number must be positive")
-   ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
-   ENSURE(NOT axis.is_zero,"axis must not be zero")
+      i,a :: INT
+
       .delete_scf_archives
       .delete_scf_integrals
       R.to_3x3_rotation_matrix(axis,angle)
+
       ! Rotate atoms; the line below does not work
-    ! .atom(.atom_group(g).element).rotate_by(R)
-      do i = 1,.atom_group(g).element.dim
-         a = .atom_group(g)[i]
+      do i = 1,.atom_group(g).n_atoms
+         a = .atom_group(g).atom_index(i)
          v = .atom(a).pos 
          .atom(a).pos = matmul(R,v)
          .atom(a).thermal_tensor.back_transform_using(R)
       end
+
       .molecular_orbitals.destroy         ! leaky here
       if (.density_matrix.destroyed) return
    ENSURE(.density_matrix.restricted.created,"so far group rotation is for restricted densities only")
+
       ! Rotate density
       mol.create
       .make_molecule_from_atom_group(g,mol)
@@ -664,13 +690,17 @@ contains
       mol.MAIN:rotate_density_matrix(P,R)
       .MAIN:set_group_density_from(P,g,mol)
       P.destroy
+
       mol.atom.nullify_ptr_part ! do not destroy these
       nullify(mol.basis)        ! do not destroy this
       nullify(mol.slaterbasis)  ! do not destroy this
       nullify(mol.coppensbasis) ! do not destroy this
       mol.destroy
+
+      ! Write out the density matrix
       archive.set(.name,"density_matrix",genre="restricted")
       archive.write(.density_matrix)
+
    end
 
    put_group_density_to(P,g,mol)
@@ -683,10 +713,10 @@ contains
    ENSURE(g>0,"group number must be positive")
    ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
       a,b,aa,bb,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
-      do a = 1,.atom_group(g).element.dim ! Copy this atom density
-      do b = 1,.atom_group(g).element.dim
-         aa  = .atom_group(g)[a]
-         bb  = .atom_group(g)[b]
+      do a = 1,.atom_group(g).n_atoms ! Copy this atom density
+      do b = 1,.atom_group(g).n_atoms
+         aa  = .atom_group(g).atom_index(a)
+         bb  = .atom_group(g).atom_index(b)
          faa = .first_basis_fn_for_atom(aa)
          fbb = .first_basis_fn_for_atom(bb)
          laa = .last_basis_fn_for_atom(aa)
@@ -706,14 +736,17 @@ contains
       P :: MAT{REAL}
       g :: INT, IN
       mol :: MOLECULE, IN
+
    ENSURE(.atom_group.created,"no atom group information")
    ENSURE(g>0,"group number must be positive")
    ENSURE(g<=.atom_group.dim,"group number exceeds number of groups")
+
       a,b,aa,bb,fa,la,fb,lb,faa,laa,fbb,lbb :: INT
-      do a = 1,.atom_group(g).element.dim ! Copy this atom density
-      do b = 1,.atom_group(g).element.dim
-         aa  = .atom_group(g)[a]
-         bb  = .atom_group(g)[b]
+
+      do a = 1,.atom_group(g).n_atoms ! Copy this atom density
+      do b = 1,.atom_group(g).n_atoms
+         aa  = .atom_group(g).atom_index(a)
+         bb  = .atom_group(g).atom_index(b)
          faa = .first_basis_fn_for_atom(aa)
          fbb = .first_basis_fn_for_atom(bb)
          laa = .last_basis_fn_for_atom(aa)
@@ -725,6 +758,7 @@ contains
          .density_matrix.restricted(faa:laa,fbb:lbb) = P(fa:la,fb:lb)
       end
       end
+
    end
 
    rotate_density_matrix(P,R)
@@ -776,7 +810,7 @@ contains
 !      end
 !      saved_self => self
 !      call minimise_BFGS(hf_scf_energy,hf_scf_gradient,p,energy,TOL(3),TOL(3),TOL(1),25)
-!      stdout.show("Optimised energy = ",energy)
+!      stdout.show("Optimised energy =",energy)
 !      stdout.text("Optimised geometry:")
 !      stdout.put(p)
 !      p.destroy
@@ -859,9 +893,9 @@ contains
 !      stdout.text("Energy gradient:")
 !      stdout.put(g)
 !      val = .e2_energy
-!      stdout.show("e2_energy     = ",val)
+!      stdout.show("e2_energy     =",val)
 !      val = .the_e2_energy
-!      stdout.show("the_e2_energy = ",val)
+!      stdout.show("the_e2_energy =",val)
 !      g.destroy
 !      .make_fd_gradient(the_scf_energy,delta)
 !   end
@@ -1212,7 +1246,7 @@ contains
 !     res :: REAL
 !     T :: MAT{REAL}*
 !     T.create(.n_bf,.n_bf)
-!     .get_kinetic_matrix(T)
+!     .get_kinetic_energy_mx(T)
 !     res = .expectation(T)
 !     T.destroy
 !   end
@@ -1222,7 +1256,7 @@ contains
 !     res :: REAL
 !     Z :: MAT{REAL}*
 !     Z.create(.n_bf,.n_bf)
-!     .get_nuclear_matrix(Z)
+!     .get_attraction_nuclear_mx(Z)
 !     res = .expectation(Z)
 !     Z.destroy
 !   end
@@ -1244,7 +1278,7 @@ contains
       VEC{REAL}:minimise_BFGS(MOLECULE.MAIN::the_r_hf_energy,MOLECULE.MAIN::the_r_hf_energy_MO_gradient, &
          MO,energy,TOL(3),TOL(3),step=TOL(2))
     ! call minimise_FRPR_(the_r_hf_energy,the_r_hf_energy_MO_gradient,MO,energy,TOL(3),TOL(3),step=TOL(2))
-      stdout.show("Optimised energy = ",energy)
+      stdout.show("Optimised energy =",energy)
       stdout.text("Optimised orbitals:")
       stdout.put(MO)
       MO.destroy
@@ -1275,7 +1309,7 @@ contains
       N.create(.n_a ,.n_a)
       .MAIN:make_r_non_ortho_scf_density(P,MO,N) ! writes density to disk
       N.destroy
-      res = .MAIN:e1_energy(P) + .MAIN:e2_energy(P) + .nuclear_energy
+      res = .MAIN:e1_energy(P) + .MAIN:e2_energy(P) + .nuclear_repulsion_energy
       P.destroy
       stdout.show("hf energy =",res)
    end
@@ -1488,7 +1522,7 @@ contains
       select case (orb_kind)
        case ("rhf","restricted_hartree_fock","xray_rhf","noninteracting-group-rhf")
          ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
-         ENSURE(.mult==1,"this is not a singlet state")
+         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
          MO => .molecular_orbitals.restricted
          D  => .density_matrix.restricted
          N.create(.n_a,.n_a)
@@ -1512,7 +1546,7 @@ contains
    ENSURE(N.is_square,"wrong size, N")
    ENSURE(P.dim1==.n_bf,"wrong size, P")
    ENSURE(N.dim1==.n_a ,"wrong size, N")
-   ENSURE(.mult==1,"this is not a singlet state")
+   ENSURE(.spin_multiplicity==1,"this is not a singlet state")
    ENSURE(MO.dim2==.n_a,"wrong size, N")
       .get_overlap_matrix
       .overlap_matrix.change_basis_to(N,MO)
@@ -1580,8 +1614,8 @@ contains
 !      arch1.read(P)
 !      .density_matrix.create("restricted")
 !      .density_matrix.restricted = P
-!      T.create(.n_bf,.n_bf); .get_kinetic_matrix(T)
-!      Z.create(.n_bf,.n_bf); .get_nuclear_matrix(Z)
+!      T.create(.n_bf,.n_bf); .get_kinetic_energy_mx(T)
+!      Z.create(.n_bf,.n_bf); .get_attraction_nuclear_mx(Z)
 !      C.create(.n_bf,.n_bf)
 !      K.create(.n_bf,.n_bf); .make_r_JK_direct(C,K,P)
 !      .make_r_fock(direct=TRUE,core=FALSE,r12=TRUE)
@@ -1635,7 +1669,7 @@ contains
 !      stdout.text(" ")
 !      fac = sum(E_T+E_Z+E_C+E_K)
 !      stdout.show("SCF electronic energy =",fac)
-!      stdout.show("SCF energy            =",fac+.atom.nuclear_energy)
+!      stdout.show("SCF energy            =",fac+.atom.nuclear_repulsion_energy)
 !      stdout.show("Kinetic energy        =",sum(E_T))
 !      !
 !      unit = "kcal/mol"
@@ -1689,8 +1723,8 @@ contains
 !      P.create(.n_bf,.n_bf)
 !      arch1.read(P)
 !      W.create(.n_bf,.n_bf)
-!      T.create(.n_bf,.n_bf); .get_kinetic_matrix(T)
-!      Z.create(.n_bf,.n_bf); .get_nuclear_matrix(Z)
+!      T.create(.n_bf,.n_bf); .get_kinetic_energy_mx(T)
+!      Z.create(.n_bf,.n_bf); .get_attraction_nuclear_mx(Z)
 !      n_group = size(.atom_group)
 !      E_T.create(n_group,n_group); E_T = ZERO
 !      E_Z.create(n_group,n_group); E_Z = ZERO
@@ -1707,7 +1741,7 @@ contains
 !            E_T(i,j) = T.trace_product_with(W)
 !            E_Z(i,j) = Z.trace_product_with(W)
 !            do x = 1,n_group
-!               .make_nuclear_matrix(ZZ,.atom_group(x).element)
+!               .make_nuclear_attraction_mx(ZZ,.atom_group(x).element)
 !               E_ZZ(i,j,x) = ZZ.trace_product_with(W)
 !            end
 !         end
@@ -1739,7 +1773,7 @@ contains
 !      stdout.text(" ")
 !      fac = sum(E_T+E_Z) + sum(E_C+E_K)
 !      stdout.show("SCF electronic energy =",fac)
-!      stdout.show("SCF energy            =",fac+.atom.nuclear_energy)
+!      stdout.show("SCF energy            =",fac+.atom.nuclear_repulsion_energy)
 !      stdout.show("Kinetic energy        =",sum(E_T))
 !!     stdout.text(" ")
 !!     stdout.text("Energy decomposition in AU ...")
@@ -1755,9 +1789,9 @@ contains
 !!     stdout.text(" ")
 !!     stdout.text("Nuclear attraction interaction terms ONLY for group 2 nuclei")
 !!     stdout.put(E_ZZ(:,:,2))
-!!     EE(1,1) = .atom(.atom_group(1).element).nuclear_energy
-!!     EE(2,2) = .atom(.atom_group(2).element).nuclear_energy
-!!     EE(2,1) = .atom.nuclear_energy - EE(1,1) - EE(2,2)
+!!     EE(1,1) = .atom(.atom_group(1).element).nuclear_repulsion_energy
+!!     EE(2,2) = .atom(.atom_group(2).element).nuclear_repulsion_energy
+!!     EE(2,1) = .atom.nuclear_repulsion_energy - EE(1,1) - EE(2,2)
 !!     EE(1,2) = ZERO
 !!     stdout.text(" ")
 !!     stdout.text("Nuclear nuclear repulsion")
@@ -1832,9 +1866,9 @@ contains
 !      stdout.text(" ")
 !      stdout.text("Nuclear attraction interaction terms ONLY for group 2 nuclei")
 !      stdout.put(E_ZZ(:,:,2))
-!      EE(1,1) = fac*.atom(.atom_group(1).element).nuclear_energy
-!      EE(2,2) = fac*.atom(.atom_group(2).element).nuclear_energy
-!      nuclear_repulsion = fac*.atom.nuclear_energy - EE(1,1) - EE(2,2)
+!      EE(1,1) = fac*.atom(.atom_group(1).element).nuclear_repulsion_energy
+!      EE(2,2) = fac*.atom(.atom_group(2).element).nuclear_repulsion_energy
+!      nuclear_repulsion = fac*.atom.nuclear_repulsion_energy - EE(1,1) - EE(2,2)
 !      EE(2,1) = nuclear_repulsion
 !      EE(1,2) = ZERO
 !      stdout.text(" ")
@@ -1938,8 +1972,8 @@ contains
 !      PP.create(.n_bf,.n_bf)
 !      arch1.read(P)
 !      W.create(.n_bf,.n_bf)
-!      T.create(.n_bf,.n_bf); .get_kinetic_matrix(T)
-!      Z.create(.n_bf,.n_bf); .get_nuclear_matrix(Z)
+!      T.create(.n_bf,.n_bf); .get_kinetic_energy_mx(T)
+!      Z.create(.n_bf,.n_bf); .get_attraction_nuclear_mx(Z)
 !      S.create(.n_bf,.n_bf); .get_overlap_matrix(S)
 !      Sph.create(.n_bf,.n_bf); Sph.to_sqrt(S)
 !      Smh.create(.n_bf,.n_bf); Smh.to_inverse_sqrt(S)
@@ -1962,7 +1996,7 @@ contains
 !            E_T(i,j) = T.trace_product_with(W)
 !            E_Z(i,j) = Z.trace_product_with(W)
 !            do g = 1,n_group
-!               .make_nuclear_matrix(ZZ,.atom_group(g).element)
+!               .make_nuclear_attraction_mx(ZZ,.atom_group(g).element)
 !               E_ZZ(i,j,g) = ZZ.trace_product_with(W)
 !            end
 !         end
@@ -2000,7 +2034,7 @@ contains
 !      stdout.text(" ")
 !      fac = sum(E_T+E_Z) + sum(E_C+E_K)
 !      stdout.show("SCF electronic energy =",fac)
-!      stdout.show("SCF energy            =",fac+.atom.nuclear_energy)
+!      stdout.show("SCF energy            =",fac+.atom.nuclear_repulsion_energy)
 !      stdout.show("Kinetic energy        =",sum(E_T))
 !      !
 !      unit = "kcal/mol"
@@ -2024,9 +2058,9 @@ contains
 !      stdout.text(" ")
 !      stdout.text("Nuclear attraction interaction terms ONLY for group 2 nuclei")
 !      stdout.put(E_ZZ(:,:,2))
-!      EE(1,1) = fac*.atom(.atom_group(1).element).nuclear_energy
-!      EE(2,2) = fac*.atom(.atom_group(2).element).nuclear_energy
-!      nuclear_repulsion = fac*.atom.nuclear_energy - EE(1,1) - EE(2,2)
+!      EE(1,1) = fac*.atom(.atom_group(1).element).nuclear_repulsion_energy
+!      EE(2,2) = fac*.atom(.atom_group(2).element).nuclear_repulsion_energy
+!      nuclear_repulsion = fac*.atom.nuclear_repulsion_energy - EE(1,1) - EE(2,2)
 !      EE(2,1) = nuclear_repulsion
 !      EE(1,2) = ZERO
 !      stdout.text(" ")
@@ -3017,7 +3051,7 @@ contains
 
          iteration = iteration + 1
 
-         stdout.show("Iteration = ",iteration)
+         stdout.show("Iteration =",iteration)
 
          ! Spherically average each atom
          eps = ZERO
@@ -3238,7 +3272,7 @@ contains
 
          iteration = iteration + 1
 
-         stdout.show("Iteration = ",iteration)
+         stdout.show("Iteration =",iteration)
 
          ! Spherically average each atom
          eps = ZERO
@@ -3669,7 +3703,7 @@ contains
 !      T.create(.n_bf,.n_bf)
 !      SOx.create(.n_bf,.n_bf); SOy.create(.n_bf,.n_bf); SOz.create(.n_bf,.n_bf)
 !      ZOx.create(.n_bf,.n_bf); ZOy.create(.n_bf,.n_bf); ZOz.create(.n_bf,.n_bf)
-!      .get_nuclear_matrix(SOz)
+!      .get_nuclear_attraction_mx(SOz)
 !      .make_ENA_matrix(ZOz)
 !      stdout.text("NA"); stdout.put(SOz)
 !      stdout.text("numerical NA"); stdout.put(ZOz)
@@ -3692,7 +3726,7 @@ contains
 !      Z.create(.n_bf,.n_bf)
 !      NZ.create(.n_bf,.n_bf)
 !      DZ.create(.n_bf,.n_bf)
-!      .make_nuclear_matrix(DZ,output=TRUE)
+!      .make_nuclear_attraction_mx(DZ,output=TRUE)
 !      .make_nuclear_ints(Z)
 !      .get_ENA_matrix(NZ)
 !      stdout.text("DZ"); stdout.put(DZ)
@@ -3876,7 +3910,7 @@ contains
 !     .make_DVPT_initial_mos
 !     .make_DVPT_density_matrices
 !     .make_DVPT_fock_matrices
-!     .scfdata.set(nuclear_energy=.nuclear_energy)
+!     .scfdata.set(nuclear_repulsion_energy=.nuclear_repulsion_energy)
 !     .scfdata.reset(energy=.DVPT_scf_energy, kinetic_energy=ZERO)
 !
 !   ! stdout.text("D:")
@@ -4448,7 +4482,7 @@ contains
 !   ! Evaluates the determinant variation perturbation theory SCF energy
 !   ! (including the nuclear repulsion contribution)
 !     res :: REAL
-!     res = .DVPT_electronic_energy + .nuclear_energy
+!     res = .DVPT_electronic_energy + .nuclear_repulsion_energy
 !   end
 !
 !   DVPT_electronic_energy result (res)
@@ -4722,8 +4756,8 @@ contains
 
    put_banner
    ! Put to stdout the current TONTO banner
-      stdout.text(" ")
-      stdout.text("---------------------------------------------------------------")
+
+      stdout.text("_______________________________________________________________")
       stdout.text("                                                               ")
       stdout.text(" T   O   N   T   O                                             ")
       stdout.text("                                                               ")
@@ -4740,9 +4774,13 @@ contains
       stdout.text("                                                               ")
       stdout.text(" Dylan Jayatilaka                                              ")
       stdout.text(" Daniel Grimwood                                               ")
-      stdout.text("---------------------------------------------------------------")
-      stdout.text(" ")
+      stdout.text("_______________________________________________________________")
+
+      stdout.flush
+      stdout.flush
       stdout.text(std_time.start_time_message)
+      stdout.flush
+   
    end
 
    reset_molecule ::: leaky
@@ -4757,35 +4795,42 @@ contains
       stdin.read(.name)
    end
 
-!   read_keywords ::: get_from(OBJECT, process_keyword=>MAIN:process_keyword), recursive, leaky
-!   ! Read data from "stdin" using keyword style input.
-!      self :: PTR
-!   end
-
-   read_keywords ::: recursive, leaky
+   read_keywords ::: get_from(OBJECT, process_keyword=>MAIN:process_keyword), recursive, leaky
    ! Read data from "stdin" using keyword style input.
       self :: PTR
-   ENSURE(stdin.next_item=="{","expecting open bracket symbol, {")
-      word :: STR
-      stdin.read(word)
-      stdout.flush
-      stdout.text("keyword found --> " // trim(word))
-      do                 ! Loop over input keywords
-         stdin.read(word)
-         DIE_IF(stdin.reverted,"unexpected end of file while reading keywords")
-         word.to_lower_case
-         if (NOT stdin.buffer_exhausted) then 
-         if (stdin.next_item=="=") then ! assume this is an attached = sign
-            stdin.skip_next_item
-            word = trim(word) // "="
-         end
-         end
-         stdout.flush
-         stdout.text("keyword found --> " // trim(word))
-         if (word=="}")      exit
-         .MAIN:process_keyword(word)
-      end
    end
+
+!   read_keywords ::: recursive, leaky
+!   ! Read data from "stdin" using keyword style input.
+!      self :: PTR
+!   ENSURE(stdin.next_item=="{","expecting open bracket symbol, {")
+!      word :: STR
+!
+!      stdin.read(word)
+!    ! stdout.flush
+!    ! stdout.text("keyword found --> " // trim(word))
+!
+!      do ! Loop over input keywords
+!
+!         stdin.read(word)
+!         DIE_IF(stdin.reverted,"unexpected end of file while reading keywords")
+!         word.to_lower_case
+!         if (NOT stdin.buffer_exhausted) then 
+!         if (stdin.next_item=="=") then ! assume this is an attached = sign
+!            stdin.skip_next_item
+!            word = trim(word) // "="
+!         end
+!         end
+!
+!       ! stdout.flush
+!       ! stdout.text("keyword found --> " // trim(word))
+!
+!         if (word=="}")      exit
+!         .MAIN:process_keyword(word)
+!
+!      end
+!
+!   end
 
 !   read_keywords ::: get_from(OBJECT, process_keyword=>MAIN:process_keyword), recursive, leaky
 !   ! Read data from "stdin" using keyword style input.
@@ -4862,7 +4907,6 @@ contains
         case ("geminal_mf_scheme_restart     "); .MAIN:restart_geminal_mf_scheme
      !   case ("make_singlet_extremals        "); .geminal_mf_scheme.spectrum.make_singlet_extremals
         case ("put_geminal_mf_scheme         "); .geminal_mf_scheme.put
-        case ("group_charges=                "); .read_group_charges
         case ("integrate_density_numerically "); .MAIN:integrate_density_numerically
         case ("interpolator=                 "); .MAIN:read_interpolator
         case ("invariom_database_directory=  "); .MAIN:read_invariom_directory
@@ -4883,7 +4927,7 @@ contains
         case ("make_fock_guess               "); .make_fock_guess
         case ("make_fock_matrix              "); .make_fock_matrix
         case ("make_h_structure_factors      "); .make_H_structure_factors(output=TRUE)
-        case ("make_n_structure_factors      "); .make_H_Sz_structure_factors(output=TRUE)
+        case ("make_n_structure_factors      "); .make_H_Sz_structure_factors
         case ("make_irrotational_jp_grid     "); .make_irrotational_jp_grid
         case ("make_monomer_mos              "); .make_monomer_MOs
         case ("make_natural_orbitals         "); .make_natural_orbitals
@@ -4910,7 +4954,7 @@ contains
         case ("move_origin_to_centre_of_atoms"); .move_origin_to_centre_of_atoms
         case ("move_origin_to_centre_of_mass "); .move_origin_to_centre_of_mass
         case ("memory_limit=                 "); .MAIN:read_memory_limit
-        case ("multiplicity=                 "); .read_multiplicity
+        case ("multiplicity=                 "); .read_spin_multiplicity ! deprecated
         case ("name=                         "); .read_name
       ! case ("optimise_geometry             "); .optimise_geometry
         case ("optimise_orbitals             "); .MAIN:optimise_orbitals
@@ -4928,10 +4972,7 @@ contains
         case ("put                           "); .put
         case ("put_1e_properties             "); .put_1e_properties
         case ("put_accurate_cif              "); .MAIN:put_accurate_cif
-        case ("put_all_atom_coord_info       "); .atom.put_coord_info(TRUE)
-        case ("put_all_bonds                 "); .put_all_bonds
         case ("put_ao_energy_partition       "); .put_AO_energy_partition
-        case ("put_atom_coord_info           "); .atom.put_coord_info(FALSE)
         case ("put_atom_groups               "); .put_atom_groups
         case ("put_bda_charges               "); .MAIN:put_BDA_charges
       ! case ("put_atom_kind_map             "); .put_atom_kind_map
@@ -4993,6 +5034,7 @@ contains
 
         case ("read_archive                  "); .read_archive
         case ("read_ascii_archive            "); .read_ascii_archive
+        case ("read_g09_FChk_file            "); .read_g09_FChk_file
         case ("read_gaussian_fchk_file       "); .read_gaussian_FChk_file
         case ("redirect                      "); .MAIN:redirect
         case ("redirect_stdout               "); .MAIN:redirect_stdout
@@ -5010,6 +5052,7 @@ contains
         case ("scfdata=                      "); .read_scfdata
         case ("simulate_new_f_exp            "); .crystal.simulate_new_F_exp
         case ("slaterbasis_name=             "); .read_slaterbasis_name
+        case ("spin_multiplicity=            "); .read_spin_multiplicity 
         case ("start_new_molecule            "); .MAIN:reset_molecule
         case ("start_timer                   "); timer.start_timing
         case ("test_iotc                     "); .test_IOTC 
@@ -5101,8 +5144,6 @@ contains
 !        case ("output_style_options=         "); .MAIN:read_output_style_options
 !        case ("plot_on_isosurface            "); .plot_on_isosurface
 !        case ("put                           "); .put
-!        case ("put_all_bonds                 "); .put_all_bonds
-!        case ("put_all_atom_coord_info       "); .atom.put_coord_info(TRUE)
 !        case ("put_crystal                   "); .put_crystal
 !        case ("put_current_time              "); .put_current_time(timer)
 !        case ("put_molecular_orbitals        "); .put_molecular_orbitals
@@ -5194,6 +5235,7 @@ contains
       routine :: STR
       stdin.read(routine) 
       stdin.read(amount) 
+      stdin.read(address) 
       tonto.leaky_routine = routine
       tonto.leaky_amount  = amount
       tonto.leaky_address = address
@@ -5281,14 +5323,15 @@ contains
       S,SS,TM :: MAT{REAL}*
       sh :: SHELL2
       ci,cj :: VEC{REAL}(3)
-    ! list :: VEC{INT}*
       maxl,n,i,j,k,l,p,q,fa,la,na,fb,lb,nb, nc,nt :: INT
+
       .get_overlap_matrix
       SS.create(.n_a,.n_a)
       .overlap_matrix.change_basis_to(SS,.localiser.MO)
       stdout.text("transformed S:")
       stdout.put(SS)
       SS.destroy
+
       ! Make the AO oscillator interals 
       maxl = 2                                  ! Set up l=2 oscillators
       n = GAUSSIAN_DATA:n_comp_up_to(maxl)      ! No. of oscillators 
@@ -5307,46 +5350,22 @@ contains
          do k = 1,n
          do l = 1,n
             SAO(:,:,k,l).symmetric_reflect
-          ! SMO(i,k,j,l) = dot_product(matmul(SAO(:,:,k,l),.localiser.MO(:,j),.localiser.MO(:,i)))
          end
          end
       end
       end
-      ! Transform to the MO basis
-    ! do i = 1,n
-    ! do j = 1,n
-    !    SAO(:,:,i,j).symmetric_reflect
-    !    SAO(:,:,i,j).change_basis_to(SMO(:,i,:,j),.localiser.MO)
-    ! end
-    ! end
       SAO.destroy
+
       ! Print out
       stdout.flush
       stdout.text("Oscillator overlap matrices, up to l = "//maxl.to_str.trim)
       stdout.text("Row = OMO, Col = oscillator fn: s, px, py, pz, ...")
       stdout.flush
       do i = 1,.n_a
-         stdout.show("MO  = ",i)
+         stdout.show("MO  =",i)
          stdout.put(SMO(i,1,:,:))
       end
-      ! Rearrange order to have all p, all d ... together
-    ! list.create(n*.n_a)
-    ! i = 0
-    ! nt = 0
-    ! do l = 0,maxl
-    !    nc = l.n_comp
-    !    k = nt
-    !    do j = 1,.n_a
-    !       list(i+1:i+nc) = [ (q,q=k+1,k+nc) ]
-    !       i = i + nc
-    !       k = k + n
-    !    end
-    !    nt = nt + nc
-    ! end
-    ! stdout.flush
-    ! stdout.text("reorder list:")
-    ! stdout.put(list)
-    ! list.destroy
+
       ! Print out
       SS.create(n*.n_a,n*.n_a)
       SS = reshape(SMO,[n*.n_a,n*.n_a])
@@ -5354,6 +5373,7 @@ contains
       stdout.text("Ordered oscillator overlap matrix:")
       stdout.flush
       stdout.put(SS)
+
       ! Define the coefficient matrix TM for the projected oscillators
       TM.create(n*.n_a,n*.n_a); TM.to_unit_matrix
       S.create(n*.n_a,n*.n_a)
@@ -5366,6 +5386,7 @@ contains
          TM(:,p:q).symmetrically_orthonormalise(SS)
          nt = q
       end
+
       ! Print out
       stdout.flush
       stdout.text("Orthonormalised oscillator orbitals:")
@@ -5654,7 +5675,7 @@ contains
    ! Print out the kinetic energy matrix
       T :: MAT{REAL}*
       T.create(.n_bf,.n_bf)
-      .get_kinetic_matrix(T)
+      .get_kinetic_energy_mx(T)
       stdout.text("Kinetic energy matrix:")
       stdout.put(T)
       T.destroy
@@ -5664,7 +5685,7 @@ contains
    ! Print out the nuclear attractions matrix
       Z :: MAT{REAL}*
       Z.create(.n_bf,.n_bf)
-      .get_nuclear_matrix(Z)
+      .get_nuclear_attraction_mx(Z)
       stdout.text("Nuclear attraction matrix:")
       stdout.put(Z)
       Z.destroy
@@ -5804,8 +5825,8 @@ contains
       n_e = sum(rho_grid*wt)
       rho_grid.destroy
       wt.destroy; pt.destroy
-      stdout.show("n_pt = ",n_pt)
-      stdout.show("n_e  = ",n_e)
+      stdout.show("n_pt =",n_pt)
+      stdout.show("n_e  =",n_e)
    end
 
 ! ********************************************
@@ -5820,14 +5841,10 @@ contains
      main :: MOLECULE.MAIN*
      v :: MAT4{REAL}*
      eri_archive :: ARCHIVE
-     n_step :: INT
-     use_brillouin,print_hamiltonian :: BIN
-     orthogonality_type :: STR
      make_integrals, readin_mos :: BIN
-     convergence :: REAL
      n_bf, new_n_bf :: INT
      .geminal_mf_scheme.create
-     .geminal_mf_scheme.set_defaults(.n_a,.n_bf,.name,.nuclear_energy)
+     .geminal_mf_scheme.set_defaults(.n_a,.n_bf,.name,.nuclear_repulsion_energy)
      .geminal_mf_scheme.read_keywords
   ! this routine stops here in most cases
      if(.geminal_mf_scheme.readin_scheme) then
@@ -5882,14 +5899,10 @@ contains
      main :: MOLECULE.MAIN*
      v :: MAT4{REAL}*
      eri_archive :: ARCHIVE
-     n_step :: INT
-     use_brillouin,print_hamiltonian :: BIN
-     orthogonality_type :: STR
      make_integrals, readin_mos :: BIN
-     convergence :: REAL
      n_bf, new_n_bf :: INT
      do_electric_dipole :: BIN
-!debug     i,j,k,l :: INT
+
      n_bf=.n_bf
      do_electric_dipole=any(.geminal_mf_scheme.do_electric_dipole)
      if(do_electric_dipole) then
@@ -5962,11 +5975,7 @@ contains
      main :: MOLECULE.MAIN*
      v :: MAT4{REAL}*
      eri_archive :: ARCHIVE
-     n_step :: INT
-     use_brillouin,print_hamiltonian :: BIN
-     orthogonality_type :: STR
      make_integrals, readin_mos :: BIN
-     convergence :: REAL
      n_bf, new_n_bf :: INT
      do_electric_dipole :: BIN
      n_bf=.n_bf
@@ -6934,7 +6943,7 @@ contains
    ! with index "a" and with scale parameters "kappa" using supplied
    ! points "pt".  This uses gaussian atomic densities.
       self :: IN
-      grid :: MAT{REAL}, target, OUT
+      grid :: MAT{REAL}, OUT
       a  :: INT, IN
       kappa :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
@@ -6945,7 +6954,7 @@ contains
    ENSURE(grid.dim2==.n_atom,"wrong dim2, grid")
    ENSURE(kappa.dim==.n_atom,"wrong size, kappa")
 
-      rho_a,rho_c,rho,gc :: VEC{REAL}*
+      rho_a,rho_c,rho :: VEC{REAL}*
       n_pt,i,c :: INT
 
       ! Allocate temporary densities
@@ -6974,11 +6983,10 @@ contains
 
         .atom(c).make_density_grid(rho_c,pt)
 
-        gc => grid(:,c)
-        gc = -rho_a*rho_c
+        grid(:,c) = -rho_a*rho_c
 
         if (c/=a) cycle
-        where (rho>epsilon(ONE)) gc = gc + rho_c/rho
+        where (rho>epsilon(ONE)) grid(:,c) = grid(:,c) + rho_c/rho
          
       end
 
@@ -6993,7 +7001,7 @@ contains
    ! atom with index "a" and with scale parameters "kappa" using
    ! supplied points "pt".  This uses gaussian atomic densities.
       self :: IN
-      grid :: MAT3{REAL}, target, OUT
+      grid :: MAT3{REAL}, OUT
       a  :: INT, IN
       kappa :: VEC{REAL}, IN
       pt :: MAT{REAL}, IN
@@ -7005,7 +7013,7 @@ contains
    ENSURE(grid.dim3==.n_atom,"wrong dim3, grid")
    ENSURE(kappa.dim==.n_atom,"wrong size, kappa")
 
-      rho_a,rho_c,rho_d,rho,gcd :: VEC{REAL}*
+      rho_a,rho_c,rho_d,rho :: VEC{REAL}*
       n_pt,i,c,d :: INT
 
       ! Allocate temporary densities
@@ -7043,11 +7051,10 @@ contains
 
            .atom(d).make_density_grid(rho_d,pt)
    
-           gcd => grid(:,c,d)
-           gcd =  rho_a*rho_c*rho_d
+           grid(:,c,d) =  rho_a*rho_c*rho_d
    
-           if (c==a) gcd = gcd - rho_d*rho
-           if (d==a) gcd = gcd - rho_c*rho
+           if (c==a) grid(:,c,d) = grid(:,c,d) - rho_d*rho
+           if (d==a) grid(:,c,d) = grid(:,c,d) - rho_c*rho
          
         end
 
@@ -7136,14 +7143,14 @@ contains
       stdout.flush
       stdout.put(alpha) 
       stdout.flush
-      stdout.show("Mean polarisability = ",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+      stdout.show("Mean polarisability =",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
 !     stdout.flush
 !     stdout.text("Sylvain-Csizmadia first polarisability - using user-input Unsold denominator (SI):")
 !     stdout.flush
 !     stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
 !     stdout.flush
-!     stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+!     stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
       stdout.flush
       stdout.text("Principal values (au) :")
@@ -7172,14 +7179,14 @@ contains
       stdout.flush
       stdout.put(alpha) 
       stdout.flush
-      stdout.show("Mean polarisability = ",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+      stdout.show("Mean polarisability =",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
 !     stdout.flush
 !     stdout.text("Sylvain-Csizmadia first polarisability (SI):")
 !     stdout.flush
 !     stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
 !     stdout.flush
-!     stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+!     stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
       stdout.flush
       stdout.text("Principal values (au) :")
@@ -7269,14 +7276,14 @@ contains
       stdout.flush
       stdout.put(alpha) 
       stdout.flush
-      stdout.show("Mean polarisability = ",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+      stdout.show("Mean polarisability =",THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
 !     stdout.flush
 !     stdout.text("Whitten-Spackman-Jayatilaka first polarisability (SI):")
 !     stdout.flush
 !     stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
 !     stdout.flush
-!     stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
+!     stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(x,x)+alpha(y,y)+alpha(z,z)))
 
       stdout.flush
       stdout.text("Principal values (au) :")
@@ -7429,14 +7436,14 @@ contains
       stdout.flush
       stdout.put(alpha) 
       stdout.flush
-      stdout.show("Mean polarisability = ",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+      stdout.show("Mean polarisability =",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 
  !    stdout.flush
  !    stdout.text("Sum-over-states dipole polarisability (SI):")
  !    stdout.flush
  !    stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
  !    stdout.flush
- !    stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+ !    stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 
       stdout.flush
       stdout.text("Principal values (au) :")
@@ -7523,14 +7530,14 @@ contains
 !      stdout.flush
 !      stdout.put(alpha) 
 !      stdout.flush
-!      stdout.show("Mean polarisability = ",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+!      stdout.show("Mean polarisability =",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 !
 !      stdout.flush
 !      stdout.text("Dipole polarisability (SI):")
 !      stdout.flush
 !      stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
 !      stdout.flush
-!      stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+!      stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 !
 !      stdout.flush
 !      stdout.text("Principal values (au) :")
@@ -7680,10 +7687,7 @@ contains
 !         destroy_becke = TRUE
 !         .becke_grid.create
 !         .becke_grid.set_defaults
-!         .becke_grid.set_atom_info(.atom.atomic_number &
-!                                  ,.atom.transposed_coordinates &
-!                                  ,.atom.minimum_basis_exponents &
-!                                  ,.atom) ! leaky
+!         .becke_grid.set_atom_info(.atom,.atom.minimum_basis_exponents) ! leaky
 !         .becke_grid.set_grid_data
 !      else
 !         destroy_becke = FALSE
@@ -7746,8 +7750,8 @@ contains
 !      stdout.flush
 !      stdout.text("Hirshfeld charges and dipole moments (au):")
 !      stdout.flush
-!      stdout.show("No. of integration grid points = ",n_pt)
-!      stdout.show("Check: no. of electrons        = ",n_e)
+!      stdout.show("No. of integration grid points =",n_pt)
+!      stdout.show("Check: no. of electrons        =",n_e)
 !      stdout.flush
 !      stdout.dash(int_fields=1,real_fields=5)
 !      stdout.tab(int_fields=1)
@@ -7888,14 +7892,14 @@ contains
 !      stdout.flush
 !      stdout.put(alpha) 
 !      stdout.flush
-!      stdout.show("Mean polarisability = ",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+!      stdout.show("Mean polarisability =",THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 !
 !      stdout.flush
 !      stdout.text("Dipole polarisability (SI):")
 !      stdout.flush
 !      stdout.put(alpha*ELECTRIC_POLARISABILITY_SI_PER_AU) 
 !      stdout.flush
-!      stdout.show("Mean polarisability = ",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
+!      stdout.show("Mean polarisability =",ELECTRIC_POLARISABILITY_SI_PER_AU*THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3)))
 !
 !      stdout.flush
 !      stdout.text("Principal values (au) :")
@@ -8045,10 +8049,7 @@ contains
 !         destroy_becke = TRUE
 !         .becke_grid.create
 !         .becke_grid.set_defaults
-!         .becke_grid.set_atom_info(.atom.atomic_number &
-!                                  ,.atom.transposed_coordinates &
-!                                  ,.atom.minimum_basis_exponents &
-!                                  ,.atom) ! leaky
+!         .becke_grid.set_atom_info(.atom,.atom.minimum_basis_exponents) ! leaky
 !         .becke_grid.set_grid_data
 !      else
 !         destroy_becke = FALSE
@@ -8111,8 +8112,8 @@ contains
 !      stdout.flush
 !      stdout.text("Hirshfeld charges and dipole moments (au):")
 !      stdout.flush
-!      stdout.show("No. of integration grid points = ",n_pt)
-!      stdout.show("Check: no. of electrons        = ",n_e)
+!      stdout.show("No. of integration grid points =",n_pt)
+!      stdout.show("Check: no. of electrons        =",n_e)
 !      stdout.flush
 !      stdout.dash(int_fields=1,real_fields=5)
 !      stdout.tab(int_fields=1)
@@ -8285,7 +8286,6 @@ contains
    DIE_IF(any(.crystal.frag_atom_for_asym_unit_atom==0),"some asymetric unit atoms were not found")
 
       chi1 :: MAT{REAL}(3,3)
-      chi2 :: MAT3{REAL}(3,3,3)
 
       ! Make sure asymmetric unit is generated from the fragment
       ! (Also it assigns atomic charges, polarisabilities to asymmetric unit)
@@ -8474,7 +8474,7 @@ contains
       alpha :: MAT{REAL}(3,3), IN
 
       eigenvectors :: MAT{REAL}(3,3)
-      eigenvalues,reorder :: VEC{REAL}(3)
+      eigenvalues :: VEC{REAL}(3)
       mean,fac :: REAL
 
       ! Conversion factor
@@ -8487,14 +8487,14 @@ contains
       stdout.put(alpha) 
       stdout.flush
       mean = THIRD*(alpha(1,1)+alpha(2,2)+alpha(3,3))
-      stdout.show("Mean polarisability (au) = ",mean)
+      stdout.show("Mean polarisability (au) =",mean)
 
       stdout.flush
       stdout.text("Dipole polarisability (SI) x 10^40:")
       stdout.flush
       stdout.put(alpha*fac)
       stdout.flush
-      stdout.show("Mean polarisability (SI) x 10^40 = ",mean*fac)
+      stdout.show("Mean polarisability (SI) x 10^40 =",mean*fac)
 
       ! Get principal axes
       alpha.solve_eigenproblem(eigenvalues,eigenvectors)
@@ -8821,7 +8821,7 @@ contains
       end
       stdout.dash(int_fields=1,real_fields=3)
       stdout.flush
-      stdout.show("Maximum asymmetry in polarisabilities = ",asym)
+      stdout.show("Maximum asymmetry in polarisabilities =",asym)
       stdout.flush
       stdout.text("Contribution to molecular polarisability from atomic charges (au):")
       stdout.put(alpha_q)
@@ -9081,7 +9081,7 @@ contains
          arch.write(U)
 
          ! Converged ?
-         stdout.show("Iteration "//iteration.to_str.trim//", convergence = ",test)
+         stdout.show("Iteration "//iteration.to_str.trim//", convergence =",test)
          converged = test<.scfdata.diis.convergence_tolerance
          if (converged) exit
 
@@ -9202,7 +9202,7 @@ contains
 !         end
 !
 !         ! Converged ?
-!         stdout.show("Iteration "//iteration.to_str.trim//", convergence = ",test)
+!         stdout.show("Iteration "//iteration.to_str.trim//", convergence =",test)
 !         converged = test<.scfdata.diis.convergence_tolerance
 !         if (converged) exit
 !
@@ -9374,7 +9374,7 @@ stdout.flush
          end
       end
       test = maxval(abs(U_new(n_occ+1:,1:n_occ,:)-U_old(n_occ+1:,1:n_occ,:)))
-      stdout.show("cycle "//cyc.to_str.trim//", test = ",test)
+      stdout.show("cycle "//cyc.to_str.trim//", test =",test)
       if ( test < tol) exit
 
 
@@ -9689,7 +9689,7 @@ stdout.flush
       labels :: VEC{STR}*
       word,basis_kind,plotfile :: STR
       density_cutoff :: REAL
-      do_log10,to_angstrom :: BIN
+      do_log10 :: BIN
       Z_max,Z :: INT
 
       ! Read the input
@@ -9733,7 +9733,7 @@ stdout.flush
       ! Make interpolators and put out the gnuplots
       do Z = 1,slaterbasis.dim   
 
-         stdout.show("Z = ",Z)
+         stdout.show("Z =",Z)
 
          slaterbasis(Z).make_interpolator(interpolator)
 
@@ -9803,7 +9803,7 @@ stdout.flush
       ! Make interpolators and put out the gnuplots
       do Z = 1,slater1basis.dim   
 
-         stdout.show("Z = ",Z)
+         stdout.show("Z =",Z)
 
          slater1basis(Z).make_interpolator(interpolator)
          slater2basis(Z).make_interpolator(interpolator)
@@ -9870,7 +9870,7 @@ stdout.flush
 
       do Z = 1,slaterbasis.dim   
 
-         stdout.show("Z = ",Z)
+         stdout.show("Z =",Z)
 
          coppensbasis(Z).make_interpolator(interpolator)
          slaterbasis(Z).make_interpolator(interpolator)
@@ -9909,7 +9909,7 @@ stdout.flush
       ! Put labels out
       stdout.flush
       stdout.text("SMILES invariom labels:")
-      stdout.put(labels,left_justify=TRUE)
+      stdout.put(labels,left=TRUE)
 
       ! Make the invariom kind table
       invariom_kind.repetitions_in(labels)
@@ -9923,7 +9923,7 @@ stdout.flush
 
       ! Put invariom kind table out
       stdout.flush
-      stdout.show("No. of distinct labels = ",invariom_kind.dim)                                  
+      stdout.show("No. of distinct labels =",invariom_kind.dim)                                  
       stdout.flush
       stdout.text("Table of invariom kinds")
       stdout.flush
@@ -9974,8 +9974,8 @@ stdout.flush
 
       do k = 1,labels.dim
          stdout.put(k,width=5)
-         stdout.put(.atom(k).label,width=10,left_justify=TRUE)
-         stdout.put(labels(k),width=25,left_justify=TRUE)
+         stdout.put(.atom(k).label,width=10,left=TRUE)
+         stdout.put(labels(k),width=25,left=TRUE)
          stdout.flush
       end
       stdout.flush
@@ -9993,7 +9993,7 @@ stdout.flush
 
       ! Put invariom kind table out
       stdout.flush
-      stdout.show("No. of distinct labels = ",invariom_kind.dim)                                  
+      stdout.show("No. of distinct labels =",invariom_kind.dim)                                  
       stdout.flush
       stdout.text("Table of invariom kinds")
       stdout.flush
@@ -10148,10 +10148,7 @@ stdout.flush
       cm.destroy
 
       ! Reset the becke grid geometry
-      .becke_grid.set_atom_info(.atom.atomic_number &
-                               ,.atom.transposed_coordinates &
-                               ,.atom.minimum_basis_exponents &
-                               ,.atom) ! leaky
+      .becke_grid.set_atom_info(.atom,.atom.minimum_basis_exponents) ! leaky
       .becke_grid.set_grid_data
 
       ! Write the CIF files
@@ -10191,7 +10188,7 @@ stdout.flush
       sf_u :: VEC{CPX}*
       Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
       rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
-      ra,rb :: VEC{REAL}(3)
+      ra :: VEC{REAL}(3)
       overlapping_atom, pi,pj,pn :: VEC{INT}*
       skipa0,skipab,skipa,skipb :: VEC{BIN}*
       D,DD,k_pts,pt,grida,gridb,bf_save :: MAT{REAL}*
@@ -10199,9 +10196,9 @@ stdout.flush
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       sf  :: CPX
-      cutoff,rf, k1k,k2k,k3k,kr, P_max,Dab, fac, val :: REAL
+      cutoff,rf, k1k,k2k,k3k,kr, Dab, fac, val :: REAL
       n_atom,n_k,n_pt,n_keep, u,c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
-      sa,fa,la,na, sb,fb,lb,nb, as,bs, ab, a,b,i,j,k,n,p :: INT
+      sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,k,n,p :: INT
  
       ! Asymmetric unit atoms
       n_atom = .crystal.asymmetric_unit_atom.dim
@@ -10347,7 +10344,6 @@ stdout.flush
                   ob  = overlapping_atom(cb)
                   fsb = .first_shell_for_atom(ob)
                   lsb =  .last_shell_for_atom(ob)
-                  rb  = .atom(ob).pos
 
                   ! Loop shells on atom b
                   do sb = fsb,min(lsb,sa)
@@ -10359,7 +10355,6 @@ stdout.flush
                      fb = .first_basis_fn_for_shell(sb)
                      lb = .last_basis_fn_for_shell(sb)
                      nb = lb - fb + 1
-                     bs = .basis_shell_for_shell(sb)
 
                      ! Set the "sb" basis function grid
                      skipb => bf_skip(sb).element 
@@ -10493,7 +10488,7 @@ stdout.flush
 
       sf_u :: VEC{CPX}*
       wt :: VEC{REAL}*
-      rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
+      rho, k1,k2,k3, r1,r2,r3 :: VEC{REAL}*
       D,k_pts,pt :: MAT{REAL}*
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
@@ -10715,7 +10710,7 @@ stdout.flush
       sf_n.create(n_k,n_ui)
       stop
       ! Make the structure factors
-      if (DO_IN_PARALLEL) sf_n = ZERO
+      sf_n = ZERO
       parallel do ui = 1,n_ui
          u = invariom_kind(ui)[1]
          f = .crystal.unique_frag_atom(u)
@@ -10735,16 +10730,12 @@ stdout.flush
             sf = ZERO
             do i = 1,n_pt ! integrate over all space
                kr = k1k*r1(i)+k2k*r2(i)+k3k*r3(i)
-             ! sf = sf + Wa(i)*cmplx(cos(kr),sin(kr))
                sf = sf + Wa(i)*exp(cmplx(ZERO,kr))
             end
             sf_u(k) = sf * rf
          end
          rho.destroy; Wa.destroy
          wt.destroy; pt.destroy
-       ! if (DO_IN_PARALLEL) then
-       !    PARALLEL_BROADCAST(sf_n(:,u),tonto.processor_rank)
-       ! end
       end
       k_pt.destroy
 
@@ -10814,7 +10805,7 @@ stdout.flush
 
       ! Make the structure factors and derivatives
       sf_e = ZERO
-      if (DO_IN_PARALLEL) sf_d = ZERO
+      sf_d = ZERO
 
       if (.crystal.data.refine_positions_and_ADPs) then 
 
@@ -10881,7 +10872,8 @@ stdout.flush
                         sf_d(k,base+2) = II*k2k*sf
                         sf_d(k,base+3) = II*k3k*sf
                         sf2 = HALF*sf
-                        val = -sf2*(k1k*k1k+k2k*k2k+k3k*k3k)*THIRD
+                        val = -real(sf2,kind=REAL_KIND) &
+                             *(k1k*k1k+k2k*k2k+k3k*k3k)*THIRD
                         sf_d(k,base+4) = val
                         sf_d(k,base+5) = val
                         sf_d(k,base+6) = val
@@ -11030,7 +11022,8 @@ stdout.flush
                         sf_d(k,base+2) = ZERO
                         sf_d(k,base+3) = ZERO
                         sf2 = HALF*sf
-                        val = -sf2*(k1k*k1k+k2k*k2k+k3k*k3k)
+                        val = -real(sf2,kind=REAL_KIND) &
+                             *(k1k*k1k+k2k*k2k+k3k*k3k)
                         sf_d(k,base+4) = val
                         sf_d(k,base+5) = val
                         sf_d(k,base+6) = val
@@ -11672,9 +11665,9 @@ stdout.flush
       arch.open(for="writing")
       keep   => TEXTFILE::stdout
       stdout => arch
-      stdout.show("Iteration = ",0)
+      stdout.show("Iteration =",0)
       .atom.put_coordinates
-      .atom.put_thermal_tensors
+      .atom.put_ADPs
       stdout => keep
 
       ! Banner
@@ -11877,9 +11870,9 @@ stdout.flush
       ! Archive parameters
       keep   => TEXTFILE::stdout
       stdout => saved_arch
-      stdout.show("Iteration = ",iter)
+      stdout.show("Iteration =",iter)
       .atom.put_coordinates
-      .atom.put_thermal_tensors
+      .atom.put_ADPs
       stdout => keep
 
    end
@@ -11900,10 +11893,10 @@ stdout.flush
 !      U.create(n_p)
 !      .MAIN:get_atom_parameters(U)
 !      .atom.put_coordinates
-!      .atom.put_thermal_tensors
+!      .atom.put_ADPs
 !    ! .MAIN:set_atom_parameters(U)
 !    ! .atom.put_coordinates
-!    ! .atom.put_thermal_tensors
+!    ! .atom.put_ADPs
 !    ! .scf
 !    ! .cleanup_scf
 !    ! .make_x_structure_factors
@@ -12026,7 +12019,7 @@ stdout.flush
 !         stdout.flush
 !         stdout.text("Making Hirshfeld structure factors ...")
 !         stdout.flush
-!         stdout.show("Check: no. of electrons        = ",n_e)
+!         stdout.show("Check: no. of electrons        =",n_e)
 !   
 !         ! Sum the symmetry equivalent SF's
 !         .crystal.sum_unique_sf(Fc,sf_e)
@@ -12052,7 +12045,7 @@ stdout.flush
 !    
 !         ! Output current ADP's
 !         .atom.put_coordinates
-!         .atom.put_thermal_tensors
+!         .atom.put_ADPs
 !
 !      else
 !
@@ -12092,7 +12085,7 @@ stdout.flush
 !         stdout.flush
 !         stdout.text("Making Hirshfeld structure factors ...")
 !         stdout.flush
-!         stdout.show("Check: no. of electrons        = ",n_e)
+!         stdout.show("Check: no. of electrons        =",n_e)
 !   
 !         ! Sum the symmetry equivalent SF's
 !         .crystal.sum_unique_sf(Fc,sf_e)
@@ -12188,7 +12181,7 @@ stdout.flush
 !   ! dchi2.create(n_p)
 !
 !     .MAIN:get_ADPs_asym(U)
-!     .atom.put_thermal_tensors
+!     .atom.put_ADPs
 !
 !     chi2_old = huge(ONE)
 !     iter = 0
@@ -12330,7 +12323,7 @@ stdout.flush
 !   ! dchi2.create(n_p)
 !
 !     .MAIN:get_ADPs(U)
-!     .atom.put_thermal_tensors
+!     .atom.put_ADPs
 !
 !     do
 !
@@ -12534,12 +12527,12 @@ stdout.flush
 ! !   .crystal.optimise_scale = FALSE
 !
 !     .MAIN:get_ADPs_asym(U)
-!     .atom.put_thermal_tensors
+!     .atom.put_ADPs
 !   ! .make_x_structure_factors
 !   ! .put_crystal_reflection_data
 !
 !   ! .MAIN:set_ADPs_asym(U)
-!   ! .atom.put_thermal_tensors
+!   ! .atom.put_ADPs
 !   ! .make_x_structure_factors
 !   ! .put_crystal_reflection_data
 !   ! stop
@@ -12834,7 +12827,7 @@ stdout.flush
 !
 !     .MAIN:get_ADPs(U)
 !
-!     .atom.put_thermal_tensors
+!     .atom.put_ADPs
 !
 !     saved_self => self
 !     VEC{REAL}:minimise_BFGS_v2(MOLECULE.MAIN::d_chi2_dU,U,chi2_min,tol=TOL(4),gtol=TOL(4),step=TOL(4))
@@ -13007,7 +13000,7 @@ stdout.flush
 !     U.create(n_p)
 !
 !     .MAIN:get_ADPs_plus_se(U)
-!     .atom.put_thermal_tensors
+!     .atom.put_ADPs
 !
 !     saved_self => self
 !     VEC{REAL}:minimise_BFGS_v2(MOLECULE.MAIN::d_chi2_dU_plus_se,U,chi2_min,tol=TOL(4),gtol=TOL(4),step=TOL(4))

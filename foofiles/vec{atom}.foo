@@ -30,15 +30,16 @@ module VEC{ATOM}
    ! name clash with a procedure of the same name.
 
    saved_self :: VEC{ATOM}*, private  DEFAULT_NULL
-   index_info_created :: BIN, private DEFAULT(FALSE)
-   atom_4_shell :: VEC{INT}*, private DEFAULT_NULL
-   atom_shell_4_shell :: VEC{INT}*, private DEFAULT_NULL
-   first_shell_4_atom :: VEC{INT}*, private DEFAULT_NULL
-   first_basis_fn_4_shell :: VEC{INT}*, private DEFAULT_NULL
-   last_basis_fn_4_shell  :: VEC{INT}*, private DEFAULT_NULL
-   angular_moment_4_shell :: VEC{INT}*, private DEFAULT_NULL
-   first_basis_fn_4_atom  :: VEC{INT}*, private DEFAULT_NULL
-   last_basis_fn_4_atom   :: VEC{INT}*, private DEFAULT_NULL
+
+!   index_info_created :: BIN, private DEFAULT(FALSE)
+!   atom_4_shell :: VEC{INT}*, private DEFAULT_NULL
+!   atom_shell_4_shell :: VEC{INT}*, private DEFAULT_NULL
+!   first_shell_4_atom :: VEC{INT}*, private DEFAULT_NULL
+!   first_basis_fn_4_shell :: VEC{INT}*, private DEFAULT_NULL
+!   last_basis_fn_4_shell  :: VEC{INT}*, private DEFAULT_NULL
+!   angular_moment_4_shell :: VEC{INT}*, private DEFAULT_NULL
+!   first_basis_fn_4_atom  :: VEC{INT}*, private DEFAULT_NULL
+!   last_basis_fn_4_atom   :: VEC{INT}*, private DEFAULT_NULL
 
    ! Atom connection table, to save work
    connections_for :: VEC{VEC_{INT}}*, private DEFAULT_NULL
@@ -141,7 +142,7 @@ contains
    ! atomic numbers as well.
       labels :: VEC{STR}
    ENSURE(labels.dim==.dim,"wrong length for labels")
-      self(:).label = labels
+      self.label = labels
    end
 
    set_recognised_labels(list) ::: leaky
@@ -174,6 +175,37 @@ contains
          do a = 1,.dim
             self(a).coppensbasis.use_interpolator = use_interp
          end
+      end
+
+   end
+
+   set_unique_tags
+   ! Set the unqie tags.
+
+      atom_kind :: VEC{VEC_{INT}}*
+      a,k,n :: INT
+
+      if (.has_unique_labels) then
+
+         self.tag = self.label
+
+      else
+
+         ! Get the atom kinds
+         .make_atom_kind_list(atom_kind)
+
+         ! Label atoms consecutively by kind and number
+         do k = 1,atom_kind.dim
+         do n = 1,atom_kind(k).element.dim
+            a = atom_kind(k)[n]
+            if (self(a).is_a_dummy_atom) cycle
+            self(a).tag = trim(self(a).chemical_symbol) // trim(n.to_str)
+         end
+         end
+
+         ! Clean
+         atom_kind.destroy
+
       end
 
    end
@@ -325,19 +357,17 @@ contains
       word.to_lower_case
       select case (word)
        case("}") ! do nothing.
-      ! case("b_iso_to_u_iso                "); .B_iso_to_U_iso
        case("find_n_terminal_atoms         "); .find_N_terminal_atoms
        case("find_protein_backbone         "); .find_protein_backbone
        case("put                           "); .put
        case("put_bond_angle_table          "); .put_bond_angle_table
        case("put_bond_length_table         "); .put_bond_length_table
-       case("put_coord_info                "); .put_coord_info
        case("put_coordinates               "); .put_coordinates
        case("put_coordinates_and_charges   "); .put_coordinates_and_charges
        case("put_invariom_labels           "); .put_invariom_labels
        case("put_smiles_invariom_labels    "); .put_smiles_invariom_labels
        case("put_mm_info                   "); .put_mm_info
-       case("put_thermal_tensors           "); .put_thermal_tensors
+       case("put_adps                      "); .put_ADPs
        case("put_torsion_angle_table       "); .put_torsion_angle_table
        case("put_protein_sequence          "); .put_protein_sequence
        case("put_restraint_atoms           "); .put_restraint_atoms
@@ -397,14 +427,13 @@ contains
       self :: PTR
       cif :: CIF
 
-      fs,fc,fd,fo,fu,fl,fail :: BIN
+      fs,fc,fd,fo,fi,fu,fl,fail :: BIN
       IDs,labels,symbols :: VEC{STR}*
       disorder_group :: MAT{STR}*
       dg    :: STR
-      i,ind,n_atom :: INT
+      i,ind :: INT
       pos,U :: MAT{REAL}*
       U_iso :: VEC{REAL}*
-      list  :: VEC{INT}*
       unit_cell :: UNIT_CELL
       fac,a,b,c :: REAL
 
@@ -451,11 +480,11 @@ contains
       ENSURE(fc,"no atom coordinate information in CIF file")
 
       ! Assign the CIF info to the atom list
-      self(:).axis_system = "crystal"
-      self(:).pos(1) = pos(1,:)
-      self(:).pos(2) = pos(2,:)
-      self(:).pos(3) = pos(3,:)
-      if (fo) self(:).site_occupancy = pos(4,:)
+      self.axis_system = "crystal"
+      self.pos(1) = pos(1,:)
+      self.pos(2) = pos(2,:)
+      self.pos(3) = pos(3,:)
+      if (fo) self.site_occupancy = pos(4,:)
       pos.destroy
 
       ! Read the disorder, group if there
@@ -478,15 +507,16 @@ contains
       end
 
       ! Read the U_iso values if there
-      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fu)
-      if (fu) then
+      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fi)
+      if (fi) then
          ! Change units if required 
          if (cif.U_iso_is_B_iso) then
             fac = ONE/(EIGHT*PI*PI)
             U_iso = fac*U_iso
          end
          U_iso.convert_from("angstrom^2")
-         self(:).U_iso = U_iso
+         self.U_iso = U_iso
+         self.thermal_axis_system = "crystal"
          U_iso.destroy
       end
 
@@ -525,16 +555,22 @@ contains
          end
          U.convert_from("angstrom^2")
 
+         ! Check if distinct labels
+         DIE_IF(self.label.no_of_unique_elements/=.dim,"for the ADP's, every site symbol must be distinct!")
+
          ! Match the anisotropic U labels and assign the U tensors
          fail = FALSE
-         DIE_IF(self(:).label.no_of_unique_elements/=.dim,"for the ADP's, every site symbol must be distinct!")
          do i = 1,labels.dim
-            ind = self(:).label.index_of(labels(i))
+
+            ! Find matching index "ind"
+            ind = self.label.index_of(labels(i))
             if (ind<=0) then
-               WARN("label "//labels(i).trim//" cant be found, failed to read U's")
+               WARN("label "//labels(i).trim//" can't be found, failed to read U's")
                fail = TRUE 
                exit
             end
+
+            ! Assign ADP
             self(ind).thermal_tensor(1,1) = U(1,i)
             self(ind).thermal_tensor(2,2) = U(2,i)
             self(ind).thermal_tensor(3,3) = U(3,i)
@@ -544,14 +580,17 @@ contains
             self(ind).thermal_tensor(3,1) = U(5,i)
             self(ind).thermal_tensor(2,3) = U(6,i)
             self(ind).thermal_tensor(3,2) = U(6,i)
+
          end
+
          if (NOT fail) then
-            self(:).thermal_axis_system = "crystal"
+            self.thermal_axis_system = "crystal"
          else
             do i = 1,labels.dim
             self(i).thermal_tensor = ZERO
             end
          end
+      
       end
 
       if (fu) U.destroy
@@ -581,35 +620,35 @@ contains
    end
 
    read_CIF_ADPs(cif) ::: leaky
-   ! Read ADP information from a Crystallographic Information File, "cif".
-   ! It is an error if the thermal tensors are missing in the "cif" file.
-   ! It is an error if self is not defined or does not have the same
-   ! length as the ADP list. NOTE: it is up to you to ensure that the
-   ! atom order in the CIF is the same as the atom order in self.
+   ! Read information from a Crystallographic Information File, "cif".
+   ! It is an error if there are no atom coordinates in the file.
+   ! It is NOT an error if the thermal tensors are missing.
+   ! NOTE: self is destroyed and created from this file!
       self :: PTR
       cif :: CIF
-   ENSURE(.created,"no atom list exists")
-      fu  :: BIN
-      IDs :: VEC{STR}*
-      i   :: INT
-      U   :: MAT{REAL}*
+
+      fi,fu,fl,fail :: BIN
+      IDs,labels :: VEC{STR}*
+      i,ind :: INT
+      U :: MAT{REAL}*
       U_iso :: VEC{REAL}*
       unit_cell :: UNIT_CELL
       fac,a,b,c :: REAL
+
       ! Read the U_iso values if there
-      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fu)
-      if (fu) then
-         DIE_IF(U_iso.dim/=.dim,"inconsistent number of atoms and U's")
+      cif.read_looped_item("_atom_site_U_iso_or_equiv",U_iso,found=fi)
+      if (fi) then
          ! Change units if required 
          if (cif.U_iso_is_B_iso) then
             fac = ONE/(EIGHT*PI*PI)
             U_iso = fac*U_iso
          end
          U_iso.convert_from("angstrom^2")
-         self(:).U_iso = U_iso
-         self(:).thermal_axis_system = "crystal"
+         self.U_iso = U_iso
+         self.thermal_axis_system = "crystal"
          U_iso.destroy
       end
+
       ! Now read U tensor if it is there ...
       IDs.create(6)
       IDs = ["_atom_site_aniso_U_11", &
@@ -618,8 +657,11 @@ contains
              "_atom_site_aniso_U_12", &
              "_atom_site_aniso_U_13", &
              "_atom_site_aniso_U_23"]
+      cif.read_looped_item("_atom_site_aniso_label",labels,fl)
       cif.read_looped_items(IDs,U,found=fu)
-      if (fu) then
+
+      if (fl AND fu) then
+
          ! Change units if required 
          if (cif.U_is_B) then
             fac = ONE/(EIGHT*PI*PI)
@@ -641,29 +683,55 @@ contains
             end
          end
          U.convert_from("angstrom^2")
-         ! Match the labels and assign the U tensors
-         do i = 1,.dim
-            self(i).thermal_tensor(1,1) = U(1,i)
-            self(i).thermal_tensor(2,2) = U(2,i)
-            self(i).thermal_tensor(3,3) = U(3,i)
-            self(i).thermal_tensor(1,2) = U(4,i)
-            self(i).thermal_tensor(2,1) = U(4,i)
-            self(i).thermal_tensor(1,3) = U(5,i)
-            self(i).thermal_tensor(3,1) = U(5,i)
-            self(i).thermal_tensor(2,3) = U(6,i)
-            self(i).thermal_tensor(3,2) = U(6,i)
-            self(i).thermal_axis_system = "crystal"
+
+         ! Check if distinct labels
+         DIE_IF(self.label.no_of_unique_elements/=.dim,"for the ADP's, every site symbol must be distinct!")
+
+         ! Match the anisotropic U labels and assign the U tensors
+         fail = FALSE
+         do i = 1,labels.dim
+
+            ! Find matching index "ind"
+            ind = self.label.index_of(labels(i))
+            if (ind<=0) then
+               WARN("label "//labels(i).trim//" can't be found, failed to read U's")
+               fail = TRUE 
+               exit
+            end
+
+            ! Assign ADP
+            self(ind).thermal_tensor(1,1) = U(1,i)
+            self(ind).thermal_tensor(2,2) = U(2,i)
+            self(ind).thermal_tensor(3,3) = U(3,i)
+            self(ind).thermal_tensor(1,2) = U(4,i)
+            self(ind).thermal_tensor(2,1) = U(4,i)
+            self(ind).thermal_tensor(1,3) = U(5,i)
+            self(ind).thermal_tensor(3,1) = U(5,i)
+            self(ind).thermal_tensor(2,3) = U(6,i)
+            self(ind).thermal_tensor(3,2) = U(6,i)
+
          end
-         U.destroy
+
+         if (NOT fail) then
+            self.thermal_axis_system = "crystal"
+         else
+            do i = 1,labels.dim
+            self(i).thermal_tensor = ZERO
+            end
+         end
+      
       end
+
+      if (fu) U.destroy
+      if (fl) labels.destroy
       IDs.destroy
+
    end
 
    read_use_interpolators 
    ! Read whether to use interpolators for spherical atom densities
       self :: PTR
       use_interp :: BIN
-      a :: INT
 
       stdin.read(use_interp)
 
@@ -675,40 +743,30 @@ contains
 
 !*******************************************************************************
 
-   resolve_bases(basis,suffix,minmatch) 
+   resolve_bases(basis,suffix) 
    ! Resolve the basis sets for each atom -- by pointer assigning its basis to
    ! the element in "basis" which matches either the atoms .basis_label, or else
    ! matches a label constructed in a standard way, by joining the atom chemical
    ! symbol with the ":suffix" string.  
       basis :: VEC{BASIS}*
       suffix :: STR, optional
-      minmatch :: BIN, optional
 
       a :: INT
-      minmat :: BIN
 
-      if (present(minmatch)) minmatch = FALSE
-
-      minmat = FALSE
       do a = 1,.dim
-         self(a).resolve_basis(basis,suffix,minmatch=minmat)
-         if (present(minmatch)) then
-         if (minmat) then
-            minmatch = TRUE
-         end
-         end
+         self(a).resolve_basis(basis,suffix)
       end
 
    end
 
-   resolve_bases(basis,suffix,minmatch) ::: get_from(VEC{ATOM}, BASIS=>SLATERBASIS)
+   resolve_bases(basis,suffix) ::: get_from(VEC{ATOM}, BASIS=>SLATERBASIS)
    ! Resolve the basis sets for each atom -- by pointer assigning its basis to
    ! the element in "basis" which matches either the atoms .basis_label, or else
    ! matches a label constructed in a standard way, by joining the atom chemical
    ! symbol with the ":suffix" string.  
    end
 
-   resolve_bases(basis,suffix,minmatch) ::: get_from(VEC{ATOM}, BASIS=>COPPENSBASIS)
+   resolve_bases(basis,suffix) ::: get_from(VEC{ATOM}, BASIS=>COPPENSBASIS)
    ! Resolve the basis sets for each atom -- by pointer assigning its basis to
    ! the element in "basis" which matches either the atoms .basis_label, or else
    ! matches a label constructed in a standard way, by joining the atom chemical
@@ -721,146 +779,93 @@ contains
 
    put
    ! Output atom information, without full basis set info
+
       stdout.flush
-      stdout.show("Chemical Formula       =",trim(.chemical_formula))
+      stdout.text("*********************")
+      stdout.text("Atom list information")
+      stdout.text("*********************")
+      stdout.flush
+
+      stdout.show("Chemical Formula       =",trim(.chemical_formula(with_spaces=TRUE)))
       stdout.show("No of atoms            =",size(self))
       stdout.show("No of electrons        =",.no_of_electrons)
+
       if (.has_residue_codes) then; .put_mm_info
-      else;                         .put_coord_info
+      else;                         .put_coordinate_info
       end
       if (.has_restraints)          .put_restraint_atoms
+
    end
 
-   put_coord_info(all)
-   ! Output atom coordinate information, including bond lengths, angles,
-   ! without full basis set info
-      all :: BIN, IN, optional
+   put_coordinate_info
+   ! Output atom coordinate information, including bond lengths, angles
       .put_coordinates
-      .put_bond_length_table(all)
-      .put_bond_angle_table(all)
-      .put_torsion_angle_table(all)
+      .put_bond_length_table
+      .put_bond_angle_table
+    ! .put_torsion_angle_table(all)
    end
 
-   put_coordinates 
-   ! Output the atom coordinate information
-      has_basis_labels :: BIN
-      has_basis_labels = .bases_are_all_labeled &
-                      OR .coppensbases_are_all_labeled &
-                      OR .slaterbases_are_all_labeled
-      if (has_basis_labels) then
-        .put_coords_with_basis_label
-        .put_coords_with_basis_label(angstrom=TRUE)
-      else
-        .put_coords_without_basis_label
-        .put_coords_without_basis_label(angstrom=TRUE)
-      end
+!  Coordinate information
+
+   put_coordinates
+   ! Output the atom coordinates information.
+
+      fac :: REAL
+      xyz :: MAT{REAL}*
+      Z  :: VEC{REAL}*
+      ID :: VEC{STR}*
+      table :: VEC{TABLE_COLUMN}*
+
+      ! Use angstroms
+      fac = STR:conversion_factor("angstrom")
+
+      ! Get table column data
+      ID.create(.dim);    ID  = self.tag
+      Z.create(.dim);     Z   = self.nuclear_charge
+      xyz.create(.dim,3); .get_geometry(xyz); xyz = xyz * fac
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("================")
+      stdout.text("Atom coordinates")
+      stdout.text("================")
+      stdout.flush
+      stdout.show("No. of atoms =",.dim)
+      stdout.flush
+
+      ! Table headings
+      table.create(5)
+      table(1).set_heading("ID")
+      table(2).set_heading("Z")
+      table(2).set_subheading("/au")
+      table(2).set_real_precision(1)
+      table(3).set_heading("x")
+      table(4).set_heading("y")
+      table(4).set_subheading(trim("/A"))
+      table(5).set_heading("z")
+      table(3).set_width_from(xyz)
+      table(4).set_width(table(3).width)
+      table(5).set_width(table(3).width)
+
+      ! Set table column data
+      table(1).set_values(ID)
+      table(2).set_values(Z)
+      table(3).set_values(xyz(:,1))
+      table(4).set_values(xyz(:,2))
+      table(5).set_values(xyz(:,3))
+
+      ! Make the table
+      table.put
+
+      ! Clean
+      table.destroy
+      xyz.destroy
+      Z.destroy
+      ID.destroy
+
    end
 
-
-   put_coords_with_basis_label(angstrom) ::: private
-   ! Output the atom coordinates information, including the basis label,
-   ! but not the entire basis set.
-      self :: target
-      angstrom :: BIN, optional
-   ENSURE(.bases_are_all_labeled OR .coppensbases_are_all_labeled OR .slaterbases_are_all_labeled,"no bases")
-
-      i :: INT
-      label :: STR
-      in_angstrom,coppens,slater,gaussian :: BIN
-
-      in_angstrom = FALSE
-      if (present(angstrom)) in_angstrom = angstrom
-
-      gaussian = .bases_are_all_labeled
-      slater   = .slaterbases_are_all_labeled
-      coppens  = .coppensbases_are_all_labeled
-
-      stdout.flush
-      if (NOT in_angstrom) then
-      stdout.text("Atom list information:")
-      else
-      stdout.text("Atom list information (in angstrom):")
-      end
-      stdout.dash(int_fields=3,real_fields=4)
-      stdout.put("#",int_width=TRUE)
-      stdout.put("ID",int_width=TRUE)
-      stdout.put("Z",int_width=TRUE)
-      stdout.put("x")
-      stdout.put("y")
-      stdout.put("z")
-      stdout.put("Basis")
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=4)
-      do i = 1,.dim
-         stdout.put(i)
-         stdout.put(self(i).label,int_width=TRUE)
-         stdout.put(self(i).nuclear_charge,int_width=TRUE)
-         if (NOT in_angstrom) then
-         stdout.put(self(i).pos(1))
-         stdout.put(self(i).pos(2))
-         stdout.put(self(i).pos(3))
-         else
-         stdout.put(self(i).pos(1).to_units("angstrom"))
-         stdout.put(self(i).pos(2).to_units("angstrom"))
-         stdout.put(self(i).pos(3).to_units("angstrom"))
-         end
-         label = " "
-         if (gaussian)            label = self(i).basis.label
-         if (slater) then 
-            if (label/=" ") then; label = trim(label)//", "//trim(self(i).slaterbasis.label)
-            else;                 label = self(i).slaterbasis.label
-            end
-         end
-         if (coppens) then
-            if (label/=" ") then; label = trim(label)//", "//trim(self(i).coppensbasis.label)
-            else;                 label = self(i).coppensbasis.label
-            end
-         end
-         stdout.put(label)
-         stdout.flush
-      end
-      stdout.dash(int_fields=3,real_fields=4)
-   end
-
-   put_coords_without_basis_label(angstrom) ::: private
-   ! Output the atom coordinates information, without basis set label
-      angstrom :: BIN, optional
-      i :: INT
-      in_angstrom,coppens :: BIN
-      in_angstrom = FALSE
-      if (present(angstrom)) in_angstrom = angstrom
-      stdout.flush
-      if (NOT in_angstrom) then
-      stdout.text("Atom list information:")
-      else
-      stdout.text("Atom list information (in angstrom):")
-      end
-      stdout.dash(int_fields=3,real_fields=3)
-      stdout.put("#",int_width=TRUE)
-      stdout.put("ID",int_width=TRUE)
-      stdout.put("Z",int_width=TRUE)
-      stdout.put("x")
-      stdout.put("y")
-      stdout.put("z")
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=3)
-      do i = 1,.dim
-         stdout.put(i)
-         stdout.put(self(i).label,int_width=TRUE)
-         stdout.put(self(i).nuclear_charge)
-         if (NOT in_angstrom) then
-         stdout.put(self(i).pos(1))
-         stdout.put(self(i).pos(2))
-         stdout.put(self(i).pos(3))
-         else
-         stdout.put(self(i).pos(1).to_units("angstrom"))
-         stdout.put(self(i).pos(2).to_units("angstrom"))
-         stdout.put(self(i).pos(3).to_units("angstrom"))
-         end
-         stdout.flush
-      end
-      stdout.dash(int_fields=3,real_fields=3)
-   end
 
    put_pdb(pdbfile)
    ! Output the atoms in pdb file format to "pdbfile" (blame Birger)
@@ -990,12 +995,12 @@ contains
          if (position_number==" ") then
          pdbfile.tab(width=1)
          else
-         pdbfile.put(position_number,width=1,left_justify=TRUE)
+         pdbfile.put(position_number,width=1,left=TRUE)
          end
-         pdbfile.put(element_name,width=len_trim(element_name),left_justify=TRUE)
+         pdbfile.put(element_name,width=len_trim(element_name),left=TRUE)
          if (position_symbol.is_included_in("'abcgdentz")) then 
          position_symbol.to_upper_case
-         pdbfile.put(position_symbol,width=1,left_justify=TRUE)
+         pdbfile.put(position_symbol,width=1,left=TRUE)
          pdbfile.tab(width=1)
          else
          pdbfile.tab(width=2)
@@ -1004,7 +1009,7 @@ contains
          if (element_len == 1) then
          pdbfile.tab(width=1)
          end
-         pdbfile.put(three_letter_code,width=3,left_justify=TRUE)
+         pdbfile.put(three_letter_code,width=3,left=TRUE)
          pdbfile.tab(width=2)
          pdbfile.put(residue_number,width=4)
          pdbfile.tab(width=4)
@@ -1029,12 +1034,12 @@ contains
          if (position_number==" ") then
          pdbfile.tab(width=1)
          else
-         pdbfile.put(position_number,width=1,left_justify=TRUE)
+         pdbfile.put(position_number,width=1,left=TRUE)
          end
-         pdbfile.put(element_name,width=len_trim(element_name),left_justify=TRUE)
+         pdbfile.put(element_name,width=len_trim(element_name),left=TRUE)
          if (position_symbol.is_included_in("'ABCGDENTZ")) then 
          position_symbol.to_upper_case
-         pdbfile.put(position_symbol,width=1,left_justify=TRUE)
+         pdbfile.put(position_symbol,width=1,left=TRUE)
          pdbfile.tab(width=1)
          else
          pdbfile.tab(width=2)
@@ -1043,7 +1048,7 @@ contains
          if (element_len == 1) then
          pdbfile.tab(width=1)
          end
-         pdbfile.put(three_letter_code,width=3,left_justify=TRUE)
+         pdbfile.put(three_letter_code,width=3,left=TRUE)
          pdbfile.tab(width=2)
          pdbfile.put(residue_number,width=4)
          pdbfile.tab(width=2)
@@ -1070,7 +1075,6 @@ contains
       pdbfile.unsave
    end
 
-
    put_coordinates_and_charges
    ! Output the atom coordinate information
       .put_coords_and_charges
@@ -1081,7 +1085,7 @@ contains
    ! Output the atom coordinates and charges
       angstrom :: BIN, optional
       i :: INT
-      in_angstrom,coppens :: BIN
+      in_angstrom :: BIN
       in_angstrom = FALSE
       if (present(angstrom)) in_angstrom = angstrom
       stdout.flush
@@ -1119,125 +1123,435 @@ contains
       stdout.dash(int_fields=3,real_fields=4)
    end
 
+!  Bond lengths
 
-   list_symbol(a) result (res) ::: private
-   ! Return the chemical symbol and atomvec number of atom "a".
-   ! e.g., "Na (3)"
-      a :: INT
-      res :: STR
-      res =  trim(self(a).label) // " (" // trim(a.to_str) // ")"
-   end
+   put_bond_length_table ::: private
+   ! Output the bond length table.
 
-   put_bond_length_table(all) ::: private
-   ! Output the bond length table. If "all" is present and true, put out all
-   ! possible bond lengths
-      all :: BIN, IN, optional
-      print_all_bonds :: BIN
+      table :: VEC{TABLE_COLUMN}*
       atom_kind :: VEC{VEC_{INT}}*
-      n_k,k,l,kk,ll,a,b :: INT
-      symbol_a,symbol_b :: STR
-      r_ab :: REAL
-      print_all_bonds = FALSE
-      if (present(all)) print_all_bonds = all
+      has_unique_labels :: BIN
+      n_kind,k1,k2,n_bonds :: INT
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      pair :: MAT{INT}*
+      dist :: VEC{REAL}*
+
       if (.dim<2) return
-      if (.no_of_bonds<1 AND NOT print_all_bonds) return
+      if (.no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .has_unique_labels
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("============")
+      stdout.text("Bond lengths")
+      stdout.text("============")
+      stdout.flush
+      stdout.show("No. of bonds =",.no_of_bonds)
+      stdout.flush
+      stdout.text("The bond-detection criteria is the same as used")
+      stdout.text("by the Cambridge Structural Database (CSD).")
+      stdout.flush
+      if (has_unique_labels) then
+      stdout.text("You have set unique labels for each atom.")
+      stdout.text("Those labels are used below.")
+      else
+      stdout.text("You have not set unique lables for each atom.")
+      stdout.text("Therefore, atom number tags are used below.")
+      end
+      stdout.flush
+
+      ! Get atom kind list
       .make_atom_kind_list(atom_kind)
-      n_k = size(atom_kind)
-      stdout.flush
-      stdout.text("Bond lengths:")
-      stdout.flush
-      stdout.show("No. of independent bonds  =",.no_of_bonds)
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=2)
-      stdout.put("Atom_a",int_width=TRUE)
-      stdout.put("Atom_b",int_width=TRUE)
-      stdout.put("r_ab/au")
-      stdout.put("r_ab/Angstrom")
-      stdout.flush
-      stdout.dash(int_fields=2,real_fields=2)
-      do k = 1,n_k
-      do kk = 1,size(atom_kind(k).element)
-         a = atom_kind(k).element(kk)
-         symbol_a = .list_symbol(a)
-         do l = 1,n_k
-         do ll = 1,size(atom_kind(l).element)
-            b = atom_kind(l).element(ll)
-            symbol_b = .list_symbol(b)
-            if (a>=b) cycle
-            if (NOT print_all_bonds AND NOT .bonded(a,b)) cycle
-            r_ab = .bond_distance(a,b)
-            stdout.put(symbol_a,int_width=TRUE)
-            stdout.put(symbol_b,int_width=TRUE)
-            stdout.put(r_ab)
-            stdout.put(r_ab*ANGSTROM_PER_BOHR)
-            stdout.flush
+
+      ! Skip dummy atoms
+      n_kind = atom_kind.dim
+      if (self(atom_kind(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(7)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(self.chemical_symbols)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_heading("B")
+      table(3).set_width(table(1).width)
+      table(3).set_left_justify(TRUE)
+
+      table(4).set_heading("A")
+      table(4).set_width_from(self.tag)
+
+      table(5).set_spacing(0)
+      table(5).set_heading("--")
+      table(5).set_width(2)
+
+      table(6).set_heading("B")
+      table(6).set_width(table(4).width)
+      table(6).set_left_justify(TRUE)
+
+      table(7).set_heading("R(A--B)")
+      table(7).set_subheading("/A")
+      table(7).set_width_from(ONE)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = k1,n_kind
+
+         ! Get the bonded atoms per kind
+         .get_bonded_atoms(pair,dist,atom_kind,k1,k2)
+         dist = dist*ANGSTROM_PER_BOHR
+
+         ! No of bonds in this class
+         n_bonds = dist.dim
+         if (n_bonds==0) then
+            dist.destroy
+            pair.destroy
+            cycle
          end
-         end
+
+         ! Element symbols
+         symbols.create(n_bonds,2)
+         symbols = " "
+         symbols(1,1) = self(atom_kind(k1)[1]).chemical_symbol
+         symbols(1,2) = self(atom_kind(k2)[1]).chemical_symbol
+
+         ! Labels
+         labels.create(n_bonds,2)
+         labels(:,1) = self(pair(:,1)).tag
+         labels(:,2) = self(pair(:,2)).tag
+
+         ! Dashes
+         dash.create(n_bonds)
+         dsh1.create(n_bonds)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Set table data
+         table(1).set_values(symbols(:,1))
+         table(2).set_values(dsh1)
+         table(3).set_values(symbols(:,2))
+         table(4).set_values(labels(:,1))
+         table(5).set_values(dash)
+         table(6).set_values(labels(:,2))
+         table(7).set_values(dist)
+
+         ! Put body
+         table.put_body(label_rows=FALSE)
+         stdout.flush
+
+         ! Clean
+         table.clear_columns
+         dsh1.destroy
+         dash.destroy
+         labels.destroy
+         symbols.destroy
+         dist.destroy
+         pair.destroy
+
       end
       end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.clear_columns
+      table.destroy
       atom_kind.destroy
-      stdout.dash(int_fields=2,real_fields=2)
+
    end
 
-   put_bond_angle_table(all) ::: private
-   ! Output the bond length table. If "all" is present and true, put out all
-   ! possible angles
-      all :: BIN, IN, optional
-      print_all_angles :: BIN
-      atom_kind :: VEC{VEC_{INT}}*
-      n_k,k,l,m,kk,ll,mm,a,b,c :: INT
-      symbol_a,symbol_b,symbol_c :: STR
-      theta_abc :: REAL
-      print_all_angles = FALSE
-      if (present(all)) print_all_angles = all
-      if (.dim<3 ) return
-      if (.no_of_angles<1 AND NOT print_all_angles) return
-      if (.no_of_angles>100 AND NOT print_all_angles) return
-      .make_atom_kind_list(atom_kind)
-      n_k = size(atom_kind)
-      stdout.flush
-      stdout.text("Bond angles (b the central atom):")
-      stdout.flush
-      stdout.show("No. of independent angles =",.no_of_angles)
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=1)
-      stdout.put("Atom_a",int_width=TRUE)
-      stdout.put("Atom_b",int_width=TRUE)
-      stdout.put("Atom_c",int_width=TRUE)
-      stdout.put("Angle_abc/degrees")
-      stdout.flush
-      stdout.dash(int_fields=3,real_fields=1)
-      do k = 1,n_k
-      do kk = 1,size(atom_kind(k).element)
-         a = atom_kind(k).element(kk)
-         symbol_a = .list_symbol(a)
-         do l = 1,n_k
-         do ll = 1,size(atom_kind(l).element)
-            b = atom_kind(l).element(ll)
-            if (a==b) cycle
-            if (NOT print_all_angles AND NOT .bonded(a,b)) cycle
-            symbol_b = .list_symbol(b)
-            do m = 1,n_k
-            do mm = 1,size(atom_kind(m).element)
-               c = atom_kind(m).element(mm)
-               if (b==c OR c==a) cycle
-               if (NOT print_all_angles AND NOT .bonded(b,c)) cycle
-               symbol_c = .list_symbol(c)
-               theta_abc = .bond_angle(a,b,c,degrees=TRUE)
-               stdout.put(symbol_a,int_width=TRUE)
-               stdout.put(symbol_b,int_width=TRUE)
-               stdout.put(symbol_c,int_width=TRUE)
-               stdout.put(theta_abc)
-               stdout.flush
-            end
-            end
-         end
+   get_bonded_atoms(pair,dist,atom_kind,k1,k2) ::: leaky, private
+   ! Get the bonded-atom "pair"s, and the distances "dist" between
+   ! them. The pair has "atom_kind" of "k1" and "k2", respectively.
+      pair :: MAT{INT}*
+      dist :: VEC{REAL}*
+      atom_kind :: VEC{VEC_{INT}}, IN
+      k1,k2 :: INT, IN
+
+      i1,i2,a1,a2, n :: INT
+
+      ! How many pairs, n, are there?
+      n = 0
+      do i1 = 1,atom_kind(k1).element.dim
+         a1 = atom_kind(k1)[i1]
+         do i2 = 1,atom_kind(k2).element.dim
+            a2 = atom_kind(k2)[i2]
+            if (k1==k2 AND a1>=a2) cycle
+            if (NOT .bonded(a1,a2)) cycle
+            n = n + 1
          end
       end
+
+      ! Allocate
+      pair.create(n,2)
+      dist.create(n)
+
+      ! Make the list
+      n = 0
+      do i1 = 1,atom_kind(k1).element.dim
+         a1 = atom_kind(k1)[i1]
+         do i2 = 1,atom_kind(k2).element.dim
+            a2 = atom_kind(k2)[i2]
+            if (k1==k2 AND a1>=a2) cycle
+            if (NOT .bonded(a1,a2)) cycle
+            n = n + 1
+            pair(n,1) = a1
+            pair(n,2) = a2
+            dist(n)   = .bond_distance(a1,a2)
+         end
       end
-      atom_kind.destroy
-      stdout.dash(int_fields=3,real_fields=1)
+
    end
+
+!  Bond angles
+
+   put_bond_angle_table ::: private
+   ! Output the bond angle table.
+
+      table :: VEC{TABLE_COLUMN}*
+      atom_kind :: VEC{VEC_{INT}}*
+      has_unique_labels :: BIN
+      n_kind,k1,k2,k3,n_angles,w :: INT
+      symbols,labels :: MAT{STR}*
+      dash,dsh1 :: VEC{STR}*
+      triple :: MAT{INT}*
+      angle :: VEC{REAL}*
+      val :: STR
+
+      if (.dim<3) return
+      if (.no_of_bonds<1) return
+
+      ! Has unique labels?
+      has_unique_labels = .has_unique_labels
+
+      ! Title
+      stdout.flush
+      stdout.flush
+      stdout.text("===========")
+      stdout.text("Bond Angles")
+      stdout.text("===========")
+      stdout.flush
+      stdout.show("No. of angles =",.no_of_angles)
+      stdout.flush
+      stdout.text("Atom B of Angle(A--B--C) is the middle atom.")
+      stdout.flush
+      if (has_unique_labels) then
+      stdout.text("You have set unique labels for each atom.")
+      stdout.text("Those labels are used below.")
+      else
+      stdout.text("You have not set unique labels for each atom.")
+      stdout.text("Therefore, atom number tags are used below.")
+      end
+      stdout.flush
+
+      ! Get atom kind list 
+      .make_atom_kind_list(atom_kind)
+
+      ! Skip dummy atoms
+      n_kind = atom_kind.dim
+      if (self(atom_kind(n_kind)[1]).atomic_number==0) n_kind = n_kind - 1
+
+      ! Create table
+      table.create(11)
+
+      ! Set the table headings
+      table(1).set_heading("A")
+      table(1).set_width_from(.chemical_symbols)
+
+      table(2).set_spacing(0)
+      table(2).set_heading("--")
+      table(2).set_width(2)
+
+      table(3).set_spacing(0)
+      table(3).set_heading("B")
+      table(3).set_width_from(.chemical_symbols)
+
+      table(4).set_spacing(0)
+      table(4).set_heading("--")
+      table(4).set_width(2)
+
+      table(5).set_spacing(0)
+      table(5).set_heading("C")
+      table(5).set_width(table(2).width)
+      table(5).set_left_justify(TRUE)
+
+      table(6).set_heading("A")
+      table(6).set_width_from(self(.angle_outer_atoms).tag)
+
+      table(7).set_spacing(0)
+      table(7).set_heading("--")
+      table(7).set_width(2)
+
+      table(8).set_spacing(0)
+      table(8).set_heading("B")
+      table(8).set_width_from(self(.angle_center_atoms).tag)
+      w = table(8).width
+      val = "B"
+      val(1:w).center_justify
+      val(1:w).replace_all(" ","-")
+      table(8).set_heading(val(1:w))
+
+      table(9).set_spacing(0)
+      table(9).set_heading("--")
+      table(9).set_width(2)
+
+      table(10).set_spacing(0)
+      table(10).set_heading("C")
+      table(10).set_width_from(self(.angle_outer_atoms).tag)
+      table(10).set_left_justify(TRUE)
+
+      table(11).set_heading("Angle(A--B--C)")
+      table(11).set_subheading("/degree")
+      table(11).set_width_from(ONE)
+
+      ! Put out the headings
+      table.put_headings(label_rows=FALSE)
+
+      ! Loop over atom kind classes
+      do k1 = 1,n_kind
+      do k2 = 1,n_kind
+      do k3 = 1,n_kind
+
+         ! Get the bonded atoms per kind
+         .get_bonded_angles(triple,angle,atom_kind,k1,k2,k3)
+         angle = angle*DEGREE_PER_RADIAN
+
+         ! No of bonds in this class
+         n_angles = angle.dim
+         if (n_angles==0) then
+            angle.destroy
+            triple.destroy
+            cycle
+         end
+
+         ! Element symbols
+         symbols.create(n_angles,3)
+         symbols = " "
+         symbols(1,1) = self(atom_kind(k1)[1]).chemical_symbol
+         symbols(1,2) = self(atom_kind(k2)[1]).chemical_symbol
+         symbols(1,3) = self(atom_kind(k3)[1]).chemical_symbol
+
+         ! Labels
+         labels.create(n_angles,3)
+         labels(:,1) = self(triple(:,1)).tag
+         labels(:,2) = self(triple(:,2)).tag
+         labels(:,2).pad_with("-",width=w,prepad=TRUE)
+         labels(:,3) = self(triple(:,3)).tag
+
+         ! Dashes
+         dash.create(n_angles)
+         dsh1.create(n_angles)
+         dash    = "--"
+         dsh1    = "  "
+         dsh1(1) = "--"
+
+         ! Set table data
+         table(1).set_values(symbols(:,1))
+         table(2).set_values(dsh1)
+         table(3).set_values(symbols(:,2))
+         table(4).set_values(dsh1)
+         table(5).set_values(symbols(:,3))
+         table(6).set_values(labels(:,1))
+         table(7).set_values(dash)
+         table(8).set_values(labels(:,2))
+         table(9).set_values(dash)
+         table(10).set_values(labels(:,3))
+         table(11).set_values(angle)
+
+         ! Put body
+         table.put_body(label_rows=FALSE)
+         if (NOT (k1==n_kind AND k2==n_kind AND k3==n_kind)) stdout.flush
+
+         ! Clean
+         table.clear_columns
+         dsh1.destroy
+         dash.destroy
+         labels.destroy
+         symbols.destroy
+         angle.destroy
+         triple.destroy
+
+      end
+      end
+      end
+
+      ! Table footer
+      table.put_footer(label_rows=FALSE)
+
+      ! Clean
+      table.destroy
+      atom_kind.destroy
+
+   end
+
+   get_bonded_angles(triple,angle,atom_kind,k1,k2,k3) ::: leaky, private
+   ! Get the bonded-atom "triple"s, and the "angles" between them. The
+   ! triplehas "atom_kind" of "k1", "k2", and "k3", respectively.
+      triple :: MAT{INT}*
+      angle :: VEC{REAL}*
+      atom_kind :: VEC{VEC_{INT}}, IN
+      k1,k2,k3 :: INT, IN
+
+      i1,i2,i3,a1,a2,a3, n :: INT
+
+      ! How many triples, n, are there?
+      n = 0
+      do i1 = 1,atom_kind(k1).element.dim
+         a1 = atom_kind(k1)[i1]
+         do i2 = 1,atom_kind(k2).element.dim
+            a2 = atom_kind(k2)[i2]
+            if (NOT .bonded(a1,a2)) cycle
+            do i3 = 1,atom_kind(k3).element.dim
+               a3 = atom_kind(k3)[i3]
+               if (a3==a1 OR a3==a2) cycle
+               if (NOT .bonded(a2,a3)) cycle
+               if (a3<a1) cycle
+               n = n + 1
+            end
+         end
+      end
+
+      ! Allocate
+      triple.create(n,3)
+      angle.create(n)
+
+      ! Make the list
+      n = 0
+      do i1 = 1,atom_kind(k1).element.dim
+         a1 = atom_kind(k1)[i1]
+         do i2 = 1,atom_kind(k2).element.dim
+            a2 = atom_kind(k2)[i2]
+            if (NOT .bonded(a1,a2)) cycle
+            do i3 = 1,atom_kind(k3).element.dim
+               a3 = atom_kind(k3)[i3]
+               if (a3==a1 OR a3==a2) cycle
+               if (NOT .bonded(a2,a3)) cycle
+               if (a3<a1) cycle
+               n = n + 1
+               triple(n,1) = a1
+               triple(n,2) = a2
+               triple(n,3) = a3
+               angle(n) = .bond_angle(a1,a2,a3)
+            end
+         end
+      end
+
+   end
+
+!  Torsions angles
 
    put_torsion_angle_table(all) ::: private
    ! Output the torsion angle table. If "all" is present and true, put out all
@@ -1318,78 +1632,80 @@ contains
       stdout.dash(int_fields=4,real_fields=1)
    end
 
-   put_thermal_tensors(cell)
+   list_symbol(a) result (res) ::: private
+   ! Return the chemical symbol and atomvec number of atom "a".
+   ! e.g., "Na (3)"
+      a :: INT
+      res :: STR
+      res =  trim(self(a).label) // " (" // trim(a.to_str) // ")"
+   end
+
+!  ADP's
+
+   put_ADPs(cell)
    ! Output the thermal tensors. If present, "cell" is used to change the
    ! thermal tensors to the crystal axis system and then print them out; the
    ! thermal tensors are changed back afterwards.
       cell :: UNIT_CELL, IN, optional
+
    ENSURE(.has_cartesian_thermal_axes,"thermals tensors are not in cartesian system")
-      if (.has_U_iso) then
-         stdout.flush
-         stdout.text("Isotropic thermal factors U_iso in cartesian coordinates/(bohr^2):")
-         .put_U_iso_helper
-         stdout.text("Isotropic thermal factors U_iso in cartesian coordinates/(angstrom^2):")
-         .put_U_iso_helper(units="angstrom^2")
-      end
-      if (.has_thermal_tensors) then
-         stdout.flush
-         stdout.text("Thermal tensors (ADP's) in cartesian coordinates/(bohr^2):")
-         .put_thermal_tensors_helper
-         stdout.text("Thermal tensors (ADP's) in cartesian coordinates/(angstrom^2):")
-         .put_thermal_tensors_helper(units="angstrom^2")
-         if (present(cell)) then
-            .change_thermal_axis_system_to("crystal",cell)
-            stdout.text("Thermal tensors in crystal axis system/(angstrom^2):")
-            .put_thermal_tensors_helper(units="angstrom^2")
-            .change_thermal_axis_system_to("cartesian",cell)
-         end
-      end
+
+      if (NOT .has_thermal_tensors) return
+
+      stdout.flush
+      stdout.flush
+      stdout.text("Anisotropic ADP's (cartesian axes):")
+      .put_ADP_helper(units="angstrom^2")
+
+ !    stdout.text("Anisotropic ADP's (crystal axes)):")
+ !    .put_ADP_helper(units="angstrom^2")
+ !    .change_thermal_axis_system_to("cartesian",cell)
+
    end
 
-   put_U_iso_helper(units) ::: private
-   ! Output the U_iso values -- helper routine. 
-      units :: STR, optional
-      i :: INT
-      fac :: REAL
-      fac = ONE
-      if (present(units)) fac.convert_to(units)
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=1)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("U_iso")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=1)
-      do i = 1,size(self)
-        stdout.put(i)
-        stdout.put(fac*self(i).U_iso)
-        stdout.flush
-      end
-      stdout.dash(int_fields=1,real_fields=1)
-      stdout.flush
-   end
-
-   put_thermal_tensors_helper(units) ::: private
+   put_ADP_helper(units) ::: private
    ! Output the thermal tensors -- helper routine. 
       units :: STR, optional
-      i :: INT
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=6)
-      stdout.put("Atom",int_width=TRUE)
-      stdout.put("U11")
-      stdout.put("U22")
-      stdout.put("U33")
-      stdout.put("U12")
-      stdout.put("U13")
-      stdout.put("U23")
-      stdout.flush
-      stdout.dash(int_fields=1,real_fields=6)
-      do i = 1,size(self)
-        stdout.put(i)
-        self(i).put_thermal_tensor(units)
-        stdout.flush
-      end
-      stdout.dash(int_fields=1,real_fields=6)
-      stdout.flush
+
+      fac :: REAL
+      Uis,Uxx,Uyy,Uzz,Uxy,Uxz,Uyz :: VEC{REAL}*
+      table :: VEC{TABLE_COLUMN}*
+
+      fac = ONE
+      if (present(units)) fac.convert_to(units)
+
+      ! Data
+      Uis.create(.dim)
+      Uxx.create(.dim); Uyy.create(.dim); Uzz.create(.dim)
+      Uxy.create(.dim); Uxz.create(.dim); Uyz.create(.dim)
+      Uis = fac*.U_iso
+      Uxx = fac*.thermal_tensor(1,1)
+      Uyy = fac*.thermal_tensor(2,2)
+      Uzz = fac*.thermal_tensor(3,3)
+      Uxy = fac*.thermal_tensor(1,2)
+      Uxz = fac*.thermal_tensor(1,3)
+      Uyz = fac*.thermal_tensor(2,3)
+
+      ! Table
+      table.create(7)
+      table(1).set_heading("Uiso"); table(1).set_values(Uis)
+      table(2).set_heading("U_xx"); table(2).set_values(Uxx)
+      table(3).set_heading("U_yy"); table(3).set_values(Uyy)
+      table(4).set_heading("U_zz"); table(4).set_values(Uzz)
+      table(5).set_heading("U_xy"); table(5).set_values(Uxy)
+      table(6).set_heading("U_xz"); table(6).set_values(Uxz)
+      table(7).set_heading("U_yz"); table(7).set_values(Uyz)
+      table(1).set_subheading("/A^2")
+      table(4).set_subheading("/A^2")
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      Uyz.destroy; Uxz.destroy; Uxy.destroy
+      Uzz.destroy; Uyy.destroy; Uxx.destroy
+      Uis.destroy
+      
    end
 
    put_mm_info ::: private
@@ -1485,6 +1801,8 @@ contains
       stdout.text("Principal axes:")
       stdout.put(pa)
    end
+
+! VRML
 
    put_vrml(out)
    ! Put vrml version of the atomvec to the file in object "out".
@@ -1586,8 +1904,8 @@ contains
        end
        colour = colour / 256
        out.text("Atom {")
-       out.text(" col " // trim(colour.to_str("f15.8",separator=", ")))
-       out.text(" pos " // trim(self(n).pos.to_str("f15.8",separator=", ")))
+       out.text(" col " // trim(colour.to_concatenated_str("f15.8",separator=", ")))
+       out.text(" pos " // trim(self(n).pos.to_concatenated_str("f15.8",separator=", ")))
        out.text(" rad " // trim(radius.to_str("f15.8")))
        out.text("}")
       end
@@ -1648,15 +1966,15 @@ contains
            col_a = col_a / 256
            col_b = col_b / 256
            out.text("Bond {")
-           out.text(" col " //  trim(col_a.to_str("f15.8",separator=", ")))
-           out.text(" pos " //  trim(pos1.to_str("f15.8",separator=", ")))
-           out.text(" rot " //  trim(rot.to_str("f15.8",separator=", ")))
+           out.text(" col " //  trim(col_a.to_concatenated_str("f15.8",separator=", ")))
+           out.text(" pos " //  trim(pos1.to_concatenated_str("f15.8",separator=", ")))
+           out.text(" rot " //  trim(rot.to_concatenated_str("f15.8",separator=", ")))
            out.text(" hgt " //  trim(hgta.to_str("f15.8")))
            out.text("}")
            out.text("Bond {")
-           out.text(" col " //  trim(col_b.to_str("f15.8",separator=", ")))
-           out.text(" pos " //  trim(pos2.to_str("f15.8",separator=", ")))
-           out.text(" rot " //  trim(rot.to_str("f15.8",separator=", ")))
+           out.text(" col " //  trim(col_b.to_concatenated_str("f15.8",separator=", ")))
+           out.text(" pos " //  trim(pos2.to_concatenated_str("f15.8",separator=", ")))
+           out.text(" rot " //  trim(rot.to_concatenated_str("f15.8",separator=", ")))
            out.text(" hgt " //  trim(hgtb.to_str("f15.8")))
            out.text("}")
          end
@@ -1688,32 +2006,6 @@ contains
       stdout.unsave
       list.destroy
    end
-
-!   put_all_interpolators
-!   ! Put out all the atom interpolators, up to a given atomic number.
-!   ENSURE(.groups_defined,"no atom group information")
-!      n,i :: INT
-!      list :: VEC{VEC_{INT}}*
-!      .make_interpolator
-!      .make_atom_group_lists(list)
-!      stdout.save
-!      stdout.set_int_width(3)
-!      stdout.set_n_fields_per_line(25)
-!      stdout.set_using_array_labels(FALSE)
-!      stdout.flush
-!      stdout.text("Atom group information")
-!      stdout.flush
-!      stdout.show("n_groups =",list.dim)
-!      do n = 1,list.dim
-!         stdout.put("group "// trim(n.to_str) //"  =")
-!         do i = 1,list(n).element.dim
-!            stdout.put(list(n).element(i))
-!         end
-!         stdout.flush
-!      end
-!      stdout.unsave
-!      list.destroy
-!   end
 
    put_CX(label,angstrom)
    ! Outputs some information for the Crystal Explorer program
@@ -1755,7 +2047,6 @@ contains
    ! Output the atoms in CIF format to "stdout"
 
       i :: INT
-      label :: STR
 
       ! Save CIF settings for later
       stdout.save
@@ -2041,7 +2332,7 @@ contains
       i,k :: INT
 
       ! Coordinates in crystal axis system
-      stdout.show("Coordinates refined at T = ",temperature)
+      stdout.show("Coordinates refined at T =",temperature)
       stdout.flush
       k = 0
       do i = 1,.dim
@@ -2069,7 +2360,7 @@ contains
       end
 
       ! ADP's in crystal (CIF) axis system, angstrom^2 units
-      stdout.show("ADP's refined at T = ",temperature)
+      stdout.show("ADP's refined at T =",temperature)
       stdout.flush
       k = 0
       do i = 1,.dim
@@ -2532,10 +2823,7 @@ contains
 
       unit :: MAT{REAL}(3,3)
       r1,r2,r3 :: VEC{REAL}(3)
-      n_H,h,i,x, fh,lh :: INT
-
-      ! No of H atoms
-      n_H = count(self.atomic_number==1)
+      h,i,x, fh,lh :: INT
 
       ! Make the connection table
       .make_connection_table
@@ -2590,9 +2878,9 @@ contains
 
    end
 
-!  *************************
-!  Geometry unit conversions
-!  *************************
+!  ********************
+!  Geometry conversions
+!  ********************
 
    resolve_axis_system(cell)
    ! Change the atom axis systems to cartesian, from crystal, if required.
@@ -2650,49 +2938,9 @@ contains
       end
    end
 
-   get_coordinates(coord)
-   ! Get the atom coordinates in a matrix object "coord"
-      coord :: MAT{REAL}
-       a :: INT
-      if (size(coord,1)==3) then
-         do a = 1,.dim
-            coord(:,a) = self(a).pos
-         end
-      else if (size(coord,2)==3) then
-         do a = 1,.dim
-            coord(a,:) = self(a).pos
-         end
-      else
-         DIE("wrong shape for coordinate matrix")
-      end
-   end
-
-   coordinates result (coord)
-   ! Get the atom coordinates in a matrix object "coord"
-      coord :: MAT{REAL}(3,.dim)
-      a :: INT
-      do a = 1,.dim
-         coord(:,a) = self(a).pos
-      end
-   end
-
-   transposed_coordinates result (coord)
-   ! Get the atom coordinates in a matrix object "coord"
-      coord :: MAT{REAL}(.dim,3)
-      a :: INT
-      do a = 1,.dim
-         coord(a,:) = self(a).pos
-      end
-   end
-
-   get_mean_neutron_numbers(NN)
-   ! Get the atom coordinates in a matrix object "coord"
-      NN :: VEC{REAL}
-       a :: INT
-      do a = 1,.dim
-         NN(a) = self(a).mean_neutron_number
-      end
-   end
+!  ***************
+!  Chamge geometry
+!  ***************
 
    extend_bond_lengths(z1,z2,factor) 
    ! Uniformly extend the bond lengths between all BONDED atoms with atomic
@@ -2769,87 +3017,54 @@ contains
 !  Information methods
 !  *******************
 
-   sum_of_atomic_numbers result (res)
-   ! Return the sum of the atomic numbers
-   ! Note: dummy atoms have zero atomic numbers and don't contribute
-      res :: REAL
-      res = sum(self(:).atomic_number)
+   no_of_dummy_atoms result (res) ::: pure
+   ! Return the number of dummy atoms
+      self :: IN
+      res :: INT
+      res = count(ATOM:is_a_dummy_atom(self))
    end
 
-   atomic_numbers result (res)
-   ! Return the atomic numbers as a vector
-   ! Note: dummy atoms are included in this list
-      res :: VEC{REAL}(size(self))
-      res = self(:).atomic_number
+   dummy_atoms result (ind) ::: pure
+   ! Return the list of dummy atoms
+      self :: IN
+      ind :: VEC{INT}(.no_of_dummy_atoms)
+      i :: INT
+      ind = pack([(i, i=1,.dim)],mask=ATOM:is_a_dummy_atom(self))
    end
 
-   nuclear_energy result (res)
-   ! Return the nuclear repulsion energy.
-   ! Only does the energy from "real" atoms, not dummy atoms
-      res :: REAL
-      i,j,qi,qj :: INT
-      radius :: VEC{REAL}(3)
-      res = ZERO
-      do i=1,.dim
-         qi = self(i).atomic_number
-         do j=1,i-1
-            qj = self(j).atomic_number
-            radius =  self(j).pos - self(i).pos
-            res = res + qi * qj / sqrt( radius.dot(radius) )
-         end
-      end
+   no_of_nondummy_atoms result (res) ::: pure
+   ! Return the number of non-dummy atoms
+      self :: IN
+      res :: INT
+      res = count(ATOM:is_a_nondummy_atom(self))
    end
 
-   nuclear_energy(atoms) result (res)
-   ! Return the nuclear repulsion energy felt by the group of atoms "a" in
-   ! the field of all the nuclei in "self"
-      atoms :: VEC{INT}
-      res :: REAL
-      a, i, j,qi,qj, n_atoms :: INT
-      radius :: VEC{REAL}(3)
-      res = ZERO
-      n_atoms = size(atoms)
-      do i = 1,n_atoms
-       a = atoms(i)
-       qi = self(a).atomic_number
-       do j = 1,.dim
-        if (any(atoms==j)) cycle
-        qj = self(j).atomic_number
-        radius =  self(j).pos - self(a).pos
-        res = res + qi * qj / sqrt( radius.dot(radius) )
-       end
-      end
-      res = HALF*res ! only count half the interaction energy
-      res = res + self(atoms).nuclear_energy
+   nondummy_atoms result (ind) ::: pure
+   ! Return TRUE if all atoms have unique labels
+      self :: IN
+      ind :: VEC{INT}(.no_of_nondummy_atoms)
+      i :: INT
+      ind = pack([(i, i=1,.dim)],mask=ATOM:is_a_nondummy_atom(self))
    end
 
-   nuclear_energy(atoms,nuclei) result (res)
-   ! Return the nuclear repulsion energy felt by the group of atoms "a" in
-   ! the field of all the nuclei in "nuclei"
-      atoms, nuclei :: VEC{INT}
-      res :: REAL
-      a, i, j,k,qi,qj, n_atoms, n_field :: INT
-      radius :: VEC{REAL}(3)
-      res = ZERO
-      n_atoms = size(atoms)
-      n_field = size(nuclei)
-      do i=1,n_atoms
-       a = atoms(i)
-       qi = self(a).atomic_number
-       do k=1,n_field
-        j = nuclei(k)
-        if (any(atoms==j)) cycle
-        qj = self(j).atomic_number
-        radius =  self(j).pos - self(a).pos
-        res = res + qi * qj / sqrt( radius.dot(radius) )
-       end
-      end
-      res = res + self(atoms).nuclear_energy
+   no_of_atoms_with_bases result (res) ::: pure
+   ! Return the number of atoms with bases
+      self :: IN
+      res :: INT
+      res = count(ATOM:has_basis(self))
+   end
+
+   atoms_with_bases result (ind) ::: pure
+   ! Return TRUE if all atoms have unique labels
+      self :: IN
+      ind :: VEC{INT}(.no_of_atoms_with_bases)
+      i :: INT
+      ind = pack([(i, i=1,.dim)],mask=ATOM:has_basis(self))
    end
 
    chemical_formula(with_spaces) result (res)
-   ! Return the chemical formula for the molecule, as a string, in alphabetical
-   ! order of elements
+   ! Return the chemical formula for the molecule, as a string, in
+   ! alphabetical order of elements
       with_spaces :: BIN, optional
       res :: STR
 
@@ -2886,6 +3101,147 @@ contains
       symbol.destroy
 
    end
+
+   molecular_weight result (res)
+   ! Return the molceular weight for this atomvec
+      res :: REAL
+      a :: INT
+      res = ZERO
+      do a = 1,.dim
+         res = res + self(a).mass
+      end
+   end
+
+   get_mean_neutron_numbers(NN)
+   ! Get the atom coordinates in a matrix object "coord"
+      NN :: VEC{REAL}
+       a :: INT
+      do a = 1,.dim
+         NN(a) = self(a).mean_neutron_number
+      end
+   end
+
+! Symbols, labels, tags
+
+   unique_tags result (res) ::: leaky
+   ! Return the unique tags
+      res :: VEC{STR}*
+      res.create(.dim)
+      res = self.tag
+   end
+
+   chemical_symbols result (res)
+   ! Return an array of the chemical symbols for each atom
+      res :: VEC{STR}(size(self))
+      res = ATOM:chemical_symbol(self)
+   end
+
+!   numbered_chemical_symbols result (res)
+!   ! Return an array of the chemical symbols for each atom with a number
+!   ! at the end in brackets, which is the number of the atom in thge list.
+!      res :: VEC{STR}(size(self))
+!      a :: INT
+!      res = ATOM:chemical_symbol(self)
+!      do a = 1,.dim
+!         res(a) = trim(res(a))//"("//trim(a.to_str)//")"
+!      end
+!   end
+
+   has_dummy_labels result (res) 
+   ! Return TRUE if any atom has a dummy charge labels
+      self :: IN
+      res :: BIN
+      res = any(ATOM:has_a_dummy_label(self))
+   end
+
+! Nuclear energies
+
+   sum_of_nuclear_charges result (res)
+   ! Return the sum of the nuclear_charges
+   ! Note: dummy atoms may have non-zero nuclear charge
+      res :: REAL
+      res = sum(self(:).nuclear_charge)
+   end
+
+   nuclear_repulsion_energy result (res)
+   ! Return the nuclear repulsion energy.
+      res :: REAL
+
+      i,j :: INT
+      qi,qj :: REAL
+      r :: VEC{REAL}(3)
+
+
+      res = ZERO
+      do i = 1,.dim
+         qi = self(i).nuclear_charge
+         do j = 1,i-1
+            qj = self(j).nuclear_charge
+            r =  self(j).pos - self(i).pos
+            res = res + qi*qj/sqrt(dot_product(r,r))
+         end
+      end
+
+   end
+
+   nuclear_repulsion_energy(atoms) result (res)
+   ! Return the nuclear repulsion energy felt by the group of atoms "a" in
+   ! the field of all the nuclei in "self"
+      atoms :: VEC{INT}
+      res :: REAL
+
+      a,i,j :: INT
+      qi,qj :: REAL
+      r :: VEC{REAL}(3)
+
+      res = ZERO
+
+      do i = 1,atoms.dim
+         a = atoms(i)
+         qi = self(a).nuclear_charge
+         do j = 1,.dim
+            if (any(atoms==j)) cycle
+            qj = self(j).nuclear_charge
+            r =  self(j).pos - self(a).pos
+            res = res + qi*qj/sqrt(dot_product(r,r))
+         end
+      end
+
+      res = HALF*res ! only count half the interaction energy
+      res = res + self(atoms).nuclear_repulsion_energy
+
+   end
+
+   nuclear_repulsion_energy(atoms,nuclei) result (res)
+   ! Return the nuclear repulsion energy felt by the group of atoms "a" in
+   ! the field of all the nuclei in "nuclei"
+      atoms, nuclei :: VEC{INT}
+      res :: REAL
+
+      a, i,j,k, n_atoms, n_field :: INT
+      qi,qj :: REAL
+      r :: VEC{REAL}(3)
+
+
+      res = ZERO
+      n_atoms = size(atoms)
+      n_field = size(nuclei)
+      do i=1,n_atoms
+         a = atoms(i)
+         qi = self(a).nuclear_charge
+         do k=1,n_field
+            j = nuclei(k)
+            if (any(atoms==j)) cycle
+            qj = self(j).nuclear_charge
+            r =  self(j).pos - self(a).pos
+            res = res + qi*qj/sqrt(dot_product(r,r))
+         end
+      end
+      res = res + self(atoms).nuclear_repulsion_energy
+
+   end
+
+! Center of mass & shape
 
    centre_of_mass result(centre)
    ! Return the centre of mass
@@ -3040,84 +3396,51 @@ contains
       end
    end
 
-!   make_principal_moments(pm,pa,reorder)
-!   ! Make the principal moments "pm" and principal axes "pm" wrt the centre of
-!   ! mass.  If "reorder" is present then the principal axes are made to be right
-!   ! handed. Also:
-!   ! - For sperical tops, the local x,y,z axes are the pricipal axes
-!   ! - For symmetric tops, the C axis is unique
-!   ! - For asymmetric tops, the pricipal axes are aligned close to the local
-!   !    x,y,z axes
-!      pm :: VEC{REAL}(3)
-!      pa :: MAT{REAL}(3,3)
-!      reorder :: BIN, optional
-!      pn :: VEC{REAL}(3)
-!      it,pa2 :: MAT{REAL}(3,3)
-!      .make_inertia_tensor(it)
-!      it.solve_eigenproblem(pm,pa)
-!      if (NOT present(reorder)) return
-!   stdout.text("first pa:")
-!   stdout.put(pa)
-!   stdout.text("first pm:")
-!   stdout.put(pm)
-!      where (pm<TOL(6))
-!        pm = ZERO                               ! Small moments set to zero
-!      end
-!      pn = pm/maxval(abs(pm))                   ! Use normalised moments for now
-!      pn = pm
-!      if (.is_spherical_top(pn)) then           ! For spherical tops, principal
-!            pa.to_unit_matrix                   ! axes are x,y,z
-!      else if (.is_symmetric_top(pn)) then      ! For symmetric tops C axis is
-!         if (abs(pn(1)-pn(3)) < TOL(2)) then    ! unique
-!            pa.swap_columns(2,3)
-!            pm.swap_elements(2,3)
-!   stdout.text("23 pa:")
-!   stdout.put(pa)
-!         else if (abs(pn(2)-pn(3)) < TOL(2)) then
-!            pa.swap_columns(1,3)
-!            pm.swap_elements(1,3)
-!   stdout.text("13 pa:")
-!   stdout.put(pa)
-!         end
-!      else                                      ! For asymmetric tops, principal
-!         if (abs(pa(1,2)) > abs(pa(1,1))) then  ! axes are close to x,y,z
-!            pa.swap_columns(1,2)
-!            pm.swap_elements(1,2)
-!         end
-!         if (abs(pa(1,3)) > abs(pa(1,1))) then
-!            pa.swap_columns(1,3)
-!            pm.swap_elements(1,3)
-!         end
-!         if (abs(pa(2,3)) > abs(pa(2,2))) then
-!            pa.swap_columns(2,3)
-!            pm.swap_elements(2,3)
-!         end
-!      end
-!   stdout.text("norms:")
-!   stdout.put(pa.column_norms)
-!   stdout.text("LAST pa:")
-!   stdout.put(pa)
-!   stdout.text("LAST pm:")
-!   stdout.put(pm)
-!      if (pa.determinant>ZERO) return ! Ensure principal axes are right handed
-!   stdout.text("neg pa:")
-!   stdout.put(pa)
-!      if (abs(pm(1)-pm(2)) < TOL(6)) then
-!         pm.swap_elements(1,2)
-!         pa.swap_columns(1,2)
-!   stdout.text("12 pa:")
-!   stdout.put(pa)
-!      else if (abs (pm(2)-pm(3)) < TOL(6)) then
-!         pm.swap_elements(2,3)
-!         pa.swap_columns(2,3)
-!      else
-!         pa(1:3,3) = -pa(1:3,3)
-!   stdout.text("-3 pa:")
-!   stdout.put(pa)
-!      end
-!   stdout.text("last pa:")
-!   stdout.put(pa)
-!   end
+   make_shape_tensor(st)
+   ! Make the shape tensor "st" wrt the centre of atoms. This is the same as the
+   ! moment of inertia tensor except that each atom is assumed to have unit mass.
+      st :: MAT{REAL}(3,3)
+      m :: MAT{REAL}(3,3)
+      c,r :: VEC{REAL}(3)
+      a :: INT
+      c = .centre_of_atoms
+      st = ZERO
+      do a = 1,.dim
+         r = self(a).pos - c
+         m = spread(r,dim=1,ncopies=3)*spread(r,dim=2,ncopies=3)
+         m.increment_diagonal_by(-m.trace)
+         st = st - m
+      end
+   end
+
+   make_shape_moments(sm,sa)
+   ! Make the shape moments "sm" and principal shape axes "sa" wrt the centre of
+   ! atoms. The shape axes are the same as the principal moment of inertia axes
+   ! except that each atom is assumed to have unit mass. The principal shape
+   ! axes are made right handed.
+      sm :: VEC{REAL}(3)
+      sa :: MAT{REAL}(3,3)
+      st :: MAT{REAL}(3,3)
+      .make_shape_tensor(st)
+      st.solve_eigenproblem(sm,sa)
+      if (abs(sa(1,2)) > abs(sa(1,1))) then ! make axes are close to x,y,z
+         sa.swap_columns(1,2)
+         sm.swap_elements(1,2)
+      end
+      if (abs(sa(1,3)) > abs(sa(1,1))) then
+         sa.swap_columns(1,3)
+         sm.swap_elements(1,3)
+      end
+      if (abs(sa(2,3)) > abs(sa(2,2))) then
+         sa.swap_columns(2,3)
+         sm.swap_elements(2,3)
+      end
+      if (sa(1,1)<ZERO)        sa(:,1) = -sa(:,1)  ! make axes +ve
+      if (sa(2,2)<ZERO)        sa(:,2) = -sa(:,2)
+      if (sa.determinant<ZERO) sa(:,3) = -sa(:,3)
+   end
+
+! Shape tests
 
    is_linear(pm) result (res) ::: private
    ! Return TRUE if the geometry is linear.
@@ -3183,59 +3506,7 @@ contains
       end
    end
 
-   has_sequence_numbers result (res)
-   ! Return TRUE if any atom in the list has a non zero sequence number
-      res :: BIN
-      res = any(self(:).residue_sequence_number > 1)
-   end
-
-   has_thermal_tensors result (res)
-   ! Return TRUE if any atom in the list has a non zero thermal tensor
-      res :: BIN
-      i :: INT
-      res = FALSE
-      do i=1,.dim
-        if (all(self(i).thermal_tensor==ZERO)) cycle
-        res = TRUE 
-        exit
-      end  
-   end
-
-   has_U_iso result (res)
-   ! Return TRUE if any atom in the list has a non zero U_iso
-      res :: BIN
-      res = any(self.U_iso>ZERO)
-   end
-
-   has_thermal_factors result (res)
-   ! Return TRUE if any atom in the list has a non zero thermal tensor
-   ! OR non zero isotropic thermal factor.
-      res :: BIN
-      res = .has_thermal_tensors OR .has_U_iso
-   end
-
-   has_residue_codes result (res)
-   ! Return TRUE if any atom in the list has a residue names
-      res :: BIN
-      res = any(self(:).residue_code /= " " )
-   end
-
-   has_restraints result (res)
-   ! Return TRUE if any atom in the list has a restrained position
-   ! or restrained force constants
-      res :: BIN
-      res = any(self(:).restraining_force_constant/=ZERO)
-   end
-
-   molecular_weight result (res)
-   ! Return the molceular weight for this atomvec
-      res :: REAL
-      a :: INT
-      res = ZERO
-      do a = 1,.dim
-         res = res + self(a).mass
-      end
-   end
+! Box centering
 
    centre_of_atoms(axes) result(centre)
    ! Return the centroid of the atom positions in "centre". If "axes" is present
@@ -3302,68 +3573,161 @@ contains
       box = FOUR*box
    end
 
-   make_shape_tensor(st)
-   ! Make the shape tensor "st" wrt the centre of atoms. This is the same as the
-   ! moment of inertia tensor except that each atom is assumed to have unit mass.
-      st :: MAT{REAL}(3,3)
-      m :: MAT{REAL}(3,3)
-      c,r :: VEC{REAL}(3)
+! Presence/absence of features and properties
+
+   has_sequence_numbers result (res)
+   ! Return TRUE if any atom in the list has a non zero sequence number
+      res :: BIN
+      res = any(self.residue_sequence_number > 1)
+   end
+
+   has_thermal_tensors result (res)
+   ! Return TRUE if any atom in the list has a non zero thermal tensor
+      res :: BIN
+      i :: INT
+      res = FALSE
+      do i=1,.dim
+        if (all(self(i).thermal_tensor==ZERO)) cycle
+        res = TRUE 
+        exit
+      end  
+   end
+
+   has_U_iso result (res)
+   ! Return TRUE if any atom in the list has a non zero U_iso
+      res :: BIN
+      res = any(self.U_iso>ZERO)
+   end
+
+   has_thermal_factors result (res)
+   ! Return TRUE if any atom in the list has a non zero thermal tensor
+   ! OR non zero isotropic thermal factor.
+      res :: BIN
+      res = .has_thermal_tensors OR .has_U_iso
+   end
+
+   has_residue_codes result (res)
+   ! Return TRUE if any atom in the list has a residue names
+      res :: BIN
+      res = any(self(:).residue_code /= " " )
+   end
+
+   has_restraints result (res)
+   ! Return TRUE if any atom in the list has a restrained position
+   ! or restrained force constants
+      res :: BIN
+      res = any(self(:).restraining_force_constant/=ZERO)
+   end
+
+   has_dipoles result (has)
+   ! Return TRUE if any of the atoms have dipoles
+      self :: IN
+      has :: BIN
       a :: INT
-      c = .centre_of_atoms
-      st = ZERO
       do a = 1,.dim
-         r = self(a).pos - c
-         m = spread(r,dim=1,ncopies=3)*spread(r,dim=2,ncopies=3)
-         m.increment_diagonal_by(-m.trace)
-         st = st - m
+         has = self(a).has_dipole
+         if (has) exit
       end
    end
 
-   make_shape_moments(sm,sa)
-   ! Make the shape moments "sm" and principal shape axes "sa" wrt the centre of
-   ! atoms. The shape axes are the same as the principal moment of inertia axes
-   ! except that each atom is assumed to have unit mass. The principal shape
-   ! axes are made right handed.
-      sm :: VEC{REAL}(3)
-      sa :: MAT{REAL}(3,3)
-      st :: MAT{REAL}(3,3)
-      .make_shape_tensor(st)
-      st.solve_eigenproblem(sm,sa)
-      if (abs(sa(1,2)) > abs(sa(1,1))) then ! make axes are close to x,y,z
-         sa.swap_columns(1,2)
-         sm.swap_elements(1,2)
+   has_polarisabilities result (has)
+   ! Return TRUE if any of the atoms have polarisabilities
+      self :: IN
+      has :: BIN
+      a :: INT
+      do a = 1,.dim
+         has = self(a).has_polarisability
+         if (has) exit
       end
-      if (abs(sa(1,3)) > abs(sa(1,1))) then
-         sa.swap_columns(1,3)
-         sm.swap_elements(1,3)
-      end
-      if (abs(sa(2,3)) > abs(sa(2,2))) then
-         sa.swap_columns(2,3)
-         sm.swap_elements(2,3)
-      end
-      if (sa(1,1)<ZERO)        sa(:,1) = -sa(:,1)  ! make axes +ve
-      if (sa(2,2)<ZERO)        sa(:,2) = -sa(:,2)
-      if (sa.determinant<ZERO) sa(:,3) = -sa(:,3)
    end
 
-   get_geometry(g)
+! Geometry info
+
+   get_coordinates(coord)
+   ! Get the atom coordinates in a matrix object "coord"
+      coord :: MAT{REAL}
+      .get_geometry(coord)
+   end
+
+   coordinates result (coord)
+   ! Get the atom coordinates in a matrix object "coord"
+      coord :: MAT{REAL}(3,.dim)
+      .get_geometry(coord)
+   end
+
+   geometry(skip_dummies) result (g) ::: leaky
+   ! Return the geometry "g" in a matrix
+      self :: IN
+      g :: MAT{REAL}*
+      skip_dummies :: BIN, IN, optional
+
+      n_atom :: INT
+      skip :: BIN
+
+      skip = FALSE
+      if (present(skip_dummies)) skip = skip_dummies
+
+      if (skip) then
+         n_atom = .no_of_nondummy_atoms
+         g.create(3,n_atom)
+         .get_geometry(g,skip_dummies=TRUE)
+      else
+         g.create(3,.dim)
+         .get_geometry(g)
+      end
+
+   end
+
+   get_geometry(g,skip_dummies)
    ! Return the geometry "g" in a matrix
       self :: IN
       g :: MAT{REAL}, OUT
-      n_atom,n :: INT
-      if (size(g,1)==3 AND size(g,2)==.dim) then
-         n_atom = size(g,2)
-         do n = 1,n_atom
-            g(:,n) = self(n).pos
+      skip_dummies :: BIN, IN, optional
+
+      n_atom,i,n :: INT
+      skip :: BIN
+
+      skip = FALSE
+      if (present(skip_dummies)) skip = skip_dummies
+
+      if (NOT skip) then
+
+         if (g.dim1==3 AND g.dim2==.dim) then
+            do n = 1,.dim
+               g(:,n) = self(n).pos
+            end
+         else if (g.dim1==.dim AND g.dim2==3) then
+            do n = 1,.dim
+               g(n,:) = self(n).pos
+            end
+         else
+            DIE("incorrectly sized geometry array")
          end
-      else if (size(g,1)==.dim AND size(g,2)==3) then
-         n_atom = size(g,1)
-         do n = 1,n_atom
-            g(n,:) = self(n).pos
-         end
+
       else
-         DIE("incorrectly sized geometry array")
+
+         n_atom = .no_of_nondummy_atoms
+
+         if (g.dim1==3 AND g.dim2==n_atom) then
+            i = 0
+            do n = 1,.dim
+               if (self(n).is_a_dummy_atom) cycle
+               i = i + 1
+               g(:,i) = self(n).pos
+            end
+         else if (g.dim1==n_atom AND g.dim==3) then
+            i = 0
+            do n = 1,.dim
+               if (self(n).is_a_dummy_atom) cycle
+               i = i + 1
+               g(i,:) = self(n).pos
+            end
+         else
+            DIE("incorrectly sized geometry array")
+         end
+
       end
+
    end
 
    get_geometry_vector(g)
@@ -3371,6 +3735,20 @@ contains
    ! fastest, useful for optimisations
       g :: VEC{REAL}
    ENSURE(g.dim==3*.dim,"wrong size, g")
+      k,i :: INT
+      k = 0
+      do i = 1,.dim
+        g(k+1) = self(i).pos(1)
+        g(k+2) = self(i).pos(2)
+        g(k+3) = self(i).pos(3)
+        k = k + 3
+      end
+   end
+
+   geometry_vector result (g)
+   ! Return the geometry "g" as a flat vector where the xyz positions increment
+   ! fastest, useful for optimisations
+      g :: VEC{REAL}(3*size(self))
       k,i :: INT
       k = 0
       do i = 1,.dim
@@ -3396,28 +3774,14 @@ contains
       end
    end
 
-   geometry result (g)
-   ! Return the geometry "g" in a (3 x .dim) matrix
-       g :: MAT{REAL}(3,.dim)
-      n_atom,n :: INT
-      n_atom = .dim
-      do n = 1,n_atom
-         g(:,n) = self(n).pos
-      end
-   end
+! Bases and labels
 
-   geometry_vector result (g)
-   ! Return the geometry "g" as a flat vector where the xyz positions increment
-   ! fastest, useful for optimisations
-      g :: VEC{REAL}(3*size(self))
-      k,i :: INT
-      k = 0
-      do i = 1,.dim
-        g(k+1) = self(i).pos(1)
-        g(k+2) = self(i).pos(2)
-        g(k+3) = self(i).pos(3)
-        k = k + 3
-      end
+   has_unique_labels result (has)
+   ! Return TRUE if all atoms with bases have unique labels
+   ! The basis test should eliminate all dummy atoms.
+      self :: IN
+      has :: BIN
+      has = NOT self(.nondummy_atoms).label.has_repetitions
    end
 
    has_all_ANO_data result(has)
@@ -3532,57 +3896,6 @@ contains
       end
    end
 
-   has_cartesian_thermal_axes result(has)
-   ! Return TRUE if all atom thermal tensors are in the cartesian axis system.
-      self :: IN
-      has :: BIN
-      a :: INT
-      has = TRUE
-      do a = 1,.dim
-         has = self(a).thermal_axis_system=="cartesian"
-         if (NOT has) exit
-      end
-   end
-
-   has_crystal_thermal_axes result(has)
-   ! Return TRUE if all atom thermal tensors are in the crystal axis system.
-      self :: IN
-      has :: BIN
-      a :: INT
-      has = TRUE
-      do a = 1,.dim
-         has = self(a).thermal_axis_system=="crystal"
-         if (NOT has) exit
-      end
-   end
-
-   has_disorder result (has)
-   ! Return TRUE if any atom has disorder i.e. an occupancy which is not one.
-      self :: IN
-      has :: BIN
-      has = NOT self(:).site_occupancy.are_all_equal_to(ONE)
-   end
-
-   chemical_symbols result (res)
-   ! Return an array of the chemical symbols for each atom
-      res :: VEC{STR}(size(self))
-       a :: INT
-      do a = 1,.dim
-         res(a) = self(a).chemical_symbol
-      end
-   end
-
-   numbered_chemical_symbols result (res)
-   ! Return an array of the chemical symbols for each atom with a number
-   ! at the end in brackets, which is the number of the atom in thge list.
-      res :: VEC{STR}(size(self))
-       a :: INT
-      do a = 1,.dim
-         res(a) = self(a).chemical_symbol
-         res(a) = trim(res(a))//"("//trim(a.to_str)//")"
-      end
-   end
-
    basis_labels result (labels) ::: leaky
    ! Return a list of basis set "labels". Missing labels are returned blank.
       labels :: VEC{STR}*
@@ -3641,6 +3954,48 @@ contains
 !      labels.remove_repetitions
 !   end
 
+   minimum_basis_exponents result (res)
+   ! Return the minimum exponent in the basis.
+      res :: VEC{REAL}(.dim)
+      i :: INT
+      do i = 1,.dim
+        res(i) = self(i).minimum_basis_exponent
+      end
+   end
+
+! Axes and disorder
+
+   has_cartesian_thermal_axes result(has)
+   ! Return TRUE if all atom thermal tensors are in the cartesian axis system.
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.dim
+         has = self(a).thermal_axis_system=="cartesian"
+         if (NOT has) exit
+      end
+   end
+
+   has_crystal_thermal_axes result(has)
+   ! Return TRUE if all atom thermal tensors are in the crystal axis system.
+      self :: IN
+      has :: BIN
+      a :: INT
+      has = TRUE
+      do a = 1,.dim
+         has = self(a).thermal_axis_system=="crystal"
+         if (NOT has) exit
+      end
+   end
+
+   has_disorder result (has)
+   ! Return TRUE if any atom has disorder i.e. an occupancy which is not one.
+      self :: IN
+      has :: BIN
+      has = NOT self(:).site_occupancy.are_all_equal_to(ONE)
+   end
+
    atom_index_from_pos(pos) result (res)
    ! Return the index of atom from its position "pos"
       pos :: VEC{REAL}(3)
@@ -3656,36 +4011,7 @@ contains
       ENSURE(found,"no atom for this position")
    end
 
-   minimum_basis_exponents result (res)
-   ! Return the minimum exponent in the basis.
-      res :: VEC{REAL}(.dim)
-      i :: INT
-      do i = 1,.dim
-        res(i) = self(i).minimum_basis_exponent
-      end
-   end
-
-   has_dipoles result (has)
-   ! Return TRUE if any of the atoms have dipoles
-      self :: IN
-      has :: BIN
-      a :: INT
-      do a = 1,.dim
-         has = self(a).has_dipole
-         if (has) exit
-      end
-   end
-
-   has_polarisabilities result (has)
-   ! Return TRUE if any of the atoms have polarisabilities
-      self :: IN
-      has :: BIN
-      a :: INT
-      do a = 1,.dim
-         has = self(a).has_polarisability
-         if (has) exit
-      end
-   end
+! Radii
 
    covalent_radii_ccdc result (res) 
    ! Returns the CCDC covalent radius for this atom
@@ -3783,9 +4109,6 @@ contains
    nuclear_E_field_at_nuclei result (res)
    ! Return the nuclear contribution to the electric fields
    ! at the nuclei as a (3 x .dim) array
-   ! Dummy nuclear charges don't contribute to the field
-   ! but the field at dummy positions from "real" charges 
-   ! is returned.
       res :: MAT{REAL}(3,size(self))
       Z,r :: REAL
       a,b :: INT
@@ -3794,7 +4117,7 @@ contains
       do a = 1,.dim
          do b = 1,.dim
             if (b==a) cycle
-            Z  = self(b).atomic_number
+            Z  = self(b).nuclear_charge
             ab = self(a).pos - self(b).pos
             r  = ab.norm
             res(:,a) = res(:,a) + Z*ab/(r*r*r)
@@ -3805,9 +4128,6 @@ contains
    nuclear_EFG_at_nuclei result (res)
    ! Return the nuclear contribution to the electric fields gradient
    ! (EFG) at the nuclei as a (6 x .dim) array
-   ! Dummy nuclear charges don't contribute to the field gradient
-   ! but the field gradient at dummy positions from "real" charges 
-   ! is returned.
       res :: MAT{REAL}(6,size(self))
       Z,r,r3,r5 :: REAL
       a,b :: INT
@@ -3816,7 +4136,7 @@ contains
       do a = 1,.dim
          do b = 1,.dim
             if (b==a) cycle
-            Z  = self(b).atomic_number
+            Z  = self(b).nuclear_charge
             ab = self(a).pos - self(b).pos
             r  = ab.norm
             r3 = r*r*r
@@ -3843,40 +4163,51 @@ contains
    end
 
    make_atom_kind_count(cnt,n_kind) ::: leaky
-   ! Return an array "cnt" in which each element represents an atom, and the
-   ! value of that array element is a count of the number of atoms of that kind.
-   ! Later atoms (i.e. array elements) which are of the same kind as earlier
-   ! atoms have a count equal to the minus of the index of the earlier atom they
-   ! are equivalent to. The number of different kinds is returned in "n_kind".
+   ! Return an array "cnt" in which each element represents an atom,
+   ! and the value of that array element is a count of the number of
+   ! atoms of that kind.  Later atoms (i.e. array elements) which are
+   ! of the same kind as earlier atoms have a count equal to the minus
+   ! of the index of the earlier atom they are equivalent to. The
+   ! number of different kinds is returned in "n_kind".
       cnt :: VEC{INT}*
       n_kind :: INT
+
       n,l,n_atom :: INT
+
       n_atom = .dim
-      nullify(cnt); cnt.create(n_atom)
+
+      cnt.create(n_atom)
       cnt = 1
+
       do n = 1,n_atom
          if (cnt(n)<0) cycle
          do l = n+1,n_atom
             if (cnt(l)<0) cycle
-            if ( .same_kind_of_atoms(l,n) ) then
-               cnt(n) = cnt(n)+1
-               cnt(l) = -n
-            end
+            if (NOT .same_kind_of_atoms(l,n)) cycle
+            cnt(n) = cnt(n)+1
+            cnt(l) = -n
          end
       end
+
       n_kind = count(cnt>0)
+
    end
 
    make_atom_kind_list(atom_kind) ::: leaky
-   ! Make the atom kind list ... atom_kind(k).element(c) is the c-th atom of the
-   ! same kind as atom k, which is a unique kind.
+   ! Make the atom kind list ... atom_kind(k).element(c) is the c-th
+   ! atom of the same kind as atom k, which is a unique kind.
       atom_kind :: VEC{VEC_{INT}}*
+
       cnt :: VEC{INT}*
       n,l,k,c,n_atom :: INT
-      n_atom = .dim
+
       .make_atom_kind_count(cnt,n)
+
       nullify(atom_kind)
       atom_kind.create(n)
+
+      n_atom = .dim
+
       k = 0
       do n = 1,n_atom
          if (cnt(n)<0) cycle
@@ -3890,63 +4221,73 @@ contains
             atom_kind(k).element(c) = l
          end
       end
+
       cnt.destroy
+
+      ! Now sort into descending atomic number
+    ! indices.create(atom_kind.dim)
+    ! self(atom_kind.element(1)).atomic_number.quick_sort(indices,decreasing_order=TRUE)
+    ! atom_kind = atom_kind(indices)
+    ! indices.destroy
+
    end
 
    make_atom_kind_list(atom_kind,n_kind)
-   ! Make a different atom kind list ... atom_kind(k) is the kind index of the
-   ! k-th atom. (Same effect as the make_atom_kind_map routine).
+   ! Make a different atom kind list ... atom_kind(k) is the kind
+   ! index of the k-th atom. (Same effect as the make_atom_kind_map
+   ! routine).
       atom_kind :: VEC{INT}
       n_kind :: INT
-   ENSURE(size(atom_kind)==.dim,"atom_kind is incorrectly dimensioned")
+
+   ENSURE(atom_kind.dim==.dim,"atom_kind is incorrectly dimensioned")
+
       n_atom,n,l :: INT
+
       n_atom = .dim
-      atom_kind = (/ (n, n=1,n_atom) /)
+      atom_kind = [ (n, n=1,n_atom) ]
+
       n_kind = 0
       do n = 1,n_atom
+
          if (atom_kind(n)<=n_kind) cycle
+
          n_kind = n_kind + 1
          atom_kind(n) = n_kind
          do l = n+1,n_atom
             if (atom_kind(l)<=n_kind) cycle
-            if ( NOT .same_kind_of_atoms(l,n) ) cycle
+            if (NOT .same_kind_of_atoms(l,n)) cycle
             atom_kind(l) = n_kind
          end
+
       end
+
    end
 
-   make_unique_atom_list(unique_atom) ::: leaky
+   make_unique_atom_list(unique_atom)
    ! "unique_atom(k)" is the index of the first atom which represents all the
    ! the atoms which are of the same kind, k.
       unique_atom :: VEC{INT}
+
       atom_kind :: VEC{INT}*
       n_kind,k,pos :: INT
-      atom_kind.create(.dim)
-      .make_atom_kind_list(atom_kind,n_kind)
-      ENSURE(size(unique_atom)==n_kind,"unique atom incorrectly dimensioned")
-      do k = 1,n_kind
-         pos = atom_kind.index_of_value(k)
-         ENSURE(pos/=0,"atom kind "// trim(k.to_str) //" does not exist!")
-         unique_atom(k) = pos
-      end
-      atom_kind.destroy
-   end
 
-   make_unique_atom_list(unique_atom,atom_kind,n_kind) ::: leaky
-   ! "unique_atom(k)" is the index of the first atom which represents all the
-   ! the atoms which are of the same kind, k. The atom kinds for each atom "a"
-   ! are given by "atom_kind(a)" ...
-      unique_atom,atom_kind :: VEC{INT}*
-      n_kind :: INT
-      k,pos :: INT
+      ! Make the atom kind list
       atom_kind.create(.dim)
       .make_atom_kind_list(atom_kind,n_kind)
-      unique_atom.create(n_kind)
+
+      ! Check size
+      DIE_IF(unique_atom.dim/=n_kind,"unique atom incorrectly dimensioned")
+
+      ! Make the list
       do k = 1,n_kind
          pos = atom_kind.index_of_value(k)
          ENSURE(pos/=0,"atom kind "// trim(k.to_str) //" does not exist!")
          unique_atom(k) = pos
       end
+
+      ! Clean
+      atom_kind.destroy
+
    end
 
    make_atom_kind_map(map)
@@ -4423,7 +4764,7 @@ contains
                symbol = self(neighbour2(j)).chemical_symbol
                mesomer(i) = trim(mesomer(i))// &
                             trim(bonds2(j))// &
-                            trim(symbol.lower_case)
+                            trim(symbol.lower_cased)
             end
             mesomer(i) = trim(mesomer(i))//achar(93)
 
@@ -4459,7 +4800,7 @@ contains
       res = res.trim_blanks_from_start
       do i = 1,n
          symbol = self(neighbour(i)).chemical_symbol
-         res = trim(res)//trim(bonds(i))//trim(symbol.lower_case)
+         res = trim(res)//trim(bonds(i))//trim(symbol.lower_cased)
          if (bond(i)==15 OR special) then
             res = trim(res)//trim(mesomer(i))
          end
@@ -4663,7 +5004,7 @@ contains
                symbol = self(neighbour2(j)).chemical_symbol
                mesomer(i) = trim(mesomer(i))// &
                             trim(bonds2(j))// &
-                            trim(symbol.lower_case)
+                            trim(symbol.lower_cased)
             end
             mesomer(i) = trim(mesomer(i))//")"
 
@@ -4700,7 +5041,7 @@ contains
       res = trim(res)//"("
       do i = 1,n
          symbol = self(neighbour(i)).chemical_symbol
-         res = trim(res)//trim(bonds(i))//trim(symbol.lower_case)
+         res = trim(res)//trim(bonds(i))//trim(symbol.lower_cased)
          if (bond(i)==15 OR special) then
             res = trim(res)//trim(mesomer(i))
          end
@@ -4733,7 +5074,6 @@ contains
    ENSURE(bonds.dim==neighbours.dim,"bond array, wrong size")
 
       i,b :: INT
-      br :: REAL
 
       do i = 1,neighbours.dim
          b = .bond_distinguisher(a,neighbours(i))
@@ -4828,7 +5168,7 @@ contains
            end
         end
 
-        stdout.show("Backbone for protein strand = ",i)
+        stdout.show("Backbone for protein strand =",i)
         stdout.put(backbone(i)[:])
       end
 
@@ -5323,7 +5663,6 @@ contains
    ! any hydrogen atom.
       connections_for :: VEC{VEC_{INT}}* 
       skip_hydrogen :: BIN, optional
-      pos_i,pos_j :: VEC{REAL}(3)
       i,j :: INT
       skip_H :: BIN
       skip_H = FALSE
@@ -5896,7 +6235,7 @@ contains
         backbone(i)[1] = N
         Cp0 = 0
 
-        stdout.show("Sequence for protein strand = ",i)
+        stdout.show("Sequence for protein strand =",i)
 
         do
 
@@ -6152,7 +6491,7 @@ contains
    ! "Ca" and "Cb" describes ILE
       Ca,Cb :: INT, IN
       res :: BIN
-      Cg1,Cg2,Nd,Cd :: INT
+      Cg1,Cg2,Cd :: INT
       res = .has_3_connections(Cb,Ca,6,6,Cg1,Cg2)
       if (NOT res) return
       if      (.has_1_connection(Cg1,Cb)) then
@@ -6248,7 +6587,7 @@ contains
       Ca,Cb :: INT, IN
       res :: BIN
       C :: VEC{INT}(4)
-      Cg,Cd1,Cd2,Ne,Ce1,Ce2,Cf1 :: INT
+      Cg,Cd1,Cd2,Ne,Ce1,Cf1 :: INT
       res = .has_2_connections(Cb,Ca,6,Cg)
       if (NOT res) return
       res = .has_3_connections(Cg,Cb,6,6,Cd1,Cd2)
@@ -6314,12 +6653,13 @@ contains
 !  Bonds, distances, angles
 !  ************************
 
-   bonded(a,b,range_factor) result (res)
+   bonded(a,b,range_factor) result (res) ::: pure
    ! Return true if "self" is bonded to "b".  If present, "range_factor" is used
    ! to determine the distance range in which the atoms are regarded as bonded.
    ! This uses the CCDC method, as documented on their web page.
+      self :: IN
       a,b :: INT, IN
-      range_factor :: REAL, optional, IN
+      range_factor :: REAL, IN, optional
       res :: BIN
       res = self(a).is_bonded_to(self(b),range_factor)
    end
@@ -6409,16 +6749,142 @@ contains
       res = 0
       do a = 1,n
       do b = 1,n
-         if (a==b) cycle
          if (NOT .bonded(a,b)) cycle
          do c = 1,n
-            if (a==c OR b==c) cycle
+            if (c==a OR c==b) cycle
             if (NOT .bonded(b,c)) cycle
+            if (c<a) cycle
             res = res + 1
          end
       end
       end
-      res = res/2
+   end
+
+   no_of_angle_center_atoms result (res) ::: pure
+   ! Return the number of angle center atoms B in angle(ABC)
+      self :: IN
+      res :: INT
+      n,a,b,c :: INT
+      cnt :: VEC{BIN}*
+
+      n = .dim
+
+      allocate(cnt(n))
+      cnt = FALSE
+
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (NOT .bonded(a,b)) cycle
+         do c = 1,n
+            if (c==a OR c==b) cycle
+            if (NOT .bonded(b,c)) cycle
+            if (c<a) cycle
+            cnt(b) = TRUE
+         end
+      end
+      end
+
+      res = count(cnt)
+
+      deallocate(cnt)
+
+   end
+
+   angle_center_atoms result (res) ::: pure
+   ! Return the list of atom indices B which belong to angles centers
+   ! angle(ABC)
+      self :: IN
+      res :: VEC{INT}(.no_of_angle_center_atoms)
+      n,a,b,c :: INT
+      cnt :: VEC{BIN}*
+
+      n = .dim
+
+      allocate(cnt(n))
+      cnt = FALSE
+
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (NOT .bonded(a,b)) cycle
+         do c = 1,n
+            if (c==a OR c==b) cycle
+            if (NOT .bonded(b,c)) cycle
+            if (c<a) cycle
+            cnt(b) = TRUE
+         end
+      end
+      end
+
+      res = pack([( a, a=1,n)],mask=cnt)
+
+      deallocate(cnt)
+
+   end
+
+   no_of_angle_outer_atoms result (res) ::: pure
+   ! Return the number of angle center atoms A and C in angle(ABC)
+      self :: IN
+      res :: INT
+      n,a,b,c :: INT
+      cnt :: VEC{BIN}*
+
+      n = .dim
+
+      allocate(cnt(n))
+      cnt = FALSE
+
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (NOT .bonded(a,b)) cycle
+         do c = 1,n
+            if (c==a OR c==b) cycle
+            if (NOT .bonded(b,c)) cycle
+            if (c<a) cycle
+            cnt(a) = TRUE
+            cnt(c) = TRUE
+         end
+      end
+      end
+
+      res = count(cnt)
+
+      deallocate(cnt)
+
+   end
+
+   angle_outer_atoms result (res) ::: pure
+   ! Return the list of atoms which are outer angle atoms
+      self :: IN
+      res :: VEC{INT}(.no_of_angle_outer_atoms)
+      n,a,b,c :: INT
+      cnt :: VEC{BIN}*
+
+      n = .dim
+
+      allocate(cnt(n))
+      cnt = FALSE
+
+      res = 0
+      do a = 1,n
+      do b = 1,n
+         if (NOT .bonded(a,b)) cycle
+         do c = 1,n
+            if (c==a OR c==b) cycle
+            if (NOT .bonded(b,c)) cycle
+            if (c<a) cycle
+            cnt(a) = TRUE
+            cnt(c) = TRUE
+         end
+      end
+      end
+
+      res = pack([( a, a=1,n)],mask=cnt)
+
+      deallocate(cnt)
+
    end
 
    bond_angle(a,b,c,degrees) result (res)
@@ -6958,234 +7424,52 @@ contains
 !  Basis set existence information
 !  *******************************
 
-   bases_all_exist result (res)
-   ! Return TRUE if *all* basis sets are associated. NOTE: do not confuse this
-   ! with the routine .basis_are_resolved, which is probably what you want.
+   bases_are_resolved result (res)
+   ! Return TRUE if all basis sets are associated AND their shell list
+   ! parts are also associated, dummy-atoms excepted
       res :: BIN
       a :: INT
       res = TRUE
       do a = 1,.dim
-         if (NOT associated(self(a).basis)) then
-            res = FALSE
-            exit
-         end
+         if (self(a).basis.is_created_and_resolved) cycle
+         if (self(a).has_a_dummy_label) cycle
+         res = FALSE
+         exit
       end
    end
 
-   bases_are_all_unlabeled result (res)
-   ! Return TRUE if all basis set labels do not exist (or are blank)
-      res :: BIN
-      a :: INT
-      if (NOT .bases_all_exist) then
-         res = TRUE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).basis.label/=" ") then
-               res = FALSE
-               exit
-            end
-         end
-      end
+   slaterbases_are_resolved result (res) ::: get_from(VEC{ATOM}:bases_are_resolved, basis=>slaterbasis)
+   ! Return TRUE if all basis sets are associated AND their shell list
+   ! parts are also associated, dummy-atoms excepted
+   end
+
+   coppensbases_are_resolved result (res) ::: get_from(VEC{ATOM}:bases_are_resolved, basis=>coppensbasis)
+   ! Return TRUE if all basis sets are associated AND their shell list
+   ! parts are also associated, dummy-atoms excepted
    end
 
    bases_are_all_labeled result (res)
    ! Return TRUE if all basis set labels exist (i.e. are not blank)
-      res :: BIN
-      a :: INT
-      if (NOT .bases_all_exist) then
-         res = FALSE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).basis.label==" ") then
-               res = FALSE
-               exit
-            end
-         end
-      end
-   end
-
-   bases_are_part_labeled result (res)
-   ! Return TRUE if only some basis set labels exist (i.e. are not blank)
-      res :: BIN
-      if (NOT .bases_all_exist) then
-         res = FALSE
-      else
-         res = NOT .bases_are_all_labeled   &
-           AND NOT .bases_are_all_unlabeled
-      end
-   end
-
-   bases_are_resolved result (res)
-   ! Return TRUE if all basis sets are associated AND their shell list parts are
-   ! also associated.
+   ! Note: If a dummy atom has a basis it should have a label
       res :: BIN
       a :: INT
       res = TRUE
       do a = 1,.dim
-         if (NOT associated(self(a).basis)) then
-            res = FALSE
-            exit
-         else if (NOT associated(self(a).basis.shell)) then
-            res = FALSE
-            exit
-         end
-      end
-   end
-
-   slaterbases_all_exist result (res)
-   ! Return TRUE if *all* slaterbasis sets are associated. NOTE: do not confuse
-   ! this with the routine .slaterbasis_are_resolved, which is probably what you
-   ! want.
-      res :: BIN
-      a :: INT
-      res = TRUE
-      do a = 1,.dim
-         if (NOT associated(self(a).slaterbasis)) then
-            res = FALSE
-            exit
-         end
-      end
-   end
-
-   slaterbases_are_all_unlabeled result (res)
-   ! Return TRUE if all slaterbasis set labels do not exist (or are blank)
-      res :: BIN
-      a :: INT
-      if (NOT .slaterbases_all_exist) then
-         res = TRUE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).slaterbasis.label/=" ") then
-               res = FALSE
-               exit
-            end
-         end
-      end
-   end
-
-   slaterbases_are_all_labeled result (res)
-   ! Return TRUE if all slaterbasis set labels exist (i.e. are not blank)
-      res :: BIN
-      a :: INT
-      if (NOT .slaterbases_all_exist) then
+         if (self(a).basis.is_created_and_has_label) cycle
+         if (self(a).has_a_dummy_label) cycle
          res = FALSE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).slaterbasis.label==" ") then
-               res = FALSE
-               exit
-            end
-         end
+         exit
       end
    end
 
-   slaterbases_are_part_labeled result (res)
-   ! Return TRUE if only some slaterbasis set labels exist (i.e. are not blank)
-      res :: BIN
-      if (NOT .slaterbases_all_exist) then
-         res = FALSE
-      else
-         res = NOT .slaterbases_are_all_labeled   &
-           AND NOT .slaterbases_are_all_unlabeled
-      end
+   slaterbases_are_all_labeled result (res) ::: get_from(VEC{ATOM}:bases_are_all_labeled, basis=>slaterbasis)
+   ! Return TRUE if all basis set labels exist (i.e. are not blank)
+   ! Note: If a dummy atom has a basis it should have a label
    end
 
-   slaterbases_are_resolved result (res)
-   ! Return TRUE if all slaterbasis sets are associated AND their shell list parts are
-   ! also associated.
-      res :: BIN
-      a :: INT
-      res = TRUE
-      do a = 1,.dim
-         if (NOT associated(self(a).slaterbasis)) then
-            res = FALSE
-            exit
-         else if (NOT associated(self(a).slaterbasis.shell)) then
-            res = FALSE
-            exit
-         end
-      end
-   end
-
-   coppensbases_all_exist result (res)
-   ! Return TRUE if *all* coppens basis sets are associated. NOTE: do not
-   ! confuse this with the routine .basis_are_resolved, which is probably what
-   ! you want.
-      res :: BIN
-      a :: INT
-      res = TRUE
-      do a = 1,.dim
-         if (NOT associated(self(a).coppensbasis)) then
-            res = FALSE
-            exit
-         end
-      end
-   end
-
-   coppensbases_are_all_unlabeled result (res)
-   ! Return TRUE if all coppens basis set labels do not exist (or are blank)
-      res :: BIN
-      a :: INT
-      if (NOT .coppensbases_all_exist) then
-         res = TRUE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).coppensbasis.label/=" ") then
-               res = FALSE
-               exit
-            end
-         end
-      end
-   end
-
-   coppensbases_are_all_labeled result (res)
-   ! Return TRUE if all coppens basis set labels exist (i.e. are not blank)
-      res :: BIN
-      a :: INT
-      if (NOT .coppensbases_all_exist) then
-         res = FALSE
-      else
-         res = TRUE
-         do a = 1,.dim
-            if (self(a).coppensbasis.label==" ") then
-               res = FALSE
-               exit
-            end
-         end
-      end
-   end
-
-   coppensbases_are_part_labeled result (res)
-   ! Return TRUE if only some coppens basis set labels exist (i.e. are not blank)
-      res :: BIN
-      if (NOT .coppensbases_all_exist) then
-         res = FALSE
-      else
-         res = NOT .coppensbases_are_all_labeled   &
-           AND NOT .coppensbases_are_all_unlabeled
-      end
-   end
-
-   coppensbases_are_resolved result (res)
-   ! Return TRUE if all coppens basis sets are associated AND their shell list
-   ! parts are also associated.
-      res :: BIN
-      a :: INT
-      res = TRUE
-      do a = 1,.dim
-         if (NOT associated(self(a).coppensbasis)) then
-            res = FALSE
-            exit
-         else if (NOT associated(self(a).coppensbasis.orbital)) then
-            res = FALSE
-            exit
-         end
-      end
+   coppensbases_are_all_labeled result (res) ::: get_from(VEC{ATOM}:bases_are_all_labeled, basis=>coppensbasis)
+   ! Return TRUE if all basis set labels exist (i.e. are not blank)
+   ! Note: If a dummy atom has a basis it should have a label
    end
 
 
@@ -7359,19 +7643,6 @@ contains
 !     end
 !   end
 
-   ensure_in_unit_cell(cell)
-   ! Translate the position of self to be in the unit cell.
-   ! WARNING: Does this work -- dylan ?
-      self :: INOUT
-      cell :: UNIT_CELL, IN
-      translation,coa_cart,coa_frac,trans_int :: VEC{REAL}(3)
-      coa_cart = .centre_of_atoms
-      coa_frac = matmul(cell.inverse_matrix,coa_cart)   ! fractionals
-      trans_int = floor(coa_frac + TOL(6))                ! round to lattice vector
-      translation = matmul(cell.inverse_matrix,translation) !cartesians
-      .translate_by(-translation)
-   end
-
    default_multiplicity result (res)
    ! Return the default multiplicity for an atomvec/molecule.
       self :: IN
@@ -7387,139 +7658,139 @@ contains
 !  Integrals
 !  *********
 
-   make_nuclear_matrix(Z)
-   ! Calculate the nuclear attraction matrix "Z" for the atoms in the list.
-   ! Includes dummay atoms
-      self :: target
-      Z :: MAT{REAL}
-   ENSURE(.bases_are_resolved, "no basis set")
-   ENSURE(Z.is_square,"Z is not square")
-   ENSURE(Z.dim1==.n_bf,"wrong size, Z")
-      atom :: ATOM*
-      Z_c :: MAT{REAL}*
-      q,c,fa,la,fb,lb :: INT
-      sh :: SHELL2
-      .make_index_info
-      Z = ZERO
-      do q = 1,.n_shell_pairs
-        .get_shell_pair(sh,q,fa,la,fb,lb)
-        Z_c.create(sh.a.n_comp,sh.b.n_comp)
-        do c = 1,.dim
-           atom => self(c)
-           sh.get_nuc(Z_c,atom.mass,atom.pos)
-           Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
-        end
-        Z_c.destroy
-        sh.destroy_ptr_part
-      end
-      Z.symmetric_reflect
-      .destroy_index_info
-   end
-
-   make_nuclear_matrix(Z,nuclei)
-   ! Calculate the nuclear attraction matrix "Z" for the basis functions on all
-   ! atoms in the list, but only for the positive nuclei specified in the
-   ! "nuclei" list.  Includes dummay atoms
-      self :: target
-      Z :: MAT{REAL}
-      nuclei :: VEC{INT}
-   ENSURE(.bases_are_resolved, "no basis set")
-   ENSURE(Z.is_square,"Z is not square")
-   ENSURE(Z.dim1==.n_bf,"wrong size, Z")
-      atom :: ATOM*
-      Z_c :: MAT{REAL}*
-      q,c,fa,la,fb,lb :: INT
-      sh :: SHELL2
-      .make_index_info
-      Z = ZERO
-      do q = 1,.n_shell_pairs
-        .get_shell_pair(sh,q,fa,la,fb,lb)
-        Z_c.create(sh.a.n_comp,sh.b.n_comp)
-        do c = 1,size(nuclei)
-           atom => self(nuclei(c))
-           sh.get_nuc(Z_c,atom.mass,atom.pos)
-           Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
-        end
-        Z_c.destroy
-        sh.destroy_ptr_part
-      end
-      Z.symmetric_reflect
-      .destroy_index_info
-   end
+!   make_nuclear_matrix(Z)
+!   ! Calculate the nuclear attraction matrix "Z" for the atoms in the list.
+!   ! Includes dummay atoms
+!      self :: target
+!      Z :: MAT{REAL}
+!   ENSURE(.bases_are_resolved, "no basis set")
+!   ENSURE(Z.is_square,"Z is not square")
+!   ENSURE(Z.dim1==.n_bf,"wrong size, Z")
+!      atom :: ATOM*
+!      Z_c :: MAT{REAL}*
+!      q,c,fa,la,fb,lb :: INT
+!      sh :: SHELL2
+!      .make_index_info
+!      Z = ZERO
+!      do q = 1,.n_shell_pairs
+!        .get_shell_pair(sh,q,fa,la,fb,lb)
+!        Z_c.create(sh.a.n_comp,sh.b.n_comp)
+!        do c = 1,.dim
+!           atom => self(c)
+!           sh.get_nuc(Z_c,atom.mass,atom.pos)
+!           Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
+!        end
+!        Z_c.destroy
+!        sh.destroy_ptr_part
+!      end
+!      Z.symmetric_reflect
+!      .destroy_index_info
+!   end
+!
+!   make_nuclear_matrix(Z,nuclei)
+!   ! Calculate the nuclear attraction matrix "Z" for the basis functions on all
+!   ! atoms in the list, but only for the positive nuclei specified in the
+!   ! "nuclei" list.  Includes dummay atoms
+!      self :: target
+!      Z :: MAT{REAL}
+!      nuclei :: VEC{INT}
+!   ENSURE(.bases_are_resolved, "no basis set")
+!   ENSURE(Z.is_square,"Z is not square")
+!   ENSURE(Z.dim1==.n_bf,"wrong size, Z")
+!      atom :: ATOM*
+!      Z_c :: MAT{REAL}*
+!      q,c,fa,la,fb,lb :: INT
+!      sh :: SHELL2
+!      .make_index_info
+!      Z = ZERO
+!      do q = 1,.n_shell_pairs
+!        .get_shell_pair(sh,q,fa,la,fb,lb)
+!        Z_c.create(sh.a.n_comp,sh.b.n_comp)
+!        do c = 1,size(nuclei)
+!           atom => self(nuclei(c))
+!           sh.get_nuc(Z_c,atom.mass,atom.pos)
+!           Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
+!        end
+!        Z_c.destroy
+!        sh.destroy_ptr_part
+!      end
+!      Z.symmetric_reflect
+!      .destroy_index_info
+!   end
+!
+!   make_index_info ::: leaky
+!   ! Define a vector of atom numbers corresponding to the molecule
+!   ! basis set shell numbers; also define a vector of atom shell numbers
+!   ! corresponding to the molecule basis set shell number
+!      atom_4_shell       => .atom_for_shell
+!      atom_shell_4_shell => .atom_shell_for_shell
+!      first_shell_4_atom => .first_shell_for_atom
+!      .make_shell_limits(first_basis_fn_4_shell,last_basis_fn_4_shell,angular_moment_4_shell)
+!      .make_atom_basis_fn_limits(first_basis_fn_4_atom,last_basis_fn_4_atom)
+!      index_info_created = TRUE
+!   end
+!
+!   destroy_index_info ::: leaky
+!   ! Destroythe private index information. There may be problems with this for
+!   ! compilers without default initialisation ...
+!      atom_4_shell.destroy
+!      atom_shell_4_shell.destroy
+!      first_shell_4_atom.destroy
+!      first_basis_fn_4_shell.destroy
+!      last_basis_fn_4_shell.destroy
+!      first_basis_fn_4_atom.destroy
+!      last_basis_fn_4_atom.destroy
+!      index_info_created = FALSE
+!   end
 
 !  ***********
 !  Shell pairs
 !  ***********
 
-   get_shell_pair(shell,index,fa,la,fb,lb) ::: leaky
-   ! Get the SHELL2 object "shell" correponding to the pair index "index"
-   ! Also return the basis function start indices "fa", "la", etc ...
-      index :: INT, IN
-      shell :: SHELL2, OUT
-      fa,la,fb,lb :: INT, OUT
-   ENSURE(index_info_created,"no index information")
-      a,b,aa,sa,bb,sb :: INT
-      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
-      b  = index - a*(a-1)/2
-      fa = first_basis_fn_4_shell(a) ! These are module variables
-      fb = first_basis_fn_4_shell(b)
-      la = last_basis_fn_4_shell(a)
-      lb = last_basis_fn_4_shell(b)
-      aa = atom_4_shell(a)
-      bb = atom_4_shell(b)
-      sa = atom_shell_4_shell(a)
-      sb = atom_shell_4_shell(b)
-      shell.copy(self(aa).basis.shell(sa), self(bb).basis.shell(sb), &
-                 self(aa).pos, self(bb).pos )
-   end
-
-   get_shell_pair(shell,index,fa,la,fb,lb,atom_a,atom_b) ::: leaky
-   ! Get the SHELL2 object "shell" correponding to the pair index "index"
-   ! Also return the basis function start indices "fa", "la", etc ...
-   ! Plus the atoms the shells are located on, "atom_a" and "atom_b".
-      index :: INT, IN
-      shell :: SHELL2, OUT
-      fa,la,fb,lb,atom_a,atom_b :: INT, OUT
-   ENSURE(index_info_created,"no index information")
-      a,b,sa,sb :: INT
-      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
-      b  = index - a*(a-1)/2
-      fa = first_basis_fn_4_shell(a)
-      fb = first_basis_fn_4_shell(b)
-      la = last_basis_fn_4_shell(a)
-      lb = last_basis_fn_4_shell(b)
-      atom_a = atom_4_shell(a)
-      atom_b = atom_4_shell(b)
-      sa = atom_shell_4_shell(a)
-      sb = atom_shell_4_shell(b)
-      shell.copy(self(atom_a).basis.shell(sa), self(atom_b).basis.shell(sb), &
-                self(atom_a).pos, self(atom_b).pos )
-   end
-
-   make_index_info ::: leaky
-   ! Define a vector of atom numbers corresponding to the molecule
-   ! basis set shell numbers; also define a vector of atom shell numbers
-   ! corresponding to the molecule basis set shell number
-      atom_4_shell       => .atom_for_shell
-      atom_shell_4_shell => .atom_shell_for_shell
-      first_shell_4_atom => .first_shell_for_atom
-      .make_shell_limits(first_basis_fn_4_shell,last_basis_fn_4_shell,angular_moment_4_shell)
-      .make_atom_basis_fn_limits(first_basis_fn_4_atom,last_basis_fn_4_atom)
-      index_info_created = TRUE
-   end
-
-   destroy_index_info ::: leaky
-   ! Destroythe private index information. There may be problems with this for
-   ! compilers without default initialisation ...
-      atom_4_shell.destroy
-      atom_shell_4_shell.destroy
-      first_shell_4_atom.destroy
-      first_basis_fn_4_shell.destroy
-      last_basis_fn_4_shell.destroy
-      first_basis_fn_4_atom.destroy
-      last_basis_fn_4_atom.destroy
-      index_info_created = FALSE
-   end
+!   get_shell_pair(shell,index,fa,la,fb,lb) ::: leaky
+!   ! Get the SHELL2 object "shell" correponding to the pair index "index"
+!   ! Also return the basis function start indices "fa", "la", etc ...
+!      index :: INT, IN
+!      shell :: SHELL2, OUT
+!      fa,la,fb,lb :: INT, OUT
+!   ENSURE(index_info_created,"no index information")
+!      a,b,aa,sa,bb,sb :: INT
+!      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+!      b  = index - a*(a-1)/2
+!      fa = first_basis_fn_4_shell(a) ! These are module variables
+!      fb = first_basis_fn_4_shell(b)
+!      la = last_basis_fn_4_shell(a)
+!      lb = last_basis_fn_4_shell(b)
+!      aa = atom_4_shell(a)
+!      bb = atom_4_shell(b)
+!      sa = atom_shell_4_shell(a)
+!      sb = atom_shell_4_shell(b)
+!      shell.copy(self(aa).basis.shell(sa), self(bb).basis.shell(sb), &
+!                 self(aa).pos, self(bb).pos )
+!   end
+!
+!   get_shell_pair(shell,index,fa,la,fb,lb,atom_a,atom_b) ::: leaky
+!   ! Get the SHELL2 object "shell" correponding to the pair index "index"
+!   ! Also return the basis function start indices "fa", "la", etc ...
+!   ! Plus the atoms the shells are located on, "atom_a" and "atom_b".
+!      index :: INT, IN
+!      shell :: SHELL2, OUT
+!      fa,la,fb,lb,atom_a,atom_b :: INT, OUT
+!   ENSURE(index_info_created,"no index information")
+!      a,b,sa,sb :: INT
+!      a  = (1+int(sqrt(8.0d0*index-7.0d0)))/2
+!      b  = index - a*(a-1)/2
+!      fa = first_basis_fn_4_shell(a)
+!      fb = first_basis_fn_4_shell(b)
+!      la = last_basis_fn_4_shell(a)
+!      lb = last_basis_fn_4_shell(b)
+!      atom_a = atom_4_shell(a)
+!      atom_b = atom_4_shell(b)
+!      sa = atom_shell_4_shell(a)
+!      sb = atom_shell_4_shell(b)
+!      shell.copy(self(atom_a).basis.shell(sa), self(atom_b).basis.shell(sb), &
+!                self(atom_a).pos, self(atom_b).pos )
+!   end
 
 !  *************
 !  Interpolators
