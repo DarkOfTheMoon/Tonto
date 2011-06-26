@@ -190,7 +190,7 @@ my $n_type_args = 0;          # The number of type argumets for this module
 my @type_arg;                 # This list of type arguments -- and arguments of arguments!
 my $n_inherited_type_args = 0;# The number of INHERITED type argumets for this module
 my @inherited_type_arg;       # This list of INHERITED type arguments -- and arguments of arguments!
-my $n_define_type;
+my $n_define_type;            # Per-inherited-routine user-defined type sunstitutions
 my @old_define_type;          # Explicitly define type substitutions (also non-type substitutions).
 my @new_define_type;          # 
 my @old_expand_type;          # Explicitly define type substitutions (also non-type substitutions).
@@ -1029,7 +1029,10 @@ sub analyse_variable_declaration {
             # Check if all args are routine arguments, or all aren't
             if ($scopeunit eq 'function' ||
                 $scopeunit eq 'subroutine') {
+
                if (&routine_has_arg($var) == 1) {
+
+                  # Check common errors
                   if (defined $current_rout_name &&
                       defined $routine{$current_rout_name}{in_routine_body} &&
                       $routine{$current_rout_name}{in_routine_body} == 1) {
@@ -1042,15 +1045,27 @@ sub analyse_variable_declaration {
                      &report_error("not all variables in the one declaration" .
                             "are routine arguments:\n\n$X");
                   }
+
+                  # Yes, this was & is a routine arg
+                  $last_var_was_arg = 1; 
+                  $var_info->{$var}{is_routine_arg} = 1;
+
+                  # See if it is intent IN, OUT, or INOUT
+                # if    ($post =~ /\bIN\b/       )  { $var_info->{$var}{is_IN}} = 1; } 
+                # elsif ($post =~ /\bOUT\b/      )  { $var_info->{$var}{is_OUT}} = 1; } 
+                # elsif ($var eq $function_result)  { $var_info->{$var}{is_OUT}} = 1; } 
+                # else                              { $var_info->{$var}{is_INOUT}} = 1; } 
+
+                  # Special stuff for function args
                   if ($var eq $function_result) {
                      $one_var_is_res = 1;
                      $true_arg = 0;
                   } else {
                      $true_arg = 1;
                   }
-                  $last_var_was_arg = 1; # Yes, this was a routine arg
-                  $var_info->{$var}{is_routine_arg} = 1;
+
                } else {
+
                   if (defined $last_var_was_arg && $last_var_was_arg == 1) {
                     &report_error("not all variables are routine arguments:\n\n$X");
                   }
@@ -1061,6 +1076,7 @@ sub analyse_variable_declaration {
                      $routine{$current_rout_name}{first_local_var_decl} = 1; # This undef'd later ...
                      $routine{$current_rout_name}{found_local_var_decl} = 1;
                   }
+
                }
             }
 
@@ -1092,9 +1108,11 @@ sub analyse_variable_declaration {
                else                          { $info{type_is_readonly} = 0; }
                if ($post =~ /\bPTR\b/ || 
                    $post =~ /\bpointer\b/ ) { $info{type_ptr_part} = '*'}
+
 #if ($post =~ /private/ ) { 
 #print "line = $X"; 
 #} 
+
             }
 
             %{$var_info->{$var}} = %info;          # Type info for *this* $var
@@ -2659,76 +2677,81 @@ sub convert_inherited_type_arg_macros {
 
    if ( ! $not_blank)                        { return ($fortran_out) }
 
-#print "--------------------------------------------";
-#print "line    =",$_;
-#print "in body =",$routine{$name}{in_routine_body};
-#print "active  =",$routine{$name}{first_active_line};
-#print "inh     =",$routine{$name}{inherited};
-#print "being   =",$routine{$name}{being_inherited};
+# print "--------------------------------------------";
+# print "line    =",$_;
+# print "in body =",$routine{$name}{in_routine_body};
+# print "active  =",$routine{$name}{first_active_line};
+# print "inh     =",$routine{$name}{inherited};
+# print "being   =",$routine{$name}{being_inherited};
 
    if ($routine{$name}{inherited}) {
 
       my ($i,$j,$narg,$arg,$newarg);
 
+      # Do user defined type substitutions
       if ($n_define_type>0) {
       
-# print "YUP, line= $input_line";
-# print "YUP, line= $fortran_out";
+#  print "YUP, line= $input_line";
+#  print "YUP, line= $fortran_out";
          for ($i=1; $i<=$n_define_type ; $i++) {
             $arg    = $old_define_type[$i];
             $newarg = $new_define_type[$i];
-            $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g;
+            $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g; # Protect regex
             $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
             $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
             $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
             $fortran_out =~ s/${arg}/${newarg}/g;
-# print "arg = $arg";
-# print "newarg = $newarg";
-# print "YUP, line= $fortran_out";
+#  print "arg = $arg";
+#  print "newarg = $newarg";
+#  print "YUP, line= $fortran_out";
             my @old = @{$old_expand_type[$i]};
             my @new = @{$new_expand_type[$i]};
             $narg = ($#old<$#new?$#old:$#new);
             if ($narg>0) {
-# print "INNER narg = $narg";
+#  print "INNER narg = $narg";
                for ($j=1; $j<=$narg ; $j++) {
                   $arg    = $old[$j];
                   $newarg = $new[$j];
-                  $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g;
+                  $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g; # Protect regex
                   $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
                   $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
                   $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
-# print "arg = $arg";
-# print "newarg = $newarg";
+#  print "arg = $arg";
+#  print "newarg = $newarg";
                   $fortran_out =~ s/${arg}/${newarg}/g;
                }
             }
          }
-# print "YUP, fort= $fortran_out";
       }
  
       if (! $routine{$name}{in_routine_body}) {
-   
-         # Convert the parent module type to the inherted module type
-         my $type_name = $routine{$name}{parent_module};
-         $fortran_out =~ s/\b${type_name}\b/${module_full_name}/;
-      
-         # Convert the parent module type args to the inherted module type args
-         if ($n_inherited_type_args>0 && $n_type_args>0) {
-      
-            $narg = ($n_type_args<$n_inherited_type_args?
-                     $n_type_args:$n_inherited_type_args);
-      
-            for ($i=1; $i<=$narg ; $i++) {
-               $arg    = $inherited_type_arg[$i];
-               $newarg = $type_arg[$i];
-               $fortran_out =~ s/\b${arg}/${newarg}/;
+
+            # Convert the parent module type to the inherted module type
+            my $type_name = $routine{$name}{parent_module};
+            $fortran_out =~ s/\b${type_name}\b/${module_full_name}/;
+         
+            # Convert the parent module type args to the inherted module type args
+            if ($n_inherited_type_args>0 && $n_type_args>0) {
+         
+               $narg = ($n_type_args<$n_inherited_type_args?
+                        $n_type_args:$n_inherited_type_args);
+         
+               for ($i=1; $i<=$narg ; $i++) {
+                  $arg    = $inherited_type_arg[$i];
+                  $newarg = $type_arg[$i];
+                  $fortran_out =~ s/\b${arg}/${newarg}/;
+               }
             }
-         }
-         # Remove len= specifiers in everything which is not an array of STR
-         if (! ($module_is_array && $type_arg[1] eq 'STR')) {
-            $fortran_out =~ s/[(]len=.*,/[(]/;
-            $fortran_out =~ s/[(]len=.*[)]//;
-         }
+   
+            # Remove len= specifiers in everything which is not an array of STR
+            # Keep len= specifiers for function results!
+            if ($module_is_array && $type_arg[1] eq 'STR') {
+          # } elsif($routine{$name}{function} && 
+          #         $fortran_out =~ /^ *${routine{$name}{function_result}} *:: /) {
+            } else {
+               $fortran_out =~ s/[(]len=.*,/[(]/;
+               $fortran_out =~ s/[(]len=.*[)]//;
+            }
       }
    }
 
@@ -5875,20 +5898,14 @@ sub analyse_rout_name {
                                                                          next}; # 
         /^template/         && do { $routine{$name}{template}=1;         next}; # will be inherited, treated above
         /^inlined_by_foo/   && do { $routine{$name}{inlined_by_foo}=1;   next}; # will manually inlined
-#       /^alias/            && do { $n_define_type++;
-#                                   my $n = $n_define_type;
-#                                   $_ =~ /^[^(]*[(]\s*([\w{,}.]+)\s*=>\s*([\w{,}.]+)\s*[)]/;
-#                                   $old_define_type[$n] = $1;
-#                                   $new_define_type[$n] = $2;
-#                                                                        next};
         '=>'                && do { $n_define_type++;                           # A=>B aliases
-                                    my $n = $n_define_type;
+                                    my $n = $n_define_type; 
                                     $_ =~ /([^ ]*)\s*=>\s*([^ ]*)/;
                                     my $old = $1;
                                     my $new = $2;
                                     $old_define_type[$n] = $old;
                                     $new_define_type[$n] = $new;
-                                    my %info; my @type_arg; 
+                                    my %info; my @type_arg;                     # A{X}=>B{Y} alias?
                                     %info = &analyse_type_name($old,0);
                                     @type_arg = @{$info{type_arg}};
                                     $old_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
