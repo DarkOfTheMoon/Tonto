@@ -2,6 +2,7 @@ package Tonto;
 
 use strict;
 
+# This sets the continuation line length for macros
 my $linewidth = 125;
 my $last_was_blank = 0;
 my $include_level = 0;
