@@ -414,7 +414,7 @@ sub show_options {
 sub do_substitutions_into_Makefile {
   -f "$SRCDIR/scripts/Makefile.in" || do {print STDERR "Makefile.in not found in scripts/"; exit 1};
   open(INFILE,"< $SRCDIR/scripts/Makefile.in");
-  open(OUTFILE,"> $SRCDIR/Makefile");
+  open(OUTFILE,"> $PLATFORM_ID.make");
   while(<INFILE>) {
     s/\@INSTALLDIR\@/$INSTALLDIR/g;
     s/\@SRCDIR\@/$SRCDIR/g;
@@ -434,4 +434,9 @@ sub do_substitutions_into_Makefile {
   }
   close(OUTFILE);
   close(INFILE);
+
+  # Link the Makefile
+  system("rm -f Makefile");
+  system("ln -s $PLATFORM_ID.make Makefile");
+
 }
