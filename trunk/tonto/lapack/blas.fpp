@@ -7,8 +7,8 @@
 !     jack dongarra, linpack, 3/11/78.
 !     modified 12/3/93, array(1) declarations changed to array(*)
 !
-      REAL :: dx(*),dy(*),da
-      INT :: i,incx,incy,ix,iy,m,mp1,n
+      REAL dx(*),dy(*),da
+      INT i,incx,incy,ix,iy,m,mp1,n
 !
       if (n<=0) return
       if (da == ZERO) return
@@ -48,6 +48,7 @@
    50 continue
       return
       end
+
       subroutine dcopy(n,dx,incx,dy,incy)
 !
 !     copies a vector, x, to a vector, y.
@@ -98,10 +99,11 @@
    50 continue
       return
       end
+
       SUBROUTINE DGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC )
 !     .. Scalar Arguments ..
       STR(len=1)        TRANSA, TRANSB
-      INTEGER            M, N, K, LDA, LDB, LDC
+      INT            M, N, K, LDA, LDB, LDC
       REAL   ALPHA, BETA
 !     .. Array Arguments ..
       REAL   A( LDA, * ), B( LDB, * ), C( LDC, * )
@@ -148,18 +150,18 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry,  M  specifies  the number  of rows  of the  matrix
 !           op( A )  and of the  matrix  C.  M  must  be at least  zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry,  N  specifies the number  of columns of the matrix
 !           op( B ) and the number of columns of the matrix C. N must be
 !           at least zero.
 !           Unchanged on exit.
 !
-!  K      - INTEGER.
+!  K      - INT.
 !           On entry,  K  specifies  the number of columns of the matrix
 !           op( A ) and the number of rows of the matrix op( B ). K must
 !           be at least  zero.
@@ -177,7 +179,7 @@
 !           matrix A.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. When  TRANSA = 'N' or 'n' then
 !           LDA must be at least  max( 1, m ), otherwise  LDA must be at
@@ -192,7 +194,7 @@
 !           matrix B.
 !           Unchanged on exit.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in the calling (sub) program. When  TRANSB = 'N' or 'n' then
 !           LDB must be at least  max( 1, k ), otherwise  LDB must be at
@@ -211,7 +213,7 @@
 !           On exit, the array  C  is overwritten by the  m by n  matrix
 !           ( alpha*op( A )*op( B ) + beta*C ).
 !
-!  LDC    - INTEGER.
+!  LDC    - INT.
 !           On entry, LDC specifies the first dimension of C as declared
 !           in  the  calling  (sub)  program.   LDC  must  be  at  least
 !           max( 1, m ).
@@ -230,8 +232,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL           NOTA, NOTB
-      INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
+      BIN           NOTA, NOTB
+      INT            I, INFO, J, L, NCOLA, NROWA, NROWB
       REAL   TEMP
 !     ..
 !     .. Executable Statements ..
@@ -402,10 +404,11 @@
 !     End of DGEMM .
 !
       END
+
       SUBROUTINE DGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
       REAL   ALPHA, BETA
-      INTEGER            INCX, INCY, LDA, M, N
+      INT            INCX, INCY, LDA, M, N
       STR(len=1)        TRANS
 !     .. Array Arguments ..
       REAL   A( LDA, * ), X( * ), Y( * )
@@ -436,12 +439,12 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of the matrix A.
 !           M must be at least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -455,7 +458,7 @@
 !           contain the matrix of coefficients.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, m ).
@@ -469,7 +472,7 @@
 !           vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -487,7 +490,7 @@
 !           must contain the vector y. On exit, Y is overwritten by the
 !           updated vector y.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -504,7 +507,7 @@
 !
 !     .. Local Scalars ..
       REAL   TEMP
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -653,10 +656,11 @@
 !     End of DGEMV .
 !
       END
+
       SUBROUTINE DGER  ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
       REAL   ALPHA
-      INTEGER            INCX, INCY, LDA, M, N
+      INT            INCX, INCY, LDA, M, N
 !     .. Array Arguments ..
       REAL   A( LDA, * ), X( * ), Y( * )
 !     ..
@@ -674,12 +678,12 @@
 !  Parameters
 !  ==========
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of the matrix A.
 !           M must be at least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -694,7 +698,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -705,7 +709,7 @@
 !           element vector y.
 !           Unchanged on exit.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -715,7 +719,7 @@
 !           contain the matrix of coefficients. On exit, A is
 !           overwritten by the updated matrix.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, m ).
@@ -733,7 +737,7 @@
 !
 !     .. Local Scalars ..
       REAL   TEMP
-      INTEGER            I, INFO, IX, J, JY, KX
+      INT            I, INFO, IX, J, JY, KX
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -804,6 +808,7 @@
 !     End of DGER  .
 !
       END
+
       SUBROUTINE DGETF2( M, N, A, LDA, IPIV, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -812,10 +817,10 @@
 !     June 30, 1992
 !
 !     .. Scalar Arguments ..
-      INTEGER            INFO, LDA, M, N
+      INT            INFO, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      INTEGER            IPIV( * )
+      INT            IPIV( * )
       REAL   A( LDA, * )
 !     ..
 !
@@ -836,10 +841,10 @@
 !  Arguments
 !  =========
 !
-!  M       (input) INTEGER
+!  M       (input) INT
 !          The number of rows of the matrix A.  M >= 0.
 !
-!  N       (input) INTEGER
+!  N       (input) INT
 !          The number of columns of the matrix A.  N >= 0.
 !
 !  A       (input/output) REAL array, dimension (LDA,N)
@@ -847,14 +852,14 @@
 !          On exit, the factors L and U from the factorization
 !          A = P*L*U; the unit diagonal elements of L are not stored.
 !
-!  LDA     (input) INTEGER
+!  LDA     (input) INT
 !          The leading dimension of the array A.  LDA >= max(1,M).
 !
-!  IPIV    (output) INTEGER array, dimension (min(M,N))
+!  IPIV    (output) INT array, dimension (min(M,N))
 !          The pivot indices; for 1 <= i <= min(M,N), row i of the
 !          matrix was interchanged with row IPIV(i).
 !
-!  INFO    (output) INTEGER
+!  INFO    (output) INT
 !          = 0: successful exit
 !          < 0: if INFO = -k, the k-th argument had an illegal value
 !          > 0: if INFO = k, U(k,k) is exactly zero. The factorization
@@ -865,10 +870,10 @@
 !  =====================================================================
 !
 !     .. Local Scalars ..
-      INTEGER            J, JP
+      INT            J, JP
 !     ..
 !     .. External Functions ..
-      INTEGER            IDAMAX
+      INT            IDAMAX
       EXTERNAL           IDAMAX
 !     ..
 !     .. External Subroutines ..
@@ -929,6 +934,7 @@
 !     End of DGETF2
 !
       END
+
       SUBROUTINE DGETRF( M, N, A, LDA, IPIV, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -937,10 +943,10 @@
 !     March 31, 1993
 !
 !     .. Scalar Arguments ..
-      INTEGER            INFO, LDA, M, N
+      INT            INFO, LDA, M, N
 !     ..
 !     .. Array Arguments ..
-      INTEGER            IPIV( * )
+      INT            IPIV( * )
       REAL   A( LDA, * )
 !     ..
 !
@@ -961,10 +967,10 @@
 !  Arguments
 !  =========
 !
-!  M       (input) INTEGER
+!  M       (input) INT
 !          The number of rows of the matrix A.  M >= 0.
 !
-!  N       (input) INTEGER
+!  N       (input) INT
 !          The number of columns of the matrix A.  N >= 0.
 !
 !  A       (input/output) REAL array, dimension (LDA,N)
@@ -972,14 +978,14 @@
 !          On exit, the factors L and U from the factorization
 !          A = P*L*U; the unit diagonal elements of L are not stored.
 !
-!  LDA     (input) INTEGER
+!  LDA     (input) INT
 !          The leading dimension of the array A.  LDA >= max(1,M).
 !
-!  IPIV    (output) INTEGER array, dimension (min(M,N))
+!  IPIV    (output) INT array, dimension (min(M,N))
 !          The pivot indices; for 1 <= i <= min(M,N), row i of the
 !          matrix was interchanged with row IPIV(i).
 !
-!  INFO    (output) INTEGER
+!  INFO    (output) INT
 !          = 0:  successful exit
 !          < 0:  if INFO = -i, the i-th argument had an illegal value
 !          > 0:  if INFO = i, U(i,i) is exactly zero. The factorization
@@ -990,13 +996,13 @@
 !  =====================================================================
 !
 !     .. Local Scalars ..
-      INTEGER            I, IINFO, J, JB, NB
+      INT            I, IINFO, J, JB, NB
 !     ..
 !     .. External Subroutines ..
       EXTERNAL           DGEMM, DGETF2, DLASWP, DTRSM, XERBLA
 !     ..
 !     .. External Functions ..
-      INTEGER            ILAENV
+      INT            ILAENV
       EXTERNAL           ILAENV
 !     ..
 !     .. Executable Statements ..
@@ -1077,6 +1083,7 @@
 !     End of DGETRF
 !
       END
+
       SUBROUTINE DLARTG( F, G, CS, SN, R )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -1127,8 +1134,8 @@
 !  =====================================================================
 !
 !     .. Local Scalars ..
-      LOGICAL            FIRST
-      INTEGER            COUNT, I
+      BIN            FIRST
+      INT            COUNT, I
       REAL   EPS, F1, G1, SAFMIN, SAFMN2, SAFMX2, SCALE, RAD
 !     ..
 !     .. Save statement ..
@@ -1203,10 +1210,11 @@
 !     End of DLARTG
 !
       END
+
       SUBROUTINE DSYMV ( UPLO, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
       REAL   ALPHA, BETA
-      INTEGER            INCX, INCY, LDA, N
+      INT            INCX, INCY, LDA, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       REAL   A( LDA, * ), X( * ), Y( * )
@@ -1238,7 +1246,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -1258,7 +1266,7 @@
 !           upper triangular part of A is not referenced.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -1270,7 +1278,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -1286,7 +1294,7 @@
 !           element vector y. On exit, Y is overwritten by the updated
 !           vector y.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -1303,7 +1311,7 @@
 !
 !     .. Local Scalars ..
       REAL   TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Executable Statements ..
@@ -1453,10 +1461,11 @@
 !     End of DSYMV .
 !
       END
+
       SUBROUTINE DSYR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
       REAL   ALPHA
-      INTEGER            INCX, INCY, LDA, N
+      INT            INCX, INCY, LDA, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       REAL   A( LDA, * ), X( * ), Y( * )
@@ -1488,7 +1497,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -1503,7 +1512,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -1514,7 +1523,7 @@
 !           element vector y.
 !           Unchanged on exit.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -1533,7 +1542,7 @@
 !           lower triangular part of the array A is overwritten by the
 !           lower triangular part of the updated matrix.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -1551,7 +1560,7 @@
 !
 !     .. Local Scalars ..
       REAL   TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -1673,10 +1682,11 @@
 !     End of DSYR2 .
 !
       END
+
       SUBROUTINE DSYR2K( UPLO, TRANS, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC )
 !     .. Scalar Arguments ..
       STR(len=1)        UPLO, TRANS
-      INTEGER            N, K, LDA, LDB, LDC
+      INT            N, K, LDA, LDB, LDC
       REAL   ALPHA, BETA
 !     .. Array Arguments ..
       REAL   A( LDA, * ), B( LDB, * ), C( LDC, * )
@@ -1728,12 +1738,12 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry,  N specifies the order of the matrix C.  N must be
 !           at least zero.
 !           Unchanged on exit.
 !
-!  K      - INTEGER.
+!  K      - INT.
 !           On entry with  TRANS = 'N' or 'n',  K  specifies  the number
 !           of  columns  of the  matrices  A and B,  and on  entry  with
 !           TRANS = 'T' or 't' or 'C' or 'c',  K  specifies  the  number
@@ -1752,7 +1762,7 @@
 !           matrix A.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in  the  calling  (sub)  program.   When  TRANS = 'N' or 'n'
 !           then  LDA must be at least  max( 1, n ), otherwise  LDA must
@@ -1767,7 +1777,7 @@
 !           matrix B.
 !           Unchanged on exit.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in  the  calling  (sub)  program.   When  TRANS = 'N' or 'n'
 !           then  LDB must be at least  max( 1, n ), otherwise  LDB must
@@ -1792,7 +1802,7 @@
 !           lower triangular part of the array  C is overwritten by the
 !           lower triangular part of the updated matrix.
 !
-!  LDC    - INTEGER.
+!  LDC    - INT.
 !           On entry, LDC specifies the first dimension of C as declared
 !           in  the  calling  (sub)  program.   LDC  must  be  at  least
 !           max( 1, n ).
@@ -1811,8 +1821,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL            UPPER
-      INTEGER            I, INFO, J, L, NROWA
+      BIN            UPPER
+      INT            I, INFO, J, L, NROWA
       REAL   TEMP1, TEMP2
 !     ..
 !     .. Executable Statements ..
@@ -1988,10 +1998,11 @@
 !     End of DSYR2K.
 !
       END
+
       SUBROUTINE DTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB)
 !     .. Scalar Arguments ..
       STR(len=1)        SIDE, UPLO, TRANSA, DIAG
-      INTEGER            M, N, LDA, LDB
+      INT            M, N, LDA, LDB
       REAL   ALPHA
 !     .. Array Arguments ..
       REAL   A( LDA, * ), B( LDB, * )
@@ -2055,12 +2066,12 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of B. M must be at
 !           least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of B.  N must be
 !           at least zero.
 !           Unchanged on exit.
@@ -2085,7 +2096,7 @@
 !           A  are not referenced either,  but are assumed to be  unity.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program.  When  SIDE = 'L' or 'l'  then
 !           LDA  must be at least  max( 1, m ),  when  SIDE = 'R' or 'r'
@@ -2097,7 +2108,7 @@
 !           contain the matrix  B,  and  on exit  is overwritten  by the
 !           transformed matrix.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in  the  calling  (sub)  program.   LDB  must  be  at  least
 !           max( 1, m ).
@@ -2115,8 +2126,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL            LSIDE, NOUNIT, UPPER
-      INTEGER            I, INFO, J, K, NROWA
+      BIN            LSIDE, NOUNIT, UPPER
+      INT            I, INFO, J, K, NROWA
       REAL   TEMP
 !     ..
 !     .. Executable Statements ..
@@ -2324,9 +2335,10 @@
 !     End of DTRMM .
 !
       END
+
       SUBROUTINE DTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 !     .. Scalar Arguments ..
-      INTEGER            INCX, LDA, N
+      INT            INCX, LDA, N
       STR(len=1)        DIAG, TRANS, UPLO
 !     .. Array Arguments ..
       REAL   A( LDA, * ), X( * )
@@ -2378,7 +2390,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -2396,7 +2408,7 @@
 !           A are not referenced either, but are assumed to be unity.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -2408,7 +2420,7 @@
 !           element vector x. On exit, X is overwritten with the
 !           tranformed vector x.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -2425,8 +2437,8 @@
 !
 !     .. Local Scalars ..
       REAL   TEMP
-      INTEGER            I, INFO, IX, J, JX, KX
-      LOGICAL            NOUNIT
+      INT            I, INFO, IX, J, JX, KX
+      BIN            NOUNIT
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -2593,10 +2605,11 @@
 !     End of DTRMV .
 !
       END
+
       SUBROUTINE DTRSM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB )
 !     .. Scalar Arguments ..
       STR(len=1)        SIDE, UPLO, TRANSA, DIAG
-      INTEGER            M, N, LDA, LDB
+      INT            M, N, LDA, LDB
       REAL   ALPHA
 !     .. Array Arguments ..
       REAL   A( LDA, * ), B( LDB, * )
@@ -2662,12 +2675,12 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of B. M must be at
 !           least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of B.  N must be
 !           at least zero.
 !           Unchanged on exit.
@@ -2692,7 +2705,7 @@
 !           A  are not referenced either,  but are assumed to be  unity.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program.  When  SIDE = 'L' or 'l'  then
 !           LDA  must be at least  max( 1, m ),  when  SIDE = 'R' or 'r'
@@ -2704,7 +2717,7 @@
 !           contain  the  right-hand  side  matrix  B,  and  on exit  is
 !           overwritten by the solution matrix  X.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in  the  calling  (sub)  program.   LDB  must  be  at  least
 !           max( 1, m ).
@@ -2723,8 +2736,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL            LSIDE, NOUNIT, UPPER
-      INTEGER            I, INFO, J, K, NROWA
+      BIN            LSIDE, NOUNIT, UPPER
+      INT            I, INFO, J, K, NROWA
       REAL   TEMP
 !     ..
 !     .. Executable Statements ..
@@ -2956,6 +2969,7 @@
 !     End of DTRSM .
 !
       END
+
       SUBROUTINE DTRTI2( UPLO, DIAG, N, A, LDA, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -2965,7 +2979,7 @@
 !
 !     .. Scalar Arguments ..
       CHR          DIAG, UPLO
-      INTEGER            INFO, LDA, N
+      INT            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
       REAL   A( LDA, * )
@@ -2992,7 +3006,7 @@
 !          = 'N':  Non-unit triangular
 !          = 'U':  Unit triangular
 !
-!  N       (input) INTEGER
+!  N       (input) INT
 !          The order of the matrix A.  N >= 0.
 !
 !  A       (input/output) REAL array, dimension (LDA,N)
@@ -3009,10 +3023,10 @@
 !          On exit, the (triangular) inverse of the original matrix, in
 !          the same storage format.
 !
-!  LDA     (input) INTEGER
+!  LDA     (input) INT
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  INFO    (output) INTEGER
+!  INFO    (output) INT
 !          = 0: successful exit
 !          < 0: if INFO = -k, the k-th argument had an illegal value
 !
@@ -3020,8 +3034,8 @@
 !
 !     ..
 !     .. Local Scalars ..
-      LOGICAL            NOUNIT, UPPER
-      INTEGER            J
+      BIN            NOUNIT, UPPER
+      INT            J
       REAL   AJJ
 !     ..
 !     .. External Subroutines ..
@@ -3093,6 +3107,7 @@
 !     End of DTRTI2
 !
       END
+
       SUBROUTINE DTRTRI( UPLO, DIAG, N, A, LDA, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -3102,7 +3117,7 @@
 !
 !     .. Scalar Arguments ..
       CHR          DIAG, UPLO
-      INTEGER            INFO, LDA, N
+      INT            INFO, LDA, N
 !     ..
 !     .. Array Arguments ..
       REAL   A( LDA, * )
@@ -3127,7 +3142,7 @@
 !          = 'N':  A is non-unit triangular;
 !          = 'U':  A is unit triangular.
 !
-!  N       (input) INTEGER
+!  N       (input) INT
 !          The order of the matrix A.  N >= 0.
 !
 !  A       (input/output) REAL array, dimension (LDA,N)
@@ -3143,10 +3158,10 @@
 !          On exit, the (triangular) inverse of the original matrix, in
 !          the same storage format.
 !
-!  LDA     (input) INTEGER
+!  LDA     (input) INT
 !          The leading dimension of the array A.  LDA >= max(1,N).
 !
-!  INFO    (output) INTEGER
+!  INFO    (output) INT
 !          = 0: successful exit
 !          < 0: if INFO = -i, the i-th argument had an illegal value
 !          > 0: if INFO = i, A(i,i) is exactly zero.  The triangular
@@ -3156,11 +3171,11 @@
 !
 !     ..
 !     .. Local Scalars ..
-      LOGICAL            NOUNIT, UPPER
-      INTEGER            J, JB, NB, NN
+      BIN            NOUNIT, UPPER
+      INT            J, JB, NB, NN
 !     ..
 !     .. External Functions ..
-      INTEGER            ILAENV
+      INT            ILAENV
       EXTERNAL           ILAENV
 !     ..
 !     .. External Subroutines ..
@@ -3261,6 +3276,7 @@
 !     End of DTRTRI
 !
       END
+
       SUBROUTINE XERBLA( SRNAME, INFO )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -3270,7 +3286,7 @@
 !
 !     .. Scalar Arguments ..
       CHARACTER(len=6)   SRNAME
-      INTEGER            INFO
+      INT            INFO
 !     ..
 !
 !  Purpose
@@ -3289,7 +3305,7 @@
 !  SRNAME  (input) CHARACTER*6
 !          The name of the routine which called XERBLA.
 !
-!  INFO    (input) INTEGER
+!  INFO    (input) INT
 !          The position of the invalid parameter in the parameter list
 !          of the calling routine.
 !
@@ -3307,11 +3323,12 @@
 !     End of XERBLA
 !
       END
+
       SUBROUTINE ZGEMM ( TRANSA, TRANSB, M, N, K, ALPHA, A, LDA, B, LDB, &
                          BETA, C, LDC )
 !     .. Scalar Arguments ..
       STR(len=1)        TRANSA, TRANSB
-      INTEGER            M, N, K, LDA, LDB, LDC
+      INT            M, N, K, LDA, LDB, LDC
       CPX         ALPHA, BETA
 !     .. Array Arguments ..
       CPX         A( LDA, * ), B( LDB, * ), C( LDC, * )
@@ -3358,18 +3375,18 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry,  M  specifies  the number  of rows  of the  matrix
 !           op( A )  and of the  matrix  C.  M  must  be at least  zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry,  N  specifies the number  of columns of the matrix
 !           op( B ) and the number of columns of the matrix C. N must be
 !           at least zero.
 !           Unchanged on exit.
 !
-!  K      - INTEGER.
+!  K      - INT.
 !           On entry,  K  specifies  the number of columns of the matrix
 !           op( A ) and the number of rows of the matrix op( B ). K must
 !           be at least  zero.
@@ -3387,7 +3404,7 @@
 !           matrix A.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. When  TRANSA = 'N' or 'n' then
 !           LDA must be at least  max( 1, m ), otherwise  LDA must be at
@@ -3402,7 +3419,7 @@
 !           matrix B.
 !           Unchanged on exit.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in the calling (sub) program. When  TRANSB = 'N' or 'n' then
 !           LDB must be at least  max( 1, k ), otherwise  LDB must be at
@@ -3421,7 +3438,7 @@
 !           On exit, the array  C  is overwritten by the  m by n  matrix
 !           ( alpha*op( A )*op( B ) + beta*C ).
 !
-!  LDC    - INTEGER.
+!  LDC    - INT.
 !           On entry, LDC specifies the first dimension of C as declared
 !           in  the  calling  (sub)  program.   LDC  must  be  at  least
 !           max( 1, m ).
@@ -3439,8 +3456,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL            CONJA, CONJB, NOTA, NOTB
-      INTEGER            I, INFO, J, L, NCOLA, NROWA, NROWB
+      BIN            CONJA, CONJB, NOTA, NOTB
+      INT            I, INFO, J, L, NCOLA, NROWA, NROWB
       CPX         TEMP
 !     ..
 !     .. Executable Statements ..
@@ -3710,10 +3727,11 @@
 !     End of ZGEMM .
 !
       END
+
       SUBROUTINE ZGEMV ( TRANS, M, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
       CPX         ALPHA, BETA
-      INTEGER            INCX, INCY, LDA, M, N
+      INT            INCX, INCY, LDA, M, N
       STR(len=1)        TRANS
 !     .. Array Arguments ..
       CPX         A( LDA, * ), X( * ), Y( * )
@@ -3746,12 +3764,12 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of the matrix A.
 !           M must be at least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -3765,7 +3783,7 @@
 !           contain the matrix of coefficients.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, m ).
@@ -3779,7 +3797,7 @@
 !           vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -3797,7 +3815,7 @@
 !           must contain the vector y. On exit, Y is overwritten by the
 !           updated vector y.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -3814,8 +3832,8 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
-      LOGICAL            NOCONJ
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY, LENX, LENY
+      BIN            NOCONJ
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -3979,10 +3997,11 @@
 !     End of ZGEMV .
 !
       END
+
       SUBROUTINE ZGERC ( M, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
       CPX         ALPHA
-      INTEGER            INCX, INCY, LDA, M, N
+      INT            INCX, INCY, LDA, M, N
 !     .. Array Arguments ..
       CPX         A( LDA, * ), X( * ), Y( * )
 !     ..
@@ -4000,12 +4019,12 @@
 !  Parameters
 !  ==========
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of the matrix A.
 !           M must be at least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -4020,7 +4039,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -4031,7 +4050,7 @@
 !           element vector y.
 !           Unchanged on exit.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -4041,7 +4060,7 @@
 !           contain the matrix of coefficients. On exit, A is
 !           overwritten by the updated matrix.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, m ).
@@ -4059,7 +4078,7 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP
-      INTEGER            I, INFO, IX, J, JY, KX
+      INT            I, INFO, IX, J, JY, KX
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -4130,10 +4149,11 @@
 !     End of ZGERC .
 !
       END
+
       SUBROUTINE ZHEMV ( UPLO, N, ALPHA, A, LDA, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
       CPX         ALPHA, BETA
-      INTEGER            INCX, INCY, LDA, N
+      INT            INCX, INCY, LDA, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       CPX         A( LDA, * ), X( * ), Y( * )
@@ -4165,7 +4185,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -4187,7 +4207,7 @@
 !           not be set and are assumed to be zero.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -4199,7 +4219,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -4215,7 +4235,7 @@
 !           element vector y. On exit, Y is overwritten by the updated
 !           vector y.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -4232,7 +4252,7 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -4383,10 +4403,11 @@
 !     End of ZHEMV .
 !
       END
+
       SUBROUTINE ZHER2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, A, LDA )
 !     .. Scalar Arguments ..
       CPX         ALPHA
-      INTEGER            INCX, INCY, LDA, N
+      INT            INCX, INCY, LDA, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       CPX         A( LDA, * ), X( * ), Y( * )
@@ -4418,7 +4439,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -4433,7 +4454,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -4444,7 +4465,7 @@
 !           element vector y.
 !           Unchanged on exit.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -4466,7 +4487,7 @@
 !           not be set, they are assumed to be zero, and on exit they
 !           are set to zero.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -4484,7 +4505,7 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -4623,10 +4644,11 @@
 !     End of ZHER2 .
 !
       END
+
       SUBROUTINE ZHER2K( UPLO, TRANS, N, K, ALPHA, A, LDA, B, LDB, BETA, C, LDC)
 !     .. Scalar Arguments ..
       CHR          TRANS, UPLO
-      INTEGER            K, LDA, LDB, LDC, N
+      INT            K, LDA, LDB, LDC, N
       REAL   BETA
       CPX         ALPHA
 !     ..
@@ -4679,12 +4701,12 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry,  N specifies the order of the matrix C.  N must be
 !           at least zero.
 !           Unchanged on exit.
 !
-!  K      - INTEGER.
+!  K      - INT.
 !           On entry with  TRANS = 'N' or 'n',  K  specifies  the number
 !           of  columns  of the  matrices  A and B,  and on  entry  with
 !           TRANS = 'C' or 'c',  K  specifies  the number of rows of the
@@ -4703,7 +4725,7 @@
 !           matrix A.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in  the  calling  (sub)  program.   When  TRANS = 'N' or 'n'
 !           then  LDA must be at least  max( 1, n ), otherwise  LDA must
@@ -4718,7 +4740,7 @@
 !           matrix B.
 !           Unchanged on exit.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in  the  calling  (sub)  program.   When  TRANS = 'N' or 'n'
 !           then  LDB must be at least  max( 1, n ), otherwise  LDB must
@@ -4746,7 +4768,7 @@
 !           not be set,  they are assumed to be zero,  and on exit they
 !           are set to zero.
 !
-!  LDC    - INTEGER.
+!  LDC    - INT.
 !           On entry, LDC specifies the first dimension of C as declared
 !           in  the  calling  (sub)  program.   LDC  must  be  at  least
 !           max( 1, n ).
@@ -4768,8 +4790,8 @@
       EXTERNAL           XERBLA
 !     ..
 !     .. Local Scalars ..
-      LOGICAL            UPPER
-      INTEGER            I, INFO, J, L, NROWA
+      BIN            UPPER
+      INT            I, INFO, J, L, NROWA
       CPX         TEMP1, TEMP2
 !     ..
 !     .. Executable Statements ..
@@ -4974,10 +4996,11 @@
 !     End of ZHER2K.
 !
       END
+
       SUBROUTINE ZHPMV ( UPLO, N, ALPHA, AP, X, INCX, BETA, Y, INCY )
 !     .. Scalar Arguments ..
       CPX         ALPHA, BETA
-      INTEGER            INCX, INCY, N
+      INT            INCX, INCY, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       CPX         AP( * ), X( * ), Y( * )
@@ -5009,7 +5032,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -5040,7 +5063,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -5056,7 +5079,7 @@
 !           element vector y. On exit, Y is overwritten by the updated
 !           vector y.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -5073,7 +5096,7 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -5229,10 +5252,11 @@
 !     End of ZHPMV .
 !
       END
+
       SUBROUTINE ZHPR2 ( UPLO, N, ALPHA, X, INCX, Y, INCY, AP )
 !     .. Scalar Arguments ..
       CPX         ALPHA
-      INTEGER            INCX, INCY, N
+      INT            INCX, INCY, N
       STR(len=1)        UPLO
 !     .. Array Arguments ..
       CPX         AP( * ), X( * ), Y( * )
@@ -5264,7 +5288,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -5279,7 +5303,7 @@
 !           element vector x.
 !           Unchanged on exit.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -5290,7 +5314,7 @@
 !           element vector y.
 !           Unchanged on exit.
 !
-!  INCY   - INTEGER.
+!  INCY   - INT.
 !           On entry, INCY specifies the increment for the elements of
 !           Y. INCY must not be zero.
 !           Unchanged on exit.
@@ -5327,7 +5351,7 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP1, TEMP2
-      INTEGER            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
+      INT            I, INFO, IX, IY, J, JX, JY, K, KK, KX, KY
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..
@@ -5469,10 +5493,11 @@
 !     End of ZHPR2 .
 !
       END
+
       SUBROUTINE ZTRMM ( SIDE, UPLO, TRANSA, DIAG, M, N, ALPHA, A, LDA, B, LDB )
 !     .. Scalar Arguments ..
       STR(len=1)        SIDE, UPLO, TRANSA, DIAG
-      INTEGER            M, N, LDA, LDB
+      INT            M, N, LDA, LDB
       CPX         ALPHA
 !     .. Array Arguments ..
       CPX         A( LDA, * ), B( LDB, * )
@@ -5536,12 +5561,12 @@
 !
 !           Unchanged on exit.
 !
-!  M      - INTEGER.
+!  M      - INT.
 !           On entry, M specifies the number of rows of B. M must be at
 !           least zero.
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the number of columns of B.  N must be
 !           at least zero.
 !           Unchanged on exit.
@@ -5566,7 +5591,7 @@
 !           A  are not referenced either,  but are assumed to be  unity.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program.  When  SIDE = 'L' or 'l'  then
 !           LDA  must be at least  max( 1, m ),  when  SIDE = 'R' or 'r'
@@ -5578,7 +5603,7 @@
 !           contain the matrix  B,  and  on exit  is overwritten  by the
 !           transformed matrix.
 !
-!  LDB    - INTEGER.
+!  LDB    - INT.
 !           On entry, LDB specifies the first dimension of B as declared
 !           in  the  calling  (sub)  program.   LDB  must  be  at  least
 !           max( 1, m ).
@@ -5596,8 +5621,8 @@
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
-      LOGICAL            LSIDE, NOCONJ, NOUNIT, UPPER
-      INTEGER            I, INFO, J, K, NROWA
+      BIN            LSIDE, NOCONJ, NOUNIT, UPPER
+      INT            I, INFO, J, K, NROWA
       CPX         TEMP
 !     ..
 !     .. Executable Statements ..
@@ -5840,9 +5865,10 @@
 !     End of ZTRMM .
 !
       END
+
       SUBROUTINE ZTRMV ( UPLO, TRANS, DIAG, N, A, LDA, X, INCX )
 !     .. Scalar Arguments ..
-      INTEGER            INCX, LDA, N
+      INT            INCX, LDA, N
       STR(len=1)        DIAG, TRANS, UPLO
 !     .. Array Arguments ..
       CPX         A( LDA, * ), X( * )
@@ -5894,7 +5920,7 @@
 !
 !           Unchanged on exit.
 !
-!  N      - INTEGER.
+!  N      - INT.
 !           On entry, N specifies the order of the matrix A.
 !           N must be at least zero.
 !           Unchanged on exit.
@@ -5912,7 +5938,7 @@
 !           A are not referenced either, but are assumed to be unity.
 !           Unchanged on exit.
 !
-!  LDA    - INTEGER.
+!  LDA    - INT.
 !           On entry, LDA specifies the first dimension of A as declared
 !           in the calling (sub) program. LDA must be at least
 !           max( 1, n ).
@@ -5924,7 +5950,7 @@
 !           element vector x. On exit, X is overwritten with the
 !           tranformed vector x.
 !
-!  INCX   - INTEGER.
+!  INCX   - INT.
 !           On entry, INCX specifies the increment for the elements of
 !           X. INCX must not be zero.
 !           Unchanged on exit.
@@ -5941,8 +5967,8 @@
 !
 !     .. Local Scalars ..
       CPX         TEMP
-      INTEGER            I, INFO, IX, J, JX, KX
-      LOGICAL            NOCONJ, NOUNIT
+      INT            I, INFO, IX, J, JX, KX
+      BIN            NOCONJ, NOUNIT
 !     .. External Subroutines ..
       EXTERNAL           XERBLA
 !     ..

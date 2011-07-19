@@ -2,7 +2,7 @@
 #undef STACK
 #undef E
 
-  function ddot(n,dx,incx,dy,incy) result(res)
+  function ddot(n,dx,incx,dy,incy) result (res)
 
 !     forms the dot product of two vectors.
 !     uses unrolled loops for increments equal to one.
@@ -50,6 +50,7 @@
    50 continue
    60 res  = dtemp
   end function
+
 
   SUBROUTINE DGESV( N, NRHS, A, LDA, IPIV, B, LDB, INFO )
 !
@@ -155,6 +156,7 @@
 !     End of DGESV
 !
   END
+
   SUBROUTINE DGETRI( N, A, LDA, IPIV, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -338,6 +340,7 @@
 !     End of DGETRI
 !
   END
+
   SUBROUTINE DGETRS( TRANS, N, NRHS, A, LDA, IPIV, B, LDB, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -477,6 +480,7 @@
 !     End of DGETRS
 !
   END
+
   SUBROUTINE DLADIV( A, B, C, D, P, Q )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -537,6 +541,7 @@
 !     End of DLADIV
 !
   END
+
   SUBROUTINE DLAE2( A, B, C, RT1, RT2 )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -648,6 +653,7 @@
 !     End of DLAE2
 !
   END
+
   SUBROUTINE DLAEV2( A, B, C, RT1, RT2, CS1, SN1 )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -805,7 +811,8 @@
 !
   END
 
-  REAL FUNCTION DLANST( NORM, N, D, E )
+
+  FUNCTION DLANST( NORM, N, D, E ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -818,6 +825,7 @@
 !     ..
 !     .. Array Arguments ..
   REAL   D( * ), E( * )
+  REAL   res
 !     ..
 !
 !  Purpose
@@ -913,12 +921,13 @@
      ANORM = SCALE*SQRT( SUM )
   END IF
 !
-  DLANST = ANORM
+  res = ANORM
   RETURN
 !
 !     End of DLANST
 !
   END function
+
   FUNCTION DLANSY( NORM, UPLO, N, A, LDA, WORK ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -932,6 +941,7 @@
 !     ..
 !     .. Array Arguments ..
   REAL   A( LDA, * ), WORK( * )
+  REAL   res
 !     ..
 !
 !  Purpose
@@ -997,7 +1007,7 @@
 !     ..
 !     .. Local Scalars ..
   INTEGER    I, J
-  REAL   ABSA, SCALE, SUM, VALUE, res
+  REAL   ABSA, SCALE, SUM, VALUE
 !     ..
 !     .. External Subroutines ..
   EXTERNAL       DLASSQ
@@ -1082,7 +1092,8 @@
 !     End of DLANSY
 !
   END function
-  FUNCTION DLAPY2( X, Y ) result(res)
+
+  FUNCTION DLAPY2( X, Y ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1128,7 +1139,8 @@
 !     End of DLAPY2
 !
   END function
-  FUNCTION DLAPY3( X, Y, Z ) result(res)
+
+  FUNCTION DLAPY3( X, Y, Z ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -1174,6 +1186,7 @@
 !     End of DLAPY3
 !
   END function
+
   SUBROUTINE DLARFB( SIDE, TRANS, DIRECT, STOREV, M, N, K, V, LDV, &
          T, LDT, C, LDC, WORK, LDWORK )
 !
@@ -1752,6 +1765,7 @@
 !     End of DLARFB
 !
   END
+
   SUBROUTINE DLARF( SIDE, M, N, V, INCV, TAU, C, LDC, WORK )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -1859,6 +1873,7 @@
 !     End of DLARF
 !
   END
+
   SUBROUTINE DLARFG( N, ALPHA, X, INCX, TAU )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -1990,6 +2005,7 @@
 !     End of DLARFG
 !
   END
+
   SUBROUTINE DLARFT( DIRECT, STOREV, N, K, V, LDV, TAU, T, LDT )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -2198,6 +2214,7 @@
 !     End of DLARFT
 !
   END
+
   SUBROUTINE DLASCL( TYPE, KL, KU, CFROM, CTO, M, N, A, LDA, INFO )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -2452,6 +2469,7 @@
 !     End of DLASCL
 !
   END
+
   SUBROUTINE DLASET( UPLO, M, N, ALPHA, BETA, A, LDA )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -2560,6 +2578,7 @@
 !     End of DLASET
 !
   END
+
   SUBROUTINE DLASR( SIDE, PIVOT, DIRECT, M, N, C, S, A, LDA )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -2872,6 +2891,7 @@
 !     End of DLASR
 !
   END
+
   SUBROUTINE DLASRT( ID, N, D, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -3106,6 +3126,7 @@
 !     End of DLASRT
 !
   END
+
   SUBROUTINE DLASSQ( N, X, INCX, SCALE, SUMSQ )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -3189,6 +3210,7 @@
 !     End of DLASSQ
 !
   END
+
   SUBROUTINE DLASWP( N, A, LDA, K1, K2, IPIV, INCX )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -3309,6 +3331,7 @@
 !     End of DLASWP
 !
   END
+
   SUBROUTINE DLATRD( UPLO, N, NB, A, LDA, E, TAU, W, LDW )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -3557,6 +3580,7 @@
 !     End of DLATRD
 !
   END
+
   FUNCTION DNRM2 ( N, X, INCX ) result(res)
 !     .. Scalar Arguments ..
   INTEGER           INCX, N
@@ -3608,6 +3632,7 @@
  
   res = NORM
   END function
+
   SUBROUTINE DORG2L( M, N, K, A, LDA, TAU, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -3728,6 +3753,7 @@
 !     End of DORG2L
 !
   END
+
   SUBROUTINE DORG2R( M, N, K, A, LDA, TAU, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -3850,6 +3876,7 @@
 !     End of DORG2R
 !
   END
+
   SUBROUTINE DORGQL( M, N, K, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -4058,6 +4085,7 @@
 !     End of DORGQL
 !
   END
+
   SUBROUTINE DORGQR( M, N, K, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -4267,6 +4295,7 @@
 !     End of DORGQR
 !
   END
+
   SUBROUTINE DORGTR( UPLO, N, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -4486,6 +4515,7 @@
    50 continue
   return
   END
+
   SUBROUTINE DSTEQR( COMPZ, N, D, E, Z, LDZ, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -4946,6 +4976,7 @@
 !     End of DSTEQR
 !
   END
+
   SUBROUTINE DSTERF( N, D, E, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -5334,6 +5365,7 @@
    50 continue
   return
   end
+
   SUBROUTINE DSYEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, INFO )
 !
 !  -- LAPACK driver routine (version 3.0) --
@@ -5534,6 +5566,7 @@
 !     End of DSYEV
 !
   END
+
   SUBROUTINE DSYTD2( UPLO, N, A, LDA, D, E, TAU, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -5769,6 +5802,7 @@
 !     End of DSYTD2
 !
   END
+
   SUBROUTINE DSYTRD( UPLO, N, A, LDA, D, E, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -6052,6 +6086,7 @@
 !     End of DSYTRD
 !
   END
+
   FUNCTION DZNRM2( N, X, INCX ) result(res)
 !     .. Scalar Arguments ..
   INTEGER           INCX, N
@@ -6111,7 +6146,7 @@
 !
   res = NORM
   END function
-  function idamax(n,dx,incx) result(res)
+  function idamax(n,dx,incx) result (res)
 !
 !     finds the index of element having max. absolute value.
 !     jack dongarra, linpack, 3/11/78.
@@ -6150,7 +6185,8 @@
   end do
   end function
 
-  FUNCTION ILAENV( ISPEC, NAME, OPTS, N1, N2, N3, N4 ) result(res)
+
+  FUNCTION ILAENV( ISPEC, NAME, OPTS, N1, N2, N3, N4 ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -6716,7 +6752,7 @@
    30 continue
   return
   end
-  CPX function zdotc(n,zx,incx,zy,incy)
+  function zdotc(n,zx,incx,zy,incy) result (res)
 !
 !     forms the dot product of a vector.
 !     jack dongarra, 3/11/78.
@@ -6724,8 +6760,9 @@
 !
   CPX zx(*),zy(*),ztemp
   INT i,incx,incy,ix,iy,n
+  CPX res
   ztemp = (ZERO,ZERO)
-  zdotc = (ZERO,ZERO)
+  res   = (ZERO,ZERO)
   if (n <= 0) return
   if (incx == 1 AND incy == 1)go to 20
 !
@@ -6741,7 +6778,7 @@
     ix = ix + incx
     iy = iy + incy
    10 continue
-  zdotc = ztemp
+  res = ztemp
   return
 !
 !    code for both increments equal to 1
@@ -6749,7 +6786,7 @@
    20 do 30 i = 1,n
     ztemp = ztemp + conjg(zx(i))*zy(i)
    30 continue
-  zdotc = ztemp
+  res = ztemp
   return
   end
   subroutine  zdscal(n,da,zx,incx)
@@ -6782,6 +6819,7 @@
    30 continue
   return
   end
+
   SUBROUTINE ZHEEV( JOBZ, UPLO, N, A, LDA, W, WORK, LWORK, RWORK, INFO )
 !
 !  -- LAPACK driver routine (version 3.0) --
@@ -6988,6 +7026,7 @@
 !     End of ZHEEV
 !
   END
+
   SUBROUTINE ZHETD2( UPLO, N, A, LDA, D, E, TAU, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -7234,6 +7273,7 @@
 !     End of ZHETD2
 !
   END
+
   SUBROUTINE ZHETRD( UPLO, N, A, LDA, D, E, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -7518,6 +7558,7 @@
 !     End of ZHETRD
 !
   END
+
   SUBROUTINE ZHPEV( JOBZ, UPLO, N, AP, W, Z, LDZ, WORK, RWORK, INFO )
 !
 !  -- LAPACK driver routine (version 3.0) --
@@ -7698,6 +7739,7 @@
 !     End of ZHPEV
 !
   END
+
   SUBROUTINE ZHPTRD( UPLO, N, AP, D, E, TAU, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -7923,6 +7965,7 @@
 !     End of ZHPTRD
 !
   END
+
   SUBROUTINE ZLACGV( N, X, INCX )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -7980,7 +8023,8 @@
 !     End of ZLACGV
 !
   END
-   FUNCTION ZLADIV( X, Y ) result(res)
+
+   FUNCTION ZLADIV( X, Y ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8018,7 +8062,8 @@
   CALL DLADIV( DBLE( X ), AIMAG( X ), DBLE( Y ), AIMAG( Y ), ZR, ZI )
   res = CMPLX( ZR, ZI , kind=kind(ZI))
   END function
-  FUNCTION ZLANHE( NORM, UPLO, N, A, LDA, WORK ) result(res)
+
+  FUNCTION ZLANHE( NORM, UPLO, N, A, LDA, WORK ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8191,7 +8236,8 @@
 !
   res = VALUE
   END function
-  FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK ) result(res)
+
+  FUNCTION ZLANHP( NORM, UPLO, N, AP, WORK ) result (res)
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
 !     Univ. of Tennessee, Univ. of California Berkeley, NAG Ltd.,
@@ -8379,6 +8425,7 @@
 !
   res = VALUE
   END function
+
   SUBROUTINE ZLARFB( SIDE, TRANS, DIRECT, STOREV, M, N, K, V, LDV, &
          T, LDT, C, LDC, WORK, LDWORK )
 !
@@ -8968,6 +9015,7 @@
 !     End of ZLARFB
 !
   END
+
   SUBROUTINE ZLARF( SIDE, M, N, V, INCV, TAU, C, LDC, WORK )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -9080,6 +9128,7 @@
 !     End of ZLARF
 !
   END
+
   SUBROUTINE ZLARFG( N, ALPHA, X, INCX, TAU )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -9219,6 +9268,7 @@
 !     End of ZLARFG
 !
   END
+
   SUBROUTINE ZLARFT( DIRECT, STOREV, N, K, V, LDV, TAU, T, LDT )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -9433,6 +9483,7 @@
 !     End of ZLARFT
 !
   END
+
   SUBROUTINE ZLASCL( TYPE, KL, KU, CFROM, CTO, M, N, A, LDA, INFO )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -9687,6 +9738,7 @@
 !     End of ZLASCL
 !
   END
+
   SUBROUTINE ZLASET( UPLO, M, N, ALPHA, BETA, A, LDA )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -9795,6 +9847,7 @@
 !     End of ZLASET
 !
   END
+
   SUBROUTINE ZLASR( SIDE, PIVOT, DIRECT, M, N, C, S, A, LDA )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -10107,6 +10160,7 @@
 !     End of ZLASR
 !
   END
+
   SUBROUTINE ZLASSQ( N, X, INCX, SCALE, SUMSQ )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -10203,6 +10257,7 @@
 !     End of ZLASSQ
 !
   END
+
   SUBROUTINE ZLATRD( UPLO, N, NB, A, LDA, E, TAU, W, LDW )
 !
 !  -- LAPACK auxiliary routine (version 3.0) --
@@ -10498,6 +10553,7 @@
    30 continue
   return
   end
+
   SUBROUTINE ZSTEQR( COMPZ, N, D, E, Z, LDZ, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -10995,6 +11051,7 @@
    30 continue
   return
   end
+
   SUBROUTINE ZUNG2L( M, N, K, A, LDA, TAU, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -11115,6 +11172,7 @@
 !     End of ZUNG2L
 !
   END
+
   SUBROUTINE ZUNG2R( M, N, K, A, LDA, TAU, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -11237,6 +11295,7 @@
 !     End of ZUNG2R
 !
   END
+
   SUBROUTINE ZUNGQL( M, N, K, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -11445,6 +11504,7 @@
 !     End of ZUNGQL
 !
   END
+
   SUBROUTINE ZUNGQR( M, N, K, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -11654,6 +11714,7 @@
 !     End of ZUNGQR
 !
   END
+
   SUBROUTINE ZUNGTR( UPLO, N, A, LDA, TAU, WORK, LWORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
@@ -11830,6 +11891,7 @@
 !     End of ZUNGTR
 !
   END
+
   SUBROUTINE ZUPGTR( UPLO, N, AP, TAU, Q, LDQ, WORK, INFO )
 !
 !  -- LAPACK routine (version 3.0) --
