@@ -3295,17 +3295,17 @@ contains
 
       parallel do q = 1,.n_shell_pairs
 
-       .get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+         .get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
 
-       Z_c.create(na,nb)
-       do c = 1,.n_atom
-          atom => .atom(c)
-          sh.get_nuc(Z_c, atom.mass, atom.pos)
-          Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
-       end
+         Z_c.create(na,nb)
+         do c = 1,.n_atom
+            atom => .atom(c)
+            sh.get_nuc(Z_c, atom.mass, atom.pos)
+            Z(fa:la,fb:lb) = Z(fa:la,fb:lb) - atom.nuclear_charge * Z_c
+         end
 
-       Z_c.destroy
-       sh.destroy_ptr_part
+         Z_c.destroy
+         sh.destroy_ptr_part
 
       end
 
@@ -3669,13 +3669,17 @@ contains
          if (.core_matrix.created(spinorbital_kind)) return
 
          select case (spinorbital_kind)
+
             case ("general_complex")
                .get_gc_core_matrix
+
             case ("restricted")
                .get_r_core_matrix
+
             case default
                .get_r_core_matrix
                .core_matrix.convert_to(spinorbital_kind) ! leaky
+
          end
 
       end
@@ -13224,11 +13228,24 @@ contains
    initialise_scfdata
    ! Initialise the scf data, including iteration counters
    ENSURE(.scfdata.created,"no scfdata")
-      .scfdata.reset                         ! Reset everything (except DFT parts)
-      .scfdata.nuclear_repulsion_energy = .nuclear_repulsion_energy
+
+      ! Reset everything (except DFT parts)
+      .scfdata.reset                     
+
+      ! Assign energies
+      .scfdata.nuclear_repulsion_energy  = .nuclear_repulsion_energy
       .scfdata.nuclear_attraction_energy = .nuclear_attraction_energy
-      .scfdata.kinetic_energy = .kinetic_energy
+      if (.scfdata.using_cluster_charges) &
+      .scfdata.charge_attraction_energy  = .charge_attraction_energy
+      .scfdata.kinetic_energy            = .kinetic_energy
       .scfdata.set_energy(.scf_energy,.crystal)
+
+      ! Electron repulsion by subtraction
+      .scfdata.electron_repulsion_energy = .scfdata.energy &
+                                         - .scfdata.nuclear_repulsion_energy &
+                                         - .scfdata.nuclear_attraction_energy &
+                                         - .scfdata.charge_attraction_energy &
+                                         - .scfdata.kinetic_energy 
    end
 
    update_scfdata
@@ -13236,10 +13253,24 @@ contains
    ! differences are used to test for convergence in the SCF procedure.
    ENSURE(.scfdata.created,"no scfdata")
 
+      ! New iteration
       .scfdata.update_iteration
-      .scfdata.kinetic_energy = .kinetic_energy
+
+      ! Assign energies
       .scfdata.nuclear_attraction_energy = .nuclear_attraction_energy
+      if (.scfdata.using_cluster_charges) &
+      .scfdata.charge_attraction_energy  = .charge_attraction_energy
+      .scfdata.kinetic_energy            = .kinetic_energy
+
+      ! Total SCF energy [including V(nuc) repulsion]
       .scfdata.update_energy(.scf_energy,.crystal)
+
+      ! Electron repulsion by subtraction
+      .scfdata.electron_repulsion_energy = .scfdata.energy &
+                                         - .scfdata.nuclear_repulsion_energy &
+                                         - .scfdata.nuclear_attraction_energy &
+                                         - .scfdata.charge_attraction_energy &
+                                         - .scfdata.kinetic_energy 
 
    end
 
@@ -15268,6 +15299,7 @@ contains
    ! with the ".kinetic matrix".
       res :: REAL
 
+   ENSURE(.scfdata.created,           "no scfdata")
    ENSURE(.density_matrix.created,    "no density matrix")
    ENSURE(.density_matrix.any_created,"no density matrix")
 
@@ -15316,6 +15348,7 @@ contains
    ! with the ".kinetic matrix".
       res :: REAL
 
+   ENSURE(.scfdata.created,           "no scfdata")
    ENSURE(.density_matrix.created,    "no density matrix")
    ENSURE(.density_matrix.any_created,"no density matrix")
 
@@ -15348,6 +15381,70 @@ contains
            .get_nuclear_attraction_mx(H)
            HH.alpha_alpha_set_to(H)
            HH.beta_beta_set_to(H)
+           H.destroy
+           res = real(.density_matrix.general_complex.trace_product_with(HH),kind=REAL_KIND)
+           HH.destroy
+
+        case default
+           DIE("unknown scf kind, "//trim(scf_kind))
+
+      end
+
+   end
+
+   charge_attraction_energy result (res)
+   ! Evaluates the point-charge attraction energy as a trace of
+   ! ".density_matrix" with the ".kinetic matrix".
+      res :: REAL
+
+   ENSURE(.scfdata.created,           "no scfdata")
+   ENSURE(.density_matrix.created,    "no density matrix")
+   ENSURE(.density_matrix.any_created,"no density matrix")
+
+      scf_kind :: STR
+      H,T :: MAT{REAL}*
+      HH :: MAT{CPX}*
+
+      ! Make sure .core_matrix is there
+      .get_core_matrix
+
+      scf_kind = .scfdata.scf_kind
+
+      select case (scf_kind)
+
+        case ("rhf","rks","xray_rhf","xray_rks", &
+              "embedded_rhf","crystal_rhf","noninteracting-group-rhf")
+           H.create(.n_bf,.n_bf)
+           T.create(.n_bf,.n_bf)
+           .get_nuclear_attraction_mx(H)
+           .get_kinetic_energy_mx(T)
+           H = .core_matrix.restricted - H - T
+           res = .density_matrix.restricted.trace_product_with(H)
+           T.destroy
+           H.destroy
+
+        case ("uhf","uks","xray_uhf","xray_uks","rohf", &
+              "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+           H.create(.n_bf,.n_bf)
+           T.create(.n_bf,.n_bf)
+           .get_nuclear_attraction_mx(H)
+           .get_kinetic_energy_mx(T)
+           H = .core_matrix.alpha - H - T
+           res = .density_matrix.alpha.trace_product_with(H)
+           res = .density_matrix.beta.trace_product_with(H) + res
+           T.destroy
+           H.destroy
+
+        case ("gchf")
+           HH.create(2*.n_bf,2*.n_bf); HH = ZERO
+           H.create(.n_bf,.n_bf)
+           T.create(.n_bf,.n_bf)
+           .get_nuclear_attraction_mx(H)
+           .get_kinetic_energy_mx(T)
+           HH.alpha_alpha_set_to(H+T)
+           HH.beta_beta_set_to(H+T)
+           HH = .core_matrix.general_complex - HH
+           T.destroy
            H.destroy
            res = real(.density_matrix.general_complex.trace_product_with(HH),kind=REAL_KIND)
            HH.destroy
@@ -17072,25 +17169,44 @@ contains
       .scfdata.dft_energy_correction       = ZERO ! Set these to zero since
       .scfdata.dft_alpha_energy_correction = ZERO ! they may be calculated
       .scfdata.dft_beta_energy_correction  = ZERO
+
       select case (.scfdata.scf_kind)
+
         case ("rhf","xray_rhf","embedded_rhf")
+
            .make_r_fock(P,F,direct,core,r12)
+
         case ("rks","xray_rks")
+
            .make_r_KS_fock(P,F,direct,core,r12,xc)
+
       !  case ("crystal_rhf")
+
       !     .make_r_crystal_fock(P,F,direct,core,r12)
+
         case ("uks","xray_uks","pnd_uks","xray_pnd_uks")
+
            .make_u_KS_fock(P,F,core,r12,xc)
+
         case ("rohf")
+
            .make_ro_fock(P,F,direct,core,r12)
+
         case ("uhf","xray_uhf","pnd_uhf","xray_pnd_uhf")
+
            .make_u_fock(P,F,direct,core,r12)
+
         case ("gchf")
+
            .make_gc_fock(P,F,direct,core,r12)
            .add_gc_so_fock(P,F)
+
         case default
+
            DIE("unknown SCF kind, "//trim(.scfdata.scf_kind))
+
       end
+
    end
 
    add_core_hamiltonian(F)
@@ -17104,15 +17220,24 @@ contains
       genre = .scfdata.spinorbital_kind
 
       select case (genre)
+
          case ("restricted")
+
             F.restricted = F.restricted + .core_matrix.restricted
+
          case ("unrestricted")
+
             F.alpha = F.alpha + .core_matrix.alpha
             F.beta  = F.beta  + .core_matrix.beta
+
          case ("general_complex")
+
             F.general_complex = F.general_complex + .core_matrix.general_complex
+
          case default
+
             DIE("unimplemented")
+
       end
 
    end
