@@ -57,8 +57,10 @@ contains
       .diis.nullify_ptr_part
       nullify(.crystal)
       nullify(.cluster)
-      nullify(.cluster_charge)
-      nullify(.cluster_pos)
+      nullify(.cluster_charges)
+      nullify(.cluster_charge_positions)
+      nullify(.table_info)
+      nullify(.table)
    end
 
    destroy_ptr_part ::: leaky
@@ -66,8 +68,10 @@ contains
       .diis.destroy_ptr_part
       nullify(.crystal)
       .cluster.destroy
-      .cluster_charge.destroy
-      .cluster_pos.destroy
+      .cluster_charges.destroy
+      .cluster_charge_positions.destroy
+      .table_info.destroy
+      .table.destroy
    end
 
    create_copy(scfdata) ::: leaky
@@ -87,11 +91,14 @@ contains
       .nullify_ptr_part
 
       .diis.copy(scfdata.diis)
-      if (scfdata.crystal.created)         .crystal => scfdata.crystal
+      if (scfdata.crystal.created)                  .crystal => scfdata.crystal
 
-      if (scfdata.cluster.created)         .cluster.create_copy(scfdata.cluster)
-      if (scfdata.cluster_charge.created)  .cluster_charge.create_copy(scfdata.cluster_charge)
-      if (scfdata.cluster_pos.created)     .cluster_pos.create_copy(scfdata.cluster_pos)
+      if (scfdata.cluster.created)                  .cluster.create_copy(scfdata.cluster)
+      if (scfdata.cluster_charges.created)          .cluster_charges.create_copy(scfdata.cluster_charges)
+      if (scfdata.cluster_charge_positions.created) .cluster_charge_positions.create_copy(scfdata.cluster_charge_positions)
+
+      if (scfdata.table_info.created)               .table_info.create_copy(scfdata.table_info)
+      if (scfdata.table.created)                    .table.create_copy(scfdata.table)
 
    end
 
@@ -180,7 +187,7 @@ contains
       .XC_atom_separation_cutoff = SCFDATA_XC_ATOM_SEPARATION_CUTOFF
 
       ! DIIS convergence related data
-      .diis.set_defaults       ! leaky here ...
+      .diis.set_defaults       ! <<< leaky here ...
       .diis.iteration          = -1
       .diis_error              = ZERO
       .old_diis_error          = ZERO
@@ -265,21 +272,16 @@ contains
       .using_bs_t_term         = FALSE
    end
 
-   set_energy(energy,crystal)
-   ! Set the energy and crystal data. The latter is needed in constrained fits,
-   ! to set the penalty value.
-      energy :: REAL, IN
+   set_crystal(crystal)
+   ! Set the crystal 
       crystal :: CRYSTAL*
-
+      
+      ! Set crystal and penalty
+      if (.iteration==0) then
       if (associated(crystal)) then
          .crystal => crystal
-         if (.fitting) .set_penalty 
       end
-
-      .energy = energy
-      if (.fitting) .fit_value = energy + .lambda * .penalty
-
-      .energy_difference = energy
+      end
 
    end
 
@@ -312,6 +314,193 @@ contains
             DIE("this is not a constrained scf")
 
       end    
+
+   end
+
+   set_table ::: leaky
+   ! Prints out the SCF iteration banner (and related options)
+
+      n :: INT
+
+      ! Initialize save margin note data
+      .table_info.create(1,20)
+      .set_margin_info(n)
+
+      ! Set table headings
+      if (NOT .fitting) then
+
+         .table.create(5)
+         .table(1).set_heading("Iter")
+         .table(2).set_heading("Energy")
+         .table(2).set_subhead("  E/au")
+         .table(3).set_heading("Delta")
+         .table(3).set_subhead("E")
+         .table(4).set_heading("  DIIS  ")
+         .table(4).set_subhead("Gradient")
+         .table(5).set_width(0)
+
+         ! Table widths 
+         .table(1).set_width_from(.max_iterations)
+         .table(2).set_width_from(.energy)       
+         .table(3).set_width_from(.energy)          
+         .table(4).set_width_from(.energy)         
+         .table(5).force_width(0)
+         .table(5).set_left(TRUE)
+         .table(5).set_list_as_column(TRUE)
+
+      else
+
+         .table.create(8)
+         .table(1).set_heading("Iter")
+         .table(2).set_heading("Lambda")
+         .table(2).set_subhead("   L  ")
+         .table(3).set_heading("chi2")
+         .table(4).set_heading("Energy")
+         .table(4).set_subhead(" E/au ")
+         .table(5).set_heading("Penalty")
+         .table(5).set_subhead("E+L*chi2")
+         .table(6).set_heading("Delta")
+         .table(6).set_subhead("penalty")
+         .table(4).set_heading("  DIIS  ")
+         .table(7).set_subhead("Gradient")
+
+         ! Table widths 
+         .table(1).set_width_from(.max_iterations)
+         .table(2).set_width_from(.lambda)       
+         .table(3).set_width_from(.penalty)       
+         .table(4).set_width_from(.energy)       
+         .table(5).set_width_from(.fit_value)          
+         .table(6).set_width_from(.fit_value)        
+         .table(7).set_width_from(.energy)        
+         .table(8).force_width(0)
+         .table(8).set_left(TRUE)
+         .table(8).set_list_as_column(TRUE)
+
+      end
+
+   end
+
+   set_margin_info(n)
+   ! Set the margin information "info" for the SCF iterations
+
+      n :: INT
+      diff_converged :: BIN, save
+      diis_converged :: BIN, save
+      diis_sv        :: BIN, save
+      diis_st        :: BIN, save
+      diis_up        :: BIN, save
+      diis_stage     :: INT, save
+      damping_on     :: BIN, save
+      damping_off    :: BIN, save
+      level_on       :: BIN, save
+      level_off      :: BIN, save
+
+      ! Initialize saved switches
+      if (.iteration == 0) then
+
+         diff_converged = FALSE
+
+         diis_converged = FALSE
+         diis_sv = FALSE
+         diis_st = FALSE
+         diis_stage = 0
+         if (NOT .using_previous_diis_info) diis_up = FALSE
+
+         damping_on = FALSE
+         damping_off = FALSE
+
+         level_on = FALSE
+         level_off = FALSE
+
+      end
+
+      ! Initialize info
+      n = 0
+      .table_info(1)[:] = " "
+
+      ! No notes ...
+      if (.scf_done) return
+
+      ! Set margin info ...
+      if (NOT diff_converged AND .energy_difference_converged AND .iteration>0) then
+         n = n + 1
+         .table_info(1)[n] = " *Difference has converged"
+         diff_converged = TRUE
+      end
+
+      if (NOT diis_converged AND .diis.is_converged) then
+         n = n + 1
+         .table_info(1)[n] = " *Gradient has converged"
+         diis_converged = TRUE
+      end
+
+      if (.apply_damping AND NOT damping_on) then
+         n = n + 1
+         .table_info(1)[n] = " *Damping on"
+         damping_on = TRUE
+      else if (NOT .apply_damping AND NOT damping_off) then
+         n = n + 1
+         .table_info(1)[n] = " *Damping was off"
+         damping_off = TRUE
+      end
+
+      if (.apply_level_shifting AND NOT level_on) then
+         n = n + 1
+         .table_info(1)[n] = " *Levelshift on"
+         level_on = TRUE
+      else if (NOT .apply_level_shifting AND NOT level_off) then
+         n = n + 1
+         .table_info(1)[n] = " *Levelshift was off"
+         level_off = TRUE
+      end
+
+      if ((.using_diis AND .diis.saved_iteration==0 AND NOT diis_sv)) then
+         n = n + 1
+         .table_info(1)[n] = " *"//trim(.diis.genre.upper_cased)//" will start saving"
+         diis_sv = TRUE
+      end
+
+      if ((.using_diis AND .diis.actual_iteration==0 AND NOT diis_st)) then
+         n = n + 1
+         ! DIIS
+         .table_info(1)[n] = " *"//trim(.diis.genre.upper_cased)//" will start"
+         diis_st = TRUE
+      end
+
+      if ((.using_diis AND .apply_diis AND .diis.genre=="ediis+diis")) then
+      if (diis_stage==0 AND .diis.switch_to_diis) then
+         n = n + 1
+         .table_info(1)[n] = " *Will switch to DIIS"
+         diis_stage = 1
+      end
+      if (diis_stage==1 AND .diis.switch_to_encore_ediis) then
+         n = n + 1
+         .table_info(1)[n] = " *Will switch back to EDIIS"
+         diis_stage = 2
+      end
+      if (diis_stage==2 AND .diis.switch_back_to_diis) then
+         n = n + 1
+         .table_info(1)[n] = " *Will switch back to DIIS"
+         diis_stage = 1
+      end
+      end
+
+      if (diis_up AND .apply_diis AND NOT .diis.subspace_saturated) then
+         n = n + 1
+         .table_info(1)[n] = " *DIIS was stuck, kept best"
+         diis_up = FALSE
+      end
+
+      if (diis_up AND .apply_diis AND .diis.subspace_saturated) then
+         n = n + 1
+         .table_info(1)[n] = " *DIIS replaced iterate="//.diis.new.to_str.trim
+      end
+
+      if (NOT diis_up AND .apply_diis AND .diis.subspace_saturated) then
+         n = n + 1
+         .table_info(1)[n] = " *DIIS subspace saturated"
+         diis_up = TRUE
+      end
 
    end
 
@@ -358,14 +547,20 @@ contains
       .total_iterations = .total_iterations + 1
    end
 
-   update_energy(energy,crystal)
-   ! Update the SCF energy
+   update_energy(energy)
+   ! Update the energy and penalty needed in constrained fits.
       energy :: REAL
-      crystal :: CRYSTAL*
-
-      .old_energy = .energy
+      
+      ! Keep old values
+      .old_energy    = .energy
       .old_fit_value = .fit_value
-      .set_energy(energy,crystal)
+
+      ! Set new values
+      .energy = energy
+      if (.fitting) .fit_value = energy + .lambda * .penalty
+
+      ! Set energy differences
+      .energy_difference = energy
       .energy_difference = .energy - .old_energy
 
    end
@@ -1708,23 +1903,30 @@ contains
 
    put_banner
    ! Prints out the nuclear energy and initial guess energy.
+
       if (NOT .output) return
+
       stdout.flush
-      stdout.text("***************")
+      stdout.text("===============")
       stdout.text("SCF calculation")
-      stdout.text("***************")
+      stdout.text("===============")
       stdout.flush
-      .put_summary
+
    end
 
-   put_summary ::: private
-   ! Prints out a summary of what is stored in the scfdata object.
-     q :: VEC{REAL}(3)
-     real_width :: BIN
+   put_options
+   ! Prints out a summary of what options are stored in the scfdata object.
+      q :: VEC{REAL}(3)
 
-      real_width = TRUE
+      if (NOT .output) return
  
       stdout.show("SCF kind                       =", .scf_kind)
+ 
+      stdout.flush
+      stdout.text("Initial guess options:")
+      stdout.flush
+      stdout.show("Kind of initial density        =", .initial_density)
+      stdout.show("Kind of initial MO's           =", .initial_mos)
  
       if (.is_DFT_calculation) then
       stdout.show("DFT Exchange functional        =", .dft_exchange_functional)
@@ -1732,21 +1934,21 @@ contains
       end
  
       if (NOT .using_direct_scf) then
-      stdout.show("Using direct SCF?              =", .using_direct_scf,real_width)
+      stdout.show("Using direct SCF?              =", .using_direct_scf)
       end
  
       if (NOT .using_delta_build) then
-      stdout.show("Using delta build              =", .using_delta_build,real_width)
+      stdout.show("Using delta build              =", .using_delta_build)
       end
  
       if (.using_cluster_charges) then
-      stdout.show("Using cluster charges          =", .using_cluster_charges,real_width)
-      stdout.show("Self consistent charges?       =", .using_SC_cluster_charges,real_width)
+      stdout.show("Using cluster charges          =", .using_cluster_charges)
+      stdout.show("Self consistent charges?       =", .using_SC_cluster_charges)
       stdout.show("Cluster radius                 =", .cluster_radius)
       end
  
       if (.using_SC_Lorentz_fields) then
-      stdout.show("Using SC Lorentz fields        =", .using_SC_Lorentz_fields,real_width)
+      stdout.show("Using SC Lorentz fields        =", .using_SC_Lorentz_fields)
       end
  
       if (.using_nonstandrad_eri_cutoffs) then
@@ -1763,8 +1965,7 @@ contains
       end
  
       if (.using_NDDO) &
-      stdout.show("Doing NDDO?                    =", .using_NDDO,real_width)
- 
+      stdout.show("Doing NDDO?                    =", .using_NDDO)
  
       if (.relativity_kind/="none") then
  
@@ -1775,22 +1976,22 @@ contains
       stdout.show("Relativity kind                =", .relativity_kind)
  
       if (.relativity_kind=="iotc") then
-      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp,real_width)
+      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp)
       end
  
-      if (  .relativity_kind=="douglas-kroll-hess"   OR   .relativity_kind=="dkh" )  then
-      stdout.show("Using DK1                      =", .DK1,real_width)
-      stdout.show("Using DK2                      =", .DK2,real_width)
-      stdout.show("Using DK3                      =", .DK3,real_width)
-      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp,real_width)
-      stdout.show("Using SOfullDOUBLEfullFULL :P  =", .using_SO_FDFF,real_width)
+      if (.relativity_kind=="douglas-kroll-hess" OR .relativity_kind=="dkh" )  then
+      stdout.show("Using DK1                      =", .DK1)
+      stdout.show("Using DK2                      =", .DK2)
+      stdout.show("Using DK3                      =", .DK3)
+      stdout.show("Using <PPXPP> integrals        =", .using_ppzpp)
+      stdout.show("Using SOfullDOUBLEfullFULL :P  =", .using_SO_FDFF)
       end
  
       if (.relativity_kind=="iotc" OR .relativity_kind=="douglas-kroll-hess" OR .relativity_kind=="dkh") then
       if (.PCE_CORR) then
-      stdout.show("Using correction of PCE (DK0)  =", .PCE_CORR,real_width)
-      stdout.show("Using DK1 PCE correction       =", .DK1_PCE,real_width)
-      stdout.show("Using DK2 PCE correction       =", .DK2_PCE,real_width)
+      stdout.show("Using correction of PCE (DK0)  =", .PCE_CORR)
+      stdout.show("Using DK1 PCE correction       =", .DK1_PCE)
+      stdout.show("Using DK2 PCE correction       =", .DK2_PCE)
       end
       end
  
@@ -1810,73 +2011,59 @@ contains
       end
  
       end ! relativity
- 
- 
-      stdout.flush
-      stdout.text("Initial guess options:")
-      stdout.flush
-      stdout.show("Kind of initial density       =", .initial_density)
-      stdout.show("Kind of initial MO's          =", .initial_mos)
 
       stdout.flush
-      stdout.text("Initial guess energies:")
-      stdout.flush
-      stdout.show("Total energy        E_e + V_NN =",.energy)
-      stdout.show("Total electronic energy   E_e  =",.energy-.nuclear_repulsion_energy)
-      stdout.show("Nuclear repulsion energy  V_NN =",.nuclear_repulsion_energy)
-      stdout.show("Electron repulsion energy V_ee =",.electron_repulsion_energy)
-      stdout.show("Nuclear attraction energy V_eN =",.nuclear_attraction_energy)
-      if (.using_cluster_charges) &
-      stdout.show("Charge attraction energy  V_cN =",.charge_attraction_energy)
-      stdout.show("Total potential energy,   V    =",.energy-.kinetic_energy)
-      stdout.show("Kinetic energy            T    =",.kinetic_energy)
-      stdout.show("Virial ratio             -V/T  =",(.kinetic_energy-.energy)/.kinetic_energy)
-
-      stdout.flush
-      stdout.text("SCF termination criteria:")
+      stdout.text("SCF termination options:")
       stdout.flush
       stdout.set_real_style("e")
       stdout.show("Delta E convergence tolerance  =", .convergence)
       stdout.show("Gradient/DIIS convergence      =", .diis.convergence_tolerance)
       stdout.set_real_style("f")
-      stdout.show("Minimum # of iterations        =", .min_iterations,real_width)
-      stdout.show("Maximum # of iterations        =", .max_iterations,real_width)
+      stdout.show("Minimum # of iterations        =", .min_iterations)
+      stdout.show("Maximum # of iterations        =", .max_iterations)
  
       stdout.flush
-      stdout.text("Convergence related options:")
+      stdout.text("Convergence acceleration options:")
+
       stdout.flush
       stdout.set_real_style("e")
       stdout.show("Linear dependence tolerance    =", .linear_dependence_tol)
       stdout.show("Linear dependence shift        =", .linear_dependence_shift)
       stdout.set_real_style("f")
-      stdout.show("Using level shift              =", .using_level_shift,real_width)
+
+      stdout.show("Using level shift              =", .using_level_shift)
+
       if (.using_level_shift) then
       stdout.show("Level shift                    =", .level_shift)
-      stdout.show("Level shift  quits at          =", .level_shift_finish,real_width)
+      stdout.show("Level shift  quits at          =", .level_shift_finish)
       end
+
       if (.using_orbital_locking) then
-      stdout.show("Using orbital locking          =", .using_orbital_locking,real_width)
+      stdout.show("Using orbital locking          =", .using_orbital_locking)
       end
-      stdout.show("Using density damping          =", .using_damping,real_width)
+
+      stdout.show("Using density damping          =", .using_damping)
+
       if (.using_damping) then
       stdout.show("Damping factor                 =", .damp_factor)
-      stdout.show("Damping quits at               =", .damp_finish,real_width)
+      stdout.show("Damping quits at               =", .damp_finish)
       end
+
       if (.using_MO_gradient_update OR .using_exponential_update) then
-      stdout.show("Using MO gradient update       =", .using_MO_gradient_update,real_width)
-      stdout.show("Using exponential update       =", .using_exponential_update,real_width)
+      stdout.show("Using MO gradient update       =", .using_MO_gradient_update)
+      stdout.show("Using exponential update       =", .using_exponential_update)
       stdout.set_real_style("e")
       stdout.show("MO gradient stepsize           =", .MO_gradient_stepsize)
       stdout.show("Maximum update stepsize        =", .max_update_stepsize)
       stdout.set_real_style("f")
       end
  
-      stdout.show("Using DIIS                     =", .using_diis,real_width)
-      stdout.show("Using Fock DIIS?               =", .using_fock_diis,real_width)
-      stdout.show("Using MO DIIS?                 =", .using_MO_diis,real_width)
-      stdout.show("Using previous DIIS info       =", .using_previous_diis_info,real_width)
+      stdout.show("Using DIIS                     =", .using_diis)
+      stdout.show("Using Fock DIIS?               =", .using_fock_diis)
+      stdout.show("Using MO DIIS?                 =", .using_MO_diis)
+      stdout.show("Using previous DIIS info       =", .using_previous_diis_info)
       if (.fitting) &
-      stdout.show("Reset DIIS every lambda?       =", NOT(.using_previous_diis_info),real_width)
+      stdout.show("Reset DIIS every lambda?       =", NOT(.using_previous_diis_info))
  
       if (.using_diis) .diis.put
  
@@ -1888,191 +2075,120 @@ contains
       stdout.show("Lambda max                     =", .lambda_max)
       stdout.show("Lambda step                    =", .lambda_step)
       stdout.show("Zero occ-occ constraint?       =", .zero_oo_constraint_block)
-         .put_crystal_fit_info
+      .put_crystal_fit_info
       end
 
    end
 
-   put_table_head ::: private
-   ! Prints out the table head for an SCF calculation
-      fields :: INT
+   put_table_head
+   ! Prints out the SCF iteration banner (and related options)
+
+   ENSURE(.table.created,"no table created")
 
       if (NOT .output) return
 
-      fields = 3
-      if (.fitting)     fields = fields + 3
-
       stdout.flush
-      stdout.dash(real_fields=fields,int_fields=1)
+      stdout.text("==============")
+      stdout.text("SCF iterations")
+      stdout.text("==============")
 
-      stdout.put("Iter",int_width=TRUE)
+      ! Put the table
+      .table.put_headings
 
-      if (.fitting) then
-         stdout.put("lambda")
-         stdout.put("penalty")
+   end
+
+   put_table_body
+   ! Print out the results for the current iteration. 
+   ! NOTE: hast have called put_table_head before!
+
+      n :: INT
+
+      if (NOT .output) return
+
+      if (NOT .scf_done) then
+
+         ! Set margin notes ...
+         .set_margin_info(n)
+   
+         ! Set table body (leaky)
+         if (NOT .fitting) then
+            .table(1).create_values([.iteration])
+            .table(2).create_values([.energy])
+            .table(3).create_values([.energy_difference])
+            .table(4).create_values([.diis_error])
+            .table(5).create_values(.table_info)
+            .table(5).force_width(0)
+         else
+            .table(1).create_values([.iteration])
+            .table(2).create_values([.lambda])
+            .table(3).create_values([.penalty])
+            .table(4).create_values([.energy])
+            .table(5).create_values([.fit_value])
+            .table(6).create_values([.fit_value-.old_fit_value])
+            .table(7).create_values([.diis_error])
+            .table(8).create_values(.table_info)
+            .table(8).force_width(0)
+         end
+   
+         ! Put out the body
+         .table.put_body
+   
+         ! Clear thje columns for next time (UNleaky!)
+         .table.clear_columns
+
+      else ! the SCF is done ...
+
+        .table.put_footer
+
+        stdout.flush
+        if (.converged) then; stdout.text("* * * SCF has converged * * *")
+        else;                 stdout.text("* * * SCF has not converged * * *")
+        end
+
+        .table.put_footer
+
       end
-
-      stdout.put("Energy")
-
-      if (.fitting) then
-         stdout.put("E+l*pen")
-         stdout.put("d(E+l*pen)")
-      else
-         stdout.put("difference")
-      end
-
-      stdout.put("Gradient/DIIS")
-
-      stdout.flush
-      stdout.dash(real_fields=fields,int_fields=1)
 
    end
 
    put_results
-   ! Print out the results for the current iteration. This routine must be
-   ! compatible with put_banner. This routine must be called at iteration 0
-   ! because saved variables are set in here at that time.
-      fields,n,i,margin_pos :: INT
-      diis_converged,diff_converged,damping_on,damping_off :: BIN, save
-      level_on,level_off,diis_sv,diis_st,diis_up :: BIN, save
-      diis_stage :: INT, save = 0
-      info :: VEC{STR}(20)
+   ! Prints out the results
+
       if (NOT .output) return
-      ! This is the table head ...
-      if (.iteration == 0) then
-        if (.lambda_iteration == 0) then
-          .put_table_head
-        end
-        if (NOT .using_previous_diis_info) diis_up = FALSE
-        diff_converged = FALSE
-        diis_converged = FALSE
-        diis_sv = FALSE
-        diis_st = FALSE
-        diis_stage = 0
-        damping_on = FALSE
-        damping_off = FALSE
-        level_on = FALSE
-        level_off = FALSE
-      end
-      stdout.put(.iteration)
-      fields = 3
-      if (.fitting) then
-        fields = fields + 2
-        stdout.put(.lambda)
-        stdout.put(.penalty)
-      end
-      ! This is the important info ...
-      stdout.put(.energy)
-      if (.fitting) then
-       stdout.put(.fit_value)
-       stdout.put(.fit_value-.old_fit_value)
-      else
-       stdout.put(.energy_difference)
-      end
-      stdout.put(.diis_error)
-      ! Margin notes ...
-      if (NOT .scf_done) then
-        info = " "
-        n = 0
-        if (NOT diff_converged AND .energy_difference_converged AND .iteration>0) then
-          n = n + 1
-          info(n) = " *Difference has converged"
-          diff_converged = TRUE
-        end
-        if (NOT diis_converged AND .diis.is_converged) then
-          n = n + 1
-          info(n) = " *Gradient has converged"
-          diis_converged = TRUE
-        end
-        if (.apply_damping AND NOT damping_on) then
-           n = n + 1
-           info(n) = " *Damping on"
-           damping_on = TRUE
-        else if (NOT .apply_damping AND NOT damping_off) then
-           n = n + 1
-           info(n) = " *Damping was off"
-           damping_off = TRUE
-        end
-        if (.apply_level_shifting AND NOT level_on) then
-           n = n + 1
-           info(n) = " *Levelshift on"
-           level_on = TRUE
-        else if (NOT .apply_level_shifting AND NOT level_off) then
-           n = n + 1
-           info(n) = " *Levelshift was off"
-           level_off = TRUE
-        end
-        if ((.using_diis AND .diis.saved_iteration==0 AND NOT diis_sv)) then
-           n = n + 1
-           info(n) = " *"//trim(.diis.genre.upper_cased)//" will start saving"
-           diis_sv = TRUE
-        end
-        if ((.using_diis AND .diis.actual_iteration==0 AND NOT diis_st)) then
-           n = n + 1
-           ! DIIS
-           info(n) = " *"//trim(.diis.genre.upper_cased)//" will start"
-           diis_st = TRUE
-        end
-        if ((.using_diis AND .apply_diis AND .diis.genre=="ediis+diis")) then
-        if (diis_stage==0 AND .diis.switch_to_diis) then
-           n = n + 1
-           info(n) = " *Will switch to DIIS"
-           diis_stage = 1
-        end
-        if (diis_stage==1 AND .diis.switch_to_encore_ediis) then
-           n = n + 1
-           info(n) = " *Will switch back to EDIIS"
-           diis_stage = 2
-        end
-        if (diis_stage==2 AND .diis.switch_back_to_diis) then
-           n = n + 1
-           info(n) = " *Will switch back to DIIS"
-           diis_stage = 1
-        end
-        end
-        if (diis_up AND .apply_diis AND NOT .diis.subspace_saturated) then
-           n = n + 1
-           info(n) = " *DIIS was stuck, kept best"
-           diis_up = FALSE
-        end
-        if (diis_up AND .apply_diis AND .diis.subspace_saturated) then
-           n = n + 1
-           info(n) = " *DIIS replaced iterate="//.diis.new.to_str.trim
-        end
-        if (NOT diis_up AND .apply_diis AND .diis.subspace_saturated) then
-           n = n + 1
-           info(n) = " *DIIS subspace saturated"
-           diis_up = TRUE
-        end
-        margin_pos = stdout.buffer.item_end
-        do i = 1,n
-          if (i>1) then
-          stdout.flush
-          stdout.tab(width=margin_pos)
-          end
-          stdout.put(trim(info(i)),width=len_trim(info(i)))
-        end
-        stdout.flush
-      ! This is the table foot ...
-      else
-        .put_table_foot
-      end
+
+      stdout.flush
+      stdout.text("===========")
+      stdout.text("SCF results")
+      stdout.text("===========")
+
+      .put_energies
+
+      if (.fitting) .put_crystal_fit_info
+
    end
 
-   put_table_foot ::: private
+   put_initial_guess_energies
+   ! Prints out initial guess energies
+
+      if (NOT .output) return
+
+      stdout.flush
+      stdout.text("======================")
+      stdout.text("Initial guess energies")
+      stdout.text("======================")
+
+      .put_energies
+
+   end
+
+   put_energies 
    ! Prints out the table foot for an SCF calculation, after convergence
    ! or not as the case may be
-      fields :: INT
+
       if (NOT .output) return
-      fields = 3
-      if (.fitting)     fields = fields + 3
+
       stdout.flush
-      stdout.dash(real_fields=fields,int_fields=1)
-      if (.converged) then; stdout.text("* * * SCF has converged * * *")
-      else;                 stdout.text("* * * SCF has not converged * * *")
-      end
-      stdout.dash(real_fields=fields,int_fields=1)
-      stdout.show("Total energy        E_e + V_NN =",.energy)
+      stdout.show("Total energy (E_e+V_NN)   E    =",.energy)
       stdout.show("Total electronic energy   E_e  =",.energy-.nuclear_repulsion_energy)
       stdout.show("Nuclear repulsion energy  V_NN =",.nuclear_repulsion_energy)
       stdout.show("Electron repulsion energy V_ee =",.electron_repulsion_energy)
@@ -2082,38 +2198,38 @@ contains
       stdout.show("Total potential energy    V    =",.energy-.kinetic_energy)
       stdout.show("Kinetic energy            T    =",.kinetic_energy)
       stdout.show("Virial ratio             -V/T  =",(.kinetic_energy-.energy)/.kinetic_energy)
-      if (.fitting) .put_crystal_fit_info
-      stdout.dash(real_fields=fields,int_fields=1)
+
    end
 
    put_crystal_fit_info
    ! Prints out the crystal structure factor statistics.
-      stdout.show("Penalty in F                  =", .penalty)
-      if (.crystal.xray_data.created AND .scf_kind.includes("xray")) then
-       stdout.flush
-       stdout.text("X-ray goodness of fit data:")
-       .crystal.xray_data.put_gof_data
-       if (.crystal.r_free_percentage>0 AND .crystal.xray_r_free_data.created) &
-       .crystal.xray_r_free_data.put_free_gof_data
-      end
-      if (.crystal.pnd_data.created AND .scf_kind.includes("pnd")) then
-       stdout.flush
-       stdout.text("PND goodness of fit data:")
-       .crystal.pnd_data.put_gof_data
-       if (.crystal.r_free_percentage>0 AND .crystal.pnd_r_free_data.created) &
-       .crystal.pnd_r_free_data.put_free_gof_data
-      end
-   end
 
-   put_constrained_scf_results(out)
-   ! Outputs SCF information to a file, which is useful for constrained
-   ! Hartree-Fock methods where you want to view the effects of the constraint
-   ! Lagrange multiplier.
-      out :: TEXTFILE
-      out.put(.lambda)
-      out.put(.penalty)
-      out.put(.energy)
-      out.put(.kinetic_energy)
+      if (NOT .output) return
+
+      stdout.show("Penalty in F                  =", .penalty)
+
+      if (.crystal.xray_data.created AND .scf_kind.includes("xray")) then
+
+         stdout.flush
+         stdout.text("X-ray data:")
+         .crystal.xray_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.xray_r_free_data.created) &
+            .crystal.xray_r_free_data.put_F_free_stats
+
+      end
+
+      if (.crystal.pnd_data.created AND .scf_kind.includes("pnd")) then
+
+         stdout.flush
+         stdout.text("PND data:")
+         .crystal.pnd_data.put_F_statistics
+
+         if (.crystal.r_free_percentage>0 AND .crystal.pnd_r_free_data.created) &
+            .crystal.pnd_r_free_data.put_F_free_stats
+
+      end
+
    end
 
    put_cluster
@@ -2124,13 +2240,13 @@ contains
 
    put_cluster_charges
    ! Put the cluster charges out
-   ENSURE(.cluster_charge.created,"no cluster_charge array")
-   ENSURE(.cluster_pos.created,"no cluster_pos array")
+   ENSURE(.cluster_charges.created,"no cluster_charge array")
+   ENSURE(.cluster_charge_positions.created,"no cluster_charge_positions array")
 
       n,i,k :: INT
       fac :: REAL
 
-      n = .cluster_charge.dim/3
+      n = .cluster_charges.dim/3
 
       fac = STR:conversion_factor("angstrom")
 
@@ -2147,10 +2263,10 @@ contains
       k = 1
       do i = 1,n
          stdout.put(k)
-         stdout.put(.cluster_charge(k))
-         stdout.put(.cluster_pos(1,k)*fac)
-         stdout.put(.cluster_pos(2,k)*fac)
-         stdout.put(.cluster_pos(3,k)*fac)
+         stdout.put(.cluster_charges(k))
+         stdout.put(.cluster_charge_positions(1,k)*fac)
+         stdout.put(.cluster_charge_positions(2,k)*fac)
+         stdout.put(.cluster_charge_positions(3,k)*fac)
          stdout.flush
          k = k + 3
       end
@@ -2167,12 +2283,12 @@ contains
       stdout.put("pos")
       stdout.flush
 
-      do i = 1,.cluster_charge.dim
+      do i = 1,.cluster_charges.dim
          stdout.put(i)
-         stdout.put(.cluster_charge(i))
-         stdout.put(.cluster_pos(1,i)*fac)
-         stdout.put(.cluster_pos(2,i)*fac)
-         stdout.put(.cluster_pos(3,i)*fac)
+         stdout.put(.cluster_charges(i))
+         stdout.put(.cluster_charge_positions(1,i)*fac)
+         stdout.put(.cluster_charge_positions(2,i)*fac)
+         stdout.put(.cluster_charge_positions(3,i)*fac)
          stdout.flush
       end
 

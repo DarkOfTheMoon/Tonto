@@ -796,8 +796,8 @@ contains
    nullify_ptr_part
    ! Nullify the pointer parts of object
       nullify(.seitz)
-   !  nullify(.unique_symop)
-   !  nullify(.map_to_unique)
+      nullify(.product_of_symops)
+      nullify(.inverse_of_symops)
       nullify(.inverted_symop)
       nullify(.translated_symop)
       nullify(.unique_SF_symop)
@@ -806,8 +806,8 @@ contains
    destroy_ptr_part ::: leaky
    ! Destroy the pointer parts of object
       .seitz.destroy
-   !  .unique_symop.destroy
-   !  .map_to_unique.destroy
+      .product_of_symops.destroy
+      .inverse_of_symops.destroy
       .inverted_symop.destroy
       .translated_symop.destroy
       .unique_SF_symop.destroy
@@ -831,15 +831,20 @@ contains
 
    copy(sg) ::: leaky
    ! Make a copy of "sg"
-      sg :: SPACEGROUP
+      sg :: SPACEGROUP, IN
+
       self = sg
+
       .nullify_ptr_part
-      if (sg.seitz.created)         .seitz.create_copy(sg.seitz)
-   ! if (sg.unique_symop.created)  .unique_symop.create_copy(sg.unique_symop)
-   ! if (sg.map_to_unique.created) .map_to_unique.create_copy(sg.map_to_unique)
-      if (sg.inverted_symop.created)   .inverted_symop.create_copy(sg.inverted_symop)
-      if (sg.translated_symop.created) .translated_symop.create_copy(sg.translated_symop)
-      if (sg.unique_SF_symop.created)  .unique_SF_symop.create_copy(sg.unique_SF_symop)
+
+      if (sg.seitz.created)             .seitz.create_copy(sg.seitz)
+      if (sg.product_of_symops.created) .product_of_symops.create_copy(sg.product_of_symops)
+      if (sg.inverse_of_symops.created) .inverse_of_symops.create_copy(sg.inverse_of_symops)
+
+      if (sg.inverted_symop.created)    .inverted_symop.create_copy(sg.inverted_symop)
+      if (sg.translated_symop.created)  .translated_symop.create_copy(sg.translated_symop)
+      if (sg.unique_SF_symop.created)   .unique_SF_symop.create_copy(sg.unique_SF_symop)
+
    end
 
    set_defaults ::: leaky
@@ -1244,11 +1249,13 @@ contains
       ! Clean up
       .destroy_ptr_part
 
-      ! Generate the Seitz operators
+      ! Decode the Hall symbol
       .decode_Hall_symbol
       .set_lattice_type
       .set_default_axis_symbol_info
       .set_spacegroup_order
+
+      ! Make the Seitz operators
       .seitz.create(4,4,.n_seitz)
       .seitz = ZERO
       .form_L_seitz
@@ -1256,43 +1263,59 @@ contains
       .generate_seitz
       .shift_origin
 
+      ! Group things
+      .product_of_symops.create(.n_seitz,.n_seitz)
+      .inverse_of_symops.create(.n_seitz)
+      .make_multiplication_table
+
       ! These are used to save time in SF calcs
       .make_inverted_symops        
       .make_translated_symops
       .make_unique_SF_symops
 
-      ! Now its  analysed ...
+      ! Analysed
       .analysed = TRUE
 
    end
 
    decode_Hall_symbol
    ! Decode the Hall notation symbol for the spacegroup
+
       buffer :: BUFFER
       axis,i :: INT
       gen,latt :: STR(1)
       symbol,lattice,generator,as :: STR
       impossible,alpha_used :: BIN
+
+      ! Get lower case hall symbol
       symbol = .Hall_symbol
       symbol.to_lower_case
+
+      ! Initialize
       buffer.nullify_ptr_part
       buffer.set_defaults
       buffer.set_and_analyse(symbol)
       buffer.string.to_lower_case
       alpha_used = FALSE
-      ! Look for lattice symbol, and (possible) inversion
+
+      ! Get lattice symbol
       buffer.get_item(lattice)
+
+      ! Check lattice symbol for inversion
       if (lattice(1:1)==bar_symbol) then; .centrosymmetric = TRUE
       else;                               .centrosymmetric = FALSE
       end
       if (.centrosymmetric) lattice = lattice(2:)
+
+      ! Extract lattice symbol
       lattice.to_upper_case
       latt = lattice(1:1)
       ENSURE(len_trim(lattice)==1,"unknown lattice, "//lattice)
       ENSURE(lattice_symbols.includes(latt),"unknown lattice, "//latt)
       .lattice_symbol = lattice
       .lattice_symbol_index = index(lattice_symbols,latt)
-      ! Analyse the crystal axis "N" symbols
+
+      ! Defaults for crystal axis "N" symbols
       .has_axis_bar       = FALSE
       .axis_order         = 1
       .axis_symbol        = "_"                ! *** this means a blank
@@ -1300,54 +1323,86 @@ contains
       .has_translation    = FALSE
       .translation_symbol = "_"                ! *** this means a blank
       .origin_shift       = 0
-      do axis = 1,3                            ! Loop over crystal axis generators
-         if (buffer.exhausted) return          ! No more
+
+      ! Analyse the crystal axis "N" symbols
+      ! Loop over crystal axis generators
+      do axis = 1,3                            
+
+         ! Anything in buffer?
+         if (buffer.exhausted) return          
+
+         ! Is explicit origin present?
          buffer.get_item(generator)
          gen = generator(1:1)
-         if (gen=="(") exit                    ! explicit origin present
+         if (gen=="(") exit                    
+
          ! Check for bar symbol
          if (gen==bar_symbol) then
             .has_axis_bar(axis) = TRUE
-            generator = generator(2:); gen = generator(1:1)
+            generator           = generator(2:)
+            gen                 = generator(1:1)
          end
          ENSURE(generator/=" ","missing axis order symbol")
          ENSURE(axis_order_symbols.includes(gen),"unknown axis order, "//gen)
+
          ! Get axis order
          .axis_order(axis) = index(axis_order_symbols,gen)
-         generator = generator(2:); gen = generator(1:1)
-         if (generator==" ") cycle             ! Get another axis generator
+
+         ! Get another axis generator
+         generator = generator(2:)
+         gen       = generator(1:1)
+         if (generator==" ") cycle             
+
          ! Check for axis symbols: x,y,z,',"
          if (axis_symbols.includes(gen)) then
+
             as = gen
             .axis_symbol(axis) = as
             .axis_symbol_index(axis) = index(axis_symbols,gen)
+
             impossible = (as==dash_symbol OR as==double_dash_symbol) AND &
                          (.axis_order(axis)/=2 OR axis==1)
             DIE_IF(impossible,"impossible axis setting") ! see set_axis_symbol_info
+
             impossible = as==star_symbol AND .axis_order(axis)/=3
             DIE_IF(impossible,"impossible axis setting")
-            generator = generator(2:); gen = generator(1:1)
-            if (generator==" ") cycle          ! Get another axis generator
+
+            ! Get another axis generator
+            generator = generator(2:)
+            gen = generator(1:1)
+            if (generator==" ") cycle          
+
          end
+
          ! Check for translation symbols: a,b,c,u,v,w,n and 1 .. 6
          .has_translation(axis) = TRUE
-         do i = 1,3                            ! At most 3 translation symbols ...
+
+         ! Loop over translation symbols ...
+         ! At most 3 translation symbols ...
+         do i = 1,3                            
+
             if (gen==" ") then
                exit
             else if (alpha_translation_symbols.includes(gen)) then
                .translation_symbol(i,axis) = gen
-               generator = generator(2:); gen = generator(1:1)
+               generator  = generator(2:)
+               gen        = generator(1:1)
                alpha_used = TRUE
             else if (number_translation_symbols.includes(gen)) then
                WARN_IF(alpha_used,"mixed alphabetical/numeric translation symbols")
                .translation_symbol(i,axis) = gen
-               generator = generator(2:); gen = generator(1:1)
+               generator = generator(2:)
+               gen       = generator(1:1)
             else if (gen/=" ") then
                DIE("Unknown translation symbol, "//gen)
             end
+
          end
+
       end
+
       if (buffer.exhausted) return             ! No more
+
       ! Extract change of origin vector
       buffer.get_int(.origin_shift(1))
       buffer.get_int(.origin_shift(2))
@@ -1355,12 +1410,14 @@ contains
       buffer.get_item(generator)
       ENSURE(generator==")","missing origin-shift closing parenthesis")
       ENSURE(buffer.exhausted,"extra items at end of Hall symbol")
+
    end
 
    set_lattice_type
    ! Set the lattice type name
    ENSURE(.axis_order.all_in_range([1,6]),"wrong axis orders")
-      if (.axis_order(3)==3) then;                            .lattice_type = "Cubic"
+
+           if (.axis_order(3)==3) then;                       .lattice_type = "Cubic"
       else if (.axis_order(1)==4 AND .axis_order(3)/=3) then; .lattice_type = "Tetragonal"
       else if (.axis_order(1)==2 AND .axis_order(2)==2) then; .lattice_type = "Orthorhombic"
       else if (.axis_order(1)==2 AND .axis_order(2)==1) then; .lattice_type = "Monoclinic"
@@ -1368,6 +1425,7 @@ contains
       else if (.axis_order(1)==3) then;                       .lattice_type = "Trigonal"
       else if (.axis_order(1)==1) then;                       .lattice_type = "Triclinic"
       end
+
    end
 
    set_default_axis_symbol_info
@@ -1377,40 +1435,57 @@ contains
    ! .axis_symbol_index(i) = 5      means a-b or '
    ! .axis_symbol_index(i) = 6      means a+b+c or *
    ! See international tables vol B, section A1.4.2.3.1, p. 114
+
       set :: BIN
+
       set = FALSE
+
       if (.axis_symbol(1)=="_") then
          .axis_symbol(1) = "z"
-         .axis_symbol_index(1)  = 3
+         .axis_symbol_index(1) = 3
          set = TRUE
       end
+
       if (.axis_symbol(2)=="_" AND .axis_order(2)==2) then
+
          WARN_IF(NOT set,"default axis 2, but axis 1 is non-default")
+
          if (.axis_order(1)==2 OR .axis_order(1)==4) then
             .axis_symbol(2) = "x"
-            .axis_symbol_index(2)  = 1
+            .axis_symbol_index(2) = 1
          else if (.axis_order(1)==3 OR .axis_order(1)==6) then
             .axis_symbol(2) = dash_symbol
-            .axis_symbol_index(2)  = 5
+            .axis_symbol_index(2) = 5
          end
+
       end
+
       if (.axis_symbol(3)=="_" AND .axis_order(3)==3) then
          .axis_symbol(3) = star_symbol
-         .axis_symbol_index(3)  = 6
+         .axis_symbol_index(3) = 6
       end
+
    end
 
    set_spacegroup_order
    ! Work out the spacegroup orders.
    ENSURE(.lattice_symbol_index.is_in_range([1,8]),"wrong lattice index")
+
       axis :: INT
+
+      ! No. of translation generators
       .nL = n_implied_translations(.lattice_symbol_index)
-      if (.centrosymmetric) .nL = 2*.nL   ! No. of translations
-      .n_seitz = .nL*product(.axis_order) ! No. of seitz matrices
-      .nG = .nL                           ! No. of generators
+      if (.centrosymmetric) .nL = 2*.nL   
+
+      ! No. of seitz matrices
+      .n_seitz = .nL*product(.axis_order) 
+
+      ! No. of generators
+      .nG = .nL                           
       do axis = 1,3
-         if (.axis_order(axis)>1) .nG = .nG+1
+         if (.axis_order(axis)>1) .nG = .nG + 1
       end
+
    end
 
    form_L_seitz
@@ -1435,33 +1510,49 @@ contains
 
    form_S_seitz
    ! Add the rotational seitz matrices to the generator list
+
       t :: VEC{REAL}(3)
-      axis,N,i,v,ax,isign :: INT
+      axis,N,i,v,ax,sign :: INT
       alpha_used :: BIN
+
       .nR = 0
+
       do axis = 1,3
+
          N  = .axis_order(axis)
          ax = .axis_symbol_index(axis)
+
          if (N<=1) cycle
+
+         t = ZERO
+
          ! Make the translation vector
-         t(:) = ZERO
          if (.has_translation(axis)) then
+
             alpha_used = FALSE
-            do i = 1,3 ! loop over translation symbols
-               ! are the following two mutually exclusive ?
+
+            ! Loop over translation symbols
+            do i = 1,3 
+
+               ! Are the following two mutually exclusive ?
                v = index(alpha_translation_symbols,.translation_symbol(i,axis))
                if (v/=0) then
-                  t(:)  = t(:) + T_alpha(:,v)
+                  t = t + T_alpha(:,v)
                   alpha_used = TRUE
                end
                v = index(number_translation_symbols,.translation_symbol(i,axis))
+
                if (v/=0) then
                   ENSURE(ax.is_in_range([1,3]),"wrong axis index")
                   WARN_IF(alpha_used,"mixed alphabetical/numeric translation symbols")
                   t(ax) = t(ax) + (ONE*v)/N ! what if ax = ',", or * ?
                end
+
             end
+
          end
+
+         ! Dash/double-dash axis symbol
          if (.axis_symbol(axis)=='"' OR .axis_symbol(axis)=="'") then
             ENSURE(axis>1,"cannot have dash symbols on 1st axis")
             if (.axis_symbol(axis)=="'") N = 5 ! see comments for NN matrices above
@@ -1469,6 +1560,8 @@ contains
             ax = .axis_symbol_index(axis-1)    ! NOTE: axis of previous N symbol
             ENSURE(ax.is_in_range([1,3]),"wrong previous axis index")
          end
+
+         ! Star axis symbol
          if (.axis_symbol(axis)=="*") then
             ENSURE(N==3,"star operation is only for order 3 axis")
             N  = 8
@@ -1476,61 +1569,144 @@ contains
          end
          ENSURE(N.is_in_range([1,8]),"Wrong axis order/type index")
          ENSURE(ax.is_in_range([1,3]),"Wrong axis symbol index")
-         isign = 1
-         if (.has_axis_bar(axis)) isign = -1
+
+         ! Set sign
+         sign = 1
+         if (.has_axis_bar(axis)) sign = -1
+
          ! Add the generators to the list here
          .nR = .nR + 1
-         .seitz(1:3,1:3,.nL+.nR) = isign*NN(:,:,ax,N)
+         .seitz(1:3,1:3,.nL+.nR) = sign*NN(:,:,ax,N)
          .seitz(1:3,  4,.nL+.nR) = t(:)
          .seitz(  4,1:3,.nL+.nR) = ZERO
          .seitz(4  ,  4,.nL+.nR) = ONE
+
       end
+
    end
 
    generate_seitz
    ! Generate all the Seitz matrices from the minimal generating set.
    ENSURE(.nG>0,"number of generators must be positive")
+
       m,i,j,k :: INT
       equal :: BIN
+
       m = .nG
+
+      ! Anything to do?
       if (m==.n_seitz) return
+
       i = 1
+
       main: do
-         i = i+1
+
+         i = i + 1
          j = 1
+
          pair_products: do
-            j = j+1
+
+            j = j + 1
+
+            ! Get new pair-product
             .seitz(:,:,m+1) = matmul(.seitz(:,:,j),.seitz(:,:,i))
+
+            ! Put translation part to unit cell
             .seitz(1,4,m+1) = mod(.seitz(1,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
             .seitz(2,4,m+1) = mod(.seitz(2,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
             .seitz(3,4,m+1) = mod(.seitz(3,4,m+1)+TWO+TOL(8),ONE)-TOL(8)
+
+            ! Pair-product equal to previous?
             do k = 1,m
                equal = .seitz(:,:,m+1).same_as(.seitz(:,:,k))
                if (equal) exit
             end
-            if (NOT equal) m = m+1
+
+            ! A new seitz matrix found
+            if (NOT equal)   m = m + 1
+
+            ! Finished everything?
             if (m==.n_seitz) exit main
+
+            ! Next pair?
             if (j==m)        exit pair_products
+
          end do pair_products
+
+         ! No more pairs -- should die here?
          if (i==m) exit main
+
       end do main
+
+   end
+
+   make_multiplication_table
+   ! Make the multiplication table
+   ENSURE(.n_seitz>0,"no seitz matrices")
+
+      i,j,k :: INT
+      equal :: BIN
+      prod :: MAT{REAL}(4,4)
+
+      ! Make the multiplication table
+      do i = 1,.n_seitz
+      do j = 1,.n_seitz
+
+         ! Get product
+         prod = matmul(.seitz(:,:,j),.seitz(:,:,i))
+
+         ! Put translation part to unit cell
+         prod(1,4) = mod(prod(1,4)+TWO+TOL(8),ONE)-TOL(8)
+         prod(2,4) = mod(prod(2,4)+TWO+TOL(8),ONE)-TOL(8)
+         prod(3,4) = mod(prod(3,4)+TWO+TOL(8),ONE)-TOL(8)
+
+         ! Product equal to previous?
+         do k = 1,.n_seitz
+            equal = prod.same_as(.seitz(:,:,k))
+            if (NOT equal) cycle
+            .product_of_symops(j,i) = k
+            exit
+         end
+
+         ! A new seitz matrix found
+         DIE_IF(NOT equal,"product not found")
+
+      end
+      end
+
+      ! Get the (unique!) inverse symop
+      do i = 1,.n_seitz
+      do j = 1,.n_seitz
+          if (.product_of_symops(i,j)/=1) cycle
+          .inverse_of_symops(i) = j
+          exit
+      end
+      end
+
    end
 
    shift_origin
    ! Shift the origin of the Seitz matrices, by doing a similarity transform
+
       V :: MAT{REAL}(4,4)
       t :: VEC{REAL}(3)
       i :: INT
+
       if (.origin_shift.same_as([0,0,0])) return
+
       V.to_unit_matrix
       V(1:3,4) = .origin_shift/12.0d0
+
       .seitz.similarity_transform_12(V)
-      do i = 1,.n_seitz ! make sure translations do not exceed one unit cell
+
+      ! Make sure translations do not exceed one unit cell
+      do i = 1,.n_seitz 
          t = .seitz(1:3,4,i)
          if (all(abs(t)<ONE-TOL(8))) cycle
          t = mod(t+TWO+TOL(8),ONE)-TOL(8)
          .seitz(1:3,4,i) = t
       end
+
    end
 
 !  ***************************************
@@ -1538,51 +1714,77 @@ contains
 !  ***************************************
 
    make_inverted_symops ::: leaky, private
-   ! Determine which of the Seitz symops generate geometries which are related
-   ! by inversion. Really, we should check the cartesian seitz matrices, but and
-   ! inversion is just -1 times the identity, to the cartesian inversion
-   ! operator is just the same as the crystal-axis inversion operator, with -1
-   ! down the diagonal.
+   ! Determine which of the .seitz symops are related by inversion.
+   ! Really, we should check the cartesian seitz matrices, but and
+   ! inversion is just -1 times the identity, to the cartesian
+   ! inversion operator is just the same as the crystal-axis inversion
+   ! operator, with -1 down the diagonal.
    ENSURE(.seitz.created,"Seitz matrices not initialised")
+
       n,i,j :: INT
       inverted :: BIN
+
       .inverted_symop.create(.n_seitz)
       .inverted_symop = 0
+
       n = 0
+
+      ! Loop on symop pairs i>j
       do i = 2,.n_seitz
-         do j = 1,i-1
-            inverted = .seitz(1:3,1:3,i).equals(-.seitz(1:3,1:3,j))
-            if (NOT inverted) cycle
-            n = n + 1
-            .inverted_symop(i) = j
-            exit
-         end
+      do j = 1,i-1
+
+         inverted = .seitz(1:3,1:3,i).equals(-.seitz(1:3,1:3,j))
+
+         if (NOT inverted) cycle
+
+         n = n + 1
+         .inverted_symop(i) = j
+         exit
+
       end
+      end
+
       .n_inverted_symops = n
+
    end
 
    make_translated_symops ::: leaky, private
-   ! Determine which of the Seitz symops generate geometries which are related
-   ! by translation, (including translation by the zero vector), but not
-   ! inversion. Really we should check the cartesian seitz operators, but the
-   ! identity oprator has the same representation in either the crystal or
-   ! cartesian axis systems.
+   ! Determine which of the .seitz symops are related by translation,
+   ! (including translation by the zero vector) but *not* inversion.
+   ! Really we should check the cartesian seitz operators, but the
+   ! identity oprator has the same representation in either the
+   ! crystal or cartesian axis systems.
    ENSURE(.inverted_symop.created,"no inverted_symop array")
    ENSURE(.seitz.created,"Seitz matrices not initialised")
+
       i,j :: INT
       translated :: BIN
+
       .translated_symop.create(.n_seitz)
       .translated_symop = 0
+
       do i = 1,.n_seitz
+
+         ! Symop i is a translation of itself
          .translated_symop(i) = i
+
+         ! Skip inversions
          if (.inverted_symop(i)>0) cycle
+
+         ! Loop on symop pairs i>=j
          do j = 1,i-1
+
             translated = .seitz(1:3,1:3,i).equals(.seitz(1:3,1:3,j))
+
             if (NOT translated) cycle
+
             .translated_symop(i) = j
             exit
+
          end
+
       end
+
    end
 
    make_unique_SF_symops ::: leaky, private
@@ -1591,14 +1793,21 @@ contains
    ! inversion. This list should be a superset of the reduced symops.
    ENSURE(.inverted_symop.created,  "no inverted_symop array")
    ENSURE(.translated_symop.created,"no translated_symop array")
+
       n,i :: INT
+
+      ! How many unique symops?
       n = 0
       do i = 1,.n_seitz
          if (.inverted_symop(i)>0) cycle
          if (.translated_symop(i)<i) cycle ! Only true translations count
          n = n + 1
       end
+
+      ! Set the # of unique symops
       .n_unique_SF_symops = n
+
+      ! Make the unique_SF_symop index array
       .unique_SF_symop.create(n)
       n = 0
       do i = 1,.n_seitz
@@ -1607,6 +1816,7 @@ contains
          n = n + 1
          .unique_SF_symop(n) = i
       end
+
    end
 
    unique_SF_symop_mat(u) result (res)
@@ -1621,6 +1831,7 @@ contains
    ENSURE(u>0,"symop index out of range")
 
       res = .seitz(1:3,1:3,.unique_SF_symop(u))
+
    end
 
 !  ****************************
@@ -1745,31 +1956,40 @@ contains
          jj = " "
 
          val = mat(i,1)
-         if      (val.equals( ONE)) then; jj = trim(jj)//"+x"
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+x"
          else if (val.equals(-ONE)) then; jj = trim(jj)//"-x"
+         else; DIE("unknown value at col 1: "//trim(val.to_str))
          end
 
          val = mat(i,2)
-         if      (mat(2,i).equals( ONE)) then; jj = trim(jj)//"+y"
-         else if (mat(2,i).equals(-ONE)) then; jj = trim(jj)//"-y"
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+y"
+         else if (val.equals(-ONE)) then; jj = trim(jj)//"-y"
+         else; DIE("unknown value at col 2: "//trim(val.to_str))
          end
 
          val = mat(i,3)
-         if      (val.equals( ONE)) then; jj = trim(jj)//"+z"
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals( ONE)) then; jj = trim(jj)//"+z"
          else if (val.equals(-ONE)) then; jj = trim(jj)//"-z"
+         else; DIE("unknown value at col 3: "//trim(val.to_str))
          end
 
          val = mat(i,4)
-         if      (val.equals(    HALF)) then; jj = trim(jj)//"+1/2"
+         if      (val.equals(ZERO)) then; 
+         else if (val.equals(    HALF)) then; jj = trim(jj)//"+1/2"
          else if (val.equals(   -HALF)) then; jj = trim(jj)//"-1/2"
          else if (val.equals(   THIRD)) then; jj = trim(jj)//"+1/3"
          else if (val.equals(  -THIRD)) then; jj = trim(jj)//"-1/3"
          else if (val.equals( QUARTER)) then; jj = trim(jj)//"+1/4"
          else if (val.equals(-QUARTER)) then; jj = trim(jj)//"-1/4"
+         else; DIE("unknown value at col 3: "//trim(val.to_str))
          end
 
-         if (i==1) then; jf = trim(jj)
-         else;           jf = trim(jf)//", "//trim(jj)
+         if      (i ==1  ) then; jf =                 trim(jj)
+         else if (jf==" ") then; jf =                 trim(jj)
+         else;                   jf = trim(jf)//", "//trim(jj)
          end
 
       end
@@ -2027,80 +2247,18 @@ contains
       gi.destroy
    end
 
-!  ************************
-!  Spacegroup unique symops
-!  ************************
+!  *******************************************
+!  Sum structure factors over unique SF symops
+!  *******************************************
 
-!   make_unique_symops(geometry) ::: leaky
-!   ! Check to see if any of the Seitz matrices ".seitz" will change a
-!   ! molecular "geometry" by more than just a translation or an inversion
-!   ! operation: such a list is called a reduced symop list, or unique symop list
-!   ! Array ".map_to_unique(i)" maps the i-th symmetry operator onto the
-!   ! corresponding reduced operator "j" which is equivalent to it by
-!   ! translation, or to "-j" if equivalent by inversion. ".unique_symop(j)"
-!   ! is the first unique Seitz operator in the list. ".n_unique" is set
-!   ! to the number of unique symmetry operations.
-!      geometry :: MAT{REAL}
-!   ENSURE(.seitz.created, "Seitz matrices not initialised")
-!      gi,gu :: MAT{REAL}*
-!      unique_symop :: VEC{INT}*
-!      n_atom,i,j,u, n :: INT
-!      same,inverted :: BIN
-!      n_atom = size(geometry,2)
-!      gi.create(3,n_atom)
-!      gu.create(3,n_atom)
-!      .map_to_unique.create(.n_seitz)
-!      unique_symop.create(.n_seitz)
-!      n = 0
-!      do i = 1,.n_seitz
-!         same     = FALSE
-!         inverted = FALSE
-!         gi = geometry; .transform_geometry(gi,i)
-!         do j = 1,n                            ! Loop over unique symops
-!            u = unique_symop(j)
-!            gu = geometry; .transform_geometry(gu,u)
-!            same = .is_same_geometry(gi,gu)
-!            inverted = .seitz(1:3,1:3,i).equals(-.seitz(1:3,1:3,u))
-!            if (same OR inverted) exit
-!         end
-!         if (inverted) then
-!            .map_to_unique(i) = -j             ! negative for inversion
-!         else if (same) then
-!            .map_to_unique(i) =  j             ! positive for translation
-!         else
-!            n = n + 1
-!            unique_symop(n) = i
-!            .map_to_unique(i) = n              ! map to new unique symop
-!         end
-!      end
-!      .n_unique = n
-!      .unique_symop.create(n)
-!      .unique_symop = unique_symop
-!      unique_symop.destroy
-!      gu.destroy
-!      gi.destroy
-!   end
-
-!   unique_symop_mat(u) result (res)
-!   ! Return the "u"-th unique symop matrix in the unique list made by routine
-!   ! ".make_unique_symops".
-!      res :: MAT{REAL}(3,3)
-!       u :: INT
-!   ENSURE(.unique_symop.created,"No unique symops")
-!   ENSURE(u<=.n_unique,"symop index out of range")
-!   ENSURE(u>0,         "symop index out of range")
-!      res = .seitz(1:3,1:3,.unique_symop(u))
-!   end
-
-!  *************************************
-!  Service methods used by other modules
-!  *************************************
+! To understand this code see Jayatilaka & Diitrich (2008)
+! Acta Cryst. A 64, p383 section 2.5 comments (i) and (ii)
 
    make_phases_for_symop(u,phase,mask,refl)  ::: private
-   ! For each reflection in "refl", return the sum of the "phase" shifts from each
-   ! glide vector for all symops which are equivalent to the "u"-th
-   ! unique symmetry operation, .unique_SF_symop(u), as determined by the mask
-   ! array.
+   ! For each reflection in "refl", return the sum of the "phase"
+   ! shifts from each glide vector for all symops which are equivalent
+   ! to the "u"-th unique symmetry operation, .unique_SF_symop(u), as
+   ! determined by the mask array.
       u :: INT, IN
       phase :: VEC{CPX}, OUT
       mask :: VEC{INT}, IN
@@ -2120,22 +2278,30 @@ contains
       pi2 = TWO*PI
 
       phase = ZERO
+
       do s = 1,.n_seitz
 
-       if (mask(s)/=.unique_SF_symop(u)) cycle
+         ! Perform phase sum over symops in mask(s) 
+         ! which are the same as .unique_SF_symop(u)
+         if (mask(s)/=.unique_SF_symop(u)) cycle
+  
+         seitz => .seitz(:,:,s)
 
-       seitz => .seitz(:,:,s)
-       tx = pi2*seitz(1,4)
-       ty = pi2*seitz(2,4)
-       tz = pi2*seitz(3,4)
+         tx = pi2*seitz(1,4)
+         ty = pi2*seitz(2,4)
+         tz = pi2*seitz(3,4)
+  
+         do n = 1,n_refl
 
-       do n = 1,n_refl
-         h = refl(n).h
-         k = refl(n).k
-         l = refl(n).l
-         dot = h*tx + k*ty + l*tz
-         phase(n) = phase(n) + exp(cmplx(ZERO,dot,kind=CPX_KIND))
-       end
+            h = refl(n).h
+            k = refl(n).k
+            l = refl(n).l
+
+            dot = h*tx + k*ty + l*tz
+
+            phase(n) = phase(n) + exp(IMAGIFY(dot))
+
+         end
 
       end
 
@@ -2143,14 +2309,14 @@ contains
 
    sum_unique_sf(sf,unique_sf,refl)
    ! Form the structure factors "sf" from the sum of the list of
-   ! unique structure factors, "unique_sf".
+   ! unique-symop-generated structure factors, "unique_sf".
       sf :: VEC{CPX}, OUT
       unique_sf :: VEC{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analysed,"spacegroup not analysed")
-   ENSURE(sf.dim==refl.dim,"wrong size, array sf")
-   ENSURE(unique_sf.dim==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf")
+   ENSURE(.analysed,                                  "spacegroup not analysed")
+   ENSURE(sf.dim==refl.dim,                           "sf: wrong size")
+   ENSURE(unique_sf.dim==.n_unique_SF_symops*refl.dim,"unique_sf: wrong size")
 
       phase :: VEC{CPX}*
       u,uf,ul,n_refl :: INT
@@ -2162,17 +2328,17 @@ contains
 
       parallel do u = 1,.n_unique_SF_symops
 
-        uf = n_refl*(u-1)+1
-        ul = n_refl*u
-
-        ! Add up translated symop contribution
-        .make_phases_for_symop(u,phase,.translated_symop,refl)
-        sf = sf + phase*unique_sf(uf:ul)
-
-        ! Add up inverted symop contribution, if any
-        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-        .make_phases_for_symop(u,phase,.inverted_symop,refl)
-        sf = sf + phase*conjg(unique_sf(uf:ul))
+         uf = n_refl*(u-1)+1
+         ul = n_refl*u
+ 
+         ! Add up translated symop contribution
+         .make_phases_for_symop(u,phase,.translated_symop,refl)
+         sf = sf + phase*unique_sf(uf:ul)
+ 
+         ! Add up inverted symop contribution, if any
+         if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
+         .make_phases_for_symop(u,phase,.inverted_symop,refl)
+         sf = sf + phase*conjg(unique_sf(uf:ul))
 
       end
 
@@ -2181,54 +2347,16 @@ contains
 
    end
 
-!   add_unique_sf(sf,unique_sf,refl)
-!   ! Form the structure factors "sf" from the sum of the list of
-!   ! unique structure factors, "unique_sf".
-!     sf :: VEC{CPX}, INOUT
-!     unique_sf :: VEC{CPX}, IN
-!     refl :: VEC{REFLECTION}, IN
-!
-!   ENSURE(.analysed,"spacegroup not analysed")
-!   ENSURE(sf.dim==refl.dim,"wrong size, array sf")
-!   ENSURE(unique_sf.dim==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf")
-!
-!     phase :: VEC{CPX}*
-!     u,uf,ul,n_refl :: INT
-!
-!     n_refl = refl.dim
-!     phase.create(n_refl)
-!
-!     parallel do u = 1,.n_unique_SF_symops
-!
-!        uf = n_refl*(u-1)+1
-!        ul = n_refl*u
-!
-!        ! Add up translated symop contribution
-!        .make_phases_for_symop(u,phase,.translated_symop,refl)
-!        sf = sf + phase*unique_sf(uf:ul)
-!
-!        ! Add up inverted symop contribution, if any
-!        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-!        .make_phases_for_symop(u,phase,.inverted_symop,refl)
-!        sf = sf + phase*conjg(unique_sf(uf:ul))
-!
-!     end
-!
-!     PARALLEL_SUM(sf)
-!     phase.destroy
-!
-!   end
-
    sum_unique_sf_ints(sf_ints,unique_sf_ints,refl)
    ! Form the structure factor integrals "sf_ints" from a sum of the list
-   ! of unique structure factors integrals  "unique_sf_ints".
+   ! of unique-symop-generated structure factors integrals "unique_sf_ints".
       sf_ints :: MAT3{CPX}
       unique_sf_ints :: MAT3{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analysed,"spacegroup not analysed")
-   ENSURE(sf_ints.dim1==refl.dim,"wrong size, sf_ints")
-   ENSURE(unique_sf_ints.dim1==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf_ints")
+   ENSURE(.analysed,                                        "spacegroup not analysed")
+   ENSURE(sf_ints.dim1==refl.dim,                           "sf_ints: wrong size")
+   ENSURE(unique_sf_ints.dim1==.n_unique_SF_symops*refl.dim,"unique_sf_ints: wrong size")
 
       phase :: VEC{CPX}*
       u,uf,n,n_refl :: INT
@@ -2263,14 +2391,14 @@ contains
 
    sum_unique_sf_derivs(sf,unique_sf,refl)
    ! Form the structure factor derivatives "sf" from a sum of the list
-   ! of unique structure factor derivatives "unique_sf".
+   ! of unique-symop-generated structure factor derivatives "unique_sf".
       sf :: MAT{CPX}, OUT
       unique_sf :: MAT{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analysed,"spacegroup not analysed")
-   ENSURE(sf.dim1==refl.dim,"wrong size, sf_ints")
-   ENSURE(unique_sf.dim2==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf")
+   ENSURE(.analysed,                                   "spacegroup not analysed")
+   ENSURE(sf.dim==refl.dim,                            "sf: wrong size")
+   ENSURE(unique_sf.dim2==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim2")
 
       phase :: VEC{CPX}*
       u,uf,n,n_refl :: INT
@@ -2305,14 +2433,15 @@ contains
 
    sum_unique_sf_derivs_t(sf,unique_sf,refl)
    ! Form the structure factor derivatives "sf" from a sum of the list
-   ! of unique structure factor derivatives "unique_sf".
+   ! of unique-symop-generated structure factor derivatives "unique_sf".
+   ! This version seems more efficient than the one above.
       sf :: MAT{CPX}, OUT
       unique_sf :: MAT{CPX}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analysed,"spacegroup not analysed")
-   ENSURE(sf.dim1==refl.dim,"wrong size, sf_ints")
-   ENSURE(unique_sf.dim1==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf")
+   ENSURE(.analysed,                                   "spacegroup not analysed")
+   ENSURE(sf.dim1==refl.dim,                           "sf: wrong dim1")
+   ENSURE(unique_sf.dim1==.n_unique_SF_symops*refl.dim,"unique_sf: wrong dim1")
 
       phase :: VEC{CPX}*
       u,uf,n,n_refl :: INT
@@ -2328,14 +2457,14 @@ contains
        ! Add up translated symop contribution
        .make_phases_for_symop(u,phase,.translated_symop,refl)
        do n = 1,n_refl
-         sf(n,:) = sf(n,:) + phase(n)*unique_sf(uf+n,:)
+          sf(n,:) = sf(n,:) + phase(n)*unique_sf(uf+n,:)
        end
 
        ! Add up inverted symop contribution, if any
        if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
        .make_phases_for_symop(u,phase,.inverted_symop,refl)
        do n = 1,n_refl
-         sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(uf+n,:))
+          sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(uf+n,:))
        end
 
       end
@@ -2344,47 +2473,6 @@ contains
       phase.destroy
 
    end
-
-!   add_unique_sf_derivs(sf,unique_sf,refl)
-!   ! Form the structure factor derivatives "sf" from a sum of the list
-!   ! of unique structure factor derivatives "unique_sf".
-!     sf :: MAT{CPX}, INOUT
-!     unique_sf :: MAT{CPX}, IN
-!     refl :: VEC{REFLECTION}, IN
-!
-!   ENSURE(.analysed,"spacegroup not analysed")
-!   ENSURE(sf.dim1==refl.dim,"wrong size, sf_ints")
-!   ENSURE(unique_sf.dim2==.n_unique_SF_symops*refl.dim,"wrong size, array unique_sf")
-!
-!     phase :: VEC{CPX}*
-!     u,uf,n,n_refl :: INT
-!
-!     n_refl = refl.dim
-!     phase.create(n_refl)
-!
-!     parallel do u = 1,.n_unique_SF_symops
-!
-!       uf = n_refl*(u-1)
-!
-!       ! Add up translated symop contribution
-!       .make_phases_for_symop(u,phase,.translated_symop,refl)
-!       do n = 1,n_refl
-!         sf(n,:) = sf(n,:) + phase(n)*unique_sf(:,uf+n)
-!       end
-!
-!       ! Add up inverted symop contribution, if any
-!       if ( all(.inverted_symop/=.unique_SF_symop(u)) ) cycle
-!       .make_phases_for_symop(u,phase,.inverted_symop,refl)
-!       do n = 1,n_refl
-!         sf(n,:) = sf(n,:) + phase(n)*conjg(unique_sf(:,uf+n))
-!       end
-!
-!     end
-!
-!     PARALLEL_SUM(sf)
-!     phase.destroy
-!
-!   end
 
    sum_unique_sf_pts(X,k_pts,pts,tf,Fr,Fc,refl)
    ! Form "X", the sum of the FT phase factor e^(i k.r) times the
@@ -2398,12 +2486,12 @@ contains
       Fr,Fc :: VEC{REAL}, IN
       refl :: VEC{REFLECTION}, IN
 
-   ENSURE(.analysed,"spacegroup not analysed")
-   ENSURE(X.dim==pts.dim1,"wrong size, X")
-   ENSURE(k_pts.dim1==.n_unique_SF_symops*refl.dim,"wrong size, k_pts")
-   ENSURE(k_pts.dim2==3,"wrong size, k_pts")
-   ENSURE(Fr.dim==refl.dim,"wrong size, Fr")
-   ENSURE(Fc.dim==refl.dim,"wrong size, Fc")
+   ENSURE(.analysed,                               "spacegroup not analysed")
+   ENSURE(X.dim==pts.dim1,                         "X: wrong size")
+   ENSURE(k_pts.dim1==.n_unique_SF_symops*refl.dim,"k_pts: wrong dim1")
+   ENSURE(k_pts.dim2==3,                           "k_pts: wrong dim2")
+   ENSURE(Fr.dim==refl.dim,                        "Fr: wrong size")
+   ENSURE(Fc.dim==refl.dim,                        "Fc: wrong size")
 
       phase :: VEC{CPX}*
       T, k1,k2,k3, r1,r2,r3 :: VEC{REAL}*
@@ -2411,7 +2499,7 @@ contains
       k1k,k2k,k3k, kr, facr,facc,valr,valc :: REAL
       n_refl,n_p,k,p,u,uf,ul :: INT
 
-      I = (ZERO,ONE)
+      I = IMAGIFY(ONE)
 
       n_refl = refl.dim
       phase.create(n_refl)
@@ -2438,17 +2526,25 @@ contains
 
          ! Loop over the points
          do k = 1,n_refl
-            k1k = k1(k); k2k = k2(k); k3k = k3(k)
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
             ph = phase(k) * T(k)
             facr = Fr(k)
             facc = Fc(k)
+
             do p = 1,n_p
+
                kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
                val  = exp(I*kr)*ph
                valr =  real(val)
                valc = aimag(val)
+
                X(p) = X(p) + valr*facr + valc*facc
+
             end
+
          end
 
          ! Add up inverted symop contribution, if any
@@ -2456,17 +2552,25 @@ contains
 
          ! Loop over the points
          do k = 1,n_refl
-            k1k = k1(k); k2k = k2(k); k3k = k3(k)
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
             ph = phase(k) * T(k)
             facr = Fr(k)
             facc = Fc(k)
+
             do p = 1,n_p
+
                kr = k1k*r1(p)+k2k*r2(p)+k3k*r3(p)
                val  = exp(-I*kr)*ph
                valr =  real(val)
                valc = aimag(val)
+
                X(p) = X(p) + valr*facr + valc*facc
+
             end
+
          end
 
       end
@@ -2507,7 +2611,7 @@ contains
       HM_symbol   = .HM_symbol;    HM_symbol(1:1).to_upper_case
       Hall_symbol = .Hall_symbol;  Hall_symbol(1:1).to_upper_case
 
-      stdout.show("International Table no. =",.IT_group_number,real_width=TRUE)
+      stdout.show("International Table no. =",.IT_group_number)
       stdout.show("IT symbol               =",trim(.IT_symbol))
       stdout.show("Hermann-Mauguin symbol  =",trim(HM_symbol))
       stdout.show("Hall symbol             =",trim(Hall_symbol))
@@ -2516,8 +2620,8 @@ contains
       stdout.show("Lattice type            =",trim(.lattice_type))
 
       stdout.flush
-      stdout.show("Spacegroup order        =",.n_seitz,real_width=TRUE)
-      stdout.show("Centro-symmetric?       =",.centrosymmetric,real_width=TRUE)
+      stdout.show("Spacegroup order        =",.n_seitz)
+      stdout.show("Centro-symmetric?       =",.centrosymmetric)
       order = 100*.axis_order(1) + 10*.axis_order(2) + .axis_order(3)
       axis_symbol = .axis_symbol(1) // &
                     .axis_symbol(2) // &
@@ -2530,14 +2634,14 @@ contains
          sub(1,1) // sub(2,1) // sub(3,1) // " " // &
          sub(1,2) // sub(2,2) // sub(3,2) // " " // &
          sub(1,3) // sub(2,3) // sub(3,3)
-      stdout.show("Axis orders             =",order,real_width=TRUE)
+      stdout.show("Axis orders             =",order)
       stdout.show("Axis symbols            =",axis_symbol)
-      stdout.show("Axis symbol indices     =",axis_symbol_indices,real_width=TRUE)
+      stdout.show("Axis symbol indices     =",axis_symbol_indices)
       stdout.show("Translation subscripts  =",subscripts)
-      stdout.show("No of T generators      =",.nL,real_width=TRUE)
-      stdout.show("No of R generators      =",.nR,real_width=TRUE)
-      stdout.show("No of Generators        =",.nG,real_width=TRUE)
-      stdout.show("Origin shift in 12-ths  =",.origin_shift(1),.origin_shift(2),.origin_shift(3))
+      stdout.show("No of T generators      =",.nL)
+      stdout.show("No of R generators      =",.nR)
+      stdout.show("No of Generators        =",.nG)
+      stdout.show("Origin shift in 12-ths  =",.origin_shift)
 
    end
 
@@ -2568,6 +2672,7 @@ contains
 
       ! Table
       table.create(1)
+      table(1).set_spacing(4)
       table(1).set_heading("Symop")
       table(1).set_center(TRUE)
       table(1).set_values(jf)
@@ -2578,6 +2683,11 @@ contains
       table.destroy
       jf.destroy
 
+      ! Matrices
+    ! stdout.flush
+    ! stdout.text("Seitz matrices:")
+    ! stdout.put(.seitz,auto_width=TRUE)
+
    end
 
    put_inv_trans_symop_data ::: private
@@ -2587,53 +2697,67 @@ contains
    ENSURE(.translated_symop.created,"no translated_symop")
 
       n :: INT
-      inverted,translated :: BIN
+      unique :: VEC{STR}*
+      table :: VEC{TABLE_COLUMN}*
 
       stdout.flush
-      stdout.text("Inversion/Translation related symop information:")
+      stdout.text("Inversion-translation-related symops:")
       stdout.flush
-      stdout.text("The information in this table is used to speed up")
-      stdout.text("structure factor calculations.")
-      stdout.flush
-      stdout.dash(int_fields=4)
-      stdout.put("Seitz",int_width=TRUE)
-      stdout.put("Inv.",int_width=TRUE)
-      stdout.put("Trans.",int_width=TRUE)
-      stdout.flush
-      stdout.put("Symop",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("of?",int_width=TRUE)
-      stdout.put("Unique?",int_width=TRUE)
-      stdout.flush
-      stdout.dash(int_fields=4)
+      stdout.text(". The information in this table is used to")
+      stdout.text("  speed up structure factor calculations.")
+
+      ! Table
+      table.create(3)
+      table(1).set_heading(" Related to")
+      table(1).set_subhead("  Inversion")
+      table(1).set_sb3head(" of symop #")
+      table(1).set_center(TRUE)
+      table(2).set_heading(" Related to")
+      table(2).set_subhead("Translation")
+      table(2).set_sb3head(" of symop #")
+      table(2).set_center(TRUE)
+      table(3).set_heading("Unique")
+      table(3).set_subhead("symop?")
+      table(3).set_center(TRUE)
+
+      ! Set data
+      unique.create(.n_seitz)
       do n = 1,.n_seitz
-         stdout.put(n)
-         inverted = .inverted_symop(n)>0
-         if (inverted) then;   stdout.put(.inverted_symop(n))
-         else;                 stdout.tab(int_fields=1)
-         end
-         translated = .translated_symop(n)<n
-         stdout.put(.translated_symop(n))
-         if (inverted OR translated) then; stdout.put("No",int_width=TRUE)
-         else;                             stdout.put("Yes",int_width=TRUE)
-         end
-         stdout.flush
+         unique(n) = "no"
+         if (.inverted_symop(n)>0 OR .translated_symop(n)<n) unique(n) = "yes"
       end
-      stdout.dash(int_fields=4)
+
+      ! Set table columns
+      table(1).set_values(.inverted_symop)
+      table(2).set_values(.translated_symop)
+      table(3).set_values(unique)
+
+      ! Put the table
+      table.put
+
+      ! Clear
+      table.clear_columns
+      table.destroy
+      unique.destroy
+
    end
 
    put_matching_IT_symbols(symbol)
    ! Put out all the IT symbols which match "symbol".
       symbol :: STR
+
       mask :: VEC{BIN}*
       IT,HM,Hall :: VEC{STR}*
       n,i :: INT
+
       mask.create(593)
       mask = spacegroup_conversion_table(1,:).includes(trim(symbol),at_start=TRUE)
       n = count(mask)
+
       IT.create(n);   IT   = pack(spacegroup_conversion_table(1,:),mask)
       HM.create(n);   HM   = pack(spacegroup_conversion_table(3,:),mask)
       Hall.create(n); Hall = pack(spacegroup_conversion_table(4,:),mask)
+
       stdout.flush
       stdout.dash(real_fields=3)
       stdout.put("IT symbol")
@@ -2648,24 +2772,31 @@ contains
          stdout.flush
       end
       stdout.dash(real_fields=3)
+
+      ! Clean
       Hall.destroy
       HM.destroy
       IT.destroy
       mask.destroy
+
    end
 
    put_matching_HM_symbols(symbol)
    ! Put out all the HM symbols which match "symbol".
       symbol :: STR
+
       mask :: VEC{BIN}*
       IT,HM,Hall :: VEC{STR}*
       n,i :: INT
+
       mask.create(593)
       mask = spacegroup_conversion_table(3,:).includes(trim(symbol),at_start=TRUE)
       n = count(mask)
+
       IT.create(n);   IT   = pack(spacegroup_conversion_table(1,:),mask)
       HM.create(n);   HM   = pack(spacegroup_conversion_table(3,:),mask)
       Hall.create(n); Hall = pack(spacegroup_conversion_table(4,:),mask)
+
       stdout.flush
       stdout.dash(real_fields=3)
       stdout.put("IT symbol")
@@ -2680,6 +2811,8 @@ contains
          stdout.flush
       end
       stdout.dash(real_fields=3)
+
+      ! Clean
       Hall.destroy
       HM.destroy
       IT.destroy
