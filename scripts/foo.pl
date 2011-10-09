@@ -1088,11 +1088,17 @@ sub analyse_variable_declaration {
                       " from other variables:\n\n$X");
             }
         
-            if (! %info) {                         # Analyse the type here ################
+            # Analyse the type here ################
+            if (! %info) {                         
+
+               ###########################################
                %info = &analyse_type_name($typ,$true_arg);  
+               ###########################################
+
 #print "------------------------found $var";
 #print "line = $X";
 #print "info = ",%info;
+
                if ($typ eq 'PTR' || $typ eq 'IN' || $typ eq 'INOUT' || $typ eq 'OUT')   {
                  &report_error("attribute \"$typ\" is not a valid type for variable \"$var\".");
                }
@@ -1101,6 +1107,7 @@ sub analyse_variable_declaration {
                if (! defined $tonto_type_info{$type} && $ptrp eq '') {
                  &report_error("type of \"$var\" was not declared in \"$typesfile\".");
                }
+
                # Correct any attributes not in the type.
                if ($post =~ /\bprivate\b/ )  { $info{type_is_private} = 1; } 
                else                          { $info{type_is_private} = 0; }
@@ -1119,6 +1126,7 @@ sub analyse_variable_declaration {
             %{$local_var_info{$var}} = %info;
 
 #print "CHECK, X                ",$X;
+#print "CHECK, var              ",$var;
 #print "CHECK, full_type_name   ",$var_info->{$var}{full_type_name};
 #print "CHECK, type_name        ",$var_info->{$var}{type_name};
 #print "CHECK, sub_type_name    ",$var_info->{$var}{sub_type_name};
@@ -1134,9 +1142,9 @@ sub analyse_variable_declaration {
 #print "CHECK, type_ptr_part    ",$var_info->{$var}{type_ptr_part};
 #print "CHECK, is_routine_arg   ",$var_info->{$var}{is_routine_arg};
 
-        }
+        } # end declared vars
 
-    }
+    } # end type declaration line
 }
 
 
@@ -1146,32 +1154,34 @@ sub analyse_variable_declaration {
 
 sub analyse_type_name {
 
+  # 1st argument
   my $full_type_name = shift;    # This could be a module name also
+  if (! defined $full_type_name) { &report_error("type name unknown."); }
+#print "type-declaration= $full_type_name";
+
+  # 2nd argument
   my $is_routine_arg = shift;    # Is 1 if the declared variable is a routine arg
   if (! defined $is_routine_arg) { $is_routine_arg = 0; }
 
+  # Local vars
   my ($type_name,$right,$sub_type_name);
   my ($type_head_name,$type_arg_part);
   my ($type_size_part,$type_array_part,$type_ptr_part,$type_is_private);
 
-  if (! defined $full_type_name) { &report_error("type name unknown."); }
-
-  #$full_type_name =~ '^\s*([A-Z][\w\d{,}()]*[A-Z\d}])'; 
+  # Extract type name
   $full_type_name =~ '^\s*([A-Z][\w\d{,}]*[A-Z\d}])'; 
-
-  $type_name = $1;               # TONTO type name including curlies, but NOT sub type...
+  $type_name = $1;               # TONTO type name including curlies, AND sub type...
   $type_name =~ s/[(][^)]*$//;   # Remove unclosed parentheses at end, if there
 
-  my $tmp = $type_name; 
-# $tmp =~ s/\{/\\{/g; $tmp =~ s/\}/\\}/g;
-  $full_type_name =~ /^\Q$tmp\E/; 
-  $right = $POSTMATCH;           # e.g. 'VEC{REAL}' in 'VEC{REAL}.DYLAN"
-
+  # Extract type-head and type-arg part
   $type_name =~ /^([A-Z][A-Z_0-9]*)([{].*[}])?/;
-
   $type_head_name = $1;          # Type head, without curlies e.g. VEC in VEC{STR}
   $type_arg_part  = $2;          # These are the curlies e.g.  {STR} in VEC{STR}
 
+  # Extract subtype name
+  my $tmp = $type_name; 
+  $full_type_name =~ /^\Q$tmp\E/; 
+  $right = $POSTMATCH;           # e.g. '.DYLAN' in 'VEC{REAL}.DYLAN"
   if ($right =~ /^[.]([A-Z][A-Z_0-9]*)/) {
      $sub_type_name = $1;        # Only the subtype/submodule dotted part at end
      $right = $POSTMATCH;        # e.g. 'DYLAN' in 'VEC{REAL}.DYLAN' 
@@ -1179,6 +1189,9 @@ sub analyse_type_name {
      $sub_type_name = '';
   }
 
+  # Extract array-size part
+#print "full-type-name= $full_type_name";
+#print "type-size-part= $right";
   if ($right =~ /^\s*[(](.*)[)]/) {
      $type_size_part  = $1;      # The array size part
      $type_array_part = "($1)";  # e.g.  (size(a)) in VEC{STR}(size(a))
@@ -1193,14 +1206,14 @@ sub analyse_type_name {
      $type_array_part = "";  
   }
 
+  # Extract pointer-declaration part
   if ($right =~ /^\s*[*]/) {
      $type_ptr_part = '*';       # The star at the end, if any
   } else {
      $type_ptr_part = '';
   }
 
-  # Get all the type arguments, if any ...
-
+  # Get all the type arguments, within curlies {blah,blah}  ...
   my $n_type_args = 0;
   my @type_arg    = undef;
 
@@ -1249,13 +1262,18 @@ sub analyse_type_name {
      $type_name = $type_head_name . 
                   "{" .  join(",",@type_arg[1..$n_type_args]) . "}";
   }
+
+  # Define the full-type-name, including subtype name
   if ($sub_type_name eq '') { $full_type_name = $type_name; }
   else                      { $full_type_name = "$type_name.$sub_type_name"; }
 
+  # Is this an intrinsic type?
   my $is_intrinsic_type = &is_intrinsic_scalar_type_name($type_name);
 
+  # Is this an array type?
   my $is_array_type = &is_array_head_type_name($type_head_name);
 
+  # Get the Fortran type declaration
   my ($fortran_type_name,
       $fortran_type_decl,
       $fortran_mod_name, 
@@ -1871,7 +1889,10 @@ sub analyse_routine_scope {
   # Analyse any variable declaration lines
   if ($_[0] =~ m' *:: *[A-Z][\w{,}()]'o ) {
      $X = $_[0];
+#print "analyse-routine-scope";
+#print "line = $X";
      $X = &convert_inherited_type_arg_macros($X);
+#print "line = $X";
      &analyse_variable_declaration($X,\%local_var_info);
      # Keep used module
      if (defined $current_type_name) { $used_modules{$current_type_name} = 1; }
@@ -2500,9 +2521,10 @@ sub fortran_dump_use {
 }
 
 
-################################################################################
+##########################################################################
 # Change the start of the routine by adding START_TIMER, STACK, and ENSURE
 # macros. Also add a comment if the routine is inherited for clarity.
+##########################################################################
 
 sub fortran_add_stack_macro {
 
@@ -2520,13 +2542,13 @@ sub fortran_add_stack_macro {
      }
      if (defined $routine{$name}{fortran_ensure_statements}) {
         if ($pre_out ne '') { $pre_out .= "\n" }
-        $pre_out .= $routine{$name}{fortran_ensure_statements};
+        $pre_out .= $routine{$name}{fortran_ensure_statements} . "\n";
         $routine{$name}{fortran_ensure_statements} = undef;
      }
      if (defined $routine{$name}{being_inherited}) {
         if ($pre_out ne '') { $pre_out .= "\n" }
         $pre_out .= "   ! The following code is inherited from " .  
-                    $routine{$name}{parent_module};
+                    $routine{$name}{parent_module} ;
      }
      if ($pre_out ne '') {
         $fortran_out = $pre_out . "\n" . $fortran_out;
@@ -2663,19 +2685,23 @@ sub fortran_process_error_management {
 #   $fortran_out =~  s/\)( *)DIE_IF\(/\)\n$1DIE_IF\(/;
 # }
 }
-################################################################################
+
+#########################################################################
 # Convert inherited type and type arg macros. Also convert any explicitly
 # defined type substitutions.
+# NOTE: this routine may remove the len= specifier
+#########################################################################
 
 sub convert_inherited_type_arg_macros {
 
+   # 1st argument: the whole line
    my $fortran_out = $_[0];
 
-   # Inherited type/type arguments
+   # Skip blank lines
+   if ( ! $not_blank) { return ($fortran_out) }
 
+   # Set current rout name
    my $name = $current_rout_name;
-
-   if ( ! $not_blank)                        { return ($fortran_out) }
 
 # print "--------------------------------------------";
 # print "line    =",$_;
@@ -2684,45 +2710,69 @@ sub convert_inherited_type_arg_macros {
 # print "inh     =",$routine{$name}{inherited};
 # print "being   =",$routine{$name}{being_inherited};
 
+   # Inherited type/type arguments
    if ($routine{$name}{inherited}) {
 
-      my ($i,$j,$narg,$arg,$newarg);
+      my ($i,$j,$narg,$oldarg,$newarg);
 
       # Do user defined type substitutions
       if ($n_define_type>0) {
       
 #  print "YUP, line= $input_line";
 #  print "YUP, line= $fortran_out";
+
          for ($i=1; $i<=$n_define_type ; $i++) {
-            $arg    = $old_define_type[$i];
+
+            # Old and new
+            $oldarg = $old_define_type[$i];
             $newarg = $new_define_type[$i];
-            $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g; # Protect regex
-            $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
-            $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
-            $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
-            $fortran_out =~ s/${arg}/${newarg}/g;
+
+            # Protect special chars in old
+            $oldarg =~ s/\(/\\(/g; $oldarg =~ s/\)/\\)/g; 
+            $oldarg =~ s/\{/\\{/g; $oldarg =~ s/\}/\\}/g;
+            $oldarg =~ s/\./\\./g; $oldarg =~ s/\?/\\?/g;
+            $oldarg =~ s/\*/\\*/g; $oldarg =~ s/\+/\\+/g;
+
+            # Replace
+            $fortran_out =~ s/${oldarg}/${newarg}/g;
+
 #  print "arg = $arg";
 #  print "newarg = $newarg";
 #  print "YUP, line= $fortran_out";
+
+            # Do implied (type-arg) replacements
             my @old = @{$old_expand_type[$i]};
             my @new = @{$new_expand_type[$i]};
+
+            # Don't go over array bounds ???
             $narg = ($#old<$#new?$#old:$#new);
+
+            # Replace
             if ($narg>0) {
 #  print "INNER narg = $narg";
                for ($j=1; $j<=$narg ; $j++) {
-                  $arg    = $old[$j];
+
+                  # Old and new
+                  $oldarg = $old[$j];
                   $newarg = $new[$j];
-                  $arg =~ s/\(/\\(/g; $arg =~ s/\)/\\)/g; # Protect regex
-                  $arg =~ s/\{/\\{/g; $arg =~ s/\}/\\}/g;
-                  $arg =~ s/\./\\./g; $arg =~ s/\?/\\?/g;
-                  $arg =~ s/\*/\\*/g; $arg =~ s/\+/\\+/g;
-#  print "arg = $arg";
+
+                  # Protect special chars in old
+                  $oldarg =~ s/\(/\\(/g; $oldarg =~ s/\)/\\)/g;
+                  $oldarg =~ s/\{/\\{/g; $oldarg =~ s/\}/\\}/g;
+                  $oldarg =~ s/\./\\./g; $oldarg =~ s/\?/\\?/g;
+                  $oldarg =~ s/\*/\\*/g; $oldarg =~ s/\+/\\+/g;
+#  print "oldarg = $oldarg";
 #  print "newarg = $newarg";
-                  $fortran_out =~ s/${arg}/${newarg}/g;
+
+                  # Replace
+                  $fortran_out =~ s/${oldarg}/${newarg}/g;
+
                }
             }
-         }
-      }
+
+         } # each defined type
+
+      } # end user-defined
  
       if (! $routine{$name}{in_routine_body}) {
 
@@ -2733,13 +2783,15 @@ sub convert_inherited_type_arg_macros {
             # Convert the parent module type args to the inherted module type args
             if ($n_inherited_type_args>0 && $n_type_args>0) {
          
+               # Don't go over array bounds ???
                $narg = ($n_type_args<$n_inherited_type_args?
                         $n_type_args:$n_inherited_type_args);
          
+               # Replace
                for ($i=1; $i<=$narg ; $i++) {
-                  $arg    = $inherited_type_arg[$i];
+                  $oldarg = $inherited_type_arg[$i];
                   $newarg = $type_arg[$i];
-                  $fortran_out =~ s/\b${arg}/${newarg}/;
+                  $fortran_out =~ s/\b${oldarg}/${newarg}/;
                }
             }
    
@@ -2749,11 +2801,13 @@ sub convert_inherited_type_arg_macros {
           # } elsif($routine{$name}{function} && 
           #         $fortran_out =~ /^ *${routine{$name}{function_result}} *:: /) {
             } else {
-               $fortran_out =~ s/[(]len=.*,/[(]/;
-               $fortran_out =~ s/[(]len=.*[)]//;
+      ##?      $fortran_out =~ s/[(]len=.*,/[(]/;
+      ##?      $fortran_out =~ s/[(]len=.*[)]//;
             }
-      }
-   }
+
+      } # routine body
+
+   } # in inherited
 
    return ($fortran_out);
 
@@ -3024,6 +3078,7 @@ sub fortran_do_new_type_scope {
 ################################################################################
 # The line is a labelled or unlabelled end keyword.
 sub analyse_new_end_scope {
+
   my($i,$getfile,$found,$name);
 
   $name = $current_rout_name;
@@ -4518,6 +4573,7 @@ sub fortran_change_variable_declarations {
 
 sub make_fortran_type_declarations {
 
+   # Extract arguments
    my ($type_name,
        $sub_type_name,
        $type_size_part,
@@ -4527,16 +4583,19 @@ sub make_fortran_type_declarations {
        $is_intrinsic_scalar,
        $is_array) = @_;     # <------------
 
+   # Locals
    my $fortran_type_name;
    my $fortran_type_decl;
    my $fortran_mod_name, 
    my $fortran_self_decl;
 
+   # Get fortran-type-name
    $fortran_type_name = $type_name;
    $fortran_type_name =~ s/[{,.]/_/g;  # Replace open curlies and commas with underscore
    $fortran_type_name =~ s/[}]//g;     # Eliminate the close ciurlies
    $fortran_type_name =~ s/[(].*[)]$//;# Remove any size part at the end
 
+   # Get fortran-module-name
   if ($sub_type_name eq '') { $fortran_mod_name = "${fortran_type_name}"; }
   else                      { $fortran_mod_name = "${fortran_type_name}_${sub_type_name}"; }
 
@@ -4551,22 +4610,22 @@ sub make_fortran_type_declarations {
 #print "fortran_type_name = $fortran_type_name   ";
 #print "sub_type_name     = $sub_type_name   ";
 
-   #############################################################################
+   # Pick up BSTR errors
    if ($type_name eq 'BSTR') {
      &report_error("Do not use BSTR to declare variables, use STR(len=BSTR_SIZE).");
    }
-   #############################################################################
+   # Pick up CHR errors
    elsif ($type_name =~ '^CHR') {            
      &report_error("Do not use CHR to declare variables, use STR(len=1).");
    }
-   #############################################################################
+
+   ### Type declarations for INTRINSIC scalars ###
    elsif  ($is_intrinsic_scalar) {  
-   # For INTRINSIC scalar variable declarations # # ############################
       ($fortran_type_decl,$fortran_self_decl) =
          &make_scalar_fortran_types($type_name,$type_size_part,$is_routine_arg);
    }
 
-   # For ARRAY declarations ...  # #############################################
+   ### Type declarations for ARRAYS ###
    elsif ($is_array) {                               
 
       if (! defined $type_arg_1) {
@@ -4577,6 +4636,7 @@ sub make_fortran_type_declarations {
          &make_scalar_fortran_types($type_arg_1,$type_size_part,$is_routine_arg);
 
       my $dim;
+
       for ($dim = 1; $dim <= @tonto_intrinsic_array_type_names; $dim++) {  
          # $pattern is VEC, MAT, MAT3, MAT4 ... 
          my $pattern = $tonto_intrinsic_array_type_names[$dim]; 
@@ -4591,8 +4651,9 @@ sub make_fortran_type_declarations {
          last;
       }
    }
-   #############################################################################
-   else {                   # For NONINTRINSIC non-array variable declarations
+
+   ### Type declarations for NONINTRINSIC non-array variables ###
+   else {                   
       $fortran_type_decl = "type(${fortran_type_name}_TYPE)";
       $fortran_self_decl = $fortran_type_decl;
    }
@@ -4604,28 +4665,35 @@ sub make_fortran_type_declarations {
 }
 
 ################################################################################
-# If $type_name is *NOT* intrinsic, this routine returns $fortran_type_decl
-# as stored in tonto_type_info{$type_name}{fortran_type_decl}. The kind length
-# variables are returned as blank, and the $type_size_part is returned
-# unchanged. If $type_name *IS* intrinsic scalar (e.g.  "STR{7}") and there is a
-# corresponding $type_size_part which may specify a len= specifier (e.g.
-# "len=3,:,:"), and $is_routine_arg tells whether the $type_name is intended to
-# declare a routine arg or not, THEN return the $fortran_type_decl (e.g.
-# "STR(kind=7,len=3)" for $type_name being "STR{7}" and $type_size_part being
-# "len=3,:,:"), the $fortran_self_decl (e.g.  "STR(kind=7,len=*)" for the
-# previous example), and a modified $type_size part which has the len= specifier
+# If $type_name is *NOT* intrinsic, this routine returns the $fortran_type_decl
+# which is stored in tonto_type_info{$type_name}{fortran_type_decl}. 
+#
+# If $type_name *IS* intrinsic scalar (e.g. "STR{7}(len=3)") and there is a 
+# corresponding $type_size_part which may specify a len= specifier, and 
+# $is_routine_arg tells whether the $type_name is intended to declare a routine 
+# arg or not, THEN return
+#
+# . the $fortran_type_decl (e.g.  "STR(kind=7,len=3)" ).
+# . the $fortran_self_decl (e.g.  "STR(kind=7,len=*)" ) 
+# and a modified $type_size_part which has the len= specifier
 # removed (e.g. ":,:" for the previous example). 
 # NOTE: the $type_size_part need not correspond to that for a scalar type.
 # NOTE: the len= specifier (if present) MUST be the first thing in the
-# $type_size_part, and it overrides $is_routine_arg which leads to len=*.
+#       $type_size_part, and it overrides $is_routine_arg which leads to len=*.
+################################################################################
 
 sub make_scalar_fortran_types {
 
+   # Extract arguments
    my ($type_name,$type_size_part,$is_routine_arg) = @_;
 
+   # Locals
    my ($fortran_type_decl,$kind);
 
+   # Get kind= specifier
    $kind = "";
+
+   # Is this an INTRINSIC type?
    if ($type_name =~ "^(STR)({.*})? *\$"  ||  # For INTRINSIC types
        $type_name =~ "^(BIN)({.*})? *\$"  ||  # Kind is specified in curlies
        $type_name =~ "^(INT)({.*})? *\$"  ||
@@ -4637,17 +4705,25 @@ sub make_scalar_fortran_types {
          $kind =~ /[{](.*)[}]/;
          $kind = "kind=$1,"; # note comma
       }
-   } else {                               # For NONINTRINSIC types
+   } 
+
+   # OK, this is a (NONINTRINSIC) type ...
+   else {                              
+
       # This part should be entered only from the array type region of
       # &make_fortran_type_declarations. Therefore, scalar $type_name will be a
       # type arg, and should have been defined previously in the types.foo file
       # -- unless it is a dummy type being analysed in a get_from statement.
+
+      # Get the type declaration
       $fortran_type_decl = $tonto_type_info{$type_name}{fortran_type_decl}; # <========
-      # Die if it hasn't been defined ... and it isn't a dummy being analysed
+
+      # Die if it hasn't been defined ... 
+      # but not if it is a dummy-type being analysed
       if (! defined $fortran_type_decl) {
-         if ($newscopeunitfound) {
+         if ($newscopeunitfound) {  # Dummy
            $fortran_type_decl = ''; # This should not be used, its in a get_from
-         } else { 
+         } else {                   # Oops ...
            &report_error("fortran type name for type \"$type_name\" not yet defined.");
          }
       }
@@ -4655,19 +4731,32 @@ sub make_scalar_fortran_types {
 
    my $kind_length_part = "";        
    my $self_kind_length_part = "";                 
-   if ($fortran_type_decl eq 'STR') {     # For STR type ... can have kind= and len=
+
+   # For STR type, set the len= part of the type declaration
+   # Append to the kind= part (if any)
+   if ($fortran_type_decl eq 'STR') { 
+
       # Users beware: explicit len= overrides routine arguments len=*. Trust foo!
-      # Note the $type_size_part gets modified here.
       if    ($type_size_part =~ s/^ *len *= *(.*?),//) { $kind_length_part = "(${kind}len=$1)"; }
       elsif ($type_size_part =~ s/^ *len *= *(.*?)$//) { $kind_length_part = "(${kind}len=$1)"; }
       elsif ($is_routine_arg==1)                       { $kind_length_part = "(${kind}len=*)"; }
       else                                             { $kind_length_part = "(${kind}len=STR_SIZE)"; }
       $self_kind_length_part = "(${kind}len=*)";
    }
+
+   # If there is a len= declaration, and its not a STR, this must
+   # be an inherited routine, so remove it ...
    elsif ($type_size_part =~ /^ *len *= */) {
-     &report_error("cannot specify len= for intrinsic scalar type \"$type_name\".");
+      if ($routine{$current_rout_name}{being_inherited}) { 
+         $type_size_part =~ s/^ *len *= *(.*?),//;
+         $type_size_part =~ s/^ *len *= *(.*?)$//;
+      } else {
+         &report_error("cannot specify len= for intrinsic scalar type \"$type_name\".");
+      }
    }
-   elsif ($kind ne '') {                  # Must be a non-string INTRINSIC kind= declaration
+
+   # OK, it must be a non-string INTRINSIC kind= declaration
+   elsif ($kind ne '') {                  
       $kind =~ s/,$//;      # remove comma
       $kind_length_part      = "(${kind})";             # Insert kind= like len=
       $self_kind_length_part = "(${kind})";             # ... for self declaration as well
@@ -4675,7 +4764,7 @@ sub make_scalar_fortran_types {
 
    return ($fortran_type_decl . $kind_length_part,      # Normal declaration
            $fortran_type_decl . $self_kind_length_part, # Self declaration
-           $type_size_part);
+           $type_size_part);                            # Size part
 }
 
 ################################################################################
