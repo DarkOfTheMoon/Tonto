@@ -412,9 +412,17 @@ sub show_options {
 
 ################################################################################
 sub do_substitutions_into_Makefile {
+
   -f "$SRCDIR/scripts/Makefile.in" || do {print STDERR "Makefile.in not found in scripts/"; exit 1};
+
+  # Get outfile
+  my $loc = &makefile_location;
+  -d "$PLATFORM_ID"      || do { system("mkdir $PLATFORM_ID") };
+  -d "$PLATFORM_ID/$loc" || do { system("mkdir $PLATFORM_ID/$loc") };
+  open(OUTFILE,"> $PLATFORM_ID/$loc/Makefile");
+
   open(INFILE,"< $SRCDIR/scripts/Makefile.in");
-  open(OUTFILE,"> $PLATFORM_ID.make");
+
   while(<INFILE>) {
     s/\@INSTALLDIR\@/$INSTALLDIR/g;
     s/\@SRCDIR\@/$SRCDIR/g;
@@ -432,11 +440,37 @@ sub do_substitutions_into_Makefile {
     s/\@CPX_KIND\@/$CPX_KIND/g;
     print OUTFILE;
   }
+
   close(OUTFILE);
   close(INFILE);
 
   # Link the Makefile
   system("rm -f Makefile");
-  system("ln -s $PLATFORM_ID.make Makefile");
+  system("ln -s $PLATFORM_ID/$loc/Makefile Makefile");
+
+}
+
+################################################################################
+sub makefile_location {
+
+  open(INFILE,"< platforms/$PLATFORM_ID");
+
+  my $loc = " ";
+
+  while(<INFILE>) {
+
+    if    (/^FOPTNS\s*=\s*\$\(FFAST\)/)  { $loc = "fast"; }
+    elsif (/^FOPTNS\s*=\s*\$\(FDEBUG\)/) { $loc = "debug"; }
+    elsif (/^FOPTNS\s*=\s*\$\(FPROF\)/)  { $loc = "custom"; }
+   
+    next if ($loc eq " ");
+
+    last;
+
+  }
+
+  close(INFILE);
+
+  return $loc;
 
 }

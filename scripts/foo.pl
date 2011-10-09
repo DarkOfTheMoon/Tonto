@@ -521,6 +521,7 @@ sub analyse_command_arguments {
    if ($do_fortran) {
       my($fortran_directory,$file);
       ($fortran_volume,$fortran_directory,$file) = File::Spec->splitpath($fortranfile);
+      $fortran_directory = "";
       if ($includedir ne '') { $fortran_directory = $includedir; }
       $fortranintfile = File::Spec->catpath($fortran_volume,$fortran_directory,$foofile_head_name . ".int"); 
       $fortranusefile = File::Spec->catpath($fortran_volume,$fortran_directory,$foofile_head_name . ".use"); 
@@ -3373,7 +3374,7 @@ sub fortran_do_new_end_scope {
      &fortran_prepend_self_decl;
      if ($#scope<=2) { &fortran_prepend_use_decl; }
 
-     # Insert used procedures from the current proceudre use file
+     # Insert used procedures from the current procedure use file
      # Only if required ...
      if ($do_mod_use eq 0 && $#scope <= 2) {
         my ($saved_fortranusefile);
