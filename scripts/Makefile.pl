@@ -18,6 +18,7 @@ my $SRCDIR = '.';                     # Directory for the source files
 my $INSTALLDIR = '/usr/local/bin';    # Directory to install executables.
 my $PERL = '';                        # Location of the perl executable.
 my $FC = '';                          # The fortran compiler command.
+my $FOPTNS_TYPE = '';                 # FOPTNS setting: whether fast, debug or custom
 my $COMPILER_VENDOR = '';             # Name of the compiler vendor.
 my $COMPILER_ID_ = '';                # Compiler ID 
 my $havelibs = 0;                     # Whether have determined the libraries to use.
@@ -29,7 +30,7 @@ my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operatin
 my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
 my $REAL_KIND = 8;                    # The default real kind
-my $CPX_KIND = 8;                 # The default complex kind
+my $CPX_KIND = 8;                     # The default complex kind
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -137,6 +138,10 @@ if ($FC ne '') {
   $COMPILER_ID_ = "${COMPILER_VENDOR}_${FC}";
   $PLATFORM_INFO_FILE = "${SRCDIR}/platforms/${PLATFORM_ID}";
 
+  print STDERR "Determining Fortran options used ...";
+  $FOPTNS_TYPE = &get_foptns_type;
+  &print_result($FOPTNS_TYPE);
+
   print STDERR "Determining Fortran default integer kind ...";
   &get_default_integer_kind;
   &print_result($INT_KIND);
@@ -153,7 +158,10 @@ if ($FC ne '') {
   &get_default_double_complex_kind;
   &print_result($CPX_KIND);
 
-  print STDERR "Options for your compiler are in $PLATFORM_INFO_FILE\n";
+  print STDERR "Compiler options taken from $PLATFORM_INFO_FILE\n";
+
+
+  print STDERR "Makefile located at $PLATFORM_ID/$FOPTNS_TYPE/Makefile\n";
   &check_siteconfig;
 
 } else {
@@ -383,11 +391,36 @@ sub get_vendor {
 }
 
 ################################################################################
+sub get_foptns_type {
+
+  open(INFILE,"< platforms/$PLATFORM_ID");
+
+  my $loc = " ";
+
+  while(<INFILE>) {
+
+    if    (/^FOPTNS\s*=\s*\$\(FFAST\)/)  { $loc = "fast"; }
+    elsif (/^FOPTNS\s*=\s*\$\(FDEBUG\)/) { $loc = "debug"; }
+    elsif (/^FOPTNS\s*=\s*\$\(FPROF\)/)  { $loc = "custom"; }
+   
+    next if ($loc eq " ");
+
+    last;
+
+  }
+
+  close(INFILE);
+
+  return $loc;
+
+}
+
+################################################################################
 sub check_siteconfig {
   if (! -f $PLATFORM_INFO_FILE) {
     print STDERR "\n";
-    print STDERR "File ${PLATFORM_INFO_FILE} created from template.\n";
-    print STDERR "Please edit ${PLATFORM_INFO_FILE}.\n";
+    print STDERR "Note: File ${PLATFORM_INFO_FILE} created from template.\n";
+    print STDERR "Please edit ${PLATFORM_INFO_FILE} and reuse this script.\n";
     open(SCt,"${SRCDIR}/platforms/template");
     open(SC,"> $PLATFORM_INFO_FILE");
     while(<SCt>) {
@@ -415,11 +448,11 @@ sub do_substitutions_into_Makefile {
 
   -f "$SRCDIR/scripts/Makefile.in" || do {print STDERR "Makefile.in not found in scripts/"; exit 1};
 
-  # Get outfile
-  my $loc = &makefile_location;
+  # Make the Makefile directory location
   -d "$PLATFORM_ID"      || do { system("mkdir $PLATFORM_ID") };
-  -d "$PLATFORM_ID/$loc" || do { system("mkdir $PLATFORM_ID/$loc") };
-  open(OUTFILE,"> $PLATFORM_ID/$loc/Makefile");
+  -d "$PLATFORM_ID/$FOPTNS_TYPE" || do { system("mkdir $PLATFORM_ID/$FOPTNS_TYPE") };
+
+  open(OUTFILE,"> $PLATFORM_ID/$FOPTNS_TYPE/Makefile");
 
   open(INFILE,"< $SRCDIR/scripts/Makefile.in");
 
@@ -430,6 +463,7 @@ sub do_substitutions_into_Makefile {
     s/\@MAKE\@/$MAKE/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
+    s/\@FOPTNS_TYPE\@/$FOPTNS_TYPE/g;
     s/\@COMPILER_ID_\@/$COMPILER_ID_/g;
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
@@ -446,31 +480,6 @@ sub do_substitutions_into_Makefile {
 
   # Link the Makefile
   system("rm -f Makefile");
-  system("ln -s $PLATFORM_ID/$loc/Makefile Makefile");
-
-}
-
-################################################################################
-sub makefile_location {
-
-  open(INFILE,"< platforms/$PLATFORM_ID");
-
-  my $loc = " ";
-
-  while(<INFILE>) {
-
-    if    (/^FOPTNS\s*=\s*\$\(FFAST\)/)  { $loc = "fast"; }
-    elsif (/^FOPTNS\s*=\s*\$\(FDEBUG\)/) { $loc = "debug"; }
-    elsif (/^FOPTNS\s*=\s*\$\(FPROF\)/)  { $loc = "custom"; }
-   
-    next if ($loc eq " ");
-
-    last;
-
-  }
-
-  close(INFILE);
-
-  return $loc;
+  system("ln -s $PLATFORM_ID/$FOPTNS_TYPE/Makefile Makefile");
 
 }
