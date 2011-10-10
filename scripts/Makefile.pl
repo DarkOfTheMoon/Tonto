@@ -481,5 +481,7 @@ sub do_substitutions_into_Makefile {
   # Link the Makefile
   system("rm -f Makefile");
   system("ln -s $PLATFORM_ID/$FOPTNS_TYPE/Makefile Makefile");
+  system("rm -f $PLATFORM_ID.$FOPTNS_TYPE.make");
+  system("ln -s $PLATFORM_ID/$FOPTNS_TYPE/Makefile $PLATFORM_ID.$FOPTNS_TYPE.make");
 
 }
