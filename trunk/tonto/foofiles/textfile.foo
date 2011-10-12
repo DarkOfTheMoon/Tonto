@@ -225,9 +225,7 @@ contains
 
       if (.is_open) .close
 
-      if (IO_IS_ALLOWED) then
-         unit.free(.unit)
-      end
+      unit.free(.unit)
 
       deallocate(self)
       DELETE_MEMORY(SELF_TYPE_SIZE)
@@ -274,11 +272,16 @@ contains
       self :: PTR
       file :: TEXTFILE
       unit :: UNIT_NUMBER
+
+      ! Create fresh file, with no name
       .create(" ")
-      if (IO_IS_ALLOWED) then
-        unit.free(.unit)
-      end
+
+      ! Free nameless file unit
+      unit.free(.unit) 
+
+      ! Copy the file, unit and all
       .copy(file)
+
    end
 
    copy(file,copy_saved) ::: recursive, leaky
@@ -309,7 +312,7 @@ contains
 !  Set defaults
 !  ************
 
-   set_defaults 
+   set_defaults
    ! Set defaults
 
       .name = "unknown"
@@ -350,7 +353,8 @@ contains
    set_no_of_lines
    ! Set the number of lines in the file
 
-   ENSURE(.action=="unknown" OR .action=="read","not a readable file")
+   ENSURE(.exists, "not an existing file!")
+   ENSURE(.action=="read","not a readable file")
 
       unit,fail,l :: INT
       name :: STR
@@ -363,6 +367,7 @@ contains
 
       ! Open the file
       if (IO_IS_ALLOWED) then
+
          open(unit=unit,           &
               file=trim(name),     &
               status="old",        &
@@ -373,6 +378,7 @@ contains
 
       PARALLEL_BROADCAST(fail,0)
       DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
+      .io_status = fail
 
       ! Read the lines until done
       if (IO_IS_ALLOWED) then
@@ -382,7 +388,7 @@ contains
             line = line
             read(unit,fmt="(a)",iostat=fail) line
             l = l + 1
-            inquire(unit,position=stat) 
+          ! inquire(unit,position=stat) 
           ! print *,l,stat,line
             if (fail/=0) exit
          end 
@@ -394,7 +400,13 @@ contains
       .no_of_lines = l - 1
 
       ! Rewind
-      close(unit)
+      if (IO_IS_ALLOWED) then
+         close(unit,iostat=fail)
+      end
+
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail/=0,"error closing file for reading: "//trim(name))
+      .io_status = fail
 
    end
 
@@ -425,6 +437,7 @@ contains
 
       ! Make .saved the old self
       .saved => saved
+
    end
 
    unsave ::: leaky
@@ -478,6 +491,7 @@ contains
 
       ! Open the new file
       .open(for=.saved.action)
+
    end
 
    redirect(internal) ::: leaky
@@ -585,8 +599,6 @@ contains
    ! Open the input file. The input file object must already be created
    ! The file is positioned at the first line.
    ENSURE(.internal.destroyed,"no need to open an internal file")
-   ENSURE(.exists, "opening new file "//trim(.name)//" for read!")
-   ENSURE(.action=="unknown" OR .action=="read","not a readable file")
 
       unit,fail :: INT
       name :: STR
@@ -594,15 +606,17 @@ contains
       .action = "read"
       .io_status = 0
 
+      unit = .unit
+      name = .name
+      fail = 0
+
+      if (.exists) then
+         .set_no_of_lines
+      else
+         DIE("the file "//trim(name)//" does not exist!")
+      end
+
       if (IO_IS_ALLOWED) then
-
-         unit = .unit
-         name = .name
-         fail = 0
-
-         DIE_IF(NOT .exists(name),"file does not exist: "//trim(name))
-
-        .set_no_of_lines
 
          open(unit=unit,           &
               file=trim(name),     &
@@ -614,6 +628,7 @@ contains
 
       PARALLEL_BROADCAST(fail,0)
       DIE_IF(fail/=0,"error opening old file for reading: "//trim(name))
+      .io_status = fail
 
    end
 
@@ -621,9 +636,6 @@ contains
    ! Open the output file associated with the output object
 
    ENSURE(.internal.destroyed,"no need to open an internal file")
-   ENSURE(.action=="unknown" OR .action=="write","not a writable file")
-
-      .action = "write"
 
       if (.exists) then; .open_old_file_for_write
       else;              .open_new_file_for_write
@@ -643,11 +655,11 @@ contains
       .action = "write"
       .io_status = 0
 
-      if (IO_IS_ALLOWED) then
+      unit = .unit
+      name = .name
+      fail = 0
 
-         unit = .unit
-         name = .name
-         fail = 0
+      if (IO_IS_ALLOWED) then
 
          open(unit=unit,           &
               file=trim(name),     &
@@ -658,7 +670,8 @@ contains
       end
 
       PARALLEL_BROADCAST(fail,0)
-      DIE_IF(fail/=0,"error opening old file: "//trim(.name))
+      DIE_IF(fail/=0,"error opening old file: "//trim(name))
+      .io_status = fail
 
       .clear_and_put_margin
 
@@ -676,22 +689,23 @@ contains
       .action = "write"
       .io_status = 0
 
-      if (IO_IS_ALLOWED) then
+      unit = .unit
+      name = .name
+      fail = 0
 
-         unit = .unit
-         name = .name
-         fail = 0
+      if (IO_IS_ALLOWED) then
 
          open(unit=unit,           &
               file=trim(name) ,    &
-              status="unknown",    &
+              status="new",        &
               access="sequential", &
               form="formatted",    &
               iostat=fail)
       end
 
       PARALLEL_BROADCAST(fail,0)
-      DIE_IF(fail/=0,"error opening new file "//trim(.name))
+      DIE_IF(fail/=0,"error opening new file "//trim(name))
+      .io_status = fail
 
    end
 
@@ -699,10 +713,11 @@ contains
    ! Close the input file
       opened :: BIN
 
-      inquire(unit=.unit,opened=opened)
-
-      if (opened) then
-         close(unit=.unit)
+      if (IO_IS_ALLOWED) then
+         inquire(unit=.unit,opened=opened)
+         if (opened) then
+            close(unit=.unit)
+         end
       end
 
    end
@@ -975,15 +990,21 @@ contains
    is_open result (res)
    ! Returns true if the file has been opened
       res :: BIN
-      ! inquire(unit=.unit,opened=res)
+
       if (.unit==TEXTFILE_STDIN_UNIT OR .unit==TEXTFILE_STDOUT_UNIT) then
-        res = TRUE ! not needed for stdin, stdout
+
+         res = TRUE ! not needed for stdin, stdout
+
       else
+
         if (IO_IS_ALLOWED) then
-          inquire(file=.name,opened=res)
+           inquire(file=.name,opened=res)
+         ! inquire(unit=.unit,opened=res)
         end
         PARALLEL_BROADCAST(res,0)
+
       end
+
    end
 
    unit_used result (res)
@@ -1067,17 +1088,21 @@ contains
       word :: STR
       ignore :: BIN
 
-      ! Save this
+      ! Save ignore EOF status
       ignore = .ignore_end_of_file 
       .ignore_end_of_file = TRUE
 
+      ! Read a word ...
       .read(word)
+
+      ! Is it the end of file?
       res = .end_of_file
 
+      ! Reset .io_status and move back
       .io_status = 0
       .move_to_previous_item
 
-      ! Put back ignore state
+      ! Put back ignore EOF status
       .ignore_end_of_file = ignore 
 
    end
@@ -1118,7 +1143,7 @@ contains
       if (.record<size(.internal)) then      ! No errors.
 
          .io_status = 0
-         .record = .record+1
+         .record = .record + 1
          string = .internal(.record)
          .buffer.set_and_analyse(string)
       
@@ -1159,12 +1184,13 @@ contains
       ! Update
       .update_system_info
 
+      ! Read a line
       if (IO_IS_ALLOWED) then
          unit = .unit
          fail = 0
          string = " "
-         read(unit=unit,fmt="(a)",iostat=fail) string
-         if (.record>=.no_of_lines) .io_status = TEXTFILE_IOSTAT_EOF
+         read(unit=unit,fmt="(a)",iostat=fail) string          ! could fail
+         if (.record>=.no_of_lines) fail = TEXTFILE_IOSTAT_EOF ! could also fail
        ! inquire(unit=.unit,position=position)
        ! print *,.record
        ! print *,trim(string)
@@ -1313,15 +1339,21 @@ contains
 
    rewind_external ::: private
    ! Rewind the input file, but do not read a line.
+
+      fail :: INT
+
       .update_system_info
-      .io_status = 0
+
+      fail = 0
       if (IO_IS_ALLOWED) then
-        rewind(unit=.unit,iostat=.io_status)
+         rewind(unit=.unit,iostat=fail)
       end
-      PARALLEL_BROADCAST(.io_status,0)
-      DIE_IF(.io_status>0,"rewind error")
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"rewind error")
+      .io_status = fail
+
       .record = 0
-      .io_status = 0
+
    end
 
    move_to_end
@@ -1339,24 +1371,42 @@ contains
 
    move_to_end_external ::: private
    ! Move to the end of the input file
+
+      fail :: INT
+
       .update_system_info
+
+      ! Read till failure
       do
-        .io_status = 0
-        if (IO_IS_ALLOWED) then
-          read(unit=.unit, fmt="()", iostat=.io_status)
-        end
-        PARALLEL_BROADCAST(.io_status,0)
-        if (.io_status/=0) exit
-        .record = .record + 1
+
+         fail = 0
+         if (IO_IS_ALLOWED) then
+            read(unit=.unit, fmt="()", iostat=fail)
+         end
+         PARALLEL_BROADCAST(fail,0)
+
+         if (fail/=0) exit
+
+         .record = .record + 1
+
       end
-      .io_status = 0
+
+      ! Backspace twice
       if (IO_IS_ALLOWED) then
-        backspace(unit=.unit,iostat=.io_status)
-        backspace(unit=.unit,iostat=.io_status)
+         backspace(unit=.unit,iostat=fail)
+         backspace(unit=.unit,iostat=fail)
       end
-      PARALLEL_BROADCAST(.io_status,0)
+      PARALLEL_BROADCAST(fail,0)
+
+      ! Set the IO status
+      .io_status = fail
+
+      ! Set the record
       .record = max(0,.record-1)
+
+      ! Get the last line
       .read_line
+
    end
 
    backspace_line
@@ -1403,32 +1453,53 @@ contains
    ! and read it into the buffer. Set .record to the 
    ! last processed record.
       rec :: INT
+
    ENSURE(rec>=0,"record number must be non-negative")
+
+      fail :: INT
+
       .update_system_info
+
       if (rec<(.record+1)) then
+
          do
-           .io_status = 0
-           if (IO_IS_ALLOWED) then
-             backspace(unit=.unit,iostat=.io_status)
-           end
-           PARALLEL_BROADCAST(.io_status,0)
-           DIE_IF(.io_status>0,"backspace error")
-           .record = .record-1
-           if (rec==(.record+1)) exit
+
+            fail = 0
+            if (IO_IS_ALLOWED) then
+               backspace(unit=.unit,iostat=fail)
+            end
+            PARALLEL_BROADCAST(fail,0)
+            DIE_IF(fail>0,"backspace error")
+            .io_status = fail
+
+            .record = .record - 1
+
+            if (rec==(.record+1)) exit
+
          end
+
       else if (rec>(.record+1)) then
+
          do
-           .io_status = 0
+
+           fail = 0
            if (IO_IS_ALLOWED) then
-             read(unit=.unit,fmt="()",iostat=.io_status)
+              read(unit=.unit,fmt="()",iostat=fail)
            end
-           PARALLEL_BROADCAST(.io_status,0)
-           DIE_IF(.io_status>0,"read error")
+           PARALLEL_BROADCAST(fail,0)
+           DIE_IF(fail>0,"read error")
+            .io_status = fail
+
            .record = .record + 1
+
            if (rec==(.record+1)) exit
+
          end
+
       end
+
       .read_line
+
    end
 
 !  ***********
@@ -2796,21 +2867,27 @@ contains
 
    flush
    ! Flush the buffer to the output file
-   ENSURE(.is_open,"file is not open!")
    ENSURE(.action=="write","file does not have write action!")
 
       unit :: UNIT_NUMBER
+      fail :: INT
 
-      .io_status = 0
+      fail = 0
       if (IO_IS_ALLOWED) then
-        write(unit=.unit,iostat=.io_status,fmt='(a)') trim(.buffer.string)
+         ENSURE(.is_open,"file is not open!")
+         write(unit=.unit,iostat=fail,fmt="(a)") trim(.buffer.string)
       end
-      PARALLEL_BROADCAST(.io_status,0)
-      DIE_IF(.io_status>0,"read error")
+      PARALLEL_BROADCAST(fail,0)
+      DIE_IF(fail>0,"read error")
+      .io_status = fail
 
-      unit.unit = .unit
-      unit.flush_buffer
+      if (IO_IS_ALLOWED) then
+         unit.unit = .unit
+         unit.flush_buffer
+      end
+
       .clear_and_put_margin
+
       .record = .record + 1
 
    end
@@ -3263,20 +3340,22 @@ contains
       column,auto :: BIN
 
       ! Vector length
-      WARN_IF(dim==0,"zero sized dimension!")
       dim = v.dim
+      WARN_IF(dim==0,"zero sized dimension!")
 
       ! Extract options
       column = TRUE
       if (present(by_row))    column = NOT by_row
       if (present(by_column)) column = by_column
 
+      iwid = dim.str_length(.spacing)
+      rwid = .real_width
+      if (present(width)) rwid = width
+
       auto = FALSE
       if (present(auto_width)) auto = auto_width
 
       ! Auto field width overrides width
-      iwid = dim.str_length(.spacing)
-      rwid = .real_width
       if (auto) rwid = v.LEN(ARG)
 
       if (column) then
