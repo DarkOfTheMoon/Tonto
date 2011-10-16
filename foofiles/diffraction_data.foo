@@ -69,8 +69,6 @@ contains
       nullify(.near_0_eigenvectors)
 
       nullify(.esd)
-      nullify(.esd_fit)
-      nullify(.esd_ref)
       nullify(.covariance_matrix)
       nullify(.correlation_matrix)
       nullify(.fragment_covariance_matrix)
@@ -117,7 +115,7 @@ contains
       .near_0_eigenvalues.destroy
       .near_0_eigenvectors.destroy
 
-      .esd_fit.destroy
+      .esd.destroy
       .covariance_matrix.destroy
       .correlation_matrix.destroy
       .fragment_covariance_matrix.destroy
@@ -131,8 +129,6 @@ contains
 
       .X_ref.destroy
       .X_ref0.destroy
-
-      .esd_ref.destroy
 
    end
 
@@ -179,8 +175,7 @@ contains
       if (data.near_0_eigenvalues.created)         .near_0_eigenvalues.create_copy(data.near_0_eigenvalues)
       if (data.near_0_eigenvectors.created)        .near_0_eigenvectors.create_copy(data.near_0_eigenvectors)
 
-      if (data.esd_fit.created)                    .esd_fit.create_copy(data.esd_fit)
-      if (data.esd_ref.created)                    .esd_ref.create_copy(data.esd_ref)
+      if (data.esd.created)                        .esd.create_copy(data.esd)
       if (data.covariance_matrix.created)          .covariance_matrix.create_copy(data.covariance_matrix)
       if (data.correlation_matrix.created)         .correlation_matrix.create_copy(data.correlation_matrix)
       if (data.fragment_covariance_matrix.created) .fragment_covariance_matrix.create_copy(data.fragment_covariance_matrix)
@@ -231,8 +226,9 @@ contains
       .chi2                     = ZERO
 
       ! Refine/fit switches
-      .refine_F                 = TRUE 
+      .fit_structure            = FALSE
       .refine_structure         = FALSE
+      .refine_F                 = TRUE 
       .refine_positions_only    = FALSE
       .refine_ADPs_only         = FALSE
       .refine_H_ADPs            = TRUE
@@ -252,25 +248,23 @@ contains
       .display_near_0_eigenvectors = FALSE
       .display_correlation_matrix  = FALSE
       .min_correlation             = DIFFRACTION_DATA_MIN_CORRELATION
-      .show_fit_output             = TRUE 
 
       ! Set the internal variables for a refine/fit data
       .destroy_fit_data
-      .destroy_refinement_data
       .set_fit_data
+
+      .destroy_refinement_data
+      .set_refinement_data
 
    end
 
    set_fit_data 
-   ! Set the defaults internal variables for a refinement/fit
+   ! Set the defaults internal variables for a fit
 
       ! Refinement/fit iteration data
       .fit_iteration           = 0
-      .ref_iteration           = 0
       .chi2_fit                = ZERO
       .chi2_fit0               = ZERO
-      .chi2_ref                = ZERO
-      .chi2_ref0               = ZERO
       .max_shift               = ZERO
       .max_shift_on_esd        = ZERO
       .max_shift_on_esd_ind    = 0
@@ -278,11 +272,26 @@ contains
       .fit_converged           = FALSE
       .chi2_increased          = FALSE
       .too_many_fit_iterations = FALSE
-      .too_many_ref_iterations = FALSE
 
       ! Near zero eigenvalues in the least-squares
       .n_0                 = 0
       .n_near_0            = 0
+
+   end
+
+   set_refinement_data 
+   ! Set the defaults internal variables for a refinement
+
+      ! Refinement/fit iteration data
+      .ref_iteration           = 0
+      .chi2_ref                = ZERO
+      .chi2_ref0               = ZERO
+      .max_refshift            = ZERO
+      .max_refshift_on_esd     = ZERO
+      .max_refshift_on_esd_ind = 0
+      .max_refshift_on_esd_par = " "
+      .refinement_converged    = FALSE
+      .too_many_ref_iterations = FALSE
 
    end
 
@@ -370,8 +379,26 @@ contains
 
    end
 
-   set_show_fit_output(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.show_fit_output)
+   set_refine_structure(val)
    ! Generic set
+      val :: BIN
+
+      .refine_structure = val
+
+      ! If refining you can't be fitting
+      if (val) .fit_structure = NOT val 
+
+   end
+
+   set_fit_structure(val)
+   ! Generic set
+      val :: BIN
+
+      .fit_structure = val
+
+      ! If fitting, you can't be refining
+      if (NOT val) .refine_structure = NOT val
+
    end
 
 
@@ -439,7 +466,6 @@ contains
          case ("reflection_data=            "); .read_reflection_data
          case ("revert                      "); .revert
          case ("sf_mixing_parameter=        "); .read_SF_mixing_parameter
-         case ("show_fit_output=            "); .read_show_fit_output
          case ("show_rejects=               "); .read_show_rejects
          case ("stl_cutoff=                 "); .read_stl_cutoff
          case ("synthesize_sigma_i=         "); .read_synthesize_sigma_I
@@ -795,10 +821,6 @@ contains
 
 !  Refinement options
 
-   read_show_fit_output ::: get_from(OBJECT:read_and_set, TYPE=>BIN, SET=>.set_show_fit_output), private
-   ! Generic read and set
-   end
-
    read_max_allowed_param_shift
    ! Read the maximum allowed shift in a structure refinement
    ! parameter
@@ -1060,8 +1082,10 @@ contains
       F_pred :: VEC{REAL}*
       n_r,n_p :: INT
 
-      ! The number of parameters is assumed set before the refinement
-      if (NOT .refine_structure) .n_param = 0
+      ! The number of parameters is assumed set before a refinement
+      ! e.g. during get_parameter_shifts in a least-squares
+      ! So only fiddle with n_param if this isn't going on.
+      if (NOT (.refine_structure OR .fit_structure)) .n_param = 0
 
       ! Get optimum scale factors, extinction, etc.
       if (.optimise_extinction OR .optimise_scale) .get_optimum_parameters
@@ -1087,35 +1111,41 @@ contains
       ! Calculate the chi^2; reset denominator
       n_r = .reflections.dim - 1
       n_p = .reflections.dim - .n_param
-      .chi2_fit0 = .chi2
       .chi2      = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
+      .chi2_fit0 = .chi2_fit
+      .chi2_fit  = .chi2
 
    end
 
    update_n_param_and_chi2 ::: private
    ! Update the number of parameters and recalculate the chi2
-   DIE_IF(NOT .refine_structure,"must be doing a structure refinement")
+   DIE_IF(NOT (.refine_structure OR .fit_structure),"must be doing a structure fit/refinement")
    DIE_IF(.n_param<=0,"n_param must be +ve")
 
       n_r,n_p :: INT
 
       ! Add on extra parameters
       if (.optimise_extinction) then
+
          DIE_IF(.use_multiple_scale_factors,"must use optimize_extinction= no")
          .n_param = .n_param + 2
+
       else if (.optimise_scale) then
+
          if (.use_multiple_scale_factors) then
             .n_param = .n_param + maxval(.reflections.group)
          else
             .n_param = .n_param + 1
          end
+
       end
 
       ! Update the chi2
       n_r = .reflections.dim - 1
       n_p = .reflections.dim - .n_param
-      .chi2_fit0 = .chi2
       .chi2      = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
+      .chi2_fit0 = .chi2_fit
+      .chi2_fit  = .chi2
 
    end
 
@@ -1261,7 +1291,10 @@ contains
 
       .scale_factor = top/bot
 
-      if (NOT .refine_structure) .n_param = .n_param + 1
+      ! The number of parameters is assumed set before a refinement
+      ! e.g. during get_parameter_shifts in a least-squares
+      ! So only fiddle with n_param if this isn't going on.
+      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
 
    end
 
@@ -1302,7 +1335,10 @@ contains
         .scale_factors(g) = top/bot
       end
 
-      if (NOT .refine_structure) .n_param = .n_param + n_group
+      ! The number of parameters is assumed set before a refinement
+      ! e.g. during get_parameter_shifts in a least-squares
+      ! So only fiddle with n_param if this isn't going on.
+      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + n_group
 
    end
 
@@ -1329,8 +1365,11 @@ contains
       .scale_factor = p(1)
       .extinction_factor = p(2)
 
-      ! One was already added to .n_param when getting the initial scale
-      if (NOT .refine_structure) .n_param = .n_param + 1
+      ! The number of parameters is assumed set before a refinement
+      ! e.g. during get_parameter_shifts in a least-squares
+      ! So only fiddle with n_param if this isn't going on.
+      ! NOTE: one was already added to .n_param when getting the initial scale
+      if (NOT (.refine_structure OR .fit_structure)) .n_param = .n_param + 1
 
    end
 
@@ -1662,8 +1701,20 @@ contains
       n_p = 9*n_asym_atoms
       n_f = 9*n_frag_atoms
 
-      ! Destroy existing data 
+      ! Reset fit data 
       .destroy_fit_data
+      .set_fit_data
+
+      ! Set fitting
+      if (NOT .refine_structure) .set_fit_structure(TRUE)
+
+      ! Initially chi^2 is as big as you can get
+      .chi2_fit0 = huge(ONE)
+
+      ! Set the uique # of parameters. Used for getting the correct
+      ! chi^2 statistic. Note: zero eigenvalues in the least squares
+      ! will modify this value.
+      .n_param = n_p
 
       ! Create parameter vectors & shifts (leaky)
       .dX.create(n_p)
@@ -1671,36 +1722,18 @@ contains
       .X_fit0.create(n_p)
 
       ! Create esd's and covariances
-      .esd_fit.create(n_p)
+      .esd.create(n_p)
       .covariance_matrix.create(n_p,n_p)
       .correlation_matrix.create(n_p,n_p)
       .fragment_covariance_matrix.create(n_f,n_f)
 
       ! Set esd's to zero
-      .esd_fit = ZERO
-
-      ! Assign the esd's
-      .esd => .esd_fit
-
-      ! This switch is for turning *off* code which resets the # of
-      ! parameters ... and for control of rigid fitting ... see below
-      .refine_structure = TRUE
-
-      ! Set the uique # of parameters. Used for getting the correct
-      ! chi^2 statistic. Note: zero eigenvalues in the least squares
-      ! will modify this value.
-      .n_param = 9*n_asym_atoms
-
-      ! Initially chi^2 is as big as you can get
-      .chi2_fit0 = huge(ONE)
-
-      ! Reset refinement iterations
-      .fit_iteration = 0
+      .esd = ZERO
 
       ! Create the table (leaky)
       .fit_table.create(8)
 
-      ! Refinement table headings
+      ! Fit table headings
       .fit_table(1).set_heading("Fit")
       .fit_table(1).set_subhead("Iter")
       .fit_table(2).set_heading("chi2")
@@ -1730,63 +1763,63 @@ contains
 
    end
 
-!   initialise_refinement_data(n_asym_atoms) ::: leaky
-!   ! Create the refinement data arrays & initialise if needed
-!      n_asym_atoms :: INT, IN
-!
-!      n_p :: INT
-!
-!      ! The unique # of parameters, and the # of frag atom parameters
-!      n_p = 9*n_asym_atoms
-!
-!      ! Destroy existing data (leaky)
-!      .destroy_refinement_data
-!
-!      ! Create parameter vectors (leaky)
-!      .X_ref.create(n_p)
-!      .X_ref0.create(n_p)
-!
-!      ! Create esd's (leaky)
-!      .esd_ref.create(n_p)
-!
-!      ! Initialise esd's to zero
-!      .esd_ref = ZERO
-!
-!      ! This switch is for turning *off* code which resets the # of
-!      ! parameters ... and for control of rigid fitting ... see below
-!      .refine_structure = TRUE
-!
-!      ! Initially chi^2 is as big as you can get
-!      .chi2_ref0 = huge(ONE)
-!
-!      ! Reset refinement iterations
-!      .ref_iteration = 0
-!
-!      ! Refinement table headings
-!      .ref_table.create(7)
-!
-!      .ref_table(1).set_heading("Macro")
-!      .ref_table(1).set_subhead("iteration")
-!
-!      .ref_table(2).set_heading("# of micro")
-!      .ref_table(2).set_subhead("itertions")
-!
-!      .ref_table(3).set_heading("chi2")
-!      .ref_table(3).set_subhead("init")
-!
-!      .ref_table(4).set_heading("chi2")
-!      .ref_table(4).set_subhead("final")
-!
-!      .ref_table(5).set_heading("R")
-!      .ref_table(5).set_subhead("final")
-!
-!      .ref_table(6).set_heading("R_w")
-!      .ref_table(6).set_subhead("final")
-!
-!      .ref_table(7).set_heading("Maximum")
-!      .ref_table(7).set_subhead("Shift/esd")
-!
-!   end
+   initialise_refinement_data(n_asym_atoms,labels) ::: leaky
+   ! Create the refinement data arrays & initialise if needed
+      n_asym_atoms :: INT, IN
+      labels :: VEC{STR}, IN
+
+   ENSURE(.ref_iteration==0,"ref_iteration is not 0!")
+
+      n_p :: INT
+
+      ! The unique # of parameters, and the # of frag atom parameters
+      n_p = 9*n_asym_atoms
+
+      ! Destroy existing data (leaky)
+      .destroy_refinement_data
+      .set_refinement_data
+
+      ! Initially chi^2 is as big as you can get
+      .chi2_ref0 = huge(ONE)
+
+      ! Create parameter vectors (leaky)
+      .X_ref.create(n_p)
+      .X_ref0.create(n_p)
+
+      ! Refinement table headings
+      .ref_table.create(9)
+      .ref_table(1).set_heading("Ref.")
+      .ref_table(1).set_subhead("Iter")
+      .ref_table(2).set_heading("No of")
+      .ref_table(2).set_subhead("  Fit")
+      .ref_table(2).set_sb3head("iters")
+      .ref_table(3).set_heading("chi2")
+      .ref_table(3).set_subhead("initial")
+      .ref_table(4).set_heading("chi2")
+      .ref_table(4).set_subhead("final")
+      .ref_table(5).set_heading("R")
+      .ref_table(6).set_heading("R_w")
+      .ref_table(7).set_heading("Max.")
+      .ref_table(7).set_subhead("Shift")
+      .ref_table(7).set_sb3head(" /esd")
+      .ref_table(8).set_heading("Max.")
+      .ref_table(8).set_subhead("Shift")
+      .ref_table(8).set_sb3head("param")
+      .ref_table(9).set_heading("No. of")
+      .ref_table(9).set_subhead("params")
+
+      ! Table widths (needs to be here because of label width)
+      .ref_table(1).set_width_from(.max_iterations) ! Iter
+      .ref_table(2).set_width_from(.max_iterations) ! # of fit iters
+      .ref_table(3).set_width_from(TEN**3)          ! chi2 initial
+      .ref_table(4).set_width_from(TEN**3)          ! chi2 final
+      .ref_table(5).set_width_from(ONE)             ! R
+      .ref_table(6).set_width_from(ONE)             ! Rw
+      .ref_table(7).set_width_from(TEN*TEN)         ! Max shift/esd
+      .ref_table(8).set_width_from(labels)          ! Max shift par
+      .ref_table(9).set_width(3)                    ! n_param
+
+   end
 
 !  Fit/refinement: Normal equations
 
@@ -1892,7 +1925,7 @@ contains
       .covariance_matrix = .chi2*.covariance_matrix
 
       ! Set the fit errors e.g. max(.dX/esd)
-      .set_fit_errors
+      .update_fit_errors
 
       if (.debugging("solve_normal_equations")) then 
       stdout.text("shifts:")
@@ -1921,29 +1954,30 @@ contains
 
    end
 
-   set_fit_errors
-   ! Set the esd's for the current fit. Call this if the covariance
-   ! matrix has been transformed to a different atom ordering.
+   update_fit_errors
+   ! Set the esd's for the current fit. You have to call this if the
+   ! covariance matrix has been transformed from a unique-fragment
+   ! atom ordering to asymmetric-unit ordering.
 
    ENSURE(.covariance_matrix.created,"no covariance_matrix")
-   ENSURE(.esd_fit.created,"no esd_fit")
+   ENSURE(.esd.created,"no esd")
    ENSURE(.dX.created,"no dX")
-   ENSURE(.esd_fit.dim==.covariance_matrix.dim1,"esd_fit: incompatible with covariance_matrix")
-   ENSURE(.esd_fit.dim==.dX.dim,"esd_fit: incompatible with dX")
+   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
+   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
 
       indmax,p :: INT
       val,valmax :: REAL
 
       ! Set esd's
-      .covariance_matrix.put_diagonal_to(.esd_fit)
-      .esd_fit = sqrt(.esd_fit)
+      .covariance_matrix.put_diagonal_to(.esd)
+      .esd = sqrt(.esd)
 
       ! Get the location of the maximum shift on esd
       indmax = 0
       valmax = ZERO
-      do p = 1,.esd_fit.dim
+      do p = 1,.esd.dim
 
-         val = .esd_fit(p)
+         val = .esd(p)
          if (val==ZERO) cycle
 
          val = abs(.dX(p)/val)
@@ -1964,9 +1998,67 @@ contains
       stdout.show("max_shift_on_esd_ind  =",indmax)
       stdout.show("max_shift_on_esd      =",valmax)
       .max_shift_on_esd     = valmax
-      stdout.text(".esd_fit:")
-      stdout.put(.esd_fit,by_column=TRUE)
+      stdout.text(".esd:")
+      stdout.put(.esd,by_column=TRUE)
       end
+
+   end
+
+   update_refinement_errors
+   ! Update the esd's for the current fit. 
+   ! NOTE: must have updated X_ref and X_ref0
+
+   ENSURE(.covariance_matrix.created,"no covariance_matrix")
+   ENSURE(.esd.created,"no esd")
+   ENSURE(.dX.created,"no dX")
+   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
+   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
+   ENSURE(.X_ref.created,"no X_ref")
+   ENSURE(.X_ref0.created,"no X_ref0")
+
+      n_p,indmax,p :: INT
+      val,valmax :: REAL
+      dX :: VEC{REAL}*
+ 
+      ! Constants
+      n_p = .esd.dim
+
+      ! Set the change in paramts between fits
+      dX.create(n_p)
+      dX = .X_ref - .X_ref0
+
+      ! Get the location of the maximum shift on esd
+      indmax = 0
+      valmax = ZERO
+      do p = 1,n_p
+
+         val = .esd(p)
+         if (val==ZERO) cycle
+
+         val = abs(dX(p)/val)
+         if (val<=valmax) cycle
+
+         valmax = val
+         indmax = p
+
+      end
+
+      ! Assign maximum index
+      DIE_IF(indmax==0,"no maximum index found!")
+      .max_refshift_on_esd_ind = indmax
+      .max_refshift_on_esd     = valmax
+
+      ! Debug
+      if (.debugging("update_refinement_errors")) then 
+      stdout.show("max_refshift_on_esd_ind  =",indmax)
+      stdout.show("max_refshift_on_esd      =",valmax)
+      .max_refshift_on_esd     = valmax
+      stdout.text(".esd:")
+      stdout.put(.esd,by_column=TRUE)
+      end
+
+      ! Clean
+      dX.destroy
 
    end
 
@@ -2130,21 +2222,28 @@ contains
 
 !  Fit/refinement iteration control
 
-   increment_ref_iteration
-   ! Increment the refinement iteration
-      .ref_iteration = .ref_iteration + 1
-   end
+   update_fit_parameters
+   ! Update i.e. increment the fit parameters
 
-   increment_fit_parameters
-   ! Increment the fit parameters
+      ! Next iteration
+      .fit_iteration = .fit_iteration + 1
+
+      ! Save and increment parameters
       .X_fit0 = .X_fit
       .X_fit  = .X_fit + .dX
+
    end
 
-   increment_ref_parameters
-   ! Increment the refinement parameters
-      .X_ref0 = .X_ref
-      .X_ref  = .X_ref + .dX
+   update_refinement_parameters
+   ! Update the refinement parameters
+
+      ! Increment 
+      .ref_iteration = .ref_iteration + 1
+ 
+      ! Transfer parameters
+      .X_ref0 = .X_ref ! From previous or 1st iteration
+      .X_ref  = .X_fit ! This iteration
+
    end
  
    fit_finished result (res)
@@ -2155,20 +2254,26 @@ contains
       .fit_converged = .max_shift_on_esd<.tol_allowed_shift_on_esd
 
       ! chi2 inceased?
-      .chi2_increased = .chi2>.chi2_fit0 AND .fit_iteration>.min_iterations
+      .chi2_increased = .chi2_fit>.chi2_fit0 AND .fit_iteration>.min_iterations
 
       ! Roll back the parameters is chi2 increases
       ! WARNING: covariances are not rolled back ...
-      if (.chi2_increased) then
-         .X_fit    = .X_fit0
-         .chi2_fit = .chi2_fit0
-      end
+    ! if (.chi2_increased) then
+    !    .X_fit    = .X_fit0
+    !    .chi2_fit = .chi2_fit0
+    ! end
 
       ! Too many fit iterations?
       .too_many_fit_iterations = .fit_iteration>.max_iterations
 
       ! Set finished
       res = .fit_converged OR .chi2_increased OR .too_many_fit_iterations
+
+      ! If refining, store initial & final chi2
+      if (.refine_structure) then
+         if (.fit_iteration==1) .chi2_ref0 = .chi2_fit ! Store initial chi2
+         if (res)               .chi2_ref  = .chi2_fit ! Stoire final chi2
+      end
 
    end
  
@@ -2177,13 +2282,13 @@ contains
       res :: BIN
 
       ! Has fit finished?
-      res = .fit_finished
+      .refinement_converged = .max_refshift_on_esd<.tol_allowed_shift_on_esd
 
       ! Too many refinement iterations?
       .too_many_ref_iterations = .ref_iteration>.max_iterations
 
-      ! Set finished
-      res = res OR .too_many_ref_iterations
+      ! Set finished; finish also if chi2 increases in fit iteration
+      res = .refinement_converged OR .chi2_increased OR .too_many_ref_iterations
 
    end
 
@@ -2255,12 +2360,26 @@ contains
 
    end
 
+   put_refinement_table_headings
+   ! Put the refinement table header
+
+      stdout.flush
+      stdout.text("================")
+      stdout.text("Begin refinement")
+      stdout.text("================")
+      stdout.flush
+
+      ! Put table headings
+      .ref_table.put_headings
+
+   end
+
    put_fit_table_body
    ! Print the current iterations results
 
       ! Set table body (leaky)
       .fit_table(1).create_values([.fit_iteration])
-      .fit_table(2).create_values([.chi2])
+      .fit_table(2).create_values([.chi2_fit])
       .fit_table(3).create_values([.F_r_factor])
       .fit_table(4).create_values([.F_weighted_r_factor])
       .fit_table(5).create_values([.max_shift_on_esd])
@@ -2276,8 +2395,30 @@ contains
 
    end
 
+   put_refinement_table_body
+   ! Print the current iterations results
+
+      ! Set table body (leaky)
+      .ref_table(1).create_values([.ref_iteration])
+      .ref_table(2).create_values([.fit_iteration])
+      .ref_table(3).create_values([.chi2_ref0])
+      .ref_table(4).create_values([.chi2_ref])
+      .ref_table(5).create_values([.F_r_factor])
+      .ref_table(6).create_values([.F_weighted_r_factor])
+      .ref_table(7).create_values([.max_refshift_on_esd])
+      .ref_table(8).create_values([.max_refshift_on_esd_par])
+      .ref_table(9).create_values([.n_param])
+
+      ! Put out the body
+      .ref_table.put_body
+
+      ! Clear thje columns for next time (UNleaky!)
+      .ref_table.clear_columns
+
+   end
+
    put_fit_results
-   ! Put the iteration footer
+   ! Put the fit-iteration footer and fit results
 
       ! Table footer
       .fit_table.put_footer
@@ -2293,6 +2434,33 @@ contains
       if      (.fit_converged)            then; stdout.text("Structure fit converged.")
       else if (.chi2_increased)           then; stdout.text("WARNING: fit stopped: chi2 has increased.")
       else if (.too_many_fit_iterations)  then; stdout.text("WARNING: fit stopped: too many iterations.")
+      end
+
+      ! Put final fitting statistics
+      .reflections.put_F_statistics(show_chi2=FALSE)
+      stdout.show("# of fit parameters, N_p    =", .n_param)
+      stdout.show("chi^2(N_p)                  =",.chi2)
+      stdout.show("Goodness of fit (N_p)       =", sqrt(.chi2))
+
+   end
+
+   put_refinement_results
+   ! Put the iteration footer and refinement results
+
+      ! Table footer
+      .ref_table.put_footer
+
+      ! Results
+      stdout.flush
+      stdout.text("============================")
+      stdout.text("Structure refinement results")
+      stdout.text("============================")
+      stdout.flush
+
+      ! Print how it finished
+      if      (.refinement_converged)     then; stdout.text("Structure refinement converged.")
+      else if (.chi2_increased)           then; stdout.text("WARNING: refinement stopped: chi2 has increased.")
+      else if (.too_many_ref_iterations)  then; stdout.text("WARNING: refinement stopped: too many iterations.")
       end
 
       ! Put final fitting statistics
@@ -2506,24 +2674,24 @@ contains
       stdout.flush
       stdout.dash(real_fields=2)
       do n = 1, num_sections
-       chi2 = ZERO
-       num = 0
-       stl_mean = stl_min + (n - HALF) * width
-       do k = 1, n_refl
-         if (n==section_for(k)) then
-           chi2 = chi2 + .reflections(k).F_z2
-           num = num + 1
+         chi2 = ZERO
+         num = 0
+         stl_mean = stl_min + (n - HALF) * width
+         do k = 1, n_refl
+           if (n==section_for(k)) then
+             chi2 = chi2 + .reflections(k).F_z2
+             num = num + 1
+           end
          end
-       end
-       stdout.put(stl_mean)
-       if (num==0) then
-         stdout.flush
-         cycle
-       else
-         chi2 = chi2 / max(num - .n_param,1)
-         stdout.put(chi2)
-         stdout.flush
-       end
+         stdout.put(stl_mean)
+         if (num==0) then
+           stdout.flush
+           cycle
+         else
+           chi2 = chi2 / max(num - .n_param,1)
+           stdout.put(chi2)
+           stdout.flush
+         end
       end
       stdout.flush
       section_for.destroy
@@ -2933,23 +3101,30 @@ contains
    simulate_new_F_exp
    ! Simulate a new experiment by adding normally distributed experimental
    ! errors the the F_exp.
+
    ENSURE(.reflection_data_exists,"no reflection data")
    ENSURE(.have_F_exp,"no experimental structure factors")
    ENSURE(.have_F_sigma,"no experimental structure factor errors")
+
       F_exp :: VEC{REAL}*
       n :: INT
       chi2,z :: REAL
+
       stdout.flush
       stdout.text("Adding simulated errors to F_exp using F_sigma.")
+
       F_exp.create(.n_refl)
       F_exp = .reflections.F_exp
+
       .reflections.simulate_new_F_exp
-      chi2=ZERO
-      do n=1,.n_refl
-       z=(F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-       chi2 = chi2 + z*z
+
+      chi2 = ZERO
+      do n = 1,.n_refl
+         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+         chi2 = chi2 + z*z
       end
       chi2 = chi2 / max(.n_refl - 1,1)
+
       stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
       stdout.flush
       stdout.dash(real_fields=4)
@@ -2959,16 +3134,19 @@ contains
       stdout.put("dF/sigma")
       stdout.flush
       stdout.dash(real_fields=4)
+
       do n=1,.n_refl
-       z=(F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-       stdout.put(F_exp(n))
-       stdout.put(.reflections(n).F_exp)
-       stdout.put(.reflections(n).F_sigma)
-       stdout.put(z)
-       stdout.flush
+         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+         stdout.put(F_exp(n))
+         stdout.put(.reflections(n).F_exp)
+         stdout.put(.reflections(n).F_sigma)
+         stdout.put(z)
+         stdout.flush
       end
+
       stdout.dash(real_fields=4)
       F_exp.destroy
+
    end
 
 end
