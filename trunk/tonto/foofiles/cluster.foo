@@ -65,6 +65,10 @@ contains
       nullify(.is_fragment_atom)
       nullify(.occupation_list)
       nullify(.molecule_for_atom)
+      nullify(.molecule)
+      nullify(.molecule_centroid)
+      nullify(.unique_molecule)
+      nullify(.unique_symop)
       nullify(.atom_connection)
 
    end
@@ -86,6 +90,10 @@ contains
       .is_fragment_atom.destroy
       .occupation_list.destroy
       .molecule_for_atom.destroy
+      .molecule.destroy
+      .molecule_centroid.destroy
+      .unique_molecule.destroy
+      .unique_symop.destroy
       .atom_connection.destroy
 
    end
@@ -100,6 +108,10 @@ contains
       .is_fragment_atom.destroy
       .occupation_list.destroy
       .molecule_for_atom.destroy
+      .molecule.destroy
+      .molecule_centroid.destroy
+      .unique_molecule.destroy
+      .unique_symop.destroy
       .atom_connection.destroy
    end
 
@@ -133,6 +145,10 @@ contains
       if (cluster.is_fragment_atom.created)        .is_fragment_atom.create_copy(cluster.is_fragment_atom)
       if (cluster.occupation_list.created)         .occupation_list.create_copy(cluster.occupation_list)
       if (cluster.molecule_for_atom.created)       .molecule_for_atom.create_copy(cluster.molecule_for_atom)
+      if (cluster.molecule.created)                .molecule.create_copy(cluster.molecule)
+      if (cluster.molecule_centroid.created)       .molecule_centroid.create_copy(cluster.molecule_centroid)
+      if (cluster.unique_molecule.created)         .unique_molecule.create_copy(cluster.unique_molecule)
+      if (cluster.unique_symop.created)            .unique_symop.create_copy(cluster.unique_symop)
       if (cluster.atom_connection.created)         .atom_connection.create_copy(cluster.atom_connection)
    end
 
@@ -464,12 +480,9 @@ contains
    ! consider fragments atoms which lie in cells outside this range. This list
    ! allows easy comparison of which atoms are in the fragment by an integer
    ! equality test. 
-   ! NO: Also make the ".molecule_for_atom" list which tells which
-   ! molecule the atom belongs to. It needs "unit_cell_.molecule_for_atom" list.
-   ! These molecule numbers may not be correct, since different molecule numbers
-   ! are assigned for atoms in different unit cells, even though they may be
-   ! connected across a cell boundary; they are made correct at the end of the
-   ! cluster generation procedure, using the connection table.
+   ! NOTE: Also make the ".molecule_for_atom" list which tells which
+   ! molecule the atom belongs to. 
+
    ENSURE(.crystal.created,"no crystal")
    ENSURE(.crystal.unit_cell_geometry.created,"no crystal unit cell")
    ENSURE(.fragment_geometry.created,"no fragment_geometry")
@@ -769,7 +782,7 @@ contains
    ENSURE(.crystal.unit_cell_connection.created,"no unit cell connection table")
 
       i,c,code,h1,h2,h3,u,k1,k2,k3,t,old,mi,mo :: INT
-      con,unique,molecule_for_atom :: VEC{INT}*
+      con,molecule_for_atom :: VEC{INT}*
       unit_cell_connection :: VEC{VEC_{VEC_{INT}}}* 
 
       unit_cell_connection => .crystal.unit_cell_connection
@@ -778,8 +791,8 @@ contains
       .atom_connection.destroy
       .atom_connection.create(.n_atoms)
       .molecule_for_atom.destroy
-      .molecule_for_atom.create(.n_atoms)
 
+      ! Assume every atom it's own molecule
       molecule_for_atom.create(.n_atoms)
       do i = 1,.n_atoms
         molecule_for_atom(i) = i
@@ -838,18 +851,8 @@ contains
       end
 
       ! Sort molecule indices
-      .molecule_for_atom = molecule_for_atom
-      unique => molecule_for_atom.unique_elements
-      .n_molecules = unique.dim
-      unique.sort
-      do mi = 1,.n_molecules
-        mo = unique(mi)
-        if (mo==mi) cycle
-        where (molecule_for_atom==mo) .molecule_for_atom = mi
-      end
-
-      unique.destroy
-      molecule_for_atom.destroy
+      .molecule_for_atom => molecule_for_atom
+      .make_molecule_list_info
 
    end
 
@@ -872,9 +875,10 @@ contains
       .atom_connection.create(.n_atoms)
       .molecule_for_atom.destroy
 
+      ! Assume every atom it's own molecule
       molecule_for_atom.create(.n_atoms)
       do i = 1,.n_atoms
-        molecule_for_atom(i) = i
+         molecule_for_atom(i) = i
       end
 
       i = 0
@@ -885,17 +889,21 @@ contains
 
         mi = molecule_for_atom(i)   ! atom i belongs to molecule "m"
 
-        code = .occupation_list(i)   ! decode the unit cell atom and offset
+        code = .occupation_list(i)  ! Occupation list code
 
-        u  = code/1000; code = code - u*1000
+        u  = code/1000
+
+        ! No connections? next ...
+        if (unit_cell_connection(u).element.dim==0) cycle
+
+        ! decode the unit cell atom and offset
+                        code = code - u*1000
         h3 = code/100;  code = code - h3*100
         h2 = code/10;   code = code - h2*10
         h1 = code; 
         h1 = h1 - 5                 ! h is the cell offset
         h2 = h2 - 5
         h3 = h3 - 5                 ! find atoms which connect to u
-
-        if (unit_cell_connection(u).element.dim==0) cycle
 
         do c = 1,unit_cell_connection(u).element.dim
 
@@ -929,18 +937,126 @@ contains
       end
 
       .molecule_for_atom => molecule_for_atom
-      molecule_for_atom.create_copy(.molecule_for_atom)
-      unique => molecule_for_atom.unique_elements
-      .n_molecules = unique.dim
+      .make_molecule_list_info
+
+   end
+
+   make_molecule_list_info ::: leaky
+   ! Sort the molecule_for_atom list and then make the molecule list.
+
+   ENSURE(.molecule_for_atom.created,"no molecule_for_atom")
+
+      m,mi,mj :: INT
+      n_atoms,a,i,ai,iu,ia,is,aj,ju,ja,js :: INT
+      unique,molecule_for_atom,match :: VEC{INT}*
+      geometry :: MAT{REAL}*
+
+      ! Get the unique molecule indices & sort ascdending
+      unique => .molecule_for_atom.unique_elements
       unique.sort
+
+      ! Set the number of molecules
+      .n_molecules = unique.dim
+
+      ! Put .molecule_for_atom into consecutive ascending order
       do mi = 1,.n_molecules
-        mo = unique(mi)
-        if (mo==mi) cycle
-        where (molecule_for_atom==mo) .molecule_for_atom = mi
+         mj = unique(mi)
+         if (mj==mi) cycle
+         where (.molecule_for_atom==mj) .molecule_for_atom = mi
       end
 
+      ! Clean
       unique.destroy
-      molecule_for_atom.destroy
+
+!      ! Now make the molecule list
+!      .molecule.create(.n_molecules)
+!      do a = 1,.n_atoms
+!         m = .molecule_for_atom(a)
+!         .molecule(m).append(a)
+!      end
+!
+!      ! Make the molecule centroids (in fractionals)
+!      .molecule_centroid.create(3,.n_molecules)
+!      do mi = 1,.n_molecules
+!         .extract_geometry(.molecule(mi).element,geometry)
+!         .molecule_centroid(:,mi) = sum(geometry,dim=2)/geometry.dim2
+!         geometry.destroy
+!      end
+!
+!      ! Clean & get ready
+!      .unique_molecule.destroy
+!      .unique_molecule.create(.n_molecules)
+!      .unique_symop.destroy
+!      .unique_symop.create(.n_molecules)
+!
+!      ! List of unique molecules and their relating symops
+!      .unique_molecule    = 0
+!      .unique_molecule(1) = 1
+!      .unique_symop       = 0
+!      .unique_symop(1)    = 1
+!
+!      ! Make atom-order in each molecule consistent
+!      do mi = 1,.n_molecules
+!
+!         ! Was this molecule already found?
+!         if (.unique_molecule(mi)>0) cycle
+!
+!         n_atoms = .molecule(mi).element.dim
+!         
+!         ! Find the next matching molecule
+!         do mj = mi+1,.n_molecules
+!  
+!            ! Must have the same # of atoms
+!            if (.molecule(mj).element.dim/=n_atoms) cycle
+!
+!            ! Match/reordering array
+!            match.create(n_atom)
+!            match = 0
+!
+!            ! Loop atoms on "mi"
+!            do ai = 1,n_atoms
+!               ia = .molecule(mi)[ai]
+!               iu = .occupation_list(ia)/1000
+!               ia = .asym_atom_for_unit_cell_atom(iu)
+!               is = .asym_symop_for_unit_cell_atom(iu)
+!
+!               ! Loop atoms on "mj"
+!               do aj = 1,.molecule(mj).element.dim
+!                  ja = .molecule(mj)[aj]
+!                  ju = .occupation_list(ja)/1000
+!                  ja = .asym_atom_for_unit_cell_atom(ju)
+!                  js = .asym_symop_for_unit_cell_atom(ju)
+!
+!                  ! Does this atom match?
+!                  if (ia==ja AND is==js) then
+!                     match(ai) = aj
+!                     exit
+!                  end
+!               end
+!
+!               ! If no match for "ai", next molecule
+!               if (match(ai)==0) exit
+!
+!            end
+!
+!            ! Add atoms match? Copy the order, mark unique molecule
+!            if (all(match>0)) then
+!               .molecule(aj).element = match 
+!               .unique_molecule(mj) = mi
+!               is = .crystal.spacegroup.inverse_of_symop(is)
+!               js = .crystal.spacegroup.product_of_symops(js,is)
+!               .unique_symop(mj) = js
+!            else
+!               .unique_molecule(mi) = mi
+!               .unique_symop(mi)    = 1
+!            end
+!
+!            ! Clean
+!            match.destroy
+!
+!         end
+!
+!      end
 
    end
 
@@ -1574,6 +1690,71 @@ contains
 
         atom(a).copy(.asymmetric_unit_atom(p))          ! make copy, but .basis is a ptr copy
         atom(a).position = .geometry(:,a)               ! position is in crystal axis system
+        atom(a).axis_system = "crystal"                 ! ... 
+
+        ADP = .asymmetric_unit_atom(p).ADP_tensor       ! This must be in cartesian axes
+        ADP.change_basis_using(seitz(:,:,s))            ! Use R^T to change U tensor basis
+        atom(a).ADP_tensor = ADP                  
+        atom(a).ADP_axis_system = "cartesian"       ! ... in cartesians ...
+
+      end
+
+      seitz.destroy
+      ulist.destroy
+     
+      atom.resolve_axis_system(.crystal.unit_cell)       ! Change pos & ADPs to cartesian
+
+   end
+
+   create_atom_list_for_molecule(m,atom) ::: leaky
+   ! Create the molcule with index "m" and make a new atom list for the cluster
+   ! NOTE: basis sets are pointer copied!
+      m :: INT, IN
+      atom :: VEC{ATOM}*
+
+   ENSURE(.molecule.created, "no molecule")
+   ENSURE(m.is_in_range(1,.n_molecules), "index m out of range")
+
+      atom.create(.molecule(m).element.dim)
+      .make_atom_list(atom,.molecule(m).element)
+
+   end
+
+   make_atom_list(atom,list)
+   ! Make a new atom list for the cluster from the indices in "list".
+   ! Note that the .asymmetric_unit_atom's must have ADP tensors 
+   ! in the cartesian axis system; this will normally be the case for 
+   ! Tonto's internal representation ....
+   ! NOTE: basis sets are pointer copied!
+      atom :: VEC{ATOM}, OUT
+      list :: VEC{INT}, IN
+
+   ENSURE(atom.dim==list.dim,"wrong size, atomsr")
+   ENSURE(.geometry.created,"no geometry")
+   ENSURE(.occupation_list.created,"no occupation_list")
+   ENSURE(.crystal.created, "no crystal data")
+   ENSURE(.crystal.fragment_info_made,"no crystal fragment info")
+   ENSURE(.asymmetric_unit_atom.created, "no asymmetric_cell_atom data")
+   ENSURE(.asymmetric_unit_atom.has_cartesian_ADP_axes, "thermal tensors must be in cartesian axis system")
+
+      ulist :: VEC{INT}*
+      seitz :: MAT3{REAL}*
+      ADP   :: MAT{REAL}(3,3)
+      a,u,p,s :: INT
+
+      ulist.create(list.dim)
+      ulist = .occupation_list(list)/1000              
+
+      seitz => .crystal.transposed_xyz_seitz_matrices    ! transposed !
+
+      do a = 1,ulist.dim
+
+        u = ulist(a)
+        p = .crystal.asym_atom_for_unit_cell_atom(u)
+        s = .crystal.asym_symop_for_unit_cell_atom(u)
+
+        atom(a).copy(.asymmetric_unit_atom(p))          ! make copy, but .basis is a ptr copy
+        atom(a).position = .geometry(:,list(a))         ! position is in crystal axis system
         atom(a).axis_system = "crystal"                 ! ... 
 
         ADP = .asymmetric_unit_atom(p).ADP_tensor       ! This must be in cartesian axes
