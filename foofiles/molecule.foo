@@ -29412,7 +29412,7 @@ contains
    ENSURE(.plot_grid.created, "no grid")
 
       select case (.plot_grid.plot_kind)
-       ! case("b_field                             "); .make_B_field_grid
+         case("b_field                             "); .make_B_field_grid
          case("b_l_field                           "); .make_B_L_field_grid
          case("b_s_field                           "); .make_B_S_field_grid
          case("bond_weight                         "); .make_bond_weight_grid
@@ -33295,6 +33295,176 @@ contains
 ! Magnetic Field
 ! **************
 
+   make_B_field_grid 
+   ! Work out the field density on ".plot_grid" and dump output
+   ENSURE(.plot_grid.created, "no grid")
+
+      B_L,B_S :: MAT{REAL}*
+      fx,fy,fz :: VEC{REAL}*
+      pt :: MAT{REAL}*
+
+      ! Make space for the field and grid points
+      B_L.create(.plot_grid.n_pt,3)
+      B_S.create(.plot_grid.n_pt,3)
+      pt.create(.plot_grid.n_pt,3)
+
+      ! Make the grid points
+      .plot_grid.make_points(pt)
+
+      ! Make the grid of field values
+      .make_B_field_grid(B_L,B_S,pt)
+
+      ! Print B_L field components
+      fx => B_L(:,1)
+      fy => B_L(:,2)
+      fz => B_L(:,3)
+      .dump_plot_grid(fx,"B_L_field.x")
+      .dump_plot_grid(fy,"B_L_field.y")
+      .dump_plot_grid(fz,"B_L_field.z")
+      fx = sqrt(fx*fx+fy*fy+fz*fz)
+      .dump_plot_grid(fx,"B_L_field.magnitude")
+
+      ! Print B_S field components
+      fx => B_S(:,1)
+      fy => B_S(:,2)
+      fz => B_S(:,3)
+      .dump_plot_grid(fx,"B_S_field.x")
+      .dump_plot_grid(fy,"B_S_field.y")
+      .dump_plot_grid(fz,"B_S_field.z")
+      fx = sqrt(fx*fx+fy*fy+fz*fz)
+      .dump_plot_grid(fx,"B_S_field.magnitude")
+
+      ! Print B field components
+      B_L = B_L + B_S
+      fx => B_L(:,1)
+      fy => B_L(:,2)
+      fz => B_L(:,3)
+      .dump_plot_grid(fx,"B_field.x")
+      .dump_plot_grid(fy,"B_field.y")
+      .dump_plot_grid(fz,"B_field.z")
+      fx = sqrt(fx*fx+fy*fy+fz*fz)
+      .dump_plot_grid(fx,"B_field.magnitude")
+
+      ! Clean up
+      pt.destroy
+      B_S.destroy
+      B_L.destroy
+
+   end
+ 
+   make_B_field_grid(B_L,B_S,pt) 
+   ! Make the magnetic field "B" field due to the linear current and
+   ! the spin current on a series of points "pt"
+      B_L,B_S :: MAT{REAL}, OUT
+      pt :: MAT{REAL}, IN
+
+   ENSURE(.basis_info_made, "no basis set")
+   ENSURE(.density_matrix.any_created,"no density matrix")
+
+      M :: MAT4{REAL}*
+      S,SS :: MAT3{REAL}*
+      D,Dba,J1,J2,J3 :: MAT{REAL}*
+      q,fa,fb,la,lb,na,nb, p,n_pt, i,j,k :: INT
+      fac :: REAL
+      sh :: SHELL2
+
+      ! No of grid points
+      n_pt = pt.dim1
+
+      ! The imaginary part of AO density matrix
+      D.create(.n_bf,.n_bf)
+      .make_ao_IM_density_matrix(D)
+
+      ! Make the AO density matrix
+      S.create(.n_bf,.n_bf,3)
+      .make_ao_RE_spin_densities(S)
+
+      ! Initialize
+      B_L = ZERO
+      B_S = ZERO
+
+      ! Loop over integral blocks
+      parallel do q = 1,.n_shell_pairs
+
+        ! Get shell indices (leaky)
+        .get_precomputed_shell_pair(sh,q,fa,la,na,fb,lb,nb)
+
+        ! Get the density matrix
+        Dba.create(nb,na)
+        Dba = D(fb:lb,fa:la)
+
+        ! Get the spin density matrix
+        SS.create(nb,na,3)
+        SS = S(fb:lb,fa:la,:)
+
+        ! Space for integrals
+        M.create(na,nb,3,3)
+        J1 => M(:,:,1,1)
+        J2 => M(:,:,2,2)
+        J3 => M(:,:,3,3)
+
+        ! Loop over points
+        do p = 1,n_pt
+
+           ! Make the B-field integrals for point k
+           sh.make_nabla_field_ints(M,pt(p,:))
+
+           ! Factor
+           fac =TWO 
+           if (fa==fb) fac = ONE
+
+           ! Sum over the spin density matrices
+           do i = 1,3
+           do j = 1,3
+           do k = 1,3
+              ! Factor 2 should be put here, since S ints are symmetric so it
+              ! is introduced once at the end
+              if (j==k) B_S(p,i) = B_S(p,i) + fac*M(:,:,i,j).trace_product_with(SS(:,:,j))
+              if (i==j) B_S(p,k) = B_S(p,k) - fac*M(:,:,i,i).trace_product_with(SS(:,:,k))
+           end
+           end
+           end
+
+           ! Cross product part
+           J1 = M(:,:,2,3) - M(:,:,3,2)
+           J2 = M(:,:,3,1) - M(:,:,1,3)
+           J3 = M(:,:,1,2) - M(:,:,2,1)
+
+           ! Get magnetic field contribution
+           ! Extra factor 2 needed from left derivative in M
+           ! is deferred to end.
+           B_L(p,1) = B_L(p,1) + fac*J1.trace_product_with(Dba)
+           B_L(p,2) = B_L(p,2) + fac*J2.trace_product_with(Dba)
+           B_L(p,3) = B_L(p,3) + fac*J3.trace_product_with(Dba)
+
+        end
+
+        ! Clean
+        SS.destroy
+        Dba.destroy
+        sh.destroy_ptr_part
+
+      end
+
+      ! Clean
+      S.destroy
+      D.destroy
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(B_S)
+         PARALLEL_SUM(B_L)
+      end
+
+      ! Minus sign not necessary? CHECK
+      fac = -ONE/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU)
+      B_L = fac*B_L
+
+      ! Spin Factor
+      fac = -G_FACTOR/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU)
+      B_S = fac*B_S
+
+   end
+
    field_grid ::: template
    ! Work out the field density on ".plot_grid" and dump output
    ENSURE(.plot_grid.created, "no grid")
@@ -33385,6 +33555,8 @@ contains
 
            ! Make the B-field integrals for point k
            sh.make_nabla_field_ints(M,pt(p,:))
+
+           ! Cross product part
            J1 = M(:,:,2,3) - M(:,:,3,2)
            J2 = M(:,:,3,1) - M(:,:,1,3)
            J3 = M(:,:,1,2) - M(:,:,2,1)
@@ -33403,7 +33575,6 @@ contains
         end
 
         ! Clean
-        J3.destroy; J2.destroy; J1.destroy
         Dba.destroy
         sh.destroy_ptr_part
 
@@ -33563,14 +33734,18 @@ contains
            ! Make the B-field integrals for point k
            sh.make_nabla_field_ints(M,pt(p,:))
 
+           ! Factor
+           fac =TWO 
+           if (fa==fb) fac = ONE
+
            ! Sum over the spin density matrices
            do i = 1,3
            do j = 1,3
               k = 3
-              ! Factor 2 should be put here, but S is symmetric so it
+              ! Factor 2 should be put here, but S ints are symmetric so it
               ! is introduced once at the end
-              if (j==k) B(p,i) = B(p,i) + M(:,:,i,j).trace_product_with(SS)
-              if (i==j) B(p,k) = B(p,k) - M(:,:,i,j).trace_product_with(SS)
+              if (j==k) B(p,i) = B(p,i) + fac*M(:,:,i,j).trace_product_with(SS)
+              if (i==j) B(p,k) = B(p,k) - fac*M(:,:,i,j).trace_product_with(SS)
            end
            end
 
@@ -33590,7 +33765,7 @@ contains
          PARALLEL_SUM(B)
       end
 
-      ! Minus sign not necessary? CHECK
+      ! Spin Factor
       fac = -G_FACTOR/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU)
       B   = fac*B
 
@@ -33639,14 +33814,18 @@ contains
            ! Make the B-field integrals for point k
            sh.make_nabla_field_ints(M,pt(p,:))
 
+           ! Factor
+           fac =TWO 
+           if (fa==fb) fac = ONE
+
            ! Sum over the spin density matrices
            do i = 1,3
            do j = 1,3
            do k = 1,3
-              ! Factor 2 should be put here, but S is symmetric so it
+              ! Factor 2 should be put here, since S ints are symmetric so it
               ! is introduced once at the end
-              if (j==k) B(p,i) = B(p,i) + M(:,:,i,j).trace_product_with(SS(:,:,j))
-              if (i==j) B(p,k) = B(p,k) - M(:,:,i,i).trace_product_with(SS(:,:,k))
+              if (j==k) B(p,i) = B(p,i) + fac*M(:,:,i,j).trace_product_with(SS(:,:,j))
+              if (i==j) B(p,k) = B(p,k) - fac*M(:,:,i,i).trace_product_with(SS(:,:,k))
            end
            end
            end
@@ -33667,7 +33846,7 @@ contains
          PARALLEL_SUM(B)
       end
 
-      ! Minus sign not necessary? CHECK
+      ! Spin Factor
       fac = -G_FACTOR/(SPEED_OF_LIGHT_AU*SPEED_OF_LIGHT_AU)
       B   = fac*B
 
