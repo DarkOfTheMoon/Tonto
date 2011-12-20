@@ -26,6 +26,7 @@ push @skip, '^\s*Platform:';
 push @skip, '^\s*Build-date:';
 push @skip, '^\s*Wall-clock time taken';
 push @skip, '^\s*CPU time taken';
+push @skip, '^\s*time taken';
 push @skip, '^\s*Warning from';
 push @skip, '^\s*Routine call stack:';
 push @skip, '^\s*Call \s*Routine name \s*Memory Used';
