@@ -791,6 +791,8 @@ contains
       scf_kind = "unknown"
       if (.scfdata.created) scf_kind = .scfdata.scf_kind
 
+      i = 0
+      res = ZERO
       select case (scf_kind)
          case ("embedded_rhf"); res = .atom.nuclear_repulsion_energy([(i,i=1,.saved.n_atom)])
          case ("crystal_rhf "); res = .atom.nuclear_repulsion_energy([(i,i=1,.saved.n_atom)])
@@ -1764,16 +1766,24 @@ contains
    ! NOTE for later: this should be a basisvec routine.
       atom :: INT, IN
       res :: INT
+
       i,j :: INT
-      i=1
-      do j=1,size(.basis) ! Loop over bases
-       if (.basis(j).label==.atom(atom).basis.label) then
-         res=i
-         exit
-       else
-         i = i + .basis(j).n_shell
-       end
+
+      res = 0
+
+      i = 1
+      ! Loop over bases
+      do j = 1,.basis.dim 
+         if (.basis(j).label==.atom(atom).basis.label) then
+            res = i
+            exit
+         else
+            i = i + .basis(j).n_shell
+         end
       end
+
+      DIE_IF(res==0,"atom basis label not found")
+
    end
 
    make_basis_shell_for_shell ::: leaky
@@ -1871,7 +1881,7 @@ contains
             MO => .molecular_orbitals.restricted
             F  => .fock_matrix.restricted
             T = .scfdata.temperature_for_pFON
-            .make_finite_T_density_matrix(D,MO,F,T,.n_a)
+            MOLECULE:make_finite_T_density_matrix(D,MO,F,T,.n_a)
             D = TWO*D
          else
             MO => .molecular_orbitals.restricted(:,1:.n_a)
@@ -1909,8 +1919,8 @@ contains
             Fa => .fock_matrix.alpha
             Fb => .fock_matrix.beta
             T = .scfdata.temperature_for_pFON
-            .make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
-            .make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
+            MOLECULE:make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
+            MOLECULE:make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
          else
             MOa => .molecular_orbitals.alpha(:,1:.n_a)
             MOb => .molecular_orbitals.beta(:,1:.n_b)
@@ -1978,90 +1988,76 @@ contains
 
    end
 
-   make_finite_T_density_matrix(D,MO,F,T,n_e) ::: leaky
+   make_finite_T_density_matrix(D,MO,F,T,n_e) ::: selfless
    ! Make the finite temperature density matrix "D" from molecular orbitals "MO"
    ! according to the pFON method with temperature "T" and number of electrons
    ! "n_e" *for a given spin*, as in Rabuck and Scuseria, JCP 110, 695 (1999).
    ! There must exist a current fock_matrix "F" made from "D" which is used to
    ! get the eigenvalues for the Fermi-Dirac distribution.
       D,MO :: MAT{REAL}
-      F :: MAT{REAL}*
+      F :: MAT{REAL}
       T :: REAL
       n_e :: INT
-   ENSURE(F.created,"no molecular orbitals")
+
    ENSURE(F.is_square,"F must be square")
    ENSURE(F.is_same_shape_as(MO),"incompatible F and MO")
    ENSURE(n_e<MO.dim2,"fewer MO's than electrons")
    ENSURE(T>=ZERO,"T must be positive")
+
       W :: MAT{REAL}*
       occ :: VEC{REAL}*
       ind :: VEC{INT}*
       beta,e_homo,e_lumo,e_fermi,homo_lumo_gap :: REAL
       n_orb,i,j,n_frac :: INT
-      n_orb  = F.dim1
-      occ.create(n_orb)     ! Make the occupation numbers
+
+      n_orb = F.dim1
+
+      occ.create(n_orb)     
       ind.create(n_orb)
+
+      ! Make the occupation numbers
       W.create(n_orb,n_orb)
       W.to_product_of(F,MO)
       do i = 1,n_orb        ! These are energies
         occ(i) = dot_product(MO(:,i),W(:,i))
       end
       occ.quick_sort(ind)   ! "ind" has the energies sorted
- ! stdout.text("F:")
- ! stdout.put(F)
- ! stdout.text("MO:")
- ! stdout.put(MO)
- ! stdout.text("ind:")
- ! stdout.put(ind)
- ! stdout.text("unsorted eig:")
- ! stdout.put(occ)
- ! stdout.text("eig:")
- ! stdout.put(occ(ind))
       W.destroy
-      beta = KELVIN_PER_HARTREE/T
-      e_homo = occ(ind(n_e))
-      e_lumo = occ(ind(n_e+1))
+
+      beta    = KELVIN_PER_HARTREE/T
+      e_homo  = occ(ind(n_e))
+      e_lumo  = occ(ind(n_e+1))
       e_fermi = HALF*(e_homo + e_lumo)
       homo_lumo_gap = e_lumo - e_homo
- ! stdout.show("n_e    =",n_e)
- ! stdout.show("e_homo =",e_homo)
- ! stdout.show("e_lumo =",e_lumo)
-!  stdout.show("e_fermi=",e_fermi)
-!  stdout.show("gap    =",homo_lumo_gap)
-!  stdout.show("T      =",T)
- ! print *,"beta   =",beta
       do j = 1,n_orb        ! These are the occupation numbers
-        i = ind(j)
-!  print *,"eig          =",occ(i)
-!  print *,"delta        =",(occ(i)-e_fermi)
-!  print *,"beta delta   =",beta*(occ(i)-e_fermi)
-        occ(i) = ONE/(ONE+exp(beta*(occ(i)-e_fermi)))
-      end                   ! The number of fractional orbitals
- ! stdout.text("occ:")
- ! stdout.put(occ(ind))
+         i = ind(j)
+         occ(i) = ONE/(ONE+exp(beta*(occ(i)-e_fermi)))
+      end                   
+
+      ! The number of fractional orbitals
       if      (homo_lumo_gap>0.135d0) then; n_frac = 5
       else if (homo_lumo_gap<0.090d0) then; n_frac = 3
       else;                                 n_frac = 4
       end
-      do j = 1,n_orb        ! Reset the fractional occupancies
-        i = ind(j)
-        if      (j<=n_e-n_frac) then; occ(i) = ONE
-        else if (j >n_e+n_frac) then; occ(i) = ZERO
-        end
+
+      ! Reset the fractional occupancies
+      do j = 1,n_orb        
+         i = ind(j)
+         if      (j<=n_e-n_frac) then; occ(i) = ONE
+         else if (j >n_e+n_frac) then; occ(i) = ZERO
+         end
       end
- ! stdout.show("n_frac =",n_frac)
- ! stdout.text("occ reset:")
- ! stdout.put(occ(ind))
-!    occ = n_e*occ/sum(occ)
- ! stdout.text("occ renormalised:")
- ! stdout.put(occ(ind))
+
+      ! Form the temperature broadended density
       D = ZERO
-      do j = 1,n_e+n_frac   ! Form the temperature broadended density
-        i = ind(j)
-        D.plus_scaled_product_of(MO(:,i:i),MO(:,i:i),fac=occ(i),transpose_b=TRUE)
+      do j = 1,n_e+n_frac   
+         i = ind(j)
+         D.plus_scaled_product_of(MO(:,i:i),MO(:,i:i),fac=occ(i),transpose_b=TRUE)
       end
+
       ind.destroy
       occ.destroy
+
    end
 
    make_ao_density_matrix ::: leaky
@@ -2618,6 +2614,7 @@ contains
       ! Get indices of occ & virtuals
       occ.create(no)
       vir.create(nv)
+      i = 0
       occ = pack([(i,i=1,.n_bf)],.occupation_numbers.restricted> 0.1)
       vir = pack([(i,i=1,.n_bf)],.occupation_numbers.restricted<=0.1)
 
@@ -10658,13 +10655,13 @@ contains
       .crystal.put_PND_sf(.name)
    end
 
-   put_current_time(timer)
+   put_current_time(timer) ::: selfless
    ! Output the current time
       timer :: TIME
       stdout.text(timer.current_time_message)
    end
 
-   put_time_taken(timer)
+   put_time_taken(timer) ::: selfless
    ! Output the time taken as given by the "timer" object
       timer :: TIME
       stdout.text(timer.elapsed_time_message)
@@ -13090,6 +13087,7 @@ contains
       mol.set_basis_data_from(self)
 
       ! Don't remake ANO data if there
+      i = 0
       mol.set_ANO_data_from(self,[(i,i=n,n)])
 
       ! Set guess-type SCF defaults
@@ -14146,7 +14144,7 @@ contains
    ! Reset the iteration counters for the next lambda iteration.
    ! Also reset the fock matrices on disk.
       .get_overlap_matrix
-      .scfdata.reset_for_next_lambda(.fock_matrix,.overlap_matrix)
+      .scfdata.reset_for_next_lambda
    end
 
 !  ************
@@ -14977,11 +14975,11 @@ contains
 
       ! Decouple and shift the small eigenvectors to high energy
       shift = .scfdata.linear_dependence_shift
-      .decouple_and_shift_r(F,.overlap_eigenvectors,n,shift)
+      MOLECULE:decouple_and_shift_r(F,.overlap_eigenvectors,n,shift)
 
    end
 
-   decouple_and_shift_r(F,evec,n,shift)
+   decouple_and_shift_r(F,evec,n,shift) ::: selfless
    ! In "F", decouple the first "n" eigenvectors "evec" and shift them
    ! to eigenvalue "shift". NOTE: ensure "evec" is orthonormal.
       F :: MAT{REAL}
@@ -15421,6 +15419,8 @@ contains
       H :: MAT{REAL}*
       HH :: MAT{CPX}*
 
+      res = ZERO
+
       scf_kind = .scfdata.scf_kind
 
       select case (scf_kind)
@@ -15469,6 +15469,8 @@ contains
       scf_kind :: STR
       H :: MAT{REAL}*
       HH :: MAT{CPX}*
+
+      res = ZERO
 
       scf_kind = .scfdata.scf_kind
 
@@ -15521,6 +15523,8 @@ contains
 
       ! Make sure .core_matrix is there
       .get_core_matrix
+
+      res = ZERO
 
       scf_kind = .scfdata.scf_kind
 
@@ -15594,6 +15598,8 @@ contains
       I0 :: VEC{REAL}*
       I1 :: MAT{REAL}*
 
+      res = ZERO
+
       select case  (.scfdata.scf_kind)
 
         case ("noninteracting-group-rhf")
@@ -15635,9 +15641,12 @@ contains
       P :: OPMATRIX
       core :: BIN, optional
       res :: REAL
+
    ENSURE(.fock_matrix.created,    "no fock matrix")
    ENSURE(.fock_matrix.any_created,"no fock matrix")
+
       res = .scf_electronic_energy(P,.fock_matrix,core)
+
    end
 
    scf_electronic_energy(P,F,core) result (res)
@@ -15661,6 +15670,8 @@ contains
       if (present(core)) add_core = core
 
       W.create_copy(F)
+
+      res = ZERO
 
       select case (.scfdata.scf_kind)
 
@@ -15759,23 +15770,35 @@ contains
    ! with the current density matrix
       X :: MAT{REAL}
       res :: REAL
+
    ENSURE(X.is_square,"X operator matrix is not square")
+
       orb_kind :: STR
+
+      res = ZERO
+
       orb_kind = .density_matrix.spinorbital_kind
+
       select case (orb_kind)
+
         case ("restricted")
            ENSURE(X.dim1==.n_bf,"wrong size, X")
            res = .density_matrix.restricted.trace_product_with(X)
+
         case ("unrestricted")
            ENSURE(X.dim1==.n_bf,"wrong size, X")
            res = .density_matrix.alpha.trace_product_with(X)
            res = .density_matrix.beta.trace_product_with(X) + res
+
         case ("general_complex")
            ENSURE(X.dim1==2*.n_bf,"wrong size, X")
            res = MAT{REAL}:trace_product_with(RE(.density_matrix.general_complex),X)
+
         case default
            DIE("unimplemented kind, "//trim(orb_kind))
+      
       end
+
    end
 
 ! ******************
@@ -17074,7 +17097,7 @@ contains
 
       ! Make commutator
       C.create(.fock_matrix.n_bf,spinorbital_kind)
-      .make_diis_commutator(C,.fock_matrix,.density_matrix,.overlap_matrix)
+      MOLECULE:make_diis_commutator(C,.fock_matrix,.density_matrix,.overlap_matrix)
 
       ! Compress
       C.compress
@@ -17154,10 +17177,11 @@ contains
 
       ! Make commutator
       C.create(F.n_bf,spinorbital_kind)
-      .make_diis_commutator(C,F,D,S)
+      MOLECULE:make_diis_commutator(C,F,D,S)
       C.compress
 
       ! Set error length
+      res = ZERO
       select case (spinorbital_kind)
          case("restricted");      res = C.triangle.norm
          case("unrestricted");    res = C.triangle.norm
@@ -17170,7 +17194,7 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S)
+   make_diis_commutator(C,F,D,S) ::: selfless
    ! Make the DIIS commutator opmatrix, C = FDS - SDF.
       C :: OPMATRIX
       F,D :: OPMATRIX, IN
@@ -17183,15 +17207,15 @@ contains
       select case (F.spinorbital_kind)
 
          case("restricted")
-            .make_diis_commutator(C.restricted,F.restricted,D.restricted,S)
+            MOLECULE:make_diis_commutator(C.restricted,F.restricted,D.restricted,S)
 
          case("unrestricted")
-            .make_diis_commutator(C.alpha,F.alpha,D.alpha,S)
-            .make_diis_commutator(C.beta,F.beta,D.beta,S)
+            MOLECULE:make_diis_commutator(C.alpha,F.alpha,D.alpha,S)
+            MOLECULE:make_diis_commutator(C.beta,F.beta,D.beta,S)
             C.alpha = C.alpha + C.beta
 
          case("general_complex")
-            .make_diis_commutator(C.general_complex,F.general_complex,D.general_complex,S)
+            MOLECULE:make_diis_commutator(C.general_complex,F.general_complex,D.general_complex,S)
 
          case default
             DIE("unimplemented")
@@ -17200,7 +17224,7 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S)
+   make_diis_commutator(C,F,D,S) ::: selfless
    ! Make the real DIIS commutator matrix, C = FDS - SDF.
       C :: MAT{REAL}
       F,D,S :: MAT{REAL}, IN
@@ -17215,7 +17239,7 @@ contains
 
    end
 
-   make_diis_commutator(C,F,D,S)
+   make_diis_commutator(C,F,D,S) ::: selfless
    ! Make the complex DIIS commutator matrix, C = FDS - SDF.
       C :: MAT{CPX}
       F,D :: MAT{CPX}, IN
@@ -17539,7 +17563,6 @@ contains
    ENSURE(F.n_bf==.n_bf, "Fock matrix dimensions wrong")
    ENSURE(P.n_bf==.n_bf, "Density matrix dimensions wrong")
       J,K :: OPMATRIX*
-      archive :: ARCHIVE
       do_direct,add_core,add_r12 :: BIN
 
       F.destroy("unrestricted")
@@ -17598,8 +17621,6 @@ contains
    ENSURE(P.beta.created, "no density matrix")
 
       J,Pab :: MAT{REAL}*
-      W :: OPMATRIX*
-      archive :: ARCHIVE
       add_core,add_r12,add_xc :: BIN
 
       F.destroy("unrestricted")
@@ -17887,7 +17908,7 @@ contains
    end
 
 
-   schwarz_inequality_test(cutoff,ab,cd,a,b,c,d,P_max,I_max) result(skip)
+   schwarz_inequality_test(cutoff,ab,cd,a,b,c,d,P_max,I_max) result(skip) ::: selfless
    ! Return "skip", a logical variable which is TRUE if the maximum contribution
    ! to the restricted Fock matrix (based on the schwarz inequality test) from a
    ! shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd" is
@@ -17922,8 +17943,7 @@ contains
 
    end
 
-   schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,a,b,c,d,P_max,I_max)
-   ! Return "skip_J" and "skip_K", logical variables are TRUE if the maximum
+   schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,a,b,c,d,P_max,I_max) ::: selfless, private
    ! contribution to the J and K matrices (based on the schwarz inequality test)
    ! from a shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd"
    ! is smaller than a preset "cutoff". "P_max(ab)" is the maximum density
@@ -18003,7 +18023,7 @@ contains
 !
 !   end
 
-   schwarz_J_test(skip_J,cutoff,ab,cd,P_max,I_max)
+   schwarz_J_test(skip_J,cutoff,ab,cd,P_max,I_max) ::: selfless, private
    ! Return "skip_J" which is set TRUE if the maximum contribution to the J
    ! matrix (based on the schwarz inequality test) from a shell of ERI integrals
    ! (ab|cd) with shell pair indices "ab" and "cd" is smaller than a preset
@@ -18026,7 +18046,7 @@ contains
 
    end
 
-   schwarz_K_test(skip_K,cutoff,ab,cd,a,b,c,d,P_max,I_max)
+   schwarz_K_test(skip_K,cutoff,ab,cd,a,b,c,d,P_max,I_max) ::: selfless, private
    ! Return "skip_K", logical variables are TRUE if the maximum
    ! contribution to the K matrices (based on the schwarz inequality test)
    ! from a shell of ERI integrals (ab|cd) with shell pair indices "ab" and "cd"
@@ -18037,19 +18057,26 @@ contains
       cutoff :: REAL, IN
       ab,cd, a,b,c,d :: INT, IN
       P_max,I_max :: VEC{REAL}, IN
+
       Kmax :: REAL
       ac,ad,bc,bd,k,l,m,n :: INT
+
       k = max(b,c); l = min(b,c)
       m = max(b,d); n = min(b,d)
-      ac = (a-1)*a/2 + c          ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+
+      ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
+      ac = (a-1)*a/2 + c          
       ad = ac - c + d
       bc = (k-1)*k/2 + l
       bd = (m-1)*m/2 + n
+
       Kmax = max(P_max(ac),P_max(ad),P_max(bc),P_max(bd))
+
       skip_K = FALSE
       if      (Kmax < TOL(20)) then;                    skip_K = TRUE
       else if (Kmax*I_max(ab)*I_max(cd) < cutoff) then; skip_K = TRUE
       end
+
    end
 
    make_max_density_elements(P_max,P)
@@ -18551,7 +18578,7 @@ contains
             .get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d) 
             cd_same = atom_c==atom_d
 
-            skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+            skip = MOLECULE::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
             if (skip) cycle
 
             factor = ONE
@@ -18681,7 +18708,7 @@ contains
 
          cd_same = atom_c==atom_d
 
-         .schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         MOLECULE::schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
 
          if (skip_J AND skip_K) cycle
 
@@ -18798,7 +18825,7 @@ contains
          .get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d) 
 
          cd_same = atom_c==atom_d
-         .schwarz_J_test(skip,cutoff,ab,cd,max_P,.max_I)
+         MOLECULE::schwarz_J_test(skip,cutoff,ab,cd,max_P,.max_I)
 
          if (skip) cycle
 
@@ -18948,7 +18975,7 @@ contains
 
          cd_same = atom_c==atom_d
 
-         .schwarz_K_test(skip,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         MOLECULE::schwarz_K_test(skip,cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
 
          if (aa==bb) then                   ! Evaluate the integrals'
@@ -19201,7 +19228,7 @@ contains
 
            cd_same = atom_c==atom_d
 
-           skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+           skip = MOLECULE::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
            if (skip) cycle
 
            if (aa==bb) then; factor = HALF      ! coincidence factors
@@ -19382,7 +19409,7 @@ contains
             .get_shell_pair_indices(cd,cc,dd,fc,lc,nc,fd,ld,nd,atom_c,atom_d) 
             cd_same = atom_c==atom_d
                                                  ! ab|cd < sqrt(ab|ab) * sqrt(cd|cd) test.
-            skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+            skip = MOLECULE::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
             if (skip) cycle
                                                  ! calculate ab|cd
             factor = ONE                         ! Evaluate the integrals'
@@ -19512,7 +19539,7 @@ contains
 
          cd_same = atom_c==atom_d
 
-         .schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         MOLECULE::schwarz_test(skip_J,skip_K,cutoff,JP_cut,KP_cut,ab,cd,aa,bb,cc,dd,max_P,.max_I)
 
          if (skip_J AND skip_K) cycle
 
@@ -19787,7 +19814,7 @@ contains
 
          cd_same = atom_c==atom_d
 
-         skip = .schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
+         skip = MOLECULE::schwarz_inequality_test(cutoff,ab,cd,aa,bb,cc,dd,max_P,.max_I)
          if (skip) cycle
 
          factor = ONE                             ! Evaluate the integrals
@@ -24696,7 +24723,10 @@ contains
    ! Put of the Roby energy parts
       E_T,E_K,E_C,E_Z,E_N :: REAL
       E_int,E_prom :: REAL, optional
-      stdout.text(" ")
+
+      self = self
+
+      stdout.flush
       stdout.show("Kinetic energy       =",E_T)
       stdout.show("Exchange energy      =",E_K)
       stdout.show("Kinetic + Exhange    =",E_T+E_K)
@@ -24704,10 +24734,12 @@ contains
       stdout.show("Nuclear repulsion    =",E_N)
       stdout.show("Electronic repulsion =",E_C)
       stdout.show("Net coulomb energy   =",E_Z+E_N+E_C)
+
       if (present(E_int)) &
       stdout.show("Total int. energy    =",E_int)
       if (present(E_prom)) &
       stdout.show("Promotion energy     =",E_prom)
+
    end
 
 !  ******************
@@ -25794,7 +25826,7 @@ contains
                   .make_orbital_grid_r(gr,.natural_orbitals.restricted(:,orb),pt,square=TRUE)
                case("general_complex") 
                   gc.create(.plot_grid.n_pt)
-                  .make_orbital_grid_gc(gc,.molecular_orbitals.general_complex(:,orb),pt,square=TRUE)
+                  .make_orbital_grid_gc(gc,.molecular_orbitals.general_complex(:,orb),pt)
                   gr = RE(gc)
                   gc.destroy
                case default
@@ -25978,13 +26010,12 @@ contains
 
    end
 
-   make_orbital_grid_gc(g,orb,pt,square)
+   make_orbital_grid_gc(g,orb,pt)
    ! Evaluate the orbital density for *one* AO-basis orbital coefficient vector
    ! "orb" on a set of grid points "pt"
       g :: VEC{CPX}, OUT
       orb :: VEC{CPX}, IN
       pt :: MAT{REAL}, IN
-      square :: BIN, optional  ! basically a dummy argument but well: do not mind
 
    ENSURE(.basis_info_made, "no basis info")
    ENSURE(.atom.created,  "no atom list")
@@ -27011,6 +27042,7 @@ contains
       bond_density_atom :: VEC{INT}*
 
    ENSURE(.atom.created,"no atoms")
+   ENSURE(.n_atom>1,"must have at least two atoms")
 
       n_atoms,n_pt,a,b,c,n :: INT
       x,y,z :: REAL
@@ -27031,6 +27063,7 @@ contains
       rho = ZERO
 
       ! Get the atom pair density for whole molecule
+      r_ab = ZERO
       do a = 2,.n_atom
       do b = 1,a-1
         if (NOT .atom.bonded(a,b)) cycle
@@ -27119,6 +27152,7 @@ contains
       def_density_grid :: VEC{REAL}, IN
 
    ENSURE(.atom.created,"no atoms")
+   ENSURE(.n_atom>1,"must have at least two atoms")
 
       n_atoms,n_pt,a,b,c,n :: INT
       x,y,z,r_inv :: REAL
@@ -27136,6 +27170,7 @@ contains
       rho = ZERO
 
       ! Get the atom pair density for whole molecule
+      r_ab = ZERO
       do a = 2,.n_atom
       do b = 1,a-1
         if (NOT .atom.bonded(a,b)) cycle
@@ -27354,6 +27389,7 @@ contains
       bond_density_atom :: VEC{INT}*
 
    ENSURE(.atom.created,"no atoms")
+   ENSURE(.n_atom>1,"must have at least two atoms")
 
       n_atoms,n_pt,a,b,c,n :: INT
       x,y,z :: REAL
@@ -27371,6 +27407,7 @@ contains
       rho = ZERO
 
       ! Get the atom pair density for whole molecule
+      r_ab = ZERO
       do a = 2,.n_atom
       do b = 1,a-1
         if (NOT .atom.bonded(a,b)) cycle
@@ -33889,19 +33926,17 @@ contains
     M_gcm.symmetric_reflect
    end
 
-   get_back_prim_now(M_gcm,M,m_out,n_gcm)  
+   get_back_prim_now(M_gcm,M,m_out)  
    ! This routine is thought for the final DKH matrix in the non-redundant a-la general contraction
    ! primitive basis set style to get projected back to the tonto primitive often redundant basis set style 
    ! meaning of variables
    ! M_gcm any gcm matrix; input
    ! M primitive matrix; output 
    ! m_out matrix of
-   ! n_gcm the dimension of Sgcm 
 
       M_gcm :: MAT{REAL} 
       M :: MAT{REAL} 
       m_out :: MAT{INT} 
-      n_gcm :: INT    
       i,j,k,l :: INT    
 
 
@@ -33993,19 +34028,17 @@ contains
     M_gcm.symmetric_reflect
    end
 
-   get_back_prim_now(M_gcm,M,m_out,n_gcm)  
+   get_back_prim_now(M_gcm,M,m_out)  
    ! This routine is thought for the final DKH matrix in the non-redundant a-la general contraction
    ! primitive basis set style to get projected back to the tonto primitive often redundant basis set style 
    ! meaning of variables
    ! M_gcm any gcm matrix; input
    ! M primitive matrix; output 
    ! m_out matrix of
-   ! n_gcm the dimension of Sgcm 
 
       M_gcm :: MAT{CPX} 
       M :: MAT{CPX} 
       m_out :: MAT{INT} 
-      n_gcm :: INT    
       i,j,k,l :: INT    
 
 
@@ -34302,7 +34335,7 @@ contains
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(F,R,m_out,n_gcm)  
+     .get_back_prim_now(F,R,m_out)  
      F.destroy
      m_out.destroy
 
@@ -34362,7 +34395,7 @@ contains
       T.change_basis_using(Y)
 
       ! Decouple T from linear dependencies
-      .decouple_and_shift_r(T,evec,n_small,ZERO)
+      MOLECULE:decouple_and_shift_r(T,evec,n_small,ZERO)
       evec.destroy
 
       ! Momentum^2 eigenvalues in orthogonal basis
@@ -34615,7 +34648,7 @@ contains
       ! Change T to orthogonal basis
       T.change_basis_using(Y)
       ! Decouple T from linear dependencies
-      .decouple_and_shift_r(T,evec,n_small,ZERO)
+      MOLECULE:decouple_and_shift_r(T,evec,n_small,ZERO)
       evec.destroy
 
      U.create(n_gcm,n_gcm)
@@ -34820,7 +34853,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(F,R,m_out,n_gcm)  
+     .get_back_prim_now(F,R,m_out)  
      F.destroy
      m_out.destroy
 
@@ -35154,7 +35187,7 @@ end if
             MO => .molecular_orbitals.restricted(:,1:.n_a)
             D  => .density_matrix.restricted
             D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-           .density_DKH_norm(g,norm,D,.n_a)
+           .density_DKH_norm(g,norm,D)
             stdout.flush
             stdout.text("renormalization check")
             stdout.flush
@@ -35172,8 +35205,8 @@ end if
             Db => .density_matrix.beta
             Da.to_product_of(MOa,MOa,transpose_b=TRUE)
             Db.to_product_of(MOb,MOb,transpose_b=TRUE)
-           .density_DKH_norm(ga,norma,Da,.n_a)
-           .density_DKH_norm(gb,normb,Db,.n_b)
+           .density_DKH_norm(ga,norma,Da)
+           .density_DKH_norm(gb,normb,Db)
             stdout.flush
             stdout.text("renormalization check")
             stdout.flush
@@ -35200,7 +35233,7 @@ end if
      end
    end
 
-   density_DKH_norm(g,norm,D,no)
+   density_DKH_norm(g,norm,D)
    ! gives back g and norm the summ and the normalization
    ! constant which is false becasue the wave function is
    ! normalized to the number of electrons and not to unity
@@ -35209,7 +35242,6 @@ end if
    ! of the density which has to be normalised
   g,norm :: REAL 
   D :: MAT{REAL} , IN
-  no :: INT , IN 
   n_gcm,dim :: INT
   i,j :: INT
   m_out :: MAT{INT}* 
@@ -35529,7 +35561,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(S,R,m_out,n_gcm)  
+     .get_back_prim_now(S,R,m_out)  
      S.destroy
 
 !!! moving back to contracted basis sets 
@@ -35544,17 +35576,17 @@ end if
         D.alpha_alpha_plus(A)
         D.beta_beta_plus(A)
 
-       .get_back_prim_now(SOx,R,m_out,n_gcm) 
+       .get_back_prim_now(SOx,R,m_out) 
         SOx.destroy
         buco.to_product_of(M,R,transpose_a=TRUE)
         A.to_product_of(buco,M)
 
-       .get_back_prim_now(SOy,R,m_out,n_gcm)  
+       .get_back_prim_now(SOy,R,m_out)  
         SOy.destroy
         buco.to_product_of(M,R,transpose_a=TRUE)
         A.to_product_of(buco,M)
 
-       .get_back_prim_now(SOy,R,m_out,n_gcm)  
+       .get_back_prim_now(SOy,R,m_out)  
         SOz.destroy
         buco.to_product_of(M,R,transpose_a=TRUE)
         A.to_product_of(buco,M)
@@ -36360,7 +36392,7 @@ end if
 ! point for point the density will be on and on calculated
 ! I am sincerely sorry, but the code comparing to it's non-relativistic
 ! counter part really not effective :(
-     .make_DENSITY_PCE_SO_off_2(GG22,YU,Ap,Ep,P2,pt(n,1),pt(n,2),pt(n,3),m_out,n_gcm,S,Z2,PZP2)
+     .make_DENSITY_PCE_SO_off_v2(GG22,YU,Ap,Ep,P2,pt(n,1),pt(n,2),pt(n,3),n_gcm,S,Z2,PZP2)
 
        gc=(ZERO,ZERO)
  !           GG22.make_hermitian
@@ -36772,7 +36804,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(D,R,m_out,n_gcm)  
+     .get_back_prim_now(D,R,m_out)  
      D.destroy
 
 !!! moving back to contracted basis sets 
@@ -37153,7 +37185,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(D,R,m_out,n_gcm)  
+     .get_back_prim_now(D,R,m_out)  
      D.destroy
 
 !!! moving back to contracted basis sets 
@@ -37178,7 +37210,7 @@ end if
         YU :: MAT{REAL} , IN
         Ap,Ep,P2 :: VEC{REAL} , IN
         xx,yy,zz :: REAL , IN
-        m_out :: MAT{INT} , IN
+        m_out :: MAT{INT}
         n_gcm :: INT , IN
         S,sZ,sPZP :: MAT{REAL} , IN
         sPZPx,sPZPy,sPZPz :: MAT{REAL} , IN
@@ -37570,10 +37602,10 @@ end if
      Ry=ZERO
      Rz=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(D,R,m_out,n_gcm)  
-     .get_back_prim_now(SOx,Rx,m_out,n_gcm)  
-     .get_back_prim_now(SOy,Ry,m_out,n_gcm)  
-     .get_back_prim_now(SOz,Rz,m_out,n_gcm) 
+     .get_back_prim_now(D,R,m_out)  
+     .get_back_prim_now(SOx,Rx,m_out)  
+     .get_back_prim_now(SOy,Ry,m_out)  
+     .get_back_prim_now(SOz,Rz,m_out) 
      D.destroy
      SOx.destroy
      SOy.destroy
@@ -37608,7 +37640,7 @@ end if
      buco.destroy
    end   
 
-   make_DENSITY_PCE_SO_off_2(GG22,YU,Ap,Ep,P2,xx,yy,zz,m_out,n_gcm,S,sZ2,sPZP2,PPZPP)
+   make_DENSITY_PCE_SO_off_v2(GG22,YU,Ap,Ep,P2,xx,yy,zz,n_gcm,S,sZ2,sPZP2)
    ! correct the  picture change
    ! g is the electron density in a given point with coordinates x=xx, y=yy, z=zz
    ! this routine is based on the make_r_DKH_matrix(H) routine
@@ -37617,11 +37649,9 @@ end if
         YU :: MAT{REAL} , IN
         Ap,Ep,P2 :: VEC{REAL} , IN
         xx,yy,zz :: REAL , IN
-        m_out :: MAT{INT} , IN
         n_gcm :: INT , IN
         S :: MAT{REAL} , IN
         sZ2,sPZP2 :: MAT{CPX} , IN
-        PPZPP :: MAT{REAL} , IN , optional
 
         c,fac :: REAL  
         i,j :: INT   
@@ -38127,7 +38157,7 @@ end if
    ! point for point the density will be on and on calculated
    ! I am sincerely sorry, but the code comparing to its non-relativistic
    ! counterpart is really not effective :(
-     .make_DENSITY_PCE_SO_off_2(GG22,YU,Ap,Ep,P2,pt(n,1),pt(n,2),pt(n,3),m_out,n_gcm,S,Z2,PZP2)
+     .make_DENSITY_PCE_SO_off_v2(GG22,YU,Ap,Ep,P2,pt(n,1),pt(n,2),pt(n,3),n_gcm,S,Z2,PZP2)
 
          gc=(ZERO,ZERO)
          do i=1,2*.n_bf
@@ -38996,7 +39026,7 @@ end if
 
           t.create(la-fa+1,lb-fb+1)
           t=ZERO
-         .thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b,sh)
+         .thermal_smearing_correction_pce(t,k_vec,atom_a,atom_b)
 
             do bg=1,lb-fb+1
               do ag=1,la-fa+1
@@ -39013,14 +39043,13 @@ end if
 
    end
 
-   thermal_smearing_correction_pce(res,k_vec,a,b,sh)
+   thermal_smearing_correction_pce(res,k_vec,a,b)
    ! Makes the thermal smearing correction term.  Note that res
    ! is done over the contraction coefficients.
    ! Dimensions of "res" are [.a.n_cc,.b.n_cc].
       res :: MAT{REAL}
       k_vec :: VEC{REAL}
       a,b :: INT
-      sh :: SHELL2
 
       Ua,Ub,Uab :: MAT{REAL}(3,3)
       S,US :: VEC{REAL}(3)
@@ -39406,7 +39435,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(F,R,m_out,n_gcm)  
+     .get_back_prim_now(F,R,m_out)  
      F.destroy
      m_out.destroy
 
@@ -40362,6 +40391,8 @@ end if
    c,alpha,alpha2,alpha3,alpha4 :: REAL
    Y1L,Y1R,Y2 :: MAT{REAL}*
 
+   self = self
+
    Y=ZERO
      c = SPEED_OF_LIGHT_AU
      alpha = ONE/c
@@ -40394,78 +40425,80 @@ end if
 
    end
 
-   build_da_Y_old(Y,Yr0,PZP,Z,p,b,ep,n_gcm)
-   ! build the IOTC Y matrix 
-   ! should be more effective
-   Y :: MAT{REAL}
-   Yr0,PZP,Z :: MAT{REAL}
-   p,b,ep :: VEC{REAL}
-   n_gcm :: INT
-   i,j,k,l :: INT
-   c,alpha,alpha2,alpha3,alpha4 :: REAL
-
-   Y=ZERO
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-     alpha3= alpha2*alpha
-     alpha4= alpha3*alpha
-
-     do i = 1,n_gcm
-       do j = 1,n_gcm
-
-         Y(i,j) = alpha3*( p(i)*b(i)*Z(i,j)-PZP(i,j)/p(i)*b(j) )   
-
-         do k = 1,n_gcm  
-           Y(i,j) = Y(i,j) + alpha2* ( PZP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*Z(k,j) )    &
-                             + alpha4* ( p(i)*b(i)*Z(i,k)*b(k)*p(k)*Yr0(k,j)                &
-                                       - Yr0(i,k)*b(k)*PZP(k,j)*b(j)         )                        
+!   build_da_Y_old(Y,Yr0,PZP,Z,p,b,ep,n_gcm)
+!   ! build the IOTC Y matrix 
+!   ! should be more effective
+!   Y :: MAT{REAL}
+!   Yr0,PZP,Z :: MAT{REAL}
+!   p,b,ep :: VEC{REAL}
+!   n_gcm :: INT
+!   i,j,k,l :: INT
+!   c,alpha,alpha2,alpha3,alpha4 :: REAL
+!
+!   Y=ZERO
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!     alpha3= alpha2*alpha
+!     alpha4= alpha3*alpha
+!
+!     do i = 1,n_gcm
+!       do j = 1,n_gcm
+!
+!         Y(i,j) = alpha3*( p(i)*b(i)*Z(i,j)-PZP(i,j)/p(i)*b(j) )   
+!
+!         do k = 1,n_gcm  
+!           Y(i,j) = Y(i,j) + alpha2* ( PZP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*Z(k,j) )    &
+!                             + alpha4* ( p(i)*b(i)*Z(i,k)*b(k)*p(k)*Yr0(k,j)                &
+!                                       - Yr0(i,k)*b(k)*PZP(k,j)*b(j)         )                        
+!!         end do
+!
+!!         do k = 1,n_gcm
+!           do l = 1,n_gcm
+!             Y(i,j) = Y(i,j) + alpha3* (                                                  &
+!                       Yr0(i,k)* ( b(k)*PZP(k,l)/p(l) - Z(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
+!           end do
 !         end do
+!
+!         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
+!
+!       end do
+!     end do
+!
+!   end
 
-!         do k = 1,n_gcm
-           do l = 1,n_gcm
-             Y(i,j) = Y(i,j) + alpha3* (                                                  &
-                       Yr0(i,k)* ( b(k)*PZP(k,l)/p(l) - Z(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
-           end do
-         end do
-
-         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
-
-       end do
-     end do
-
-   end
-
-   build_da_Y_2_Rbased_corrupt(Y,Yr0,PAP,A,p,b,ep,n_gcm)
-   ! build the IOTC Y matrix 
-   Y :: MAT{CPX}
-   Yr0,PAP,A :: MAT{CPX}
-   p,b,ep :: VEC{REAL}
-   n_gcm :: INT
-   i,j :: INT
-   c,alpha,alpha2,alpha3 :: REAL
-
-   Y=(ZERO,ZERO)
-   Yr0=(ZERO,ZERO)
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-     alpha3= alpha2*alpha
-
-     do i = 1,2*n_gcm
-       do j = 1,2*n_gcm
-
-         Y(i,j) = alpha3*( p(i)*b(i)*A(i,j)-PAP(i,j)/p(i)*b(j) )
-            ! lets try this: Barysz,Sadlej, J.Chem.Phys. 116 (2002) p2696  
-            ! the R formula (11) not (23) or (26)
-         Y(i,j) = Y(i,j) - (ep(i)-alpha2)*Yr0(i,j) - Yr0(i,j)*(ep(j)-alpha2)
-
-        Y(i,j) = HALF*Y(i,j) 
-
-       end do
-     end do
-
-   end
+!   build_da_Y_2_Rbased_corrupt(Y,Yr0,PAP,A,p,b,ep,n_gcm)
+!   ! build the IOTC Y matrix 
+!   Y :: MAT{CPX}
+!   Yr0,PAP,A :: MAT{CPX}
+!   p,b,ep :: VEC{REAL}
+!   n_gcm :: INT
+!   i,j :: INT
+!   c,alpha,alpha2,alpha3 :: REAL
+!
+!   self = self
+!
+!   Y=(ZERO,ZERO)
+!   Yr0=(ZERO,ZERO)
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!     alpha3= alpha2*alpha
+!
+!     do i = 1,2*n_gcm
+!       do j = 1,2*n_gcm
+!
+!         Y(i,j) = alpha3*( p(i)*b(i)*A(i,j)-PAP(i,j)/p(i)*b(j) )
+!            ! lets try this: Barysz,Sadlej, J.Chem.Phys. 116 (2002) p2696  
+!            ! the R formula (11) not (23) or (26)
+!         Y(i,j) = Y(i,j) - (ep(i)-alpha2)*Yr0(i,j) - Yr0(i,j)*(ep(j)-alpha2)
+!
+!        Y(i,j) = HALF*Y(i,j) 
+!
+!       end do
+!     end do
+!
+!   end
 
    build_da_Y_2(Y,Yr0,PAP,A,p,b,ep,n_gcm)
    ! build the IOTC Y matrix 
@@ -40476,6 +40509,8 @@ end if
    i,j,dim :: INT
    c,alpha,alpha2,alpha3,alpha4 :: REAL
    Y1L,Y1R,Y2 :: MAT{CPX}*
+
+   self = self
 
      Y = (ZERO,ZERO)
      c = SPEED_OF_LIGHT_AU
@@ -40511,43 +40546,45 @@ end if
 
    end
 
-   build_da_Y_2_old(Y,Yr0,PAP,A,p,b,ep,n_gcm)
-   ! build the IOTC Y matrix 
-   Y :: MAT{CPX}
-   Yr0,PAP,A :: MAT{CPX}
-   p,b,ep :: VEC{REAL}
-   n_gcm :: INT
-   i,j,k,l :: INT
-   c,alpha,alpha2,alpha3,alpha4 :: REAL
-
-   Y=(ZERO,ZERO)
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-     alpha3= alpha2*alpha
-     alpha4= alpha3*alpha
-
-     do i = 1,2*n_gcm
-       do j = 1,2*n_gcm
-
-         Y(i,j) = alpha3*( p(i)*b(i)*A(i,j)-PAP(i,j)/p(i)*b(j) )
-
-          do k = 1,2*n_gcm  
-            Y(i,j) = Y(i,j) + alpha2* ( PAP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*A(k,j) )    &
-                              + alpha4* ( p(i)*b(i)*A(i,k)*b(k)*p(k)*Yr0(k,j)                &
-                                        - Yr0(i,k)*b(k)*PAP(k,j)*b(j)         )                        
-            do l = 1,2*n_gcm
-              Y(i,j) = Y(i,j) + alpha3* (                                                  &
-                        Yr0(i,k)* ( b(k)*PAP(k,l)/p(l) - A(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
-            end do
-          end do
-
-         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
-
-       end do
-     end do
-
-   end
+!   build_da_Y_2_old(Y,Yr0,PAP,A,p,b,ep,n_gcm)
+!   ! build the IOTC Y matrix 
+!   Y :: MAT{CPX}
+!   Yr0,PAP,A :: MAT{CPX}
+!   p,b,ep :: VEC{REAL}
+!   n_gcm :: INT
+!   i,j,k,l :: INT
+!   c,alpha,alpha2,alpha3,alpha4 :: REAL
+!
+!   self = self
+!
+!   Y=(ZERO,ZERO)
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!     alpha3= alpha2*alpha
+!     alpha4= alpha3*alpha
+!
+!     do i = 1,2*n_gcm
+!       do j = 1,2*n_gcm
+!
+!         Y(i,j) = alpha3*( p(i)*b(i)*A(i,j)-PAP(i,j)/p(i)*b(j) )
+!
+!          do k = 1,2*n_gcm  
+!            Y(i,j) = Y(i,j) + alpha2* ( PAP(i,k)/p(i)/p(k)*Yr0(k,j) - Yr0(i,k)*A(k,j) )    &
+!                              + alpha4* ( p(i)*b(i)*A(i,k)*b(k)*p(k)*Yr0(k,j)                &
+!                                        - Yr0(i,k)*b(k)*PAP(k,j)*b(j)         )                        
+!            do l = 1,2*n_gcm
+!              Y(i,j) = Y(i,j) + alpha3* (                                                  &
+!                        Yr0(i,k)* ( b(k)*PAP(k,l)/p(l) - A(k,l)*b(l)*p(l) ) *Yr0(l,j) ) 
+!            end do
+!          end do
+!
+!         Y(i,j) = Y(i,j) / ( ep(i)+ep(j) )
+!
+!       end do
+!     end do
+!
+!   end
 
    build_da_IOTC_F(F,Yr,PAP,A,p,bp,E,n_gcm,ppApp)
    ! build the IOTC Y matrix 
@@ -40602,49 +40639,49 @@ end if
 
    end
 
-   build_da_IOTC_F_old(F,Yr,PAP,A,p,bp,E,n_gcm,ppApp)
-   ! build the IOTC Y matrix 
-   F :: MAT{REAL}
-   Yr,PAP,A :: MAT{REAL}
-   p,bp,E :: VEC{REAL}
-   n_gcm :: INT
-   ppApp :: MAT{REAL}, optional
-   i,j,k,l :: INT
-   c,alpha,alpha2 :: REAL
-
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-
-
-     do i = 1,n_gcm
-
-!         F(i,i)=P2(i)*bp(i)   ! followin Sadlej, I did not get it yet :(
-         F(i,i)=E(i)-c*c     
-
-       do j = 1,n_gcm
-
-         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
-
-          do k = 1,n_gcm  
-            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
-                            + alpha*Yr(k,i)* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         &
-                            + Yr(k,i)*(-E(k)-c*c )*Yr(k,j)
-            do l = 1,n_gcm
-              if( .scfdata.using_ppzpp)then
-                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
-              else
-                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
-              end if
-            end do
-          end do
-
-       end do
-     end do
-
-   end
+!   build_da_IOTC_F_old(F,Yr,PAP,A,p,bp,E,n_gcm,ppApp)
+!   ! build the IOTC Y matrix 
+!   F :: MAT{REAL}
+!   Yr,PAP,A :: MAT{REAL}
+!   p,bp,E :: VEC{REAL}
+!   n_gcm :: INT
+!   ppApp :: MAT{REAL}, optional
+!   i,j,k,l :: INT
+!   c,alpha,alpha2 :: REAL
+!
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!
+!
+!     do i = 1,n_gcm
+!
+!!         F(i,i)=P2(i)*bp(i)   ! followin Sadlej, I did not get it yet :(
+!         F(i,i)=E(i)-c*c     
+!
+!       do j = 1,n_gcm
+!
+!         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
+!
+!          do k = 1,n_gcm  
+!            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
+!                            + alpha*Yr(k,i)* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         &
+!                            + Yr(k,i)*(-E(k)-c*c )*Yr(k,j)
+!            do l = 1,n_gcm
+!              if( .scfdata.using_ppzpp)then
+!                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
+!              else
+!                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
+!              end if
+!            end do
+!          end do
+!
+!       end do
+!     end do
+!
+!   end
 
    build_da_IOTC_F(F,Yr,PAP,A,p,bp,E,ppApp)
    ! build the IOTC Y matrix 
@@ -40713,6 +40750,8 @@ end if
    c,alpha,alpha2 :: REAL
    AAA,F1R,F1L,F2 :: MAT{REAL}*
 
+     E = E
+
      c = SPEED_OF_LIGHT_AU
      alpha = ONE/c
      alpha2= alpha*alpha
@@ -40752,44 +40791,46 @@ end if
 
    end
 
-   build_da_IOTC_dens_old(F,Yr,PAP,A,p,bp,E,n_gcm,ppApp)
-   ! build the IOTC Y matrix 
-   F :: MAT{REAL}
-   Yr,PAP,A :: MAT{REAL}
-   p,bp,E :: VEC{REAL}
-   n_gcm :: INT
-   ppApp :: MAT{REAL}, optional
-   i,j,k,l :: INT
-   c,alpha,alpha2 :: REAL
-
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-
-     do i = 1,n_gcm
-
-       do j = 1,n_gcm
-
-         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
-
-          do k = 1,n_gcm  
-            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
-                            + alpha*Yr(k,i)* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         
-            do l = 1,n_gcm
-              if( .scfdata.using_ppzpp)then
-                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
-              else
-                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
-              end if
-            end do
-          end do
-
-       end do
-     end do
-
-   end
+!   build_da_IOTC_dens_old(F,Yr,PAP,A,p,bp,E,n_gcm,ppApp)
+!   ! build the IOTC Y matrix 
+!   F :: MAT{REAL}
+!   Yr,PAP,A :: MAT{REAL}
+!   p,bp,E :: VEC{REAL}
+!   n_gcm :: INT
+!   ppApp :: MAT{REAL}, optional
+!   i,j,k,l :: INT
+!   c,alpha,alpha2 :: REAL
+!
+!     E = E
+!
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!
+!     do i = 1,n_gcm
+!
+!       do j = 1,n_gcm
+!
+!         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
+!
+!          do k = 1,n_gcm  
+!            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
+!                            + alpha*Yr(k,i)* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         
+!            do l = 1,n_gcm
+!              if( .scfdata.using_ppzpp)then
+!                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
+!              else
+!                F(i,j) = F(i,j) + Yr(k,i)* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
+!              end if
+!            end do
+!          end do
+!
+!       end do
+!     end do
+!
+!   end
 
    build_da_IOTC_dens(F,Yr,PAP,A,p,bp,E,ppApp)
    ! build the IOTC Y matrix 
@@ -40800,6 +40841,8 @@ end if
    i,j,n_gcm,dim :: INT
    c,alpha,alpha2 :: REAL
    AAA,F1R,F1L,F2 :: MAT{CPX}*
+
+   E = E
 
    n_gcm=.n_prim
      c = SPEED_OF_LIGHT_AU
@@ -40844,45 +40887,47 @@ end if
 
    end
 
-   build_da_IOTC_dens_old(F,Yr,PAP,A,p,bp,E,ppApp)
-   ! build the IOTC Y matrix 
-   F :: MAT{CPX}
-   Yr,PAP,A :: MAT{CPX}
-   p,bp,E :: VEC{REAL}
-   ppApp :: MAT{CPX}, optional
-   i,j,k,l,n_gcm :: INT
-   c,alpha,alpha2 :: REAL
-
-   n_gcm=.n_prim
-     c = SPEED_OF_LIGHT_AU
-     alpha = ONE/c
-     alpha2= alpha*alpha
-
-
-     do i = 1,2*n_gcm
-
-       do j = 1,2*n_gcm
-
-         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
-
-          do k = 1,2*n_gcm  
-            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
-                            + alpha*conjg(Yr(k,i))* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         
-            do l = 1,2*n_gcm
-              if( .scfdata.using_ppzpp)then
-                F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
-              else
-                F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
-                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
-              end if
-            end do
-          end do
-
-       end do
-     end do
-
-   end
+!   build_da_IOTC_dens_old(F,Yr,PAP,A,p,bp,E,ppApp)
+!   ! build the IOTC Y matrix 
+!   F :: MAT{CPX}
+!   Yr,PAP,A :: MAT{CPX}
+!   p,bp,E :: VEC{REAL}
+!   ppApp :: MAT{CPX}, optional
+!   i,j,k,l,n_gcm :: INT
+!   c,alpha,alpha2 :: REAL
+!
+!     E = E
+!
+!   n_gcm=.n_prim
+!     c = SPEED_OF_LIGHT_AU
+!     alpha = ONE/c
+!     alpha2= alpha*alpha
+!
+!
+!     do i = 1,2*n_gcm
+!
+!       do j = 1,2*n_gcm
+!
+!         F(i,j)=F(i,j)+A(i,j)+alpha2*bp(i)*PAP(i,j)*bp(j)
+!
+!          do k = 1,2*n_gcm  
+!            F(i,j) = F(i,j) + alpha* ( A(i,k)*bp(k)*p(k)-bp(i)*PAP(i,k)/p(k) )*Yr(k,j)         &
+!                            + alpha*conjg(Yr(k,i))* ( bp(k)*p(k)*A(k,j)-PAP(k,j)/p(k)*bp(j) )         
+!            do l = 1,2*n_gcm
+!              if( .scfdata.using_ppzpp)then
+!                F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*bp(k)/p(k)*ppApp(k,l)*bp(l)/p(l) ) *Yr(l,j)  
+!              else
+!                F(i,j) = F(i,j) + conjg(Yr(k,i))* ( PAP(k,l)/p(l)/p(k)         &
+!                                           + alpha2*p(k)*bp(k)*A(k,l)*bp(l)*p(l) ) *Yr(l,j)  
+!              end if
+!            end do
+!          end do
+!
+!       end do
+!     end do
+!
+!   end
 
    density_IOTC(density_grid,pt,D)
    ! the density_grid will be filled with the values of density
@@ -41267,7 +41312,8 @@ end if
    ! this routine is based on the make_r_DKH_matrix(H) routine
         GG :: MAT{REAL} , OUT
         Yr,YU :: MAT{REAL} , IN
-        Ap,E,bp,p,ep :: VEC{REAL} , IN
+        Ap,E,bp,p :: VEC{REAL} , IN
+        ep :: VEC{REAL}
         xx,yy,zz :: REAL , IN
         m_out :: MAT{INT} , IN
         n_gcm :: INT , IN
@@ -41278,6 +41324,8 @@ end if
         D,PDP,PPDPP :: MAT{REAL}*
         A,B :: MAT{REAL}*
         M,buco :: MAT{REAL}* 
+
+     ep = ep
 
 !!!  the density operator X !!!
      R.create(.n_prim,.n_prim)
@@ -41364,7 +41412,7 @@ end if
 !!! moving back to tonto style primitive basis sets 
      R=ZERO
 ! put the Fock matrix back to the space .n_prim space
-     .get_back_prim_now(D,R,m_out,n_gcm)  
+     .get_back_prim_now(D,R,m_out)  
      D.destroy
 
 !!! moving back to contracted basis sets 
@@ -41891,7 +41939,8 @@ end if
 
         GG,Yr :: MAT{CPX} 
         YU :: MAT{REAL} , IN
-        Ap,E,bp,p,ep :: VEC{REAL} , IN
+        Ap,E,bp,p :: VEC{REAL} , IN
+        ep :: VEC{REAL} 
         xx,yy,zz :: REAL , IN
         m_out :: MAT{INT} , IN
         n_gcm :: INT , IN
@@ -41905,6 +41954,8 @@ end if
         R :: MAT{REAL}*  
         D,PDP,SOx,SOy,SOz,PPDPP :: MAT{REAL}*  
         A,B,M :: MAT{REAL}*
+
+     ep = ep
 
 !!!  the density X operator !!!
      R.create(.n_prim,.n_prim)
@@ -42129,32 +42180,32 @@ end if
 
    end
 
-   make_R_to_YU(R,XXX,YU)
-   ! Calculate the primitive ft matrix for a given hkl
-   R :: MAT{REAL}
-   XXX :: MAT{REAL}
-   YU :: MAT{REAL}
-   A,B :: MAT{REAL}*
-   m_out :: MAT{INT}*
-   n_gcm :: INT
-
-   XXX=ZERO
-     m_out.create(.n_prim,.n_prim) 
-    .make_ready_da_gcm_tr2(m_out,n_gcm) 
-!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
-     A.create(n_gcm,n_gcm)
-     A=ZERO
-     B.create(n_gcm,n_gcm)
-     B=ZERO
-!    .get_da_gcm_now(R,A,m_out,n_gcm)  
-
-     B.to_product_of(YU,A,transpose_a=TRUE)
-     XXX.to_product_of(B,YU)
-
-     A.destroy
-     B.destroy
-     m_out.destroy
-
-   end
+!   make_R_to_YU(R,XXX,YU)
+!   ! Calculate the primitive ft matrix for a given hkl
+!   R :: MAT{REAL}
+!   XXX :: MAT{REAL}
+!   YU :: MAT{REAL}
+!   A,B :: MAT{REAL}*
+!   m_out :: MAT{INT}*
+!   n_gcm :: INT
+!
+!   XXX=ZERO
+!     m_out.create(.n_prim,.n_prim) 
+!    .make_ready_da_gcm_tr2(m_out,n_gcm) 
+!!    .make_ready_da_gcm_tr(R,m_out,n_gcm)  
+!     A.create(n_gcm,n_gcm)
+!     A=ZERO
+!     B.create(n_gcm,n_gcm)
+!     B=ZERO
+!!    .get_da_gcm_now(R,A,m_out,n_gcm)  
+!
+!     B.to_product_of(YU,A,transpose_a=TRUE)
+!     XXX.to_product_of(B,YU)
+!
+!     A.destroy
+!     B.destroy
+!     m_out.destroy
+!
+!   end
 
 end
