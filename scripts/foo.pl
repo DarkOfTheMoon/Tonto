@@ -1875,10 +1875,10 @@ sub analyse_routine_scope {
 
   # Check if/forall/where syntax.
   if ($_[0] =~ m'^\s*if\s*'o) { # if
-    $_[0] =~ m'^\s*if\s*[(].*[)]\s*\S+'o || &report_error("if syntax not recognised.");
-  } elsif ($_[0] =~ m'^\s*forall\s*'o) { # forall
+    $_[0] =~ m'^\s*if\s*[(].*[)]\s+\S*'o || &report_error("if syntax not recognised.");
+  } elsif ($_[0] =~ m'^\s*forall\s+'o) { # forall
     $_[0] =~ m'^\s*forall\s*[(].*[)]'o || &report_error("forall syntax not recognised.");
-  } elsif ($_[0] =~ m'^\s*where\s*'o) { # where
+  } elsif ($_[0] =~ m'^\s*where\s+'o) { # where
     $_[0] =~ m'^\s*where\s*[(].*[)]'o || &report_error("where syntax not recognised.");
   }
 
@@ -2548,7 +2548,7 @@ sub fortran_add_stack_macro {
      }
      if (defined $routine{$name}{being_inherited}) {
         if ($pre_out ne '') { $pre_out .= "\n" }
-        $pre_out .= "   ! The following code is inherited from " .  
+        $pre_out .= "\n      ! The following code is inherited from " .  
                     $routine{$name}{parent_module} ;
      }
      if ($pre_out ne '') {
@@ -2715,12 +2715,13 @@ sub convert_inherited_type_arg_macros {
    if ($routine{$name}{inherited}) {
 
       my ($i,$j,$narg,$oldarg,$newarg);
-
-      # Do user defined type substitutions
-      if ($n_define_type>0) {
       
-#  print "YUP, line= $input_line";
-#  print "YUP, line= $fortran_out";
+ # print "YUP, line= $input_line";
+ # print "YUP, line= $fortran_out";
+ # print "n-def-typ= $n_define_type";
+
+      # Do type substitutions
+      if ($n_define_type>0) {
 
          for ($i=1; $i<=$n_define_type ; $i++) {
 
@@ -2737,9 +2738,10 @@ sub convert_inherited_type_arg_macros {
             # Replace
             $fortran_out =~ s/${oldarg}/${newarg}/g;
 
-#  print "arg = $arg";
-#  print "newarg = $newarg";
-#  print "YUP, line= $fortran_out";
+ # print "i      = $i     ";
+ # print "oldarg = $oldarg";
+ # print "newarg = $newarg";
+ # print "YUP, line= $fortran_out";
 
             # Do implied (type-arg) replacements
             my @old = @{$old_expand_type[$i]};
@@ -2750,7 +2752,7 @@ sub convert_inherited_type_arg_macros {
 
             # Replace
             if ($narg>0) {
-#  print "INNER narg = $narg";
+ # print "INNER narg = $narg";
                for ($j=1; $j<=$narg ; $j++) {
 
                   # Old and new
@@ -2762,11 +2764,14 @@ sub convert_inherited_type_arg_macros {
                   $oldarg =~ s/\{/\\{/g; $oldarg =~ s/\}/\\}/g;
                   $oldarg =~ s/\./\\./g; $oldarg =~ s/\?/\\?/g;
                   $oldarg =~ s/\*/\\*/g; $oldarg =~ s/\+/\\+/g;
-#  print "oldarg = $oldarg";
-#  print "newarg = $newarg";
 
                   # Replace
                   $fortran_out =~ s/${oldarg}/${newarg}/g;
+
+ # print "j      = $j     ";
+ # print "oldarg = $oldarg";
+ # print "newarg = $newarg";
+ # print "YUP, line= $fortran_out";
 
                }
             }
@@ -2775,7 +2780,7 @@ sub convert_inherited_type_arg_macros {
 
       } # end user-defined
  
-      if (! $routine{$name}{in_routine_body}) {
+    # if (! $routine{$name}{in_routine_body}) {
 
             # Convert the parent module type to the inherted module type
             my $type_name = $routine{$name}{parent_module};
@@ -2806,7 +2811,7 @@ sub convert_inherited_type_arg_macros {
       ##?      $fortran_out =~ s/[(]len=.*[)]//;
             }
 
-      } # routine body
+    # } # routine body
 
    } # in inherited
 
