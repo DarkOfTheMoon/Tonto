@@ -51,9 +51,9 @@ module FILE
 
 contains
 
-!  =============================
-!  File creation type operations
-!  =============================
+!  ==================
+!  Allocation methods
+!  ==================
 
    create ::: get_from(OBJECT), leaky
    ! Create an object
@@ -88,6 +88,18 @@ contains
 
    end
 
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
    nullify_ptr_part
    ! Nullify the pointer parts
       nullify( .real_buffer )
@@ -101,6 +113,11 @@ contains
       .int_buffer.destroy
       .cpx_buffer.destroy
    end
+
+
+!  ====
+!  Copy
+!  ====
 
    create_copy(f) ::: leaky
    ! Create a copy a file "f"
@@ -123,68 +140,105 @@ contains
          .cpx_buffer.create_copy(f.cpx_buffer)
    end
 
+
+!  ===========
+!  Set methods
+!  ===========
+
    set_defaults
    ! Set up defaults
+
       .record = 1
-      .io_status = 0
+
+      .io_status   = 0
       .file_status = "unknown"
-      .action      = "readwrite"
-      .buffered    = FALSE
+
+      .action   = "readwrite"
+      .buffered = FALSE
+
       .real_buffer_pos = 1
-      .int_buffer_pos = 1
-      .cpx_buffer_pos = 1
+      .int_buffer_pos  = 1
+      .cpx_buffer_pos  = 1
+
    end
+
+
+!  ==============================
+!  Opening, closing, and deletion
+!  ==============================
 
    open(for,buffered,type) ::: leaky
    ! Open the file. The file object must already be created.
-   ! If present, "for" indicated whether the file is "read_write", "read-only"
-   ! or "write-only"
-   ! If present, "buffered" indicated whether the file is to be buffered, and
-   ! the "type" of the buffer must also be specified as "real" or "int"
+   ! * If present, "for" indicated whether the file is "read_write",
+   !   "read-only" or "write-only"
+   ! * If present, "buffered" indicated whether the file is to be
+   !   buffered, and the "type" of the buffer must also be specified as
+   !   "real" or "int"
       for :: STR, optional
       buffered :: BIN,    optional
       type :: STR, optional
+
+   ENSURE(present(buffered) EQV present(type),"buffered and type not both present")
+
       type1 :: STR
+
       if (present(for)) then
+
         select case (for)
-           case("readwrite ","read-write") ;              .action = "readwrite"
-           case("read      ","reading   ","read-only ") ; .action = "read"
-           case("write     ","writing   ","write-only") ; .action = "write"
+           case("rw        ","readwrite ","read-write") ;              .action = "readwrite"
+           case("r         ","read      ","reading   ","read-only ") ; .action = "read"
+           case("w         ","write     ","writing   ","write-only") ; .action = "write"
            case default; UNKNOWN(for)
         end
+
       end
+
       .file_status = "new"
       if (.exists) .file_status = "old"
+
       if (IO_IS_ALLOWED) then
-       open( unit   = .unit,       &
-           file   = .name,         &
-           status = .file_status,  &
-           access = "sequential",  &
-           form   = "unformatted", & ! <---------
-           action = .action,       &
-           iostat = .io_status)
+         open(unit   = .unit,         &
+              file   = .name,         &
+              status = .file_status,  &
+              access = "sequential",  &
+              form   = "unformatted", & ! <---------
+              action = .action,       &
+              iostat = .io_status)
       end
       DIE_IF(.io_status/=0,"error opening "//trim(.file_status)//" file "//.name)
+
+      .buffered = FALSE
       if (present(buffered)) .buffered = buffered
+
       if (.buffered) then
+
         ENSURE(present(type),"type of buffer must be specified")
         ENSURE(.action/="readwrite","buffer must be either read-only or write-only")
+
         type1 = type
         type1.to_lower_case
+
         select case (type1)
+
            case("real")
-             .real_buffer.create(FILE_BUFFER_LENGTH)
-             if (.action == "read") .get_real_buffer
+              .real_buffer.create(FILE_BUFFER_LENGTH)
+              if (.action == "read") .get_real_buffer
+
            case("int")
-             .int_buffer.create(FILE_BUFFER_LENGTH)
-             if (.action == "read") .get_int_buffer
+              .int_buffer.create(FILE_BUFFER_LENGTH)
+              if (.action == "read") .get_int_buffer
+
            case("cpx")
-             .cpx_buffer.create(FILE_BUFFER_LENGTH)
-             if (.action == "read") .get_cpx_buffer
+              .cpx_buffer.create(FILE_BUFFER_LENGTH)
+              if (.action == "read") .get_cpx_buffer
+
            case default
-             DIE("unknown buffer type, "//trim(type))
+              DIE("unknown buffer type, "//trim(type))
+
         end
+
       end
+
    end
 
    close ::: leaky
@@ -227,22 +281,33 @@ contains
       .close_and_delete
    end
 
+
 !  ==========================
 !  Data input type operations
 !  ==========================
 
+!  Scalars
+
    read(value) ::: template
    ! Read a "value" from the file.
       value :: VALUE_TYPE
+
       if (.buffered) then
-       .read_buffered(value)
+
+         .read_buffered(value)
+
       else
-       if (IO_IS_ALLOWED) then
-         read(unit=.unit,iostat=.io_status) value
-       end
-       ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
-       .record = .record + 1
+
+         if (IO_IS_ALLOWED) then
+            read(unit=.unit,iostat=.io_status) value
+            ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
+         end
+         PARALLEL_BROADCAST(values,0)
+         
+         .record = .record + 1
+
       end
+
    end
 
    read(value) ::: get_from(FILE, VALUE_TYPE=>STR, .read_buffered(value)=>DIE("unavailable"))
@@ -265,31 +330,32 @@ contains
    ! Read a "value" from the file.
    end
 
+!  Arrays
+
    read(values) ::: template
    ! Read a series of "values" from the file.
       values :: VALUES_TYPE
+
       if (.buffered) then
-       .read_buffered(values)
+
+         .read_buffered(values)
+
       else
-       if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status) values
-       ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
-       PARALLEL_BROADCAST(values,0)
-       .record = .record + 1
+
+         if (IO_IS_ALLOWED) then
+            read(unit=.unit,iostat=.io_status) values
+            ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
+         end
+         PARALLEL_BROADCAST(values,0)
+
+         .record = .record + 1
+
       end
+
    end
 
    read(values) ::: get_from(FILE, VALUES_TYPE=>VEC{STR}, .read_buffered(values)=>DIE("unavailable"))
    ! Read a series of "values" from the file.
-   end
-
-   read(matvec)
-   ! Read a matrix vector from the file into variable "mat"
-     matvec :: VEC{MAT_{REAL}}
-     if (.buffered) then
-       .read_buffered(matvec)
-     else
-       DIE("must be buffered")
-     end
    end
 
    read(values) ::: get_from(FILE, VALUES_TYPE=>VEC{BIN}, .read_buffered(values)=>DIE("unavailable"))
@@ -388,22 +454,66 @@ contains
    ! Read a series of "values" from the file.
    end
 
+!  vectors of embedded arrays
+
+   read(v) ::: template
+   ! Read an vector of embedded array types 
+      v :: VEC{TYPE}
+
+      i :: INT
+
+      if (.buffered) then
+
+         DIE("must not be buffered")
+
+      else
+
+         do i = 1,v.dim
+
+            if (IO_IS_ALLOWED) then
+               read(unit=.unit,iostat=.io_status) v(i).element
+               ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
+            end
+            PARALLEL_BROADCAST(v(i).element,0)
+
+            .record = .record + 1
+
+         end
+
+      end
+
+   end
+
+   read(v) ::: get_from(FILE, TYPE=>MAT_{REAL})
+   ! Read an vector of embedded array types 
+   end
+
+
 !  ====================
 !  Data output routines
 !  ====================
 
+!  Scalars
+
    write(value) ::: template
    ! Write the "value" to the file.
       value :: VALUE_TYPE, IN
+
       if (.buffered) then
+
          .write_buffered(value)
+
       else
-        if (IO_IS_ALLOWED) then
-          write(unit=.unit,iostat=.io_status) value
-        end
-        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-        .record = .record + 1
+
+         if (IO_IS_ALLOWED) then
+            write(unit=.unit,iostat=.io_status) value
+            ENSURE(.io_status==0,"write error, #"//trim(.io_status.to_str))
+         end
+
+         .record = .record + 1
+
       end
+
    end
 
    write(value) ::: get_from(FILE, VALUE_TYPE=>STR, .write_buffered(value)=>DIE("unavailable"))
@@ -426,18 +536,27 @@ contains
    ! Write the "value" to the file.
    end
 
+!  Arrays
+
    write(values) ::: template
    ! Write the "values" to the file.
       values :: VALUES_TYPE, IN
+
       if (.buffered) then
+
          .write_buffered(values)
+
       else
-        if (IO_IS_ALLOWED) then
-          write(unit=.unit,iostat=.io_status) values
-        end
-        ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
-        .record = .record + 1
+
+         if (IO_IS_ALLOWED) then
+            write(unit=.unit,iostat=.io_status) values
+            ENSURE(.io_status==0,"write error, #"//trim(.io_status.to_str))
+         end
+
+         .record = .record + 1
+
       end
+
    end
 
    write(values) ::: get_from(FILE, VALUES_TYPE=>VEC{STR}, .write_buffered(values)=>DIE("unavailable"))
@@ -452,14 +571,8 @@ contains
    ! Write the "values" to the file.
    end
 
-   write(matvec)
-   ! Write a matrix vector to the file as a single record
-      matvec :: VEC{MAT_{REAL}}
-      if (.buffered) then
-         .write_buffered(matvec)
-      else
-        DIE("must be buffered")
-      end
+   write(values) ::: get_from(FILE, VALUES_TYPE=>VEC{REAL})
+   ! Write the "values" to the file.
    end
 
    write(values) ::: get_from(FILE, VALUES_TYPE=>VEC{CPX})
@@ -546,17 +659,58 @@ contains
    ! Write the "values" to the file.
    end
 
+!  Vectors of embedded arrays
+
+   write(v) ::: template
+   ! Write a vector of embedded array types 
+      v :: VEC{TYPE}
+
+      i :: INT
+
+      if (.buffered) then
+
+         DIE("must not be buffered")
+
+      else
+
+         do i = 1,v.dim
+
+            if (IO_IS_ALLOWED) then
+               write(unit=.unit,iostat=.io_status) v(i).element
+               ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
+            end
+
+            .record = .record + 1
+
+         end
+
+      end
+
+   end
+
+   write(v) ::: get_from(FILE, TYPE=>MAT_{REAL})
+   ! Write a vector of embedded array types 
+   end
+
+
 ! ================================================================
 ! Buffered routines: currenly only available for INT, REAL and CPX
 ! ================================================================
 
+! These should be obsoleted in the near future ...
+
    read_buffered(value) ::: template
    ! Reads the "value" from the buffer, and reads buffer from disk when empty.
       value :: VALUE, OUT
-      ENSURE(BBUF.created,"buffer not created")
+
+   ENSURE(BBUF.created,"buffer not created")
+
       if (POS>FILE_BUFFER_LENGTH) GET
+
       value = BBUF(POS)
+
       POS = POS + 1
+
    end
 
    read_buffered(value) ::: get_from(FILE, VALUE=>INT, BBUF=>.int_buffer, POS=>.int_buffer_pos, GET=>.get_int_buffer)
@@ -571,13 +725,19 @@ contains
    ! Reads the "value" from the buffer, and reads buffer from disk when empty.
    end
 
+
    write_buffered(value) ::: template
    ! Writes the "value" to the buffer, and writes buffer to disk when full.
       value :: VALUE, IN
-      ENSURE(BBUF.created,"buffer not created")
+
+   ENSURE(BBUF.created,"buffer not created")
+
       BBUF(POS) = value
+
       POS = POS + 1
+
       if (POS>FILE_BUFFER_LENGTH) FLUSH
+
    end
 
    write_buffered(value) ::: get_from(FILE, VALUE=>INT, BBUF=>.int_buffer, POS=>.int_buffer_pos, FLUSH=>.flush_int_buffer)
@@ -592,23 +752,35 @@ contains
    ! Writes the "value" to the buffer, and writes buffer to disk when full.
    end
 
+
    read_buffered(values) ::: template
    ! Reads the "values" from the buffer, and reads buffer from disk when empty.
       values :: VALUES, OUT
-      ENSURE(BBUF.created,"buffer not created")
+
+   ENSURE(BBUF.created,"buffer not created")
+
       length,pos,buffer_top,values_top,get_length :: INT
-      length = size(values)
+
+      length = values.dim
       pos = 1
+
       do
-       if (POS>FILE_BUFFER_LENGTH) GET
-       get_length = min(FILE_BUFFER_LENGTH - POS + 1,length - pos + 1)
-       buffer_top = POS + get_length - 1
-       values_top = pos + get_length - 1
-       values(pos:values_top) = BBUF(POS :buffer_top)
-       POS = buffer_top + 1
-       pos = values_top + 1
-       if (pos>length) exit
+
+         if (POS>FILE_BUFFER_LENGTH) GET
+
+         get_length = min(FILE_BUFFER_LENGTH - POS + 1,length - pos + 1)
+         buffer_top = POS + get_length - 1
+         values_top = pos + get_length - 1
+
+         values(pos:values_top) = BBUF(POS :buffer_top)
+
+         POS = buffer_top + 1
+         pos = values_top + 1
+
+         if (pos>length) exit
+
       end
+
    end
 
    read_buffered(values) ::: get_from(FILE, VALUES=>VEC{INT}, BBUF=>.int_buffer, POS=>.int_buffer_pos, GET=>.get_int_buffer)
@@ -623,23 +795,34 @@ contains
    ! Reads the "values" from the buffer, and reads buffer from disk when empty.
    end
 
+
    write_buffered(values) ::: template
    ! Writes the "values" to the buffer, and writes buffer to disk when full.
       values :: VALUES, IN
-      ENSURE(BBUF.created,"buffer not created")
+
+   ENSURE(BBUF.created,"buffer not created")
+
       length,pos,buffer_top,values_top,put_length :: INT
-      length = size(values)
+
+      length = values.dim
       pos = 1
+
       do
-       put_length = min(FILE_BUFFER_LENGTH - POS + 1,length - pos + 1)
-       buffer_top = POS + put_length - 1
-       values_top = pos + put_length - 1
-       BBUF(POS: buffer_top) = values(pos:values_top)
-       POS = buffer_top + 1
-       pos = values_top + 1
-       if (POS>FILE_BUFFER_LENGTH) FLUSH
-       if (pos>length) exit
+
+         put_length = min(FILE_BUFFER_LENGTH - POS + 1,length - pos + 1)
+         buffer_top = POS + put_length - 1
+         values_top = pos + put_length - 1
+
+         BBUF(POS: buffer_top) = values(pos:values_top)
+
+         POS = buffer_top + 1
+         pos = values_top + 1
+
+         if (POS>FILE_BUFFER_LENGTH) FLUSH
+         if (pos>length) exit
+
       end
+
    end
 
    write_buffered(values) ::: get_from(FILE, VALUES=>VEC{INT}, BBUF=>.int_buffer, POS=>.int_buffer_pos, FLUSH=>.flush_int_buffer)
@@ -658,7 +841,7 @@ contains
    write_buffered(values) ::: template
    ! Writes the multidimensional "values" to the buffer, writes buffer to disk when full.
       values :: VALUES, IN
-      .write_buffered(reshape(values,[size(values)]))
+      .write_buffered(reshape(values,[values.dim]))
    end
 
    write_buffered(values) ::: get_from(FILE, VALUES=>MAT{INT})
@@ -713,11 +896,16 @@ contains
    read_buffered(values) ::: template
    ! Reads the multidimensional "values" from the buffer.
       values :: ARR{VALUE}, OUT
+
       tmp :: VEC{VALUE}*
+
       tmp.create(values.dim)
+
       .read_buffered(tmp)
       values = reshape(tmp,shape(values))
+
       tmp.destroy
+
    end
 
    read_buffered(values) ::: get_from(FILE, ARR{VALUE}=>MAT{INT})
@@ -768,91 +956,126 @@ contains
    ! Reads the multidimensional "values" from the buffer.
    end
 
+
    flush_real_buffer
    ! Writes the real_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.real_buffer.created, "buffer not created")
+
+   ENSURE(.real_buffer.created, "buffer not created")
+
       .real_buffer(.real_buffer_pos:) = ZERO
+
       if (IO_IS_ALLOWED)  write(unit=.unit,iostat=.io_status) .real_buffer
-      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"write error, #"// trim(.io_status.to_str))
+
       .record = .record + 1
       .real_buffer_pos = 1
+
    end
 
    flush_int_buffer
    ! Writes the int_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.int_buffer.created, "buffer not created")
+
+   ENSURE(.int_buffer.created, "buffer not created")
+
       .int_buffer(.int_buffer_pos:) = 0
+
       if (IO_IS_ALLOWED)  write(unit=.unit,iostat=.io_status) .int_buffer
-      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"write error, #"// trim(.io_status.to_str))
+
       .record = .record + 1
       .int_buffer_pos = 1
+
    end
 
    flush_cpx_buffer
    ! Writes the cpx_buffer to disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.cpx_buffer.created, "buffer not created")
+
+   ENSURE(.cpx_buffer.created, "buffer not created")
+
       .cpx_buffer(.cpx_buffer_pos:) = (ZERO,ZERO)
+
       if (IO_IS_ALLOWED) write(unit=.unit,iostat=.io_status) .cpx_buffer
-      ENSURE(.io_status==0,"write error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"write error, #"// trim(.io_status.to_str))
+
       .record = .record + 1
       .cpx_buffer_pos = 1
+
    end
+
 
    get_real_buffer
    ! Reads the real_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.real_buffer.created, "buffer not created")
+
+   ENSURE(.real_buffer.created, "buffer not created")
+
       if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status) .real_buffer
-      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       PARALLEL_BROADCAST(.real_buffer,0)
+
       .record = .record + 1
       .real_buffer_pos = 1
+
    end
 
    get_int_buffer
    ! Reads the int_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.int_buffer.created, "buffer not created")
+
+   ENSURE(.int_buffer.created, "buffer not created")
+
       if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status) .int_buffer
-      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       PARALLEL_BROADCAST(.int_buffer,0)
+
       .record = .record + 1
       .int_buffer_pos = 1
+
    end
 
    get_cpx_buffer
    ! Reads the cpx_buffer from disk, and positions the pointer at the start of
    ! the buffer.
-      ENSURE(.cpx_buffer.created, "buffer not created")
+
+   ENSURE(.cpx_buffer.created, "buffer not created")
+
       if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status) .cpx_buffer
-      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
+      ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       PARALLEL_BROADCAST(.cpx_buffer,0)
+
       .record = .record + 1
       .cpx_buffer_pos = 1
+
    end
 
-   write_buffered(matvec)
+
+   write_buffered(v)
    ! Writes the mat to the buffer, and writes buffer to disk when full.
-     matvec :: VEC{MAT_{REAL}}, IN
-     b,bsize :: INT
-     bsize=size(matvec)
-     do b=1,bsize
-       .write_buffered(matvec(b).element)
-     end
+      v :: VEC{MAT_{REAL}}, IN
+
+      b :: INT
+
+      do b = 1,v.dim
+         .write_buffered(v(b).element)
+      end
+
    end
 
-   read_buffered(matvec)
+   read_buffered(v)
    ! Reads the mat from the buffer.
-     matvec :: VEC{MAT_{REAL}}
-     b,bsize :: INT
-     bsize=size(matvec)
-     do b=1,bsize
-       .read_buffered(matvec(b).element)
-     end
+      v :: VEC{MAT_{REAL}}
+
+      b :: INT
+
+      do b = 1,v.dim
+         .read_buffered(v(b).element)
+      end
+
    end
+
 
 !  ==================================
 !  File repositioning type operations
@@ -860,39 +1083,43 @@ contains
 
    rewind
    ! Rewind the file
-      if (IO_IS_ALLOWED) then
-        rewind(unit=.unit,iostat=.io_status)
-      end
-      ENSURE(.io_status==0,"rewind error, error="// trim(.io_status.to_str))
+
+      if (IO_IS_ALLOWED) rewind(unit=.unit,iostat=.io_status)
+      ENSURE(.io_status==0,"rewind error, #"// trim(.io_status.to_str))
       .record = 1
+
    end
 
    backspace
    ! Backspace the file one record of the file. Backspacing before record 1 has
    ! no effect.
-      if (IO_IS_ALLOWED) then
-        backspace(unit=.unit,iostat=.io_status)
-      end
-      ENSURE(.io_status==0,"backspace error, error="// trim(.io_status.to_str))
+
+      if (IO_IS_ALLOWED) backspace(unit=.unit,iostat=.io_status)
+      ENSURE(.io_status==0,"backspace error, #"// trim(.io_status.to_str))
       .record = max(1,.record-1)
+
    end
 
    skip
    ! Skip over the next record of the file. An error is generated if at the end
    ! of the file
-      if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status)
-      ENSURE(.io_status==0,"read error, error="// trim(.io_status.to_str))
+
+      if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status)
+      ENSURE(.io_status==0,"read error, #"// trim(.io_status.to_str))
       .record = .record + 1
+
    end
 
    move_to_end
    ! Move to the end of the file, say for adding more data
+
       do
-        if (IO_IS_ALLOWED)  read(unit=.unit,iostat=.io_status)
-        PARALLEL_BROADCAST(.io_status,0)
-        if (.io_status/=0) exit
-        .record = .record + 1
+         if (IO_IS_ALLOWED) read(unit=.unit,iostat=.io_status)
+         PARALLEL_BROADCAST(.io_status,0)
+         if (.io_status/=0) exit
+         .record = .record + 1
       end
+
    end
 
    move_to_position(pos)
@@ -904,19 +1131,27 @@ contains
    move_to_record(rec)
    ! Move to a particular record position in the file
       rec :: INT
+
    ENSURE(rec>=1,"can't move to non-positive record")
+
       if (rec<.position) then
+
          do
             .backspace
             if (.position==rec) exit
          end
+
       else if (rec>.position) then
+
          do
             .skip
             if (.position==rec) exit
          end
+
       end
+
    end
+
 
 !  ===============
 !  Inquiry methods
@@ -950,18 +1185,6 @@ contains
       PARALLEL_BROADCAST(res,0)
    end
 
-   created result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has been created
-      self :: PTR
-      res :: BIN
-   end
-
-   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
-   ! Returns true if self has *not* been created
-      self :: PTR
-      res :: BIN
-   end
-
    position result (res)
    ! Return record position of the file
       res :: INT
@@ -971,24 +1194,16 @@ contains
    is_for_reading result (res)
    ! Return whether the file is opened for reading.
       res :: BIN
+
       reading :: STR(5)
-      if (IO_IS_ALLOWED)  inquire(unit=.unit,read=reading)
+
+      if (IO_IS_ALLOWED) inquire(unit=.unit,read=reading)
       PARALLEL_BROADCAST(reading,0)
+
       if (reading=="YES") then; res = TRUE
       else;                     res = FALSE
       end
+
    end
-
-!   is_real_buffered result (res)
-!   ! Returns true if the file is using real buffering
-!      res :: BIN
-!      res = associated(.real_buffer)
-!   end
-
-!   is_int_buffered result (res)
-!   ! Returns true if the file is using INT buffering
-!      res :: BIN
-!      res = associated(.int_buffer)
-!   end
 
 end
