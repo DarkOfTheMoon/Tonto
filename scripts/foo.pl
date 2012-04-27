@@ -5978,13 +5978,23 @@ sub analyse_rout_name {
         /^recursive/        && do { $routine{$name}{recursive}=1;        next}; # recursive
         /^get_from/         && do { /[(]\s*([^ ]*)/; # remove first brackets
                                     $routine{$name}{inherited}=1;               # inherited routine
-                                    my $parent_module=$1;                       # where inherited from
-                                    if ($parent_module=~/([^ ]*):([^ ,]*)/) {
-                                       $routine{$name}{parent_module} =$1;      # where inherited from
+                                    my $loc=$1;                                 # where inherited from
+                                    if ($loc=~/([^ ]*):([^ ,]*)/) {             # MOD:xxxx
+                                       if ($1 ne '' ) {
+                                       $routine{$name}{parent_module} =$1;      # module name
+                                       } else {
+                                       $routine{$name}{parent_module} =$module_full_name;
+                                       }
                                        $routine{$name}{parent_routine}=$2;      # new routine name
-                                    } else {
-                                       $routine{$name}{parent_module}=$parent_module;   
-                                       $routine{parent_routine}=undef;          # no new routine name
+                                    } elsif ($loc=~/([A-Z][\w{,}.]*[\w}])/) {        # MOD
+                                       $routine{$name}{parent_module} =$1;      # full mod name
+                                       $routine{parent_routine} =undef;         # no routine name
+                                    } elsif ($loc=~/([^ ,]+)/) {                # xxxx
+                                       $routine{$name}{parent_module} =$module_full_name;
+                                       $routine{$name}{parent_routine}=$1;      # new routine name
+                                    } else {                                    # ( ,
+                                       $routine{$name}{parent_module} =$module_full_name;
+                                       $routine{parent_routine} =undef;         # no routine name
                                     }
                                     $inherit_string = "";                       # the inherit match string
 #print "---inherit---";
