@@ -18,6 +18,8 @@
 
 use File::Basename;
 
+my $module_name; # the name of the current module
+
 #*******************************************************************************
 # Argument parsing.
 
@@ -143,11 +145,25 @@ sub get_deps {
   open(FILE, $_[0]) or die "Cannot find file $_[0]\n";
 
 print STDERR @gets;
+
   while (<FILE>) {
-    if (m'get_from'io) {
-      /(?:.+):::(?:.+)get_from\(\s*([^ ):]+)\s*[),]/io && do { $x=$1; push(@gets, lc($x))};
+
+    if (/^module\s+([A-Z][\w{,}.]*[\w}])/) {
+       $module_name = lc($1);
     }
+
+    if (/get_from/) {
+      if (/(?:.+):::(?:.+)get_from\(\s*([A-Z][\w{,}.]*[\w}])\s*[:,)]/) {
+         $x = $1; 
+         push(@gets, lc($x));
+      } elsif (/(?:.+):::(?:.+)get_from\(/) { 
+         push(@gets, $module_name);
+      }
+    }
+
   }
+
   close(FILE);
+
 }
 
