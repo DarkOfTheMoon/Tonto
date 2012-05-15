@@ -326,6 +326,7 @@ push(@all_known_type_names,$array_type);
 
 ## -----------------------------------------------------------------------------
 ## Define Tonto global variable symbol table hashes
+## THIS IS A HACK!
 ## -----------------------------------------------------------------------------
 
 %{$global_var_info{tonto}}    = &analyse_type_name('SYSTEM');
@@ -334,6 +335,19 @@ push(@all_known_type_names,$array_type);
 %{$global_var_info{stderr}}   = &analyse_type_name('TEXTFILE');
 %{$global_var_info{std_time}} = &analyse_type_name('TIME');
 %{$global_var_info{tonto_parallel}} = &analyse_type_name('PARALLEL');
+
+# %{$global_var_info{px}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{py}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{pz}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{pp}} = &analyse_type_name('MAT{INT}*');
+# %{$global_var_info{nx}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{ny}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{nz}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{nn}} = &analyse_type_name('MAT{INT}*');
+# %{$global_var_info{first_nonzero}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{index_of}} = &analyse_type_name('MAT3{INT}*');
+# %{$global_var_info{index_m1}} = &analyse_type_name('VEC{INT}*');
+# %{$global_var_info{index_p1}} = &analyse_type_name('MAT{INT}*');
 
 %local_var_info = %global_var_info;
 
@@ -515,8 +529,15 @@ sub analyse_command_arguments {
            goto ERROR;
    }
    
+   # Get volume, foofiles directory and file name
    my $file;
    ($foofile_volume,$foofile_directory,$file) = File::Spec->splitpath($foofile);
+
+   # Make sure foofiles directory really is, and not run_files
+   if ($foofile_directory !~ 'foofiles') {
+      my ($vol,$fil);
+      $foofile_directory = File::Spec->catpath($foofile_volume,$foofile_directory,"../foofiles"); 
+   }
    
    if ($do_fortran) {
       my($fortran_directory,$file);
