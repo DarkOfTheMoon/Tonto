@@ -315,23 +315,6 @@ module ATOM
     ( -2.0847,  8.3112), ( -2.4129,  8.6839), ( -2.8081,  9.0614), ( -3.2784,  9.4502), ( -3.8533,  9.8403),  &
     ( -4.6067, 10.2413), ( -5.7225, 10.6428)/
 
-   ! The X-ray position/ADP parameter order
-   x_ray_parameter_order :: VEC{STR}(34)
-
-   data x_ray_parameter_order/    &
-      "     x","     y","     z", &
-      "   Uxx","   Uyy","   Uzz", &
-      "   Uxy","   Uxz","   Uyz", &
-      "  Uxxx","  Uyyy","  Uzzz", &
-      "  Uxxy","  Uxxz","  Uyyx", &
-      "  Uyyz","  Uzzx","  Uzzy", &
-      "  Uxyz",                   &
-      " Uxxxx"," Uyyyy"," Uzzzz", &
-      " Uxxxy"," Uxxxz"," Uyyyx", &
-      " Uyyyz"," Uzzzx"," Uzzzy", &
-      " Uxxyy"," Uxxzz"," Uyyzz", &
-      " Uxxyz"," Uyyxz"," Uzzxy"  /
-
    saved_self :: ATOM*, private  DEFAULT_NULL
 
    debug_list :: VEC{STR}*, private  DEFAULT_NULL
@@ -372,6 +355,9 @@ contains
       nullify(.basis)          
       nullify(.slaterbasis)
       nullify(.coppensbasis)
+
+      nullify(.pADP_vector)
+      nullify(.pADP_errors)
 
       nullify(.atomic_orbitals)
       nullify(.density_matrix)
@@ -429,11 +415,9 @@ contains
 
       end
 
-      ! Do destroy these
-      .ADP3_tensor.destroy
-      .ADP3_error.destroy
-      .ADP4_tensor.destroy
-      .ADP4_error.destroy
+      ! Do always destroy these
+      .pADP_vector.destroy
+      .pADP_errors.destroy
 
    end
 
@@ -546,6 +530,10 @@ contains
       self = atom
 
       .nullify_ptr_part
+
+      ! Copy the pADP data
+      if (atom.pADP_vector.created)     .pADP_vector.create_copy(atom.pADP_vector)
+      if (atom.pADP_errors.created)     .pADP_errors.create_copy(atom.pADP_errors)
 
       ! Re-assign bases
       if (atom.basis.created)           .basis        => atom.basis
@@ -729,7 +717,6 @@ contains
 
       .U_iso = ZERO
       .ADP_tensor = ZERO
-      .ADP_error = ZERO
       .ADP_axis_system = "cartesian"
 
       ! Charges
@@ -781,6 +768,10 @@ contains
       .restraining_force_constant = ZERO
 
    end
+
+!  ============================
+!  Set labels, dummies, charges
+!  ============================
 
    set_label(label)
    ! Set the atom "label" and related variables
@@ -884,14 +875,24 @@ contains
    ! Generic set
    end
 
-!  position setting
+!  =============
+!  Set positions
+!  =============
 
-   set_position(val) ::: get_from(OBJECT:set, TYPE=>VEC{REAL}(3), VAL=>.position)
-   ! Generic set
+   set_position(val) ::: pure
+   ! Set positions. Also set the pADP_vector *only* if created.
+      self :: INOUT
+      val :: VEC{REAL}(3), IN
+      .position = val
+      if (.pADP_vector.created) .pADP_vector(1:3) = val
    end
 
-   set_position_error(val) ::: get_from(OBJECT:set, TYPE=>VEC{REAL}(3), VAL=>.position_error)
-   ! Generic set
+   set_position_error(val) ::: pure
+   ! Set position error. Also set the pADP_error *only* if created.
+      self :: INOUT
+      val :: VEC{REAL}(3), IN
+      .position_error = val
+      if (.pADP_errors.created) .pADP_errors(1:3) = val
    end
 
    set_axis_system(word)
@@ -911,23 +912,52 @@ contains
 
    end
 
-!  ADP setting
+!  ========
+!  Set ADPs
+!  ========
 
    set_U_iso(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.U_iso)
    ! Generic set
    end
 
-   set_ADP_tensor(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.ADP_tensor)
-   ! Generic set
+   set_ADP_tensor(val) ::: pure
+   ! Set the ADP tensor.  Also set the pADP_vector *only* if created.
+      self :: INOUT
+      val :: REAL, IN
+
+      .ADP_tensor = val
+
+      if (.pADP_vector.created) .pADP_vector(4:) = val
+
    end
 
-   set_ADP_tensor(val) ::: get_from(OBJECT:set, TYPE=>MAT{REAL}(3,3), VAL=>.ADP_tensor)
-   ! Generic set
+   set_ADP_tensor(val) ::: pure
+   ! Set the ADP tensor.  Also set the pADP_vector if created.
+      self :: INOUT
+      val :: MAT{REAL}(3,3), IN
+
+      ! Set tensor
+      .ADP_tensor = val
+
+      ! Set *only* the ADP part of pADP 
+      if (.pADP_vector.created) then
+         .pADP_vector(4) = val(1,1)
+         .pADP_vector(5) = val(2,2)
+         .pADP_vector(6) = val(3,3)
+         .pADP_vector(7) = val(1,2)
+         .pADP_vector(8) = val(1,3)
+         .pADP_vector(9) = val(2,3)
+      end
+
    end
 
-   set_ADP_tensor(val)
-   ! Set from vector in the order xx, yy, zz, xy, xz, yz
-      val :: VEC{REAL}(6)
+   set_ADP_tensor(val) ::: pure
+   ! Set from vector in the order xx, yy, zz, xy, xz, yz.
+   ! Also set the pADP_vector if created.
+      self :: INOUT
+      val :: VEC{REAL}, IN
+
+      ! Set symmetric tensor
       .ADP_tensor(1,1) = val(1)
       .ADP_tensor(2,2) = val(2)
       .ADP_tensor(3,3) = val(3)
@@ -937,14 +967,10 @@ contains
       .ADP_tensor(3,1) = val(5)
       .ADP_tensor(2,3) = val(6)
       .ADP_tensor(3,2) = val(6)
-   end
 
-   set_ADP_error(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.ADP_error)
-   ! Generic set
-   end
+      ! Set *all* ADP parameters
+      if (.pADP_vector.created) .pADP_vector = val
 
-   set_ADP_error(val) ::: get_from(OBJECT:set, TYPE=>VEC{REAL}(6), VAL=>.ADP_error)
-   ! Generic set
    end
 
    set_ADP_axis_system(word)
@@ -963,146 +989,522 @@ contains
 
    end
 
-!  position/ADP setting
+!  =======================================
+!  Parameter vector (position/ADP) setting
+!  =======================================
 
-   set_position_and_ADPs_to(par) ::: pure
-   ! Set the position and ADPs from a refinement vector "par" of length
-   ! 9 comprising positions in the first 3 slots, and ADPs (Uxx, Uyy,
-   ! Uzz, Uxy, Uxz, Uyz) in the next 6 slots. 
+   reset_pADPs(dim) ::: leaky
+   ! Reset the positional-ADP parameters to size "dim".
+   ! Do not shrink the pADPs, just expand.
       self :: INOUT
-      par :: VEC{REAL}(.no_of_position_ADP_parameters), IN
+      dim  :: INT, IN
 
-      .position(1)     = par(1)
-      .position(2)     = par(2)
-      .position(3)     = par(3)
+      n :: INT
 
-      .ADP_tensor(1,1) = par(4)
-      .ADP_tensor(2,2) = par(5)
-      .ADP_tensor(3,3) = par(6)
-      .ADP_tensor(1,2) = par(7)
-      .ADP_tensor(2,1) = par(7)
-      .ADP_tensor(1,3) = par(8)
-      .ADP_tensor(3,1) = par(8)
-      .ADP_tensor(2,3) = par(9)
-      .ADP_tensor(3,2) = par(9)
-
-      if (.has_ADP3_tensor) then
-      .ADP3_tensor(1,1,1) = par(10)
-      .ADP3_tensor(2,1,1) = par(13)
-      .ADP3_tensor(2,2,1) = par(15)
-      .ADP3_tensor(2,2,2) = par(11)
-      .ADP3_tensor(3,1,1) = par(14)
-      .ADP3_tensor(3,2,1) = par(19)
-      .ADP3_tensor(3,2,2) = par(16)
-      .ADP3_tensor(3,3,3) = par(12)
-      .ADP3_tensor(3,3,1) = par(17)
-      .ADP3_tensor(3,3,2) = par(18)
-      .ADP3_tensor.make_symmetric
+      if (NOT .has_pADPs) then
+         ! Set pADP vector
+         n = dim
+         .pADP_vector.create(n)
+         .pADP_errors.create(n)
+         .put_pADPs_to(.pADP_vector)
+         .pADP_errors = ZERO
+      else
+         ! Resize, do not shrink. New values to zero.
+         n = max(dim,.pADP_vector.dim)
+         .pADP_vector.resize(n,init=ZERO)
+         .pADP_errors.resize(n,init=ZERO)
       end
 
-      if (.has_ADP4_tensor) then
-      .ADP4_tensor(1,1,1,1) = par(20)
-      .ADP4_tensor(2,1,1,1) = par(23)
-      .ADP4_tensor(2,2,1,1) = par(29)
-      .ADP4_tensor(2,2,2,1) = par(25)
-      .ADP4_tensor(2,2,2,2) = par(21)
-      .ADP4_tensor(3,1,1,1) = par(24)
-      .ADP4_tensor(3,2,1,1) = par(32)
-      .ADP4_tensor(3,2,2,1) = par(33)
-      .ADP4_tensor(3,2,2,2) = par(26)
-      .ADP4_tensor(3,3,1,1) = par(30)
-      .ADP4_tensor(3,3,2,1) = par(34)
-      .ADP4_tensor(3,3,2,2) = par(31)
-      .ADP4_tensor(3,3,3,1) = par(27)
-      .ADP4_tensor(3,3,3,2) = par(28)
-      .ADP4_tensor(3,3,3,3) = par(22)
-      .ADP4_tensor.make_symmetric
-      end
 
    end
 
-   put_position_and_ADPs_to(par) ::: pure
-   ! Get the position and ADPs into a refinement vector "par" of length
-   ! 9 comprising positions in the first 3 slots, and ADPs (Uxx, Uyy,
-   ! Uzz, Uxy, Uxz, Uyz) in the next 6 slots. 
-      self :: IN
-      par :: VEC{REAL}(.no_of_position_ADP_parameters), OUT
-
-      par( 1) = .position(1)
-      par( 2) = .position(2)
-      par( 3) = .position(3)
-
-      par( 4) = .ADP_tensor(1,1)
-      par( 5) = .ADP_tensor(2,2)
-      par( 6) = .ADP_tensor(3,3)
-      par( 7) = .ADP_tensor(1,2)
-      par( 8) = .ADP_tensor(1,3)
-      par( 9) = .ADP_tensor(2,3)
-
-      par(10:34) = ZERO
-
-      if (.has_ADP3_tensor) then
-      par(10) = .ADP3_tensor(1,1,1)
-      par(11) = .ADP3_tensor(2,2,2)
-      par(12) = .ADP3_tensor(3,3,3)
-      par(13) = .ADP3_tensor(1,1,2)
-      par(14) = .ADP3_tensor(1,1,3)
-      par(15) = .ADP3_tensor(2,2,1)
-      par(16) = .ADP3_tensor(2,2,3)
-      par(17) = .ADP3_tensor(3,3,1)
-      par(18) = .ADP3_tensor(3,3,2)
-      par(19) = .ADP3_tensor(1,2,3)
-      end
-
-      if (.has_ADP4_tensor) then
-      par(20) = .ADP4_tensor(1,1,1,1)
-      par(21) = .ADP4_tensor(2,2,2,2)
-      par(22) = .ADP4_tensor(3,3,3,3)
-      par(23) = .ADP4_tensor(1,1,1,2)
-      par(24) = .ADP4_tensor(1,1,1,3)
-      par(25) = .ADP4_tensor(2,2,2,1)
-      par(26) = .ADP4_tensor(2,2,2,3)
-      par(27) = .ADP4_tensor(3,3,3,1)
-      par(28) = .ADP4_tensor(3,3,3,2)
-      par(29) = .ADP4_tensor(1,1,2,2)
-      par(30) = .ADP4_tensor(1,1,3,3)
-      par(31) = .ADP4_tensor(2,2,3,3)
-      par(32) = .ADP4_tensor(1,1,2,3)
-      par(33) = .ADP4_tensor(2,2,1,3)
-      par(34) = .ADP4_tensor(3,3,1,2)
-      end
-
-   end
-
-   set_position_and_ADP_errors_to(err) ::: pure
-   ! Set the position and ADP errors from a vector "err" of length 9
-   ! comprising position errors in the first 3 slots, and ADP errors
-   ! Uxx, Uyy, Uzz, Uxy, Uxz, Uyz in the next 6 slots. 
+   set_pADPs_to(X) ::: leaky
+   ! Set the parameters (positions and ADPs) from "X".
+   ! NOTE: "X" must be correct size.
       self :: INOUT
-      err :: VEC{REAL}(.no_of_position_ADP_parameters), IN
+      X :: VEC{REAL}, IN
 
-      .position_error = err(1:3)
+   DIE_IF(X.dim<9,"X too small")
 
-      .ADP_error = err(4:9)
-      if (.has_ADP3_tensor) .ADP3_error = err(10:19)
-      if (.has_ADP4_tensor) .ADP4_error = err(20:34)
+      n :: INT
+
+      ! Set positions
+      .position(1) = X(1)
+      .position(2) = X(2)
+      .position(3) = X(3)
+
+      ! Set ADP tensor
+      .ADP_tensor(1,1) = X(4)
+      .ADP_tensor(2,2) = X(5)
+      .ADP_tensor(3,3) = X(6)
+      .ADP_tensor(1,2) = X(7)
+      .ADP_tensor(2,1) = X(7)
+      .ADP_tensor(1,3) = X(8)
+      .ADP_tensor(3,1) = X(8)
+      .ADP_tensor(2,3) = X(9)
+      .ADP_tensor(3,2) = X(9)
+
+      ! Set param vector ... and anharmonic parts
+      if (NOT .has_pADPs) then
+         n = X.dim
+         .pADP_vector.create(n)
+         .pADP_errors.create(n)
+         .pADP_vector = X
+         .pADP_errors = ZERO
+      end
 
    end
 
-   put_position_and_ADP_errors_to(err) ::: pure
-   ! Get the position and ADP errors in a vector "err" of length 9
-   ! comprising position errors in the first 3 slots, and ADP errors
-   ! (Uxx, Uyy, Uzz, Uxy, Uxz, Uyz) in the next 6 slots. 
+   set_pADP_errors_to(dX) 
+   ! Set the parameter errors (positions and ADPs) to "dX".
+   ! NOTE: "dX" must be correct size.
+      self :: INOUT
+      dX :: VEC{REAL}, IN
+
+   DIE_IF(.pADP_errors.destroyed,"no pADP_errors")
+   DIE_IF(.pADP_errors.dim/=dX.dim,"wrong size, dX")
+
+      .pADP_errors = dX
+
+   end
+
+   put_pADPs_to(X,fac)
+   ! Put the parameters (positions and ADPs) vector into "X".
+   ! If present, include length-conversion factor "fac".
       self :: IN
-      err :: VEC{REAL}(.no_of_position_ADP_parameters), OUT
+      X :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
 
-      err(1:3) = .position_error
+   DIE_IF(X.dim<9,"X too small")
 
-      err(4:9) = .ADP_error
-      if (.has_ADP3_tensor) err(10:19) = .ADP3_error
-      if (.has_ADP4_tensor) err(20:34) = .ADP4_error
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+
+         ! Set position
+         X(1)     =      .position(1)
+         X(2)     =      .position(2)
+         X(3)     =      .position(3)
+
+         ! Set ADP_tensor
+         X(4)     =      .ADP_tensor(1,1)
+         X(5)     =      .ADP_tensor(2,2)
+         X(6)     =      .ADP_tensor(3,3)
+         X(7)     =      .ADP_tensor(1,2)
+         X(8)     =      .ADP_tensor(1,3)
+         X(9)     =      .ADP_tensor(2,3)
+
+         ! Set remaining ADPs
+         if (.has_pADP3s) then
+         X(10:19) =      .pADP_vector(10:19)
+         end
+
+         if (.has_pADP4s) then
+         X(20:34) =      .pADP_vector(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2     = fac *fac
+         fac3     = fac *fac2
+         fac4     = fac *fac3
+
+         ! Set position
+         X(1)     = fac *.position(1)
+         X(2)     = fac *.position(2)
+         X(3)     = fac *.position(3)
+
+         ! Set ADP_tensor
+         X(4)     = fac2*.ADP_tensor(1,1)
+         X(5)     = fac2*.ADP_tensor(2,2)
+         X(6)     = fac2*.ADP_tensor(3,3)
+         X(7)     = fac2*.ADP_tensor(1,2)
+         X(8)     = fac2*.ADP_tensor(1,3)
+         X(9)     = fac2*.ADP_tensor(2,3)
+
+         ! Set remaining ADPs
+         if (.has_pADP3s) then
+         X(10:19) = fac3*.pADP_vector(10:19)
+         end
+
+         if (.has_pADP4s) then
+         X(20:34) = fac4*.pADP_vector(20:34)
+         end
+
+      end
 
    end
+
+   put_pADPs_to(X,dX,fac)
+   ! Put the parameter vector (positions and ADPs) and its errors into
+   ! into "X" and "dX" respectively. If present, include length
+   ! conversion factor "fac".
+      self :: IN
+      X,dX :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
+
+   DIE_IF( X.dim<9,"X too small")
+   DIE_IF(dX.dim<9,"dX too small")
+   DIE_IF( X.dim/=dX.dim,"incompatbile: X and dX")
+
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+
+         ! Set position
+         X(1)      =      .position(1)
+         X(2)      =      .position(2)
+         X(3)      =      .position(3)
+
+         ! Set position error
+         if (.has_pADPs) then
+         dX( 1: 3) =      .pADP_errors( 1: 3)
+         end
+
+         ! Set ADP_tensor
+         X(4)      =      .ADP_tensor(1,1)
+         X(5)      =      .ADP_tensor(2,2)
+         X(6)      =      .ADP_tensor(3,3)
+         X(7)      =      .ADP_tensor(1,2)
+         X(8)      =      .ADP_tensor(1,3)
+         X(9)      =      .ADP_tensor(2,3)
+
+         ! Set ADP_tensor error
+         if (.has_pADPs) then
+         dX( 4: 9) =      .pADP_errors( 4: 9)
+         end
+
+         ! Set remaining ADPs & errors
+         if (.has_pADP3s) then
+          X(10:19) =      .pADP_vector(10:19)
+         dX(10:19) =      .pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+          X(20:34) =      .pADP_vector(20:34)
+         dX(20:34) =      .pADP_errors(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2      = fac *fac
+         fac3      = fac *fac2
+         fac4      = fac *fac3
+
+         ! Set position
+         X(1)      = fac *.position(1)
+         X(2)      = fac *.position(2)
+         X(3)      = fac *.position(3)
+
+         ! Set position error
+         if (.has_pADPs) then
+         dX( 1: 3) = fac *.pADP_errors( 1: 3)
+         end
+
+         ! Set ADP_tensor
+         X(4)      = fac2*.ADP_tensor(1,1)
+         X(5)      = fac2*.ADP_tensor(2,2)
+         X(6)      = fac2*.ADP_tensor(3,3)
+         X(7)      = fac2*.ADP_tensor(1,2)
+         X(8)      = fac2*.ADP_tensor(1,3)
+         X(9)      = fac2*.ADP_tensor(2,3)
+
+         ! Set ADP_tensor error
+         if (.has_pADPs) then
+         dX( 4: 9) = fac2*.pADP_errors( 4: 9)
+         end
+
+         ! Set remaining ADPs & errors
+         if (.has_pADP3s) then
+          X(10:19) = fac3*.pADP_vector(10:19)
+         dX(10:19) = fac3*.pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+          X(20:34) = fac4*.pADP_vector(20:34)
+         dX(20:34) = fac4*.pADP_errors(20:34)
+         end
+
+      end
+
+   end
+
+   put_pADP_errors_to(dX,fac)
+   ! Put the parameter errors (position and ADP errors) into "dX".
+   ! If present, include length conversion factor "fac".
+      self :: IN
+      dX :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
+
+   DIE_IF(.pADP_errors.destroyed,"no pADP_errors")
+   DIE_IF(.pADP_errors.dim/=dX.dim,"wrong size, dX")
+   DIE_IF(dX.dim<9,"dX too small")
+
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+      
+         ! Copy all errors
+         dX( 1: 3) =      .pADP_errors( 1: 3)
+
+         dX( 4: 9) =      .pADP_errors( 4: 9)
+
+         if (.has_pADP3s) then
+         dX(10:19) =      .pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+         dX(20:34) =      .pADP_errors(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2      = fac *fac
+         fac3      = fac *fac2
+         fac4      = fac *fac3
+
+         ! Copy all errors
+         dX( 1: 3) = fac *.pADP_errors( 1: 3)
+
+         dX( 4: 9) = fac2*.pADP_errors( 4: 9)
+
+         if (.has_pADP3s) then
+         dX(10:19) = fac3*.pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+         dX(20:34) = fac4*.pADP_errors(20:34)
+         end
+
+      end
+
+   end
+
+   put_pADP_labels_to(lab)
+   ! Set positional-ADP labels for parameter with index "par_index"
+      lab :: VEC{STR}(.no_of_pADPs)
+
+      i,n :: INT
+
+      n = .no_of_pADPs
+
+      do i = 1,n
+         lab(i) = .pADP_label(i)
+      end
+
+   end
+
+   put_ADPs_to(U,fac)
+   ! Put the parameters (positions and ADPs) vector into "U".
+   ! If present, include length-conversion factor "fac".
+      self :: IN
+      U :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
+
+   DIE_IF(U.dim<6,"U too small")
+
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+
+         ! Set ADP tensor
+         U(1)     =      .ADP_tensor(1,1)
+         U(2)     =      .ADP_tensor(2,2)
+         U(3)     =      .ADP_tensor(3,3)
+         U(4)     =      .ADP_tensor(1,2)
+         U(5)     =      .ADP_tensor(1,3)
+         U(6)     =      .ADP_tensor(2,3)
+
+         ! Set remaining ADPs
+         if (.has_pADP3s) then
+         U( 7:16) =      .pADP_vector(10:19)
+         end
+
+         if (.has_pADP4s) then
+         U(17:31) =      .pADP_vector(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2     = fac *fac
+         fac3     = fac *fac2
+         fac4     = fac *fac3
+
+         ! Set ADP tensor
+         U(1)     = fac2*.ADP_tensor(1,1)
+         U(2)     = fac2*.ADP_tensor(2,2)
+         U(3)     = fac2*.ADP_tensor(3,3)
+         U(4)     = fac2*.ADP_tensor(1,2)
+         U(5)     = fac2*.ADP_tensor(1,3)
+         U(6)     = fac2*.ADP_tensor(2,3)
+
+         ! Set remaining ADPs
+         if (.has_pADP3s) then
+         U( 7:16) = fac3*.pADP_vector(10:19)
+         end
+
+         if (.has_pADP4s) then
+         U(17:31) = fac4*.pADP_vector(20:34)
+         end
+
+      end
+
+   end
+
+   put_ADPs_to(U,dU,fac)
+   ! Put the parameter vector (positions and ADPs) and its errors into
+   ! "U" and "dU" respectively. If present, include length conversion
+   ! factor "fac".
+      self :: IN
+      U,dU :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
+
+   DIE_IF(U.dim<6,"U too small")
+   DIE_IF(dU.dim<6,"dU too small")
+   DIE_IF(U.dim/=dU.dim,"incompatbile: par and err")
+
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+
+         ! Set ADP tensor
+         U(1)      =      .ADP_tensor(1,1)
+         U(2)      =      .ADP_tensor(2,2)
+         U(3)      =      .ADP_tensor(3,3)
+         U(4)      =      .ADP_tensor(1,2)
+         U(5)      =      .ADP_tensor(1,3)
+         U(6)      =      .ADP_tensor(2,3)
+
+         ! Set ADP tensor error
+         if (.has_pADPs) then
+         dU( 1: 6) =      .pADP_errors( 4: 9)
+         end
+
+         ! Copy remaining ADPs & errors
+         if (.has_pADP3s) then
+          U( 7:16) =      .pADP_vector(10:19)
+         dU( 7:16) =      .pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+          U(17:31) =      .pADP_vector(20:34)
+         dU(17:31) =      .pADP_errors(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2      = fac *fac
+         fac3      = fac *fac2
+         fac4      = fac *fac3
+
+         ! Set ADP tensor
+         U(1)      = fac2*.ADP_tensor(1,1)
+         U(2)      = fac2*.ADP_tensor(2,2)
+         U(3)      = fac2*.ADP_tensor(3,3)
+         U(4)      = fac2*.ADP_tensor(1,2)
+         U(5)      = fac2*.ADP_tensor(1,3)
+         U(6)      = fac2*.ADP_tensor(2,3)
+
+         ! Set ADP tensor errors
+         if (.has_pADPs) then
+         dU( 1: 6) = fac2*.pADP_errors( 4: 9)
+         end
+
+         ! Copy remaining ADPs & errors
+         if (.has_pADP3s) then
+          U( 7:16) = fac3*.pADP_vector(10:19)
+         dU( 7:16) = fac3*.pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+          U(17:31) = fac4*.pADP_vector(20:34)
+         dU(17:31) = fac4*.pADP_errors(20:34)
+         end
+
+      end
+
+   end
+
+   put_ADP_errors_to(dU,fac)
+   ! Put the ADP errors into "dU".
+   ! If present, include length conversion factor "fac".
+      self :: IN
+      dU :: VEC{REAL}, OUT
+      fac :: REAL, optional, IN
+
+   DIE_IF(.pADP_errors.destroyed,"no pADP_errors")
+   DIE_IF(.pADP_errors.dim-3/=dU.dim,"wrong size, dU")
+
+      fac2,fac3,fac4 :: REAL
+
+      ! In atomic units
+      if (NOT present(fac)) then
+
+         ! Copy all ADP errors
+         if (.has_pADPs) then
+         dU( 1: 6) =      .pADP_errors( 4: 9)
+         end
+
+         if (.has_pADP3s) then
+         dU( 7:16) =      .pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+         dU(17:31) =      .pADP_errors(20:34)
+         end
+
+      else ! Change length units
+
+         ! Length scales
+         fac2      = fac *fac
+         fac3      = fac *fac2
+         fac4      = fac *fac3
+
+         ! Copy all ADP errors
+         if (.has_pADPs) then
+         dU( 1: 6) = fac2*.pADP_errors( 4: 9)
+         end
+
+         if (.has_pADP3s) then
+         dU( 7:16) = fac3*.pADP_errors(10:19)
+         end
+
+         if (.has_pADP4s) then
+         dU(17:31) = fac4*.pADP_errors(20:34)
+         end
+
+      end
+
+
+   end
+
+   put_ADP_labels_to(lab)
+   ! Set the ADP labels for parameter with index "par_index"
+      lab :: VEC{STR}(.no_of_ADPs)
+
+      i,n :: INT
+
+      n = .no_of_ADPs
+
+      do i = 1,n
+         lab(i) = .ADP_label(i)
+      end
+
+   end
+
+!  ===============
+!  Set atom groups
+!  ===============
 
    set_isotropic_ADP
    ! Set the ADP to be isotropic.
@@ -1123,6 +1525,10 @@ contains
    ! Generic set
    end
 
+!  ==================
+!  Set site occupancy
+!  ==================
+
    set_site_occupancy(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.site_occupancy)
    ! Generic set
    end
@@ -1130,6 +1536,10 @@ contains
    set_site_disorder_group(val) ::: get_from(OBJECT:set, TYPE=>INT, VAL=>.site_disorder_group)
    ! Generic set
    end
+
+!  =====================
+!  Set atomic properties
+!  =====================
 
    set_charge(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.charge)
    ! Generic set
@@ -1163,55 +1573,7 @@ contains
    ! Generic set
    end
 
-   set_basis_kind(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.basis_kind)
-   ! Generic set
-   end
-
-   set_basis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.basis_label)
-   ! Generic set
-   end
-
-   set_slaterbasis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.slaterbasis_label)
-   ! Generic set
-   end
-
-   set_coppensbasis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.coppensbasis_label)
-   ! Generic set
-   end
-
-   set_kind(val) ::: get_from(OBJECT:set, TYPE=>INT, VAL=>.kind)
-   ! Generic set
-   end
-
-   set_is_unique_kind(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.is_unique_kind)
-   ! Generic set
-   end
-
    set_energy(val) ::: get_from(OBJECT:set, TYPE=>REAL, VAL=>.energy)
-   ! Generic set
-   end
-
-   set_ANO_data_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.ANO_data_made)
-   ! Generic set
-   end
-
-   set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.spherical_atom_data_made)
-   ! Generic set
-   end
-
-   set_use_interpolator(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.use_interpolator)
-   ! Generic set
-   end
-
-   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.ANO_interpolators_made)
-   ! Generic set
-   end
-
-   set_interpolators_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.interpolators_made)
-   ! Generic set
-   end
-
-   set_shell_info_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.shell_info_made)
    ! Generic set
    end
 
@@ -1235,6 +1597,70 @@ contains
 
       covalent_radii_ccdc(an) = new_radius*ANGSTROM_PER_BOHR
 
+   end
+
+!  ==============
+!  Set basis info
+!  ==============
+
+   set_basis_kind(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.basis_kind)
+   ! Generic set
+   end
+
+   set_basis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.basis_label)
+   ! Generic set
+   end
+
+   set_slaterbasis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.slaterbasis_label)
+   ! Generic set
+   end
+
+   set_coppensbasis_label(val) ::: get_from(OBJECT:set, TYPE=>STR, VAL=>.coppensbasis_label)
+   ! Generic set
+   end
+
+!  ============================
+!  Set atom (unique) kind index
+!  ============================
+
+   set_kind(val) ::: get_from(OBJECT:set, TYPE=>INT, VAL=>.kind)
+   ! Generic set
+   end
+
+   set_is_unique_kind(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.is_unique_kind)
+   ! Generic set
+   end
+
+!  ================================
+!  Set ANO data and shell info made
+!  ================================
+
+   set_ANO_data_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.ANO_data_made)
+   ! Generic set
+   end
+
+   set_spherical_atom_data_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.spherical_atom_data_made)
+   ! Generic set
+   end
+
+   set_shell_info_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.shell_info_made)
+   ! Generic set
+   end
+
+!  =======================
+!  Set interpolators made?
+!  =======================
+
+   set_use_interpolator(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.use_interpolator)
+   ! Generic set
+   end
+
+   set_ANO_interpolators_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.ANO_interpolators_made)
+   ! Generic set
+   end
+
+   set_interpolators_made(val) ::: get_from(OBJECT:set, TYPE=>BIN, VAL=>.interpolators_made)
+   ! Generic set
    end
 
 ! ============
@@ -1825,9 +2251,9 @@ contains
    !   program, like gaussian.
    end
 
-! ===============
-! Inquiry methods
-! ===============
+! =========================
+! Atom-kind inquiry methods
+! =========================
 
    has_a_dummy_label result (res) ::: elemental
    ! Return TRUE if this has a dummy charge label (charged or not,
@@ -1870,46 +2296,6 @@ contains
       self :: IN
       res :: BIN
       res = .has_a_dummy_label AND NOT .nuclear_charge.is_int AND .has_basis
-   end
-
-   has_basis result (res) ::: elemental
-   ! Return TRUE if this is a pseudo atom without integral charge
-      self :: IN
-      res :: BIN
-      res = .basis.created AND .basis.is_resolved
-   end
-
-   basis_descriptor result (res) ::: elemental
-   ! Return a basis descriptor, either the .basis_label or whether the
-   ! atom is a dummy or a ghost.
-      self :: IN
-      res :: STR
-
-      if (.basis.created) then
-         res = .basis.label
-         if (.is_a_ghost_atom) then
-            res = trim(res)//" (ghost atom)"
-         else if (.is_a_pseudo_atom) then
-            res = trim(res)//" (pseudo atom)"
-         end
-      else if (.is_a_point_charge) then
-         res = "n/a (pt. charge)"
-      else if (.is_a_dummy_atom) then
-         res = "n/a (dummy atom)"
-      else
-         res = "??"
-      end
-
-   end
-
-   slaterbasis_descriptor result (res) ::: get_from(ATOM:basis_descriptor, basis=>slaterbasis), elemental
-   ! Return a basis descriptor, either the .basis_label or whether the
-   ! atom is a dummy or a ghost.
-   end
-
-   coppensbasis_descriptor result (res) ::: get_from(ATOM:basis_descriptor, basis=>coppensbasis), elemental
-   ! Return a basis descriptor, either the .basis_label or whether the
-   ! atom is a dummy or a ghost.
    end
 
    same_kind_as(atom) result (res)
@@ -1972,6 +2358,121 @@ contains
          .put
          stdout.text("atom:")
          atom.put
+      end
+
+   end
+
+! =====================
+! Basis inquiry methods
+! =====================
+
+   has_basis result (res) ::: elemental
+   ! Return TRUE if this is a pseudo atom without integral charge
+      self :: IN
+      res :: BIN
+      res = .basis.created AND .basis.is_resolved
+   end
+
+   basis_descriptor result (res) ::: elemental
+   ! Return a basis descriptor, either the .basis_label or whether the
+   ! atom is a dummy or a ghost.
+      self :: IN
+      res :: STR
+
+      if (.basis.created) then
+         res = .basis.label
+         if (.is_a_ghost_atom) then
+            res = trim(res)//" (ghost atom)"
+         else if (.is_a_pseudo_atom) then
+            res = trim(res)//" (pseudo atom)"
+         end
+      else if (.is_a_point_charge) then
+         res = "n/a (pt. charge)"
+      else if (.is_a_dummy_atom) then
+         res = "n/a (dummy atom)"
+      else
+         res = "??"
+      end
+
+   end
+
+   slaterbasis_descriptor result (res) ::: get_from(ATOM:basis_descriptor, basis=>slaterbasis), elemental
+   ! Return a basis descriptor, either the .basis_label or whether the
+   ! atom is a dummy or a ghost.
+   end
+
+   coppensbasis_descriptor result (res) ::: get_from(ATOM:basis_descriptor, basis=>coppensbasis), elemental
+   ! Return a basis descriptor, either the .basis_label or whether the
+   ! atom is a dummy or a ghost.
+   end
+
+   library_basis_label(suffix) result (label)
+   ! Return a library basis set label by appending "suffix" to the
+   ! chemical symbol.
+      suffix :: STR
+
+      label :: STR
+      symbol :: STR
+
+      symbol = .chemical_symbol
+
+      select case (suffix)
+
+         case ("Coppens","Clementi-Roetti")
+
+            ! Replace bases for high atomic numbers
+            ! where bases do not exist
+            if (.atomic_number>55) then
+
+               select case (.atomic_number)
+                  case (56);     symbol = "Sr"
+                  case (57:71);  symbol = "Y"
+                  case (72:86);  symbol = .chemical_symbol(.atomic_number-32)
+                  case (87);     symbol = "Rb"
+                  case (88);     symbol = "Sr"
+                  case (89:103); symbol = "Y"
+               end
+
+               WARN("Replaced basis for atom "//.chemical_symbol.trim//" with that for atom "//symbol.trim)
+
+            end
+
+            label = trim(symbol)//trim(.oxidation_state_str)//":"//trim(suffix)
+
+         case default
+
+            label = trim(symbol)//":"//trim(suffix)
+
+      end
+
+   end
+
+   library_basis_label(Z,suffix) result (label) ::: selfless, leaky
+   ! Return a library basis set label for the atom with atomic number
+   ! "Z", by appending "suffix" to the chemical symbol.
+      Z :: INT, IN
+      suffix :: STR
+   ENSURE(Z>=1 AND Z<=103,"Z out of range")
+
+      label :: STR
+      symbol :: STR
+
+      symbol = element_symbols(Z)
+      select case (suffix)
+         case ("Coppens","Thakkar","Clementi-Roetti")
+            if (Z>55) then
+               select case (Z)
+                  case (56);     symbol = "Sr"
+                  case (57:71);  symbol = "Y"
+                  case (72:86);  symbol = element_symbols(Z-32)
+                  case (87);     symbol = "Rb"
+                  case (88);     symbol = "Sr"
+                  case (89:103); symbol = "Y"
+               end
+            end
+            label = trim(symbol)//":"//trim(suffix)
+         case default
+            label = trim(symbol)//":"//trim(suffix)
       end
 
    end
@@ -2040,16 +2541,9 @@ contains
       res = .basis.n_prim
    end
 
-   no_of_occupied_NOs(axiskind,tol) result (res)
-   ! Returns the number of non-zero occupied natural orbitals. For this purpose,
-   ! zero is defined to be "tol" if present, or TOL(7) otherwise
-      self :: IN
-      axiskind :: STR, optional, IN
-      tol :: REAL, optional, IN
-      res :: INT
-   ENSURE(.occupation_numbers.created,"no occupation numbers")
-      res = .occupation_numbers.no_of_occupied(axiskind,tol)
-   end
+! =============================
+! Chemical-data related inquiry
+! =============================
 
    chemical_symbol(Z) result (res) ::: elemental
    ! Return the chemical symbol for this atom. If "Z" is present then the symbol
@@ -2290,77 +2784,6 @@ contains
 
    end
 
-   library_basis_label(suffix) result (label)
-   ! Return a library basis set label by appending "suffix" to the
-   ! chemical symbol.
-      suffix :: STR
-
-      label :: STR
-      symbol :: STR
-
-      symbol = .chemical_symbol
-
-      select case (suffix)
-
-         case ("Coppens","Clementi-Roetti")
-
-            ! Replace bases for high atomic numbers
-            ! where bases do not exist
-            if (.atomic_number>55) then
-
-               select case (.atomic_number)
-                  case (56);     symbol = "Sr"
-                  case (57:71);  symbol = "Y"
-                  case (72:86);  symbol = .chemical_symbol(.atomic_number-32)
-                  case (87);     symbol = "Rb"
-                  case (88);     symbol = "Sr"
-                  case (89:103); symbol = "Y"
-               end
-
-               WARN("Replaced basis for atom "//.chemical_symbol.trim//" with that for atom "//symbol.trim)
-
-            end
-
-            label = trim(symbol)//trim(.oxidation_state_str)//":"//trim(suffix)
-
-         case default
-
-            label = trim(symbol)//":"//trim(suffix)
-
-      end
-
-   end
-
-   library_basis_label(Z,suffix) result (label) ::: selfless, leaky
-   ! Return a library basis set label for the atom with atomic number
-   ! "Z", by appending "suffix" to the chemical symbol.
-      Z :: INT, IN
-      suffix :: STR
-   ENSURE(Z>=1 AND Z<=103,"Z out of range")
-
-      label :: STR
-      symbol :: STR
-
-      symbol = element_symbols(Z)
-      select case (suffix)
-         case ("Coppens","Thakkar","Clementi-Roetti")
-            if (Z>55) then
-               select case (Z)
-                  case (56);     symbol = "Sr"
-                  case (57:71);  symbol = "Y"
-                  case (72:86);  symbol = element_symbols(Z-32)
-                  case (87);     symbol = "Rb"
-                  case (88);     symbol = "Sr"
-                  case (89:103); symbol = "Y"
-               end
-            end
-            label = trim(symbol)//":"//trim(suffix)
-         case default
-            label = trim(symbol)//":"//trim(suffix)
-      end
-
-   end
-
    oxidation_state_str result (res) 
    ! Return the oxidation state string, i.e. if the oxidation state is +3, then
    ! the returned string is "3+"; or if the oxidation state is -1 then the
@@ -2378,6 +2801,17 @@ contains
          charge = abs(charge)
          if (charge/=1) res = trim(charge.to_str)//trim(res)
       end
+   end
+
+   no_of_occupied_NOs(axiskind,tol) result (res)
+   ! Returns the number of non-zero occupied natural orbitals. For this purpose,
+   ! zero is defined to be "tol" if present, or TOL(7) otherwise
+      self :: IN
+      axiskind :: STR, optional, IN
+      tol :: REAL, optional, IN
+      res :: INT
+   ENSURE(.occupation_numbers.created,"no occupation numbers")
+      res = .occupation_numbers.no_of_occupied(axiskind,tol)
    end
 
    has_ANO_data result (res)
@@ -2590,41 +3024,120 @@ contains
       end
    end
 
-   position_ADP_label(par_index) result (res)
-   ! Return the standard symbol for a positional-ADP parameter with
-   ! index "par_index", for this atom
-      par_index :: INT
+! ====================
+! pADP inquiry methods
+! ====================
+
+   ADP_label(par_index) result (res)
+   ! Return the ADP label for parameter with index "par_index"
+      par_index :: INT, IN
+      res :: STR
+
+   ENSURE(par_index.is_in_range([1,31]),"par_index out of range")
+   DIE_IF(GAUSSIAN_DATA::l_max_saved<4,"not enough gaussian data")
+
+      val :: STR
+
+      if (FALSE) self = self ! remove self-unused warning
+
+      ! Get the polynomial part (with lexical index offset)
+      val = trim(GAUSSIAN_DATA::pc(par_index+4))
+
+      ! Set the symbol
+      res = "U"//trim(val)
+
+   end
+
+   pADP_label(par_index) result (res)
+   ! Return the positional-ADP label for parameter with index
+   ! "par_index"
+      par_index :: INT, IN
+      res :: STR
+
+   ENSURE(par_index.is_in_range([1,34]),"par_index out of range")
+   DIE_IF(GAUSSIAN_DATA::l_max_saved<4,"not enough gaussian data")
+
+      val :: STR
+
+      if (FALSE) self = self
+
+      ! Get the polynomial part (with lexical index offset)
+      val = trim(GAUSSIAN_DATA::pc(par_index+1))
+
+      ! Set the symbol
+      if (par_index<=3) then; res =      trim(val)
+      else;                   res = "U"//trim(val)
+      end
+
+   end
+
+   tag_pADP_label(par_index) result (res)
+   ! Return the unique tag with the positional-ADP label for parameter
+   ! with index "par_index"
+      par_index :: INT, IN
       res :: STR
 
    ENSURE(par_index.is_in_range([1,34]),"par_index out of range")
 
-      res = trim(.tag)//trim(x_ray_parameter_order(par_index))
+      res = trim(.tag)//" "//trim(.pADP_label(par_index))
 
    end
 
-   has_ADP3_tensor result (res) ::: pure
-   ! Return TRUE if the ADP3_tensor exists
+   has_anharmonic_pADPs result (res) ::: pure
+   ! Return TRUE if there are anharmonic ADP's
       self :: IN
       res :: BIN
-      res = .ADP3_tensor.created 
+      res = .has_pADP3s OR .has_pADP4s
    end
 
-   has_ADP4_tensor result (res) ::: pure
-   ! Return TRUE if the ADP4_tensor exists
+   has_pADPs result (res) ::: pure
+   ! Return TRUE if there are pADP's *and* their errors
       self :: IN
       res :: BIN
-      res = .ADP4_tensor.created 
+      res = .pADP_vector.created AND .pADP_errors.created
    end
 
-   no_of_position_ADP_parameters result (res) ::: pure
-   ! Return the no. of positional and ADP parameters for refinement.
+   has_pADP3s result (res) ::: pure
+   ! Return TRUE if there are third-order ADP's
+      self :: IN
+      res :: BIN
+      res = .has_pADPs
+      if (NOT res) return
+      res =         .pADP_vector.dim>9  
+      res = res AND .pADP_errors.dim>9
+   end
+
+   has_pADP4s result (res) ::: pure
+   ! Return TRUE if there are fourth-order ADP's
+      self :: IN
+      res :: BIN
+      res = .has_pADPs
+      if (NOT res) return
+      res =         .pADP_vector.dim>19  
+      res = res AND .pADP_errors.dim>19
+   end
+
+   no_of_pADPs result (res) ::: pure
+   ! Return the no. of positional/ADP parameters for refinement.
    ! NOTE: positions and second-order ADP's are always refined.
+   !       i.e. there are always at least 9 pADPs
       self :: IN
       res :: INT
 
       res = 9
-      if (.has_ADP3_tensor) res = res + 10
-      if (.has_ADP4_tensor) res = res + 25
+      if (.has_pADP3s) res = res + 10
+      if (.has_pADP4s) res = res + 15
+
+   end
+
+   no_of_ADPs result (res) ::: pure
+   ! Return the no. of ADP parameters for refinement.
+      self :: IN
+      res :: INT
+
+      res = 6
+      if (.has_pADP3s) res = res + 10
+      if (.has_pADP4s) res = res + 15
 
    end
 
@@ -4795,8 +5308,8 @@ contains
       stdout.dump("site_disorder_group:INT",.site_disorder_group)
  
       stdout.dump("U_iso:REAL",.U_iso)
-      stdout.dump("ADP_tensor:MAT{REAL}(3,3)"           ,.ADP_tensor)
-      stdout.dump("ADP_error:VEC{REAL}(6)",.ADP_error)
+      stdout.dump("pADP_vector:VEC{REAL}*",.pADP_vector)
+      stdout.dump("pADP_errors:VEC{REAL}*",.pADP_errors)
       stdout.dump("ADP_axis_system:STR",.ADP_axis_system)
  
       stdout.dump("charge:REAL",.charge)
