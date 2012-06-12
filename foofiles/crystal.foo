@@ -1124,7 +1124,7 @@ contains
       offset :: VEC{INT}(3)
       asymmetric_unit_geometry :: MAT{REAL}*
       n,a,m,s,col,b :: INT
-      prune,warn,found,unique,disorder :: BIN
+      prune,warn,new,unique,disorder :: BIN
       list :: VEC{INT}*
       tol :: REAL
 
@@ -1142,15 +1142,15 @@ contains
       .asym_atom_for_unit_cell_atom.destroy
       .asym_symop_for_unit_cell_atom.destroy
 
-      ! Indices of asymmetric unit atoms to be made
+      ! List of indices of the asymmetric unit atoms to be made
       list.create(.n_fragment_atoms)
       list = [(a, a=1,.n_fragment_atoms)]
 
-      ! Initialise asymmetric unit
+      ! Initialise .asymmetric_unit as the whole fragment
       .asymmetric_unit_geometry.create_copy(.fragment_geometry)
       .n_asymmetric_unit_atoms = .n_fragment_atoms
 
-      ! Take a copy, put it to the unit cell
+      ! Copy asymmetric unit, but put it to the unit cell
       asymmetric_unit_geometry.create_copy(.asymmetric_unit_geometry)
       .put_to_unit_cell(asymmetric_unit_geometry)
 
@@ -1167,8 +1167,8 @@ contains
       n = 0
       a = 0
 
-      ! Loop: atoms "a" 
-      ! in the asymmetric unit
+      ! Loop: atoms "a" in
+      ! the asymmetric unit
       do 
 
          ! Next asymmetric unit atom
@@ -1177,55 +1177,53 @@ contains
          ! Loop over symops
          do s = 1,.spacegroup.n_seitz
 
-            ! <<< Transform asym unit with symop >>>
+            ! Get asymmetric unit atom cell-offset
             pa = .asymmetric_unit_geometry(:,a)
             .transform_position(pa,1,to_unit_cell=TRUE,unit_cell_shift=offset)
 
+            ! Transform asym unit atom with symop "s"
             pa = asymmetric_unit_geometry(:,a)
             .transform_position(pa,s,to_unit_cell=TRUE)
 
-            ! Is the new position already in the asymmetric unit?
-            ! If not, are the atoms at the two sites distinct?
-            unique = NOT asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
-            if (NOT unique) unique = .fragment_atom.are_distinct(list(a),list(col+a))
+            ! Prune symmetry redundant atoms?
+            if (prune) then
 
-            ! If not new, we may have to prune ...
-            if (NOT unique) then
+               do ! remove *all* redundant atoms
 
-               col = col + a
-               disorder = TRUE
+                  ! Is symmetry-generated atom "pa" already in the asymmetric unit?
+                  unique = NOT asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
+                  if (unique) exit
 
-               if (prune) then
+                  ! Actual atom index to prune
+                  m = col + a
 
-                  do ! Prune all repetitions
+                  ! If already there, are the atoms at the two sites distinct?
+                  unique = .fragment_atom.are_distinct(list(a),list(m))
+                  if (unique) exit
 
-                     m = max(a,col)
+                  ! This may be a disordered structure
+                  disorder = TRUE
 
-                     .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
-                     .asymmetric_unit_geometry.prune_column(m)
-                      asymmetric_unit_geometry.prune_column(m)
-                     list.prune_element(m)
-
-                     unique = NOT asymmetric_unit_geometry(:,a+1:).has_column(pa,tol,col)
-                     if (NOT unique) unique = .fragment_atom.are_distinct(list(a),list(col+a))
-                     if (unique) exit
-                     col = col + a
-
-                  end
+                  ! Prune the atom
+                  .n_asymmetric_unit_atoms = .n_asymmetric_unit_atoms - 1
+                  .asymmetric_unit_geometry.prune_column(m)
+                   asymmetric_unit_geometry.prune_column(m)
+                   list.prune_element(m)
 
                end
 
-            end ! -- NOT unique
-
-            ! Is the new position already in the unit cell?
-            ! If so, is it a distinct atom?
-            found = .unit_cell_geometry.has_column(pa,tol,col)
-            if (found) then
-               b      = .asym_atom_for_unit_cell_atom(col)
-               found  = NOT .fragment_atom.are_distinct(list(a),list(b))
             end
 
-            if (found) cycle
+            ! Is the new symmetry-generated atom "pa" already in the unit cell?
+            new = NOT .unit_cell_geometry.has_column(pa,tol,col)
+            if (NOT new) cycle
+
+            ! If so, is it a distinct atom?
+            if (col>0) then
+               b = .asym_atom_for_unit_cell_atom(col)
+               new = .fragment_atom.are_distinct(list(a),list(b))
+               if (NOT new) cycle
+            end
 
             ! New unit cell atom here ...
             n = n + 1 
@@ -1251,9 +1249,9 @@ contains
 
       .n_unit_cell_atoms = n
 
-      WARN_IF(warn AND disorder,"This structure may be disordered")
-      WARN_IF(warn AND disorder AND prune,"I had to prune redundant atoms from the unit cell")
-      ENSURE(.unit_cell_geometry.created,"could not make unit_cell_geometry")
+      WARN_IF(warn AND disorder,             "This structure may be disordered.")
+      WARN_IF(warn AND disorder AND prune,   "Symmetry-redundant atoms were pruned.")
+      DIE_IF(NOT .unit_cell_geometry.created,"unit_cell_geometry not created")
 
       ! Make the asymmetric unit atom list
       .asymmetric_unit_atom.destroy
@@ -1326,7 +1324,6 @@ contains
             pu = .unit_cell_geometry(:,u)
 
             ! Is unit cell atom u the fragment atom f?
-            ! Note: the fragment *must* use asymmetric unit tags
             found = pu.same_as(pf,tol) 
             ident = .fragment_atom(f).is_xtal_identical_to(.asymmetric_unit_atom(a))
             found = found AND ident
@@ -3136,7 +3133,7 @@ contains
 
       labels :: VEC{STR}*
       atoma :: ATOM*
-      f,a :: INT
+      f,a, n_p,n_f :: INT
 
       ! Get labels (leaky)
       labels => .asymmetric_unit_atom.tag_pADP_labels
@@ -3158,8 +3155,12 @@ contains
 
       end
 
+      ! Set the no. of parameters
+      n_p = .asymmetric_unit_atom.no_of_pADPs
+      n_f = .fragment_atom.no_of_pADPs
+
       ! Create refinement arrays & initialize (leaky)
-      .data.initialize_fit_data(.n_asymmetric_unit_atoms,.n_fragment_atoms,labels)
+      .data.initialize_fit_data(n_p,n_f,labels)
 
       ! Clean
       labels.destroy
@@ -3172,12 +3173,19 @@ contains
    ENSURE(.data_exists,"no diffraction data")
 
       labels :: VEC{STR}*
+      n_p :: INT
 
       ! Get labels
       labels => .asymmetric_unit_atom.tag_pADP_labels
 
+      ! Create space for parameters (leaky)
+      .asymmetric_unit_atom.reset_pADPs(.data.refine_3rd_order_for_atom,.data.refine_4th_order_for_atom)
+
+      ! Set the no. of parameters
+      n_p = .asymmetric_unit_atom.no_of_pADPs
+
       ! Create refinement arrays & initialize (leaky)
-      .data.initialize_refinement_data(.n_asymmetric_unit_atoms,labels)
+      .data.initialize_refinement_data(n_p,labels)
 
       ! Clean
       labels.destroy
@@ -3210,7 +3218,7 @@ contains
       ! Constants
       n_refl = .n_refl
       n_k    = .n_unique_SF_k_pts
-      n_p    = 9*.n_asymmetric_unit_atoms
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
 
       ! Symmetry generated structure factors
       sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
@@ -3262,7 +3270,7 @@ contains
    ENSURE(.data.dX.created,                    "no data.dX")
 
       d1,d2,d3,kr  :: REAL
-      n_k,u,k,base :: INT
+      n_k, u,f,n,ub, k :: INT
       k1,k2,k3 :: VEC{REAL}*
       sf_u :: VEC{CPX}*
       k_pt :: MAT{REAL}*
@@ -3277,23 +3285,34 @@ contains
       k2 => k_pt(:,2)
       k3 => k_pt(:,3)
 
+      ! Base for ufrag atoms
+      ub = 0
+
       ! Loop over unique *frag* atoms
-      do u = 1,.n_asymmetric_unit_atoms
+      do u = 1,.n_unique_frag_atoms
+
+         ! Link ufrag and asym atoms
+         f = .unique_frag_atom(u)
+
+         ! No of pADPs
+         n  = .fragment_atom(f).no_of_pADPs
 
          ! Get the shift
-         base = 9*(u-1)
-         d1 = .data.dX(base+1)
-         d2 = .data.dX(base+2)
-         d3 = .data.dX(base+3)
+         d1 = .data.dX(ub+1)
+         d2 = .data.dX(ub+2)
+         d3 = .data.dX(ub+3)
 
          ! Structure factors, unique atom "u"
          sf_u => sf_n(:,u)
 
          ! Update sf_u
          do k = 1,n_k
-            kr = k1(k)*d1+k2(k)*d2+k3(k)*d3
-            sf_u(k) = sf_u(k) * cmplx(cos(kr),sin(kr))
+            kr = k1(k)*d1 + k2(k)*d2 + k3(k)*d3
+            sf_u(k) = sf_u(k) * cmplx(cos(kr),sin(kr),kind=CPX_KIND)
          end
+
+         ! Increment
+         ub = ub + n
 
       end
 
@@ -3336,12 +3355,14 @@ contains
       f,a,s :: INT
       f_atom,a_atom :: ATOM* 
       seitz :: MAT3{REAL}*
-      DM,symop :: MAT{REAL}(3,3)
-      pos,shift :: VEC{REAL}(3)
+      CM :: MAT{REAL}(3,3)
+      shift :: VEC{REAL}(3)
 
       ! Symmetry operators & cell matrix
       seitz => .xyz_seitz_matrices
-      DM    = .unit_cell.direct_matrix
+
+      ! Cell matrix
+      CM = .unit_cell.direct_matrix
 
       ! Loop on *all* fragment atom's
       ! Set the .fragment_atom positions/ADP's 
@@ -3353,20 +3374,19 @@ contains
          s  = .asym_symop_for_frag_atom(f)
 
          ! Atoms (fragment, asymmetric)
-         f_atom => .fragment_atom(f)
+         f_atom =>        .fragment_atom(f)
          a_atom => .asymmetric_unit_atom(a)
+
+         ! Set frag atom pADPs
+         f_atom.set_pADP_vector_to(a_atom.pADP_vector)
+
+         ! Now transform frag atom pADPs with symop
+         f_atom.transform_pADP_vector_with(seitz(:,:,s))
          
-         ! Fragment symops and shifts
-         symop = seitz(:,:,s)
-         shift = .asym_shift_for_frag_atom(:,f)
-
-         ! Transform unique frag atom position (S)
-         pos = matmul(symop,a_atom.position) + matmul(DM,shift)
-         f_atom.set_position(pos)
-
-         ! Transform asym atom ADP (use S^T)
-         ! Note: ADPs must be in cartesian axes
-         a_atom.ADP_tensor.back_transform_to(f_atom.ADP_tensor,symop)
+         ! Add any fragment shift to (cartesian)  position
+         shift.to_product_of(CM,.asym_shift_for_frag_atom(:,f))
+         shift = f_atom.position + shift
+         f_atom.set_position(shift)
 
       end
 
@@ -3381,55 +3401,62 @@ contains
    ! ADP's; place the shifts in the same "dX" parameter vector.
 
    ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
+   ENSURE(.asymmetric_unit_atom.has_all_pADPs_and_errors,"not all pADPs/errors are there")
    ENSURE(.data.created,"no data")
    ENSURE(.data.dX.created,"no data.dX")
 
-      base,u,f,a,s :: INT
-      dA,par :: VEC{REAL}*
-      posa :: VEC{REAL}(3)
-      ADPa,symop :: MAT{REAL}(3,3)
+      u,f,a,s, n, ub,uf,ul, ab,af,al :: INT
+      dA,Apar,Xpar :: VEC{REAL}*
       seitz :: MAT3{REAL}*
-      atom :: ATOM
+      a_atom :: ATOM*
+      X_atom :: ATOM
+      
+      ! Get symops
+      seitz => .transposed_xyz_seitz_matrices
 
       ! Asym atom shift vector
       dA.create(.data.dX.dim)
-      
-      ! Get symops
-      seitz => .xyz_seitz_matrices
+
+      ! Base for ufrag atoms
+      ub = 0
 
       ! Loop over unique frag atoms
+      ! Order of asym atoms is the same.
       do u = 1,.n_unique_frag_atoms
-
-         ! Get the ufrag atom shifts
-         base = 9*(u-1)
-         par => .data.dX(base+1:base+9) 
-
-         ! Put ufrag shifts in "atom" (leaky)
-         atom.set_pADP_vector_to(par)
 
          ! Link ufrag and asym atoms
          f = .unique_frag_atom(u)
          a = .asym_atom_for_frag_atom(f)
          s = .asym_symop_for_frag_atom(f)
 
+         ! Fragment atom, asym atom
+         a_atom => .asymmetric_unit_atom(a)
+
+         ! Block limits for pADPs. 
+         n  = a_atom.no_of_pADPs
+         ab = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a)
+         af = ab + 1
+         al = ab + n
+         uf = ub + 1
+         ul = ub + n
+
+         ! pADP blocks
+         Apar =>       dA(af:al)
+         Xpar => .data.dX(uf:ul)
+
+         ! Put ufrag shifts at position f1 in "X_atom" (leaky)
+         X_atom.set_pADP_vector_to(Xpar)
+
          ! Change ufrag atom shifts -> asym atom shifts
-         symop = seitz(:,:,s)
-         posa = matmul(atom.position,symop)
-         atom.ADP_tensor.change_basis_to(ADPa,symop)
+         X_atom.transform_pADP_vector_with(seitz(:,:,s))
 
-         ! Define asymmetric atom
-         atom.set_position(posa)
-         atom.set_ADP_tensor(ADPa)
+         ! Store asym shifts in position a0 for asym atom "a"
+         X_atom.put_pADP_vector_to(Apar)
 
-         ! Set the asym atom parameter vector
-         base = 9*(a-1) 
-         par => dA(base+1:base+9) 
-
-         ! Store asym shifts shifts
-         atom.put_pADP_vector_to(par)
-
-         ! Clean
-         atom.destroy_ptr_part
+         ! Clean, increment
+         X_atom.destroy_ptr_part
+         ub = ub + n
 
       end
 
@@ -3437,8 +3464,8 @@ contains
       .data.dX = dA
 
       ! Clean
-      seitz.destroy
       dA.destroy
+      seitz.destroy
 
       ! Debug
       if (.debugging("set_asym_from_ufrag_shifts")) then 
@@ -3456,19 +3483,21 @@ contains
    ENSURE(.data.created,"no data")
    ENSURE(.data.dX.created,"no data.dX")
 
-      fac :: REAL
-      n_stab,base,a,s,n :: INT
+      a, n,ab,af,al, n_stab,s,t :: INT
       stabilizer :: VEC{INT}*
-      par :: VEC{REAL}*
-      posn,post :: VEC{REAL}(3)
-      ADPn,ADPt,symop :: MAT{REAL}(3,3)
+      Xpar :: VEC{REAL}*
       seitz :: MAT3{REAL}*
-      atom :: ATOM
+      X_atom,Y_atom :: ATOM
+      a_atom :: ATOM*
       
       ! Get symops
       seitz => .xyz_seitz_matrices
 
+      ! Base for asym atoms
+      ab = 0
+
       ! Symmetrize the asym atom positions/ADP's
+      ! We can use the asym atom stabilizers for the ufrag
       do a = 1,.n_asymmetric_unit_atoms
 
          ! List of stabilizer symops
@@ -3478,35 +3507,38 @@ contains
          n_stab = stabilizer.dim
          if (n_stab<=1) cycle
 
-         ! Block of parameters
-         base = 9*(a-1)
-         par => .data.dX(base+1:base+9) ! stuff goes in here
+         ! Fragment atom, asym atom
+         a_atom => .asymmetric_unit_atom(a)
 
-         ! Extract shifts (leaky)
-         atom.set_pADP_vector_to(par)
+         ! Block limits
+         n  = a_atom.no_of_pADPs
+         af = ab + 1
+         al = ab + n
+         
+         ! Asym atom a's pADPs
+         Xpar => .data.dX(af:al)
+
+         ! Set pADPs (leaky)
+         X_atom.set_pADP_vector_to(Xpar)
+         Y_atom.set_pADP_vector_to(Xpar)
 
          ! Apply symops and accumulate
-         posn = atom.position
-         ADPn = atom.ADP_tensor
-         do n = 2,n_stab
-            s = stabilizer(n)
-            symop = seitz(:,:,s)
-            atom.ADP_tensor.back_transform_to(ADPt,symop)
-            post = matmul(symop,atom.position)
-            ADPn = ADPn + ADPt
-            posn = posn + post
+         do s = 2,n_stab
+            t = stabilizer(s)
+            X_atom.transform_pADP_vector_with(seitz(:,:,t))
+            Y_atom.pADP_vector = Y_atom.pADP_vector + X_atom.pADP_vector
          end
 
          ! Stabilize
-         fac = ONE/n_stab
-         atom.set_position(posn*fac )
-         atom.set_ADP_tensor(ADPn*fac)
+         Y_atom.pADP_vector = (ONE/REALIFY(n_stab)) * Y_atom.pADP_vector
 
          ! Put back shifts
-         atom.put_pADP_vector_to(par)
+         Y_atom.put_pADP_vector_to(Xpar)
 
-         ! Clean
-         atom.destroy_ptr_part
+         ! Clean, increment
+         Y_atom.nullify_ptr_part
+         X_atom.nullify_ptr_part
+         ab = ab + n
 
       end
 
@@ -3556,80 +3588,111 @@ contains
    ! fragment atom covariance_matrix (produced from refinement)
    ! Note: .covariance_matrix is over-written.
    ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
+   ENSURE(.asymmetric_unit_atom.has_all_pADPs_and_errors,"not all pADPs/errors are there")
    ENSURE(.data.created,"no data")
+   ENSURE(.data.covariance_matrix.created,"no covariance matrix")
 
-      n_p,u1,f1,a1,s1, u2,f2,a2,s2, i1,i2,j1,j2 :: INT
+      u1,f1,a1,s1,n1, u1b,u1f,u1l, a1b,a1f,a1l :: INT
+      u2,f2,a2,s2,n2, u2b,u2f,u2l, a2b,a2f,a2l :: INT
+      dim  :: INT
       diag :: VEC{REAL}*
-      acov,ucov :: MAT{REAL}*
-      T1,T2 :: MAT{REAL}(9,9)
+      T1,T2, asyma_covariance_matrix,acov,ucov :: MAT{REAL}*
       seitz :: MAT3{REAL}*
 
       ! *Inverse* symops (see below)
       seitz => .transposed_xyz_seitz_matrices
 
-      ! No. of unique atoms (also no. of asymmetric unit atoms)
-      n_p = 9*.n_asymmetric_unit_atoms
+      ! Create asym atom frag covariance matrix
+      dim = .data.covariance_matrix.dim1
+      asyma_covariance_matrix.create(dim,dim)
+      asyma_covariance_matrix = ZERO
 
-      ! Aliases: fragment and asymmetric covariances
-      ucov => .data.covariance_matrix ! this is overwritten
-      acov.create(n_p,n_p)
-      acov = ZERO
-
-      ! Copy the unique .fragment_atom to the asym unit covariances
+      ! Transform the unique .fragment_atom to the asym unit covariances
+      u1b = 0
       do u1 = 1,.n_unique_frag_atoms
 
+         ! s1 maps: asym atom a1 -> frag atom f1, but use transpose
          f1 = .unique_frag_atom(u1)
          a1 = .asym_atom_for_frag_atom(f1)
-         s1 = .asym_symop_for_frag_atom(f1) ! s1 maps asym->ufrag atom
-         i1 = (u1-1)*9                      ! input in ufrag order
-         j1 = (a1-1)*9                      ! output in asym atom order
+         s1 = .asym_symop_for_frag_atom(f1) 
 
-         T1 = ZERO
-         T1(1:3,1:3) = seitz(:,:,s1)        ! seitz maps ufrag->asym atom
-         T1(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s1),reorder=TRUE)
+         ! Block limits
+         n1  = .asymmetric_unit_atom(a1).no_of_pADPs
+         a1b = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a1)
+         a1f = a1b +  1
+         a1l = a1b + n1
+         u1f = u1b +  1
+         u1l = u1b + n1
 
+         ! Transformation matrix
+         T1.create(n1,n1)
+         GAUSSIAN_DATA:symmetric_tensor_product_mx(T1,seitz(:,:,s1)) 
+
+         u2b = 0
          do u2 = 1,.n_unique_frag_atoms
 
+            ! s2 maps: asym atom a2 -> frag atom f2, but use transpose
             f2 = .unique_frag_atom(u2)
             a2 = .asym_atom_for_frag_atom(f2)
-            s2 = .asym_symop_for_frag_atom(f2)
-            i2 = (u2-1)*9
-            j2 = (a2-1)*9
-
-            T2 = ZERO
-            T2(1:3,1:3) = seitz(:,:,s2)
-            T2(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s2),reorder=TRUE)
+            s2 = .asym_symop_for_frag_atom(f2) 
+   
+            ! Block limits
+            n2  = .asymmetric_unit_atom(a2).no_of_pADPs
+            a2b = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a2)
+            a2f = a2b +  1
+            a2l = a2b + n2
+            u2f = u2b +  1
+            u2l = u2b + n2
+   
+            ! Transformation matrix
+            T2.create(n2,n2)
+            GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,seitz(:,:,s2)) 
             
-            ucov(i1+1:i1+9,i2+1:i2+9).back_transform_to(acov(j1+1:j1+9,j2+1:j2+9),T1,T2)
+            ! Transform covariances: ufrag -> asym atom
+            acov => asyma_covariance_matrix(a1f:a1l,a2f:a2l)
+            ucov => .data.covariance_matrix(u1f:u1l,u2f:u2l)
+            ucov.back_transform_to(acov,T1,T2)
+
+            ! Increment
+            u2b = u2b + n2
 
          end
+
+         ! Increment
+         u1b = u1b + n1
 
       end
 
       ! Debugging
       if (.debugging("set_asym_from_ufrag_cov_mx")) then
-       ! stdout.text("acov:")
-       ! stdout.put(acov)
-       ! stdout.text("ucov:")
-       ! stdout.put(ucov)
+
+         stdout.text("acov:")
+         stdout.put(acov)
+
+         stdout.text("ucov:")
+         stdout.put(ucov)
+
          diag.create(acov.dim1)
          acov.put_diagonal_to(diag)
          diag = sign(sqrt(abs(diag)),diag)
          stdout.text("acov esds:")
          stdout.put(diag)
+
          ucov.put_diagonal_to(diag)
          diag = sign(sqrt(abs(diag)),diag)
          stdout.text("ucov esds:")
          stdout.put(diag)
+
          diag.destroy
+
       end
 
-      ! >>>Overwrite frag-atom cov mx (ucov) 
-      !         with asym-atom cov mx
-      ucov = acov
+      ! Overwrite ufrag-atom cov mx with asym-atom cov mx
+      .data.covariance_matrix = asyma_covariance_matrix
 
       ! Clean
-      acov.destroy
+      asyma_covariance_matrix.destroy
       seitz.destroy
 
    end
@@ -3640,44 +3703,67 @@ contains
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.data.created,"no data")
 
-      f1,a1,s1,f2,a2,s2, i1,i2,j1,j2 :: INT
-      acov,fcov :: MAT{REAL}*
-      T1,T2 :: MAT{REAL}(9,9)
+      f1,a1,s1,n1, f1b,f1f,f1l, a1b,a1f,a1l :: INT
+      f2,a2,s2,n2, f2b,f2f,f2l, a2b,a2f,a2l :: INT
+      T1,T2, acov,fcov :: MAT{REAL}*
       seitz :: MAT3{REAL}*
 
       ! Symops
       seitz => .xyz_seitz_matrices
 
-      ! Aliases: fragment and asymmetric covariances
-      fcov => .data.fragment_covariance_matrix
-      acov => .data.covariance_matrix
-
       ! Copy the asymmetric atom covariances to *all* .fragment_atom ADPs
+      f1b = 0
       do f1 = 1,.n_fragment_atoms
 
+         ! s1 maps: asym atom a1 -> frag atom f1
          a1 = .asym_atom_for_frag_atom(f1)
-         s1 = .asym_symop_for_frag_atom(f1) ! s1 maps asym->frag atom
-         i1 = (f1-1)*9                      ! output in frag atom oder
-         j1 = (a1-1)*9                      ! input in asym atom order
+         s1 = .asym_symop_for_frag_atom(f1)                     
 
-         T1 = ZERO
-         T1(1:3,1:3) = seitz(:,:,s1)        ! seitz maps asym->frag atom
-         T1(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s1),reorder=TRUE)
+         ! Block limits
+         n1  = .asymmetric_unit_atom(a1).no_of_pADPs
+         a1b = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a1)
+         a1f = a1b +  1
+         a1l = a1b + n1
+         f1f = f1b +  1
+         f1l = f1b + n1
 
+         ! Transformation matrix
+         T1.create(n1,n1)
+         GAUSSIAN_DATA:symmetric_tensor_product_mx(T1,seitz(:,:,s1)) 
+
+         f2b = 0
          do f2 = 1,.n_fragment_atoms
 
+            ! s2 maps: asym atom a2 -> frag atom f2
             a2 = .asym_atom_for_frag_atom(f2)
             s2 = .asym_symop_for_frag_atom(f2)
-            i2 = (f2-1)*9
-            j2 = (a2-1)*9
 
-            T2 = ZERO
-            T2(1:3,1:3) = seitz(:,:,s2)
-            T2(4:9,4:9).to_tensor_change_basis_of(seitz(:,:,s2),reorder=TRUE)
+            ! Block limits
+            n2  = .asymmetric_unit_atom(a1).no_of_pADPs
+            a2b = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a2)  
+            a2f = a2b +  1
+            a2l = a2b + n2
+            f2f = f2b +  1
+            f2l = f2b + n2
 
-            acov(j1+1:j1+9,j2+1:j2+9).back_transform_to(fcov(i1+1:i1+9,i2+1:i2+9),T1,T2)
+            ! Transformation matrix
+            T2.create(n2,n2)
+            GAUSSIAN_DATA:symmetric_tensor_product_mx(T2,seitz(:,:,s2)) 
+
+            ! Transform ...
+            fcov => .data.fragment_covariance_matrix(f1f:f1l,f2f:f2l)
+            acov =>          .data.covariance_matrix(a1f:a1l,a2f:a2l)
+            acov.back_transform_to(fcov,T1,T2)
+
+            ! Clean, increment
+            T2.destroy
+            f2b = f2b + n2 
 
          end
+
+         ! Clean, increment
+         T1.destroy
+         f1b = f1b + n1
 
       end
 
@@ -3762,34 +3848,37 @@ contains
       ! Refine positions and ADPs
       if (.data.refine_positions_and_ADPs) then  
 
-         if (.data.refine_H_ADPs) then      ! ... and refine H ADP's
+         if (.data.refine_H_ADPs) then               ! ... and refine H ADP's
    
-            if (.data.refine_H_U_iso) then; .make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d,sf_n)
-            else;                           .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n)
+            if (.data.refine_H_U_iso)          then; .make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d,sf_n)
+            else
+               if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADPx_Y(sf_e,sf_d,sf_n)
+               else;                                 .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n)
+               end
             end
    
-         else                               ! ... and don't refine H ADP's
+         else                                        ! ... and don't refine H ADP's
 
-                                            .make_unique_sfd_pos_Y_HADP_N(sf_e,sf_d,sf_n)
+                                                     .make_unique_sfd_pos_Y_HADP_N(sf_e,sf_d,sf_n)
          end
 
       ! Refine positions only, not ADPs
       else if (.data.refine_positions_only) then 
 
-                                            .make_unique_sfd_pos_Y_ADP__N(sf_e,sf_d,sf_n) 
+                                                     .make_unique_sfd_pos_Y_ADP__N(sf_e,sf_d,sf_n) 
 
       ! Refine ADP's only, not positions
       else if (.data.refine_ADPs_only) then      
 
-         if (.data.refine_H_ADPs) then      ! ... and refine H ADP's
+         if (.data.refine_H_ADPs) then               ! ... and refine H ADP's
    
-            if (.data.refine_H_U_iso) then; .make_unique_sfd_pos_N_Hiso_Y(sf_e,sf_d,sf_n)
-            else;                           .make_unique_sfd_pos_N_ADP__Y(sf_e,sf_d,sf_n)
+            if (.data.refine_H_U_iso) then;          .make_unique_sfd_pos_N_Hiso_Y(sf_e,sf_d,sf_n)
+            else;                                    .make_unique_sfd_pos_N_ADP__Y(sf_e,sf_d,sf_n)
             end
 
-         else                               ! ... and don't refine H ADP's
+         else                                        ! ... and don't refine H ADP's
    
-                                            .make_unique_sfd_pos_N_HADP_N(sf_e,sf_d,sf_n)
+                                                     .make_unique_sfd_pos_N_HADP_N(sf_e,sf_d,sf_n)
          end
 
       ! wtf?
@@ -3798,6 +3887,262 @@ contains
          DIE("you aren't refining anything!")
 
       end 
+
+   end
+
+   make_unique_sfd_pos_Y_ADPx_Y(sf_e,sf_d,sf_n) ::: private
+   ! Make the unique structure factors and their derivatives "sf_e"
+   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   ! set of atom parameters in .fragment_atom.
+   ! NOTE: this version does *all* parameters, positions and ADPs
+   !       *including* up to 4th order anharmonicity.
+
+      sf_e :: VEC{CPX}, OUT
+      sf_d :: MAT{CPX}, OUT
+      sf_n :: MAT{CPX}, target, IN
+
+   ENSURE(.data.created, "no reflection data")
+   ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
+   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
+   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
+   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,         "sf_n, wrong dim1")
+   ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
+
+      f_atom :: ATOM*
+      k_pt,kU  :: MAT{REAL}*
+      sf_u :: VEC{CPX}*
+      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
+      u1,u2,u3, k1,k2,k3, tf :: REAL
+      k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
+      n_k,f,u,k,base,nADP :: INT
+      II,sf,sf2,sf4,sf6,sf24 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_k = .n_unique_SF_k_pts
+
+      ! Symmetry generated k points
+      k_pt.create(n_k,3)
+      .make_unique_SF_k_pts(k_pt)
+      k1v => k_pt(:,1)
+      k2v => k_pt(:,2)
+      k3v => k_pt(:,3)
+
+      ! K times thermal tensors
+      kU.create(n_k,3)        
+
+      ! Initialize
+      sf_e = ZERO
+      sf_d = ZERO
+
+      ! Make the structure factors and derivatives
+      parallel do u = 1,.n_unique_frag_atoms
+
+         ! Fragment atom
+         f = .unique_frag_atom(u)
+         f_atom => .fragment_atom(f)
+
+         ! k.U
+         kU.to_product_of(k_pt,f_atom.ADP_tensor)
+         u1v => kU(:,1)
+         u2v => kU(:,2)
+         u3v => kU(:,3)
+
+         ! Structure factor, iunique frag atom "u"
+         sf_u => sf_n(:,u)
+
+         ! Base index ... needed for parallel loop on "u"
+         base = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(u)
+
+         ! ADP4's
+         if (f_atom.has_pADP4s_and_errors) then
+
+            do k = 1,n_k
+   
+               ! Scattering vector
+               k1 = k1v(k)
+               k2 = k2v(k)
+               k3 = k3v(k)
+
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+   
+               ! Temperature factor (TF)
+               u1 = u1v(k)
+               u2 = u2v(k)
+               u3 = u3v(k)
+               tf = exp(-HALF*(u1*k1+u2*k2+u3*k3))
+   
+               ! Structure factor x TF x factor
+               sf   = sf_u(k)      *tf
+               sf2  =          HALF*sf
+               sf4  =       QUARTER*sf
+               sf6  =         SIXTH*sf
+               sf24 = QUARTER*SIXTH*sf
+   
+               ! SF contribution
+               sf_e(k) = sf_e(k) + sf
+   
+               ! Pos derivatives
+               sf_d(k,base+ 1) =  II*k1*sf
+               sf_d(k,base+ 2) =  II*k2*sf
+               sf_d(k,base+ 3) =  II*k3*sf
+
+               ! U2 derivatives
+               sf_d(k,base+ 4) = -k1_k1*sf2
+               sf_d(k,base+ 5) = -k2_k2*sf2
+               sf_d(k,base+ 6) = -k3_k3*sf2
+               sf_d(k,base+ 7) = -k1_k2*sf 
+               sf_d(k,base+ 8) = -k1_k3*sf 
+               sf_d(k,base+ 9) = -k2_k3*sf 
+
+               ! U3 derivatives
+               sf_d(k,base+10) = II*k1_k1*k1*sf6
+               sf_d(k,base+11) = II*k2_k2*k2*sf6
+               sf_d(k,base+12) = II*k3_k3*k3*sf6
+               sf_d(k,base+13) = II*k1_k1*k2*sf2
+               sf_d(k,base+14) = II*k1_k1*k3*sf2
+               sf_d(k,base+15) = II*k2_k2*k1*sf2
+               sf_d(k,base+16) = II*k2_k2*k3*sf2
+               sf_d(k,base+17) = II*k3_k3*k1*sf2
+               sf_d(k,base+18) = II*k3_k3*k2*sf2
+               sf_d(k,base+19) = II*k1*k2*k3*sf 
+
+               ! U4 derivatives
+               sf_d(k,base+20) = k1_k1*k1_k1*sf24
+               sf_d(k,base+21) = k2_k2*k2_k2*sf24
+               sf_d(k,base+22) = k3_k3*k3_k3*sf24
+               sf_d(k,base+23) = k1_k1*k1_k2*sf6
+               sf_d(k,base+24) = k1_k1*k1_k3*sf6
+               sf_d(k,base+25) = k2_k2*k1_k2*sf6
+               sf_d(k,base+26) = k2_k2*k2_k3*sf6
+               sf_d(k,base+27) = k3_k3*k1_k3*sf6
+               sf_d(k,base+28) = k3_k3*k2_k3*sf6
+               sf_d(k,base+29) = k1_k1*k2_k2*sf4
+               sf_d(k,base+30) = k1_k1*k3_k3*sf4
+               sf_d(k,base+31) = k2_k2*k3_k3*sf4
+               sf_d(k,base+32) = k1_k1*k2_k3*sf2
+               sf_d(k,base+33) = k2_k2*k1_k3*sf2
+               sf_d(k,base+34) = k3_k3*k1_k2*sf2
+
+            end
+
+         ! ADP3's
+         else if (f_atom.has_pADP3s_and_errors) then
+
+            do k = 1,n_k
+   
+               ! Scattering vector
+               k1 = k1v(k)
+               k2 = k2v(k)
+               k3 = k3v(k)
+
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+   
+               ! Temperature factor (TF)
+               u1 = u1v(k)
+               u2 = u2v(k)
+               u3 = u3v(k)
+               tf = exp(-HALF*(u1*k1+u2*k2+u3*k3))
+   
+               ! Structure factor x TF x factor
+               sf   = sf_u(k)      *tf
+               sf2  =          HALF*sf
+               sf6  =         SIXTH*sf
+   
+               ! SF contribution
+               sf_e(k) = sf_e(k) + sf
+   
+               ! Pos derivatives
+               sf_d(k,base+ 1) =  II*k1*sf
+               sf_d(k,base+ 2) =  II*k2*sf
+               sf_d(k,base+ 3) =  II*k3*sf
+
+               ! U2 derivatives
+               sf_d(k,base+ 4) = -k1_k1*sf2
+               sf_d(k,base+ 5) = -k2_k2*sf2
+               sf_d(k,base+ 6) = -k3_k3*sf2
+               sf_d(k,base+ 7) = -k1_k2*sf 
+               sf_d(k,base+ 8) = -k1_k3*sf 
+               sf_d(k,base+ 9) = -k2_k3*sf 
+   
+               ! U3 derivatives
+               sf_d(k,base+10) = II*k1_k1*k1*sf6
+               sf_d(k,base+11) = II*k2_k2*k2*sf6
+               sf_d(k,base+12) = II*k3_k3*k3*sf6
+               sf_d(k,base+13) = II*k1_k1*k2*sf2
+               sf_d(k,base+14) = II*k1_k1*k3*sf2
+               sf_d(k,base+15) = II*k2_k2*k1*sf2
+               sf_d(k,base+16) = II*k2_k2*k3*sf2
+               sf_d(k,base+17) = II*k3_k3*k1*sf2
+               sf_d(k,base+18) = II*k3_k3*k2*sf2
+               sf_d(k,base+19) = II*k1*k2*k3*sf 
+   
+            end
+
+         else ! no anharmonicity
+
+            do k = 1,n_k
+   
+               ! Scattering vector
+               k1 = k1v(k)
+               k2 = k2v(k)
+               k3 = k3v(k)
+   
+               ! Temperature factor (TF)
+               u1 = u1v(k)
+               u2 = u2v(k)
+               u3 = u3v(k)
+               tf = exp(-HALF*(u1*k1+u2*k2+u3*k3))
+   
+               ! Structure factor x TF x factor
+               sf  = sf_u(k) * tf
+               sf2 = HALF*sf
+   
+               ! SF contribution
+               sf_e(k) = sf_e(k) + sf
+   
+               ! Pos derivatives
+               sf_d(k,base+1) =  II*k1*sf
+               sf_d(k,base+2) =  II*k2*sf
+               sf_d(k,base+3) =  II*k3*sf
+
+               ! U2 derivatives
+               sf_d(k,base+4) = -k1*k1*sf2
+               sf_d(k,base+5) = -k2*k2*sf2
+               sf_d(k,base+6) = -k3*k3*sf2
+               sf_d(k,base+7) = -k1*k2*sf 
+               sf_d(k,base+8) = -k1*k3*sf 
+               sf_d(k,base+9) = -k2*k3*sf 
+   
+            end
+
+         end
+
+         nADP = f_atom.no_of_pADPs
+         base = base + nADP
+
+      end
+
+      ! Clean
+      kU.destroy
+      k_pt.destroy
+   
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_e)
+         PARALLEL_SUM(sf_d)
+      end
 
    end
 
@@ -3914,6 +4259,7 @@ contains
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without ADP's")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
@@ -4003,6 +4349,7 @@ contains
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without positions")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
@@ -4095,6 +4442,7 @@ contains
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without H ADP's")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
@@ -4221,6 +4569,7 @@ contains
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without positions")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
@@ -4337,6 +4686,7 @@ contains
    ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim,  "sf_n, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without H ADP's")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
@@ -4459,6 +4809,7 @@ contains
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    ENSURE(.unique_atom_for_frag_atom.created,"no crystal unique_atom_for_frag_atom")
+   DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without positions and H ADP's")
 
       k_pt,kU  :: MAT{REAL}*
       sf_u :: VEC{CPX}*
