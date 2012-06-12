@@ -1,5 +1,5 @@
 # !/usr/bin/perl
-#-------------------------------------------------------------------------------
+#=====================================================================================
 #
 # foo.perl
 #
@@ -84,7 +84,7 @@
 # (c) Dylan Jayatilaka, Daniel Grimwood, University of Western Australia, 2005
 #
 # $Id$
-#-------------------------------------------------------------------------------
+#=====================================================================================
 
 use English;            # Get rid of horrible Perl short forms
 use File::Spec ('splitpath','catpath');
@@ -95,9 +95,9 @@ $INPUT_RECORD_SEPARATOR  = "\n";
 $OUTPUT_FIELD_SEPARATOR  = ' ';
 $OUTPUT_RECORD_SEPARATOR = "\n";
 
-################################################################################
-#                               File names and handles
-#
+########################
+# File names and handles
+########################
 
 my $typesfile = "";           # The types.foo file
 my $foofile = "";             # The required .foo file to work on
@@ -139,9 +139,10 @@ my $do_routine_calls = 0;     # Set TRUE if routine calls are to be stored
 my $do_tidy    = 0;           # Set TRUE if preprocessor will tidy code
 my $do_usd = 0;               # Set TRUE if eliminatinmg unused routines AND the .usd file exists 
 
-################################################################################
-#                                Scoping units.
-#
+###############
+# Scoping units
+###############
+
 my $scopeunit = '';           # The current scoping unit AFTER this line.
 my $oldscopeunit = '';        # The previous scoping unit BEFORE this line.
 my $newscopeunit = '';        # The scoping unit *descriptor* AFTER the current line -- IF ANY
@@ -149,7 +150,10 @@ my $parentscope  = '';        # the enclosing parent scoping unit AFTER this lin
 my $newscopeunitfound = 0;    # TRUE if a new scoping unit is on this line.
 my @scope = undef;            # The nested list of current scoping units.
 
-################################################################################
+###############################
+# Routines, variables and types
+###############################
+
 my %called_routines;          # The Tonto module name, and fortran name of called routines.
 my %usd;                      # The list of used routines.
 my %routine_calls;            # The list of routine calls for each routine
@@ -165,6 +169,10 @@ my @all_known_type_names;
 my %tonto_assumed_array_part; # Assumed array subroutine argument substitutions
 my %global_var_info;          # Type (and other) information of all GLOBALLY available variables.
 my %local_var_info;           # Type (and other) information of all LOCALLY available variables.
+
+############################
+# Switches and other globals
+############################
 
 my $input_line;               # The current input line to be processed
 my $inherit_string;           # The inherit string used to find a matching interface
@@ -219,19 +227,21 @@ my $html_GNU_found = 0;
 
 my $debug = 0;
 
-## -----------------------------------------------------------------------------
-## Hack some function return values. This should be done properly by writing
-## this kind of info to file, as the foo code is processed.
-## -----------------------------------------------------------------------------
+# ################################
+# Hack some function return values 
+# ################################
+
+# This should be done properly by writing this kind of 
+# info to file, as the foo code is processed.
 
 $function_res_type{"INT_to_str"} = 'STR';
 $function_res_type{"INT_factorial"} = 'REAL';
 $function_res_type{"INT_double_factorial"} = 'REAL';
 $function_res_type{"REAL_to_str"} = 'STR';
 
-## -----------------------------------------------------------------------------
-## Set up some tonto type information, including array substitution information
-## -----------------------------------------------------------------------------
+###########################
+# Tonto intrinsic functions
+###########################
 
 @tonto_intrinsic_functions = (
     'abs',
@@ -251,6 +261,10 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'trim',
     'verify'
 );
+
+#########################
+# Tonto intrinsic scalars
+#########################
 
 @tonto_intrinsic_scalar_type_names = ( # Tonto intrinsic scalar type names
     'STR',
@@ -272,6 +286,10 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'CPX{16}',
 );
 
+########################
+# Tonto intrinsic arrays
+########################
+
 @tonto_intrinsic_array_type_names = (  # Tonto names for arrays of different dimensions 
     '???',                   # 0
     'VEC',                   # 1
@@ -283,6 +301,10 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'MAT7',                  # 7
 );
 
+###########################
+# Tonto assumed array parts
+###########################
+
 %tonto_assumed_array_part = (          # Assumed array dummy argument substitutions 
     'VEC'      => ':',
     'MAT'      => ':,:',
@@ -293,17 +315,29 @@ $function_res_type{"REAL_to_str"} = 'STR';
     'MAT7'     => ':,:,:,:,:,:,:',
 );
 
-                                       # Make Tonto intrinsic scalar & array information
-                                       # WARNING: ARR{STR} element sizes are special
+#################################################
+# Make Tonto intrinsic scalar & array information
+# WARNING: ARR{STR} element sizes are special
+#################################################
+
 my ($scalar_type,$elt_size,$elt_1,$head_name,$array_type);
+
 @all_known_type_names = @tonto_intrinsic_scalar_type_names;
+
 foreach $scalar_type (@tonto_intrinsic_scalar_type_names) {
+
    $elt_size = $scalar_type . "_SIZE";
+
    %{$tonto_type_info{$scalar_type}} = &analyse_type_name($scalar_type);
+
    $tonto_type_info{$scalar_type}{tonto_size} = $scalar_type . "_SIZE";
+
    foreach $head_name (keys %tonto_assumed_array_part) {
+
       $array_type = "$head_name\{$scalar_type\}";
+
       %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
+
       if ($scalar_type eq 'STR') {
          $elt_1 = $tonto_assumed_array_part{$head_name} ;
          $elt_1 =~ s/:/1/g;
@@ -313,21 +347,27 @@ foreach $scalar_type (@tonto_intrinsic_scalar_type_names) {
       }
       push(@all_known_type_names,$array_type);
    }
+
 }
-                                       # Add a few ad hoc
+
+##############################
+# Add a few ad hoc tonto types
+##############################
+
 $scalar_type = 'TYPES';
 %{$tonto_type_info{$scalar_type}} = &analyse_type_name($scalar_type);
 $tonto_type_info{$scalar_type}{tonto_size} = "???";
+
 $array_type = 'VEC{VEC{REAL}}';
 %{$tonto_type_info{$array_type}} = &analyse_type_name($array_type);
 $tonto_type_info{$array_type}{tonto_element_size} = "???";
 
 push(@all_known_type_names,$array_type);
 
-## -----------------------------------------------------------------------------
-## Define Tonto global variable symbol table hashes
-## THIS IS A HACK!
-## -----------------------------------------------------------------------------
+##################################################
+# Define Tonto global variable symbol table hashes
+# THIS IS A HACK!
+##################################################
 
 %{$global_var_info{tonto}}    = &analyse_type_name('SYSTEM');
 %{$global_var_info{stdin}}    = &analyse_type_name('TEXTFILE');
@@ -350,7 +390,6 @@ push(@all_known_type_names,$array_type);
 # %{$global_var_info{index_p1}} = &analyse_type_name('MAT{INT}*');
 
 %local_var_info = %global_var_info;
-
 
 
 ##########################################
@@ -446,9 +485,9 @@ if ($do_routine_calls) { close RCFILE; }
 
 
 
-##########################
 ## >>>>> Routines <<<<< ##
-##########################
+
+
 
 ##############################################################################
 # Analyse argument list for .fortran, .int, .use, types.foo and file.foo files
@@ -1179,7 +1218,6 @@ sub analyse_type_name {
   # 1st argument
   my $full_type_name = shift;    # This could be a module name also
   if (! defined $full_type_name) { &report_error("type name unknown."); }
-#print "type-declaration= $full_type_name";
 
   # 2nd argument
   my $is_routine_arg = shift;    # Is 1 if the declared variable is a routine arg
@@ -1188,19 +1226,19 @@ sub analyse_type_name {
   # Local vars
   my ($type_name,$right,$sub_type_name);
   my ($type_head_name,$type_arg_part);
-  my ($type_size_part,$type_array_part,$type_ptr_part,$type_is_private);
+  my ($type_len_part,$type_size_part,$type_array_part,$type_ptr_part,$type_is_private);
 
   # Extract type name
-  $full_type_name =~ '^\s*([A-Z][\w\d{,}]*[A-Z\d}])'; 
+  $full_type_name =~ '^\s*([A-Z][\w\d{,}(=)]*[A-Z\d}])'; 
   $type_name = $1;               # TONTO type name including curlies, AND sub type...
   $type_name =~ s/[(][^)]*$//;   # Remove unclosed parentheses at end, if there
 
-  # Extract type-head and type-arg part
+  # Extract type-head and type-arg part e.g. type-head{type-arg}
   $type_name =~ /^([A-Z][A-Z_0-9]*)([{].*[}])?/;
   $type_head_name = $1;          # Type head, without curlies e.g. VEC in VEC{STR}
   $type_arg_part  = $2;          # These are the curlies e.g.  {STR} in VEC{STR}
 
-  # Extract subtype name
+  # Extract subtype name e.g. type-head{type-arg}.sub-type-name
   my $tmp = $type_name; 
   $full_type_name =~ /^\Q$tmp\E/; 
   $right = $POSTMATCH;           # e.g. '.DYLAN' in 'VEC{REAL}.DYLAN"
@@ -1211,22 +1249,49 @@ sub analyse_type_name {
      $sub_type_name = '';
   }
 
-  # Extract array-size part
-#print "full-type-name= $full_type_name";
-#print "type-size-part= $right";
+#  print "----IN analyse_type_name---------------";
+#  print "type_name         =",$type_name;
+#  print "full_type_name    =",$full_type_name;
+#  print "type_name         =",$type_name;
+#  print "sub_type_name     =",$sub_type_name;
+#  print "type_head_name    =",$type_head_name;
+#  print "type_arg_part     =",$type_arg_part;
+#  print "----end analyse_type_name---------------";
+
+  # Extract array, arry-size and array-len parts
   if ($right =~ /^\s*[(](.*)[)]/) {
-     $type_size_part  = $1;      # The array size part
-     $type_array_part = "($1)";  # e.g.  (size(a)) in VEC{STR}(size(a))
+
+     # The type array part e.g. (len=3,size(a)) in VEC{STR}(len=3,size(a))
+     # It includes the type len part and type size part.
+     $type_len_part   = "";      
+     $type_size_part  = $1;      
+     $type_array_part = "($1)";  
      $right = $POSTMATCH;
-     if ($type_head_name eq 'STR' && 
-         $type_size_part !~ /len\s*=/) { # ... put len= back in 
-         $type_size_part = 'len='.$type_size_part;
-         $type_array_part = "($1)"; 
+
+     # Remove len= part from size part
+     if ($type_size_part =~ /^\s*len\s*=\s*\w*[(]/) {
+        # This may not always work
+        my ($left,$middle,$right) = &split_by_first_brackets($type_size_part);
+        $type_len_part  = "$left($middle)";
+        $type_size_part = $right;
+        $type_size_part =~ s/^\s*,//;
+     } elsif ($type_size_part =~ /^\s*len\s*=\s*([^,]*)(,|$)/) { 
+        $type_len_part  = "len=$1";
+        $type_size_part = $POSTMATCH;
      }
+  # No array-size part
   } else {
+     $type_len_part   = "";      
      $type_size_part  = ''; 
      $type_array_part = "";  
   }
+
+#  print "----IN analyse_type_name---------------";
+#  print "type_arg_part     =",$type_arg_part;
+#  print "type_array_part   =",$type_array_part;
+#  print "type_len_part     =",$type_len_part;
+#  print "type_size_part    =",$type_size_part;
+#  print "----end analyse_type_name---------------";
 
   # Extract pointer-declaration part
   if ($right =~ /^\s*[*]/) {
@@ -1302,6 +1367,7 @@ sub analyse_type_name {
       $fortran_self_decl) 
         = &make_fortran_type_declarations($type_name,
                                           $sub_type_name,
+                                          $type_len_part,
                                           $type_size_part,
                                           $type_head_name,
                                           $type_arg[1],
@@ -1309,25 +1375,25 @@ sub analyse_type_name {
                                           $is_intrinsic_type,
                                           $is_array_type);
 
-#print "----IN analyse_type_name---------------";
-#print "type_name         =",$type_name;
-#print "full_type_name    =",$full_type_name;
-#print "type_name         =",$type_name;
-#print "sub_type_name     =",$sub_type_name;
-#print "fortran_type_name =",$fortran_type_name;
-#print "fortran_type_decl =",$fortran_type_decl;
-#print "fortran_mod_name  =",$fortran_mod_name;
-#print "fortran_self_decl =",$fortran_self_decl;
-#print "type_head_name    =",$type_head_name;
-#print "type_arg_part     =",$type_arg_part;
-#print "n_type_args       =",$n_type_args;
-#print "type_args         =",@type_arg;
-#print "type_array_part   =",$type_array_part;
-#print "type_size_part    =",$type_size_part;
-#print "type_ptr_part     =",$type_ptr_part;
-#print "is_intrinsic_type =",$is_intrinsic_type;
-#print "is_array_type     =",$is_array_type;
-#print "----end analyse_type_name---------------";
+#  print "----IN analyse_type_name---------------";
+#  print "type_name         =",$type_name;
+#  print "full_type_name    =",$full_type_name;
+#  print "type_name         =",$type_name;
+#  print "sub_type_name     =",$sub_type_name;
+#  print "fortran_type_name =",$fortran_type_name;
+#  print "fortran_type_decl =",$fortran_type_decl;
+#  print "fortran_mod_name  =",$fortran_mod_name;
+#  print "fortran_self_decl =",$fortran_self_decl;
+#  print "type_head_name    =",$type_head_name;
+#  print "type_arg_part     =",$type_arg_part;
+#  print "n_type_args       =",$n_type_args;
+#  print "type_args         =",@type_arg;
+#  print "type_array_part   =",$type_array_part;
+#  print "type_size_part    =",$type_size_part;
+#  print "type_ptr_part     =",$type_ptr_part;
+#  print "is_intrinsic_type =",$is_intrinsic_type;
+#  print "is_array_type     =",$is_array_type;
+#  print "----end analyse_type_name---------------";
 
   $current_type_name = $full_type_name;
 
@@ -1352,6 +1418,7 @@ sub analyse_type_name {
   $info{is_array_type}     = $is_array_type;     # Is TRUE for array types
 
   return (%info);
+
 }
 
 ############################################################################
@@ -1408,7 +1475,7 @@ sub report_error {
 }
 
 ###########################################################
-# Kepp track of the foofile stack, filename and line number
+# Keep track of the foofile stack, filename and line number
 ###########################################################
 
 sub push_foofile_info_onto_stack {
@@ -1483,7 +1550,8 @@ sub analyse_foo_line {
    my $input_inh = $input_line;    # Keep for inheritance
 
    # Test if the line is blank
-   $not_blank = ($input_line =~ '^ *\S' && $input_line !~ '^ *[!]' );
+ # $not_blank = ($input_line =~ '^ *\S' && $input_line !~ '^ *[!]' && $input_line !~ '^#');
+   $not_blank = ($input_line =~ '^ *\S' && $input_line !~ '^ *[!]');
 
    # Spli off the comment from the line
    my $comment;
@@ -1553,23 +1621,28 @@ sub analyse_foo_line {
 
 }
 
-################################################################################
-# Open the fortran output file.
+##############################
+# Open the fortran output file
+##############################
+
 sub fortran_start {
   -f $fortranfile && unlink($fortranfile);
   open(FORTRANFILE,">".$fortranfile);
 }
 
-################################################################################
-# End the fortran stuff, and close the fortran file.
+###################################################
+# End the fortran stuff, and close the fortran file
+###################################################
+
 sub fortran_end {
   close FORTRANFILE;
   &fortran_dump_interface;
   &fortran_dump_use; 
 }
 
-################################################################################
-# Process the information into fortran.
+######################################
+# Process the information into fortran
+######################################
 
 sub process_foo_line {
 
@@ -1638,48 +1711,60 @@ sub process_foo_line {
    }
 }
 
-################################################################################
+###########################################################
 # Fix the comment indent in the foo files to two characters
+###########################################################
+
 sub tidy_fix_comment_indent {
    my $line = shift;
    $line =~ s/^   ! (?:\S)/   !  /;
    return $line;
 }
 
-################################################################################
+##############################################################################
 # Return TRUE if the scope has a routine/function somewhere in the scope stack
+##############################################################################
+
 sub scope_has_routine {
    my @has_routine = grep(/(subroutine)|(function)/,@scope);
    if ($#has_routine>=0) { return 1; }
    else                  { return undef; }
 }
 
-################################################################################
+#####################################################################
 # Return TRUE if the scope has a program somewhere in the scope stack
+#####################################################################
+
 sub scope_has_program {
    my @has_routine = grep(/program/,@scope);
    if ($#has_routine>=0) { return 1; }
    else                  { return undef; }
 }
 
-################################################################################
-# Return TRUE if the scope has an interface  somewhere in the scope stack
+########################################################################
+# Return TRUE if the scope has an interface somewhere in the scope stack
+########################################################################
+
 sub scope_has_interface {
    my @has_interface = grep(/interface/,@scope);
    if ($#has_interface>=0) { return 1; }
    else                    { return undef; }
 }
 
-################################################################################
+###############################################################################
 # Return TRUE if the scope is within an interface  somewhere in the scope stack
+###############################################################################
+
 sub scope_within_interface {
    my @has_interface = grep(/interface/,@scope[0..($#scope-1)]);
    if ($#has_interface>=0) { return 1; }
    else                    { return undef; }
 }
 
-################################################################################
+########################################################
 # Return TRUE if the scope is WITHIN a routine interface
+########################################################
+
 sub is_new_routine_scope {
    if (defined $newscopeunit && (
        $newscopeunit eq 'subroutine' || $newscopeunit eq 'function'))
@@ -1687,8 +1772,10 @@ sub is_new_routine_scope {
    else { return undef; }
 }
 
-################################################################################
+########################################################
 # Return TRUE if the scope is WITHIN a routine interface
+########################################################
+
 sub in_routine_scope {
    if (defined $scopeunit && (
        $scopeunit eq 'subroutine' || $scopeunit eq 'function'))
@@ -1696,8 +1783,10 @@ sub in_routine_scope {
    else { return undef; }
 }
 
-################################################################################
+#####################################################
 # Return TRUE if the scope is a NEW routine interface
+#####################################################
+
 sub is_new_routine_interface_scope {
    if ($newscopeunit eq 'interface' 
    && ($parentscope  eq 'subroutine' || $parentscope eq 'function')) 
@@ -1705,8 +1794,10 @@ sub is_new_routine_interface_scope {
    else { return undef; }
 }
 
-################################################################################
+########################################################
 # Return TRUE if the scope is WITHIN a routine interface
+########################################################
+
 sub in_routine_interface_scope {
    if ($scopeunit   eq 'interface' 
    && ($parentscope eq 'subroutine' || $parentscope eq 'function')) 
@@ -1714,16 +1805,20 @@ sub in_routine_interface_scope {
    else { return undef; }
 }
 
-################################################################################
+#####################################################
 # Return TRUE if the scope is a NEW routine interface
+#####################################################
+
 sub is_new_module_interface_scope {
    if ($newscopeunit eq 'interface' && $parentscope eq 'module') 
         { return 1; }
    else { return undef; }
 }
 
-################################################################################
+########################################################
 # Return TRUE if the scope is WITHIN a routine interface
+########################################################
+
 sub in_module_interface_scope {
    if ($scopeunit eq 'interface' && $parentscope eq 'module') 
         { return 1; }
@@ -1870,8 +1965,10 @@ sub find_new_scoping_unit {
 # print "par scope = $parentscope";
 }
 
-################################################################################
-# This line is within the scope of a module.
+###########################################
+# This line is within the scope of a module
+###########################################
+
 sub analyse_module_scope {
 
     # Analyse any module variable declaration lines
@@ -1884,13 +1981,17 @@ sub analyse_module_scope {
     }
 }
 
-################################################################################
-# The line is within the scope of an interface within a module.
+##############################################################
+# The line is within the scope of an interface within a module
+##############################################################
+
 sub analyse_module_interface_scope {
 }
 
-################################################################################
-# The line is within the scope of a subroutine or function.
+##########################################################
+# The line is within the scope of a subroutine or function
+##########################################################
+
 sub analyse_routine_scope {
   my($X);
 
@@ -1924,9 +2025,11 @@ sub analyse_routine_scope {
 
 }
 
-################################################################################
+##############################################################################
 # Store ENSURE statements which appear before the first active line and output
 # the later at the first active line
+##############################################################################
+
 sub store_ensure_statements {
 
     if ($input_line =~ /ENSURE/ ||
@@ -1999,16 +2102,20 @@ sub check_for_first_noncomment_line {
 }
 
 
-################################################################################
-# The line is within the scope of an interface in a subroutine or function.
+##########################################################################
+# The line is within the scope of an interface in a subroutine or function
+##########################################################################
+
 sub analyse_interface_scope {
   # Analyse the routine name
   &analyse_rout_name($_[0]);
   $routine{$current_rout_name}{real_name} = $current_rout_name;
 }
 
-################################################################################
-# The line is within the scope of a type.
+########################################
+# The line is within the scope of a type
+########################################
+
 sub analyse_type_scope {
 
   if ($scopeunit eq 'array type') {
@@ -2027,6 +2134,7 @@ sub analyse_type_scope {
 #######################################################################
 # Split the line into it's non-comment and comment parts, if applicable
 #######################################################################
+
 sub split_by_comment {
   my ($x,$y,$i,$left,$right);
   $x = $_[0];
@@ -2052,6 +2160,7 @@ sub split_by_comment {
 ##################################################
 # Return whether we are outside of a quoted string
 ##################################################
+
 sub outside_of_string {
   my(@tmp,$i,$y,$in_single,$in_double);
     $i = 0;
@@ -2066,8 +2175,10 @@ sub outside_of_string {
     return (! ($in_single || $in_double));
 }
 
-############################################################################
-# Return whether we are outside of a HTML quote <blah> ....</blah>. 
+##################################################################
+# Return whether we are outside of a HTML quote <blah> ....</blah> 
+##################################################################
+
 sub outside_of_HTML_quote {
   my(@tmp,$i,$y,$in_inner,$in_outer);
     $i = 0;
@@ -2084,10 +2195,10 @@ sub outside_of_HTML_quote {
     return (! $in_outer);
 }
 
-############################################################################
-#                          Conversion to HTML
+####################
+# Conversion to HTML
+####################
 
-############################################################################
 sub html_start {
   -f $htmlshortfile && unlink($htmlshortfile);
   -f $htmllongfile && unlink($htmllongfile);
@@ -2101,10 +2212,12 @@ sub html_start {
   &html_print("<H2>Synopsis:</H2>",1);
 }
 
-############################################################################
-sub html_put_header {
+##############################################################################
 # This routine outputs the HTML header.  The first argument to this routine is
 # the output file handle, as a string.
+##############################################################################
+
+sub html_put_header {
   &html_print("<HTML>",1)
   &html_print("<HEAD>",1)
   &html_print("  <META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; CHARSET=iso-8859-1\">",1)
@@ -2118,7 +2231,7 @@ sub html_put_header {
 }
 
 ############################################################################
-#
+
 sub html_end {
   print HTMLLONGFILE "\n<BR><IMG SRC=\"../hr.png\" HEIGHT=10 WIDTH=100%><BR>";
   print HTMLLONGFILE "</BODY>";
@@ -2131,9 +2244,11 @@ sub html_end {
   close HTMLSHORTFILE;
 }
 
-############################################################################
+#####################################################################
 # Expects the global hash %used_modules to contain the unique list of 
 # modules that are used (as keys).
+#####################################################################
+
 sub html_put_use_list {
   my ($mod,$tmp);
   if (keys(%used_modules) > 0) {
@@ -2157,8 +2272,10 @@ sub html_put_use_list {
   }
 }
 
-############################################################################
-# This subroutine outputs the HTML for a subroutine/function declaration.
+########################################################################
+# This subroutine outputs the HTML for a subroutine/function declaration
+########################################################################
+
 sub html_do_new_routine_scope {
 
   my ($routname,$arg,$result,$attr,$real_name,$name,$tmp);
@@ -2237,8 +2354,10 @@ sub html_do_new_routine_scope {
   else                        { &html_print("<DIV CLASS=\"INDENT\">",1); } # no <br>
 }
 
-############################################################################
-# Return TRUE if the module $name is in the used module list.
+############################################################
+# Return TRUE if the module $name is in the used module list
+############################################################
+
 sub is_used_module {
    my ($name) = @_;
    if (grep(/^$name\b/,keys %used_modules)) { return 1;}
@@ -2344,6 +2463,8 @@ sub html_put_self_type_components {
 # This routine outputs HTML $out to the appropriate file. A break is used unless
 # $no_br isd set to 1. Output goes to both short and long unless $long_only is
 # set to 1.
+################################################################################
+
 sub html_print {
 
   my ($out,$no_br,$long_only) = @_;
@@ -2363,13 +2484,14 @@ sub html_print {
 }
 
 
-################################################################################
-#                          Conversion to Fortran
-################################################################################
+#######################
+# Conversion to Fortran
+#######################
 
 
-################################################################################
+#########################
 # Dump the interface file
+#########################
 
 sub fortran_dump_interface {
   my ($cnt,$pub,$pvt,$rout);
@@ -2580,8 +2702,9 @@ sub fortran_add_stack_macro {
 }
 
 
-################################################################################
-# Change the return statement by adding STOP_TIMER, UNSTACK or CHECK macros.
+###########################################################################
+# Change the return statement by adding STOP_TIMER, UNSTACK or CHECK macros
+###########################################################################
 
 sub fortran_process_return {
 
@@ -2630,8 +2753,9 @@ sub fortran_process_return {
 }
 
 
-################################################################################
-# Change case statements with the UNKNWON macro appropriately.
+#############################################################
+# Change case statements with the UNKNWON macro appropriately
+#############################################################
 
 sub fortran_process_case_statements {
   my($tmp,$indent,$i,$unknown_arg,$name);
@@ -2675,9 +2799,10 @@ sub fortran_process_case_statements {
 }
 
 
-################################################################################
+#######################################################################
 # Change ENSURE/WARN/DIE to have the routine name in them, or eliminate
 # entirely if we are in a pure routine.
+#######################################################################
 
 sub fortran_process_error_management {
   my($error_string,$name);
@@ -2708,11 +2833,11 @@ sub fortran_process_error_management {
 # }
 }
 
-#########################################################################
-# Convert inherited type and type arg macros. Also convert any explicitly
-# defined type substitutions.
+#########################################################
+# Convert inherited type and type arg macros. 
+# Also convert any explicitly defined type substitutions.
 # NOTE: this routine may remove the len= specifier
-#########################################################################
+########################################################
 
 sub convert_inherited_type_arg_macros {
 
@@ -2841,8 +2966,9 @@ sub convert_inherited_type_arg_macros {
 }
 
 
-################################################################################
+#################################################
 # Convert square bracket array-of-arrays notation
+#################################################
 
 sub fortran_convert_array_of_arrays {
 
@@ -2857,8 +2983,9 @@ sub fortran_convert_array_of_arrays {
 }
 
 
-################################################################################
-# Add DEFAULT initialisation.
+############################
+# Add DEFAULT initialisation
+############################
 
 sub fortran_add_default_initialisation {
   #  if ($inp =~ ':: +INT *$') {                   $inp .= " DEFAULT(0)"}
@@ -2874,15 +3001,18 @@ sub fortran_add_default_initialisation {
 }
 
 
-################################################################################
-# The line is within the scope of an interface in a subroutine or function.
+##########################################################################
+# The line is within the scope of an interface in a subroutine or function
+##########################################################################
+
 sub do_routine_interface_scope {
    if ($do_fortran && $not_blank) { &fortran_do_routine_interface_scope; }
 }
 
 
-################################################################################
-# The line is within the scope of an interface in a subroutine or function.
+##########################################################################
+# The line is within the scope of an interface in a subroutine or function
+##########################################################################
 
 sub fortran_do_routine_interface_scope {
   my($name,$attr,$args,$pre);
@@ -2908,21 +3038,27 @@ sub fortran_do_routine_interface_scope {
 }
 
 
-################################################################################
-# Process new 'module' scope.
+############################
+# Process new 'module' scope
+############################
+
 sub do_new_module_scope {
    if ($do_fortran) { &fortran_do_new_module_scope; }
 }
 
-################################################################################
-# Process new 'module' scope to Fortran.
+#######################################
+# Process new 'module' scope to Fortran
+#######################################
+
 sub fortran_do_new_module_scope {
   $fortran_out  = "module ${module_fort_name}_MODULE";
   $fortran_out .= "\n\n" . "#  include \"${fortranusefile}\"";
 }
 
-################################################################################
-# Process new 'module' scope.
+############################
+# Process new 'module' scope
+############################
+
 sub do_new_virtual_module_scope {
    if ($do_fortran) { &fortran_do_new_virtual_module_scope; }
 }
@@ -2934,8 +3070,9 @@ sub fortran_do_new_virtual_module_scope {
 }
 
 
-################################################################################
-# Analayse the new scoping unit, the beginning of a module.
+##########################################################
+# Analayse the new scoping unit, the beginning of a module
+##########################################################
 
 sub analyse_new_module_scope {
 
@@ -3039,8 +3176,10 @@ sub html_do_new_contains_scope {
   &html_print("<DIV CLASS=\"INDENT\">");
 }
 
-################################################################################
-# The line is a new scoping unit, which is an interface.
+#######################################################
+# The line is a new scoping unit, which is an interface
+#######################################################
+
 sub analyse_new_module_interface_scope {
 
   # Change the interface declaration
@@ -3052,8 +3191,10 @@ sub analyse_new_module_interface_scope {
   }
 }
 
-################################################################################
-# The line is a new scoping unit, which is a type.
+#################################################
+# The line is a new scoping unit, which is a type
+#################################################
+
 sub analyse_new_type_scope {
 
   if ($parentscope ne 'module') {
@@ -3073,17 +3214,22 @@ sub analyse_new_type_scope {
   %local_var_info = %global_var_info
 }
 
-################################################################################
-# Replace the tonto type notation. The tonto type information is already
+#######################################
+# Replace the tonto type notation. 
+# The tonto type information is already
 # generated by &analyse_types_file.
+#######################################
+
 sub do_new_type_scope {
    if ($do_fortran) { &fortran_do_new_type_scope; }
 }
 
 
-################################################################################
-# Replace the tonto type notation with an acceptable fortran version. The tonto
-# type information is already generated by &analyse_types_file.
+#########################################################################
+# Replace the tonto type notation with an acceptable fortran version. 
+# The tonto type information is already generated by &analyse_types_file.
+#########################################################################
+
 sub fortran_do_new_type_scope {
 
    if    ($scopeunit eq 'array type') {
@@ -3102,8 +3248,11 @@ sub fortran_do_new_type_scope {
 
 }
 
-################################################################################
-# The line is a labelled or unlabelled end keyword.
+##################################################
+# The line is a labelled or unlabelled end keyword
+# This may deal with textual inheritance.
+##################################################
+
 sub analyse_new_end_scope {
 
   my($i,$getfile,$found,$name);
@@ -3221,9 +3370,12 @@ sub analyse_new_end_scope {
 
 }
 
-################################################################################
-# Add a scoping unit to the scope stack.  Also set $newscopeunitfound,
+########################################
+# Add a scoping unit to the scope stack. 
+# Also set $newscopeunitfound,
 # $newscopeunit and $oldscopeunit.
+########################################
+
 sub push_scope {
     $oldscopeunit = $scopeunit; 
     $scopeunit = $newscopeunit;
@@ -3231,9 +3383,11 @@ sub push_scope {
     &set_parent_scope;
 }
 
-################################################################################
+############################################################################
 # Remove one element from the scope stack, and set $oldscopeunit to the last
 # element on the stack. This is only called for -end scopes.
+############################################################################
+
 sub pop_scope {
     $oldscopeunit = $scopeunit; 
     pop @scope;
@@ -3259,8 +3413,9 @@ sub pop_scope {
 
 }
 
-################################################################################
-# Set the parent scope.
+######################
+# Set the parent scope
+######################
 
 sub set_parent_scope {
 
@@ -3269,16 +3424,20 @@ sub set_parent_scope {
 
 }
 
-################################################################################
-# Process the end of new scoping unit into Fortran.
+##################################################
+# Process the end of new scoping unit into Fortran
+##################################################
+
 sub do_new_end_scope {
    if ($do_fortran) { &fortran_do_new_end_scope; }
    if ($do_html)    { &html_do_new_end_scope; }
    if ($do_tidy)    { &tidy_do_new_end_scope; }
 }
 
-################################################################################
+###########################################
 # Replace intitial indent for .vim folding.
+###########################################
+
 sub tidy_do_new_end_scope {
    if ($oldscopeunit eq 'subroutine' || $oldscopeunit eq 'function') { 
    my $indent = $routine{$current_rout_name}{indent};
@@ -3286,8 +3445,10 @@ sub tidy_do_new_end_scope {
    }
 }
 
-################################################################################
+###################################################
 # Process the end of new scoping unit into Fortran.
+###################################################
+
 sub html_do_new_end_scope {
 
   if   ($oldscopeunit eq 'subroutine' || $oldscopeunit eq 'function') { 
@@ -3455,6 +3616,7 @@ sub fortran_do_new_end_scope {
 ####################################################
 # The line is the start of a subroutine or function.
 ####################################################
+
 sub analyse_new_routine_scope {
 
   # Expecting a subroutine/function line
@@ -3478,15 +3640,19 @@ sub do_new_do_scope {
    if ($do_html)    { $html_do_indent = 1; }
 }
 
-################################################################################
-# Process a new do scope.
+########################
+# Process a new do scope
+########################
+
 sub do_new_parallel_do_scope {
    if ($do_fortran) { &fortran_do_new_parallel_do_scope; }
    if ($do_html)    { $html_do_indent = 1; }
 }
 
-################################################################################
-# Process new 'module' scope to Fortran.
+#######################################
+# Process new 'module' scope to Fortran
+#######################################
+
 sub fortran_do_new_parallel_do_scope {
   if ($fortran_out =~ /^(\s*)parallel\s do                    # do part
                         (?:\s+(\w+)\s*=\s*(\S+)\s*,\s*(\S+))? # variable and limits
@@ -3507,45 +3673,59 @@ sub fortran_do_new_parallel_do_scope {
   }
 }
 
-################################################################################
-# Process a new if scope.
+########################
+# Process a new if scope
+########################
+
 sub do_new_if_scope {
    if ($do_html)    { $html_do_indent = 1; } 
 }
 
-################################################################################
-# Process a new if scope.
+########################
+# Process a new if scope
+########################
+
 sub do_new_select_scope {
    if ($do_html)    { $html_do_indent = 2; }
 }
 
-################################################################################
-# Process a new if scope.
+########################
+# Process a new if scope
+########################
+
 sub do_new_forall_scope {
    if ($do_html)    { $html_do_indent = 1; }
 }
 
-################################################################################
-# Process a new if scope.
+########################
+# Process a new if scope
+########################
+
 sub do_new_where_scope {
    if ($do_html)    { $html_do_indent = 1; }
 }
 
-################################################################################
-# Process a new do scope.
+########################
+# Process a new do scope
+########################
+
 sub html_add_indent {
    $html_out = $html_out . "<DIV CLASS=\"INDENT\">";
 }
 
-################################################################################
+##########################
 # Process new 'interface'.
+##########################
+
 sub do_new_module_interface_scope {
    if ($do_fortran) { &fortran_do_new_module_interface_scope; }
    if ($do_html)    { &html_do_new_module_interface_scope; }
 }
 
-############################################################################
+###########################################
 # Write a header for the generic interfaces
+###########################################
+
 sub html_do_new_module_interface_scope {
   if (! defined $module{$module_name}{found_module_interface}) {
     if (defined $module{$module_name}{found_module_var}) {
@@ -3564,15 +3744,19 @@ sub html_do_new_module_interface_scope {
   }
 }
 
-################################################################################
+##########################
 # Process new 'interface'.
+##########################
+
 sub do_new_routine_interface_scope {
    if ($do_fortran) { &prepend_self_before_interface; }
    if ($do_html)    { &html_do_new_routine_interface_scope; }
 }
 
-################################################################################
+####################################################
 # Special prepend for interface as first declaration
+####################################################
+
 sub prepend_self_before_interface {
 
      # Prepend self declaration in rare case (missing routine body)
@@ -3585,8 +3769,9 @@ sub prepend_self_before_interface {
 
 }
 
-################################################################################
+###########################################################################
 # The line is within the scope of an interface in a subroutine or function.
+###########################################################################
 
 sub html_do_new_routine_interface_scope {
 
@@ -3603,8 +3788,10 @@ sub html_do_new_routine_interface_scope {
    &html_print("<DIV CLASS=\"INDENT\">",1);
 }
 
-################################################################################
-# Process new 'interface' into fortran.
+######################################
+# Process new 'interface' into fortran
+######################################
+
 sub fortran_do_new_module_interface_scope {
 
   my ($name);
@@ -3628,15 +3815,19 @@ sub fortran_do_new_module_interface_scope {
   }
 }
 
-################################################################################
-# The line is within the scope of an interface within a module.
+##############################################################
+# The line is within the scope of an interface within a module
+##############################################################
+
 sub do_module_interface_scope {
    if ($do_fortran && $not_blank) { &fortran_do_module_interface_scope; }
    if ($do_html && $not_blank) { &html_do_module_interface_scope; }
 }
 
-################################################################################
-# The line is within the scope of an interface within a module.
+##############################################################
+# The line is within the scope of an interface within a module
+##############################################################
+
 sub html_do_module_interface_scope {
 
   my @tmp = split('\b',$html_out);
@@ -3650,8 +3841,10 @@ sub html_do_module_interface_scope {
 
 }
 
-################################################################################
-# The line is within the scope of an interface within a module.
+##############################################################
+# The line is within the scope of an interface within a module
+##############################################################
+
 sub fortran_do_module_interface_scope {
 
    if ($do_usd && ! &routine_used($current_rout_name)) {
@@ -3694,14 +3887,18 @@ sub fortran_do_module_interface_scope {
    $fortran_out = $new_out;
 }
 
-################################################################################
-# The line is before any scope i.e. at the comment header.
+#########################################################
+# The line is before any scope i.e. at the comment header
+#########################################################
+
 sub do_header_scope {
    if ($do_html) { &html_do_header_scope; }
 }
 
-################################################################################
-# The line is before any scope i.e. at the comment header.
+#########################################################
+# The line is before any scope i.e. at the comment header
+#########################################################
+
 sub html_do_header_scope {
 
    $skip_html_out = 1;          # Always skip unless the following applies ...
@@ -3734,18 +3931,20 @@ sub html_do_header_scope {
 
 }
 
-################################################################################
-# The line is within the scope of a subroutine or function.
+##########################################################
+# The line is within the scope of a subroutine or function
+##########################################################
 
 sub do_routine_scope {
    if ($do_fortran) { &fortran_do_routine_scope; }
    if ($do_html)    { &html_do_routine_scope; }
 }
 
-################################################################################
+#############################################################################
 # The line is within the scope of a subroutine or function but NOT a routine
 # body. The routine body stuff is done in another part, this just dies the
 # declaration part at the head of the routine.
+#############################################################################
 
 sub html_do_routine_scope {
 
@@ -3889,8 +4088,9 @@ sub html_do_routine_scope {
 }
 
 
-################################################################################
+##############################################
 # Replace the routine arguments in "html_out".
+##############################################
 
 sub html_replace_routine_args {
    
@@ -3921,9 +4121,10 @@ sub html_replace_routine_args {
     return ($html_out);
 }
 
-################################################################################
+############################################################################
 # The line is within the scope of a subroutine or function but NOT a routine
 # body.
+############################################################################
 
 sub fortran_do_routine_scope {
 
@@ -3969,8 +4170,9 @@ sub fortran_do_routine_scope {
 
 }
 
-################################################################################
+##########################
 # Prepend USE declarations
+##########################
 
 sub fortran_prepend_use_decl {
 
@@ -4001,8 +4203,9 @@ sub fortran_prepend_use_decl {
 
 }
 
-################################################################################
+##########################
 # Prepend self declaration 
+##########################
 
 sub fortran_prepend_self_decl {
 
@@ -4033,9 +4236,10 @@ sub fortran_prepend_self_decl {
 
 }
 
-################################################################################
+##############################################################################
 # Store ENSURE statements which appear before the first active line and output
 # the later at the first active line
+##############################################################################
 
 sub fortran_store_ensure_statements {
 
@@ -4061,18 +4265,22 @@ sub fortran_store_ensure_statements {
 
 }
 
-################################################################################
+##############################################################################
 # The line is within the scope of a subroutine or function, somewhere. i.e the
 # scope could be an "if" or "case" but somewhere previously there is an
 # enclosing scope which is a routine.
+##############################################################################
+
 sub do_routine_body {
    if ($do_fortran && $not_blank) { &fortran_do_routine_body; }
    if ($do_html)                  { &html_do_routine_body; }
    if ($do_tidy)                  { &tidy_do_routine_body; }
 }
 
-################################################################################
+###########################################
 # Replace intitial indent for .vim folding.
+###########################################
+
 sub tidy_do_routine_body {
    # Replace indent
    my $name = $current_rout_name;
@@ -4096,10 +4304,11 @@ sub tidy_do_routine_body {
    }
 }
 
-################################################################################
+##############################################################################
 # The line is within the scope of a subroutine or function, somewhere. i.e the
 # scope could be an "if" or "case" but somewhere previously there is an
 # enclosing scope which is a routine.
+##############################################################################
 
 sub html_do_routine_body {
 
@@ -4210,9 +4419,10 @@ sub html_do_routine_body {
 
 }
 
-################################################################################
+##########################################################################
 # Change special HTML characters such as < and > before anything else. Any
 # others? Put em here.
+##########################################################################
 
 sub html_change_special_chars {
    my $html_out = $_[0];
@@ -4221,10 +4431,11 @@ sub html_change_special_chars {
    return ($html_out);
 }
 
-################################################################################
+##############################################################################
 # The line is within the scope of a subroutine or function, somewhere. i.e the
 # scope could be an "if" or "case" but somewhere previously there is an
 # enclosing scope which is a routine.
+##############################################################################
 
 sub fortran_do_routine_body {
 
@@ -4262,22 +4473,28 @@ sub fortran_do_routine_body {
 
 }
 
-################################################################################
+############################################
 # The line is within the scope of a program.
+############################################
+
 sub do_program_scope {
    if ($do_fortran && $not_blank) { &fortran_do_program_scope; }
    if ($do_html)                  { &html_do_program_scope; }
 }
 
-################################################################################
+############################################
 # The line is within the scope of a program.
+############################################
+
 sub html_do_program_scope {
    &html_do_routine_scope;
    &html_do_routine_body;
 }
 
-################################################################################
+############################################
 # The line is within the scope of a program.
+############################################
+
 sub fortran_do_program_scope {
 
   $name = lc($module_name);
@@ -4308,15 +4525,19 @@ sub fortran_do_program_scope {
   $fortran_out .= $comment; 
 }
 
-################################################################################
+###########################################
 # The line is within the scope of a module.
+###########################################
+
 sub do_module_scope {
    if ($do_fortran && $not_blank) { &fortran_do_module_scope; }
    if ($do_html)                  { &html_do_module_scope; }
 }
 
-################################################################################
+###########################################
 # The line is within the scope of a module.
+###########################################
+
 sub html_do_module_scope {
 
    if ($html_out =~ /implicit none/) { &html_put_use_list; }
@@ -4324,8 +4545,10 @@ sub html_do_module_scope {
 
 }
 
-################################################################################
+###########################################
 # The line is within the scope of a module.
+###########################################
+
 sub html_do_module_variables {
 
    if (! defined $module{$module_name}{found_module_var}) {
@@ -4431,8 +4654,10 @@ sub html_do_module_variables {
 
 }
 
-################################################################################
+###########################################
 # The line is within the scope of a module.
+###########################################
+
 sub fortran_do_module_scope {
 
    my $comment;
@@ -4454,14 +4679,18 @@ sub fortran_do_module_scope {
 
 }
 
-################################################################################
+#####################################################
 # The line is within the scope of a type declaration.
+#####################################################
+
 sub do_type_scope {
    if ($do_fortran && $not_blank) { &fortran_do_type_scope; }
 }
 
-################################################################################
+#####################################################
 # The line is within the scope of a type declaration.
+#####################################################
+
 sub fortran_do_type_scope {
 
    my $comment;
@@ -4483,8 +4712,10 @@ sub fortran_do_type_scope {
 
 }
 
-################################################################################
+#####################################################
 # Add macros include file, and interface include file 
+#####################################################
+
 sub fortran_add_include_files {
    if ($fortran_out =~ 'implicit none') {
       $fortran_out .= "\n\n#  include \"macros\"\n";
@@ -4515,6 +4746,7 @@ sub fortran_add_include_files {
 ################################################################################
 # Change the variable declaration order and the array type declarations as well,
 # e.g.  VEC{REAL}.DYLAN -> VEC_REAL_DYLAN(:) 
+################################################################################
 
 sub fortran_change_variable_declarations {
 
@@ -4597,12 +4829,14 @@ sub fortran_change_variable_declarations {
 # Work out the fortran type declarations, including array size part. This
 # routine needs to know whether the type declaration is for a routine argument
 # or not.
+################################################################################
 
 sub make_fortran_type_declarations {
 
    # Extract arguments
    my ($type_name,
        $sub_type_name,
+       $type_len_part,
        $type_size_part,
        $type_head_name,
        $type_arg_1,
@@ -4626,16 +4860,18 @@ sub make_fortran_type_declarations {
   if ($sub_type_name eq '') { $fortran_mod_name = "${fortran_type_name}"; }
   else                      { $fortran_mod_name = "${fortran_type_name}_${sub_type_name}"; }
 
-#print "------ in & fortran_type_decl -----";
-#print "line -----------> $input_line";
-#print "full_type_name  = $type_name";
-#print "type_size_part  = $type_size_part";
-#print "type_head_name  = $type_head_name";
-#print "type_arg_1      = $type_arg_1";
-#print "is_routine_arg  = $is_routine_arg";
-#print "fortran_mod_name  = $fortran_mod_name";
-#print "fortran_type_name = $fortran_type_name   ";
-#print "sub_type_name     = $sub_type_name   ";
+# print "------ in & fortran_type_decl -----";
+# print "line -----------> $input_line";
+# print "full_type_name  = $type_name";
+# print "type_len_part   = $type_len_part";
+# print "type_size_part  = $type_size_part";
+# print "type_head_name  = $type_head_name";
+# print "type_arg_1      = $type_arg_1";
+# print "is_routine_arg  = $is_routine_arg";
+# print "fortran_mod_name  = $fortran_mod_name";
+# print "fortran_type_name = $fortran_type_name   ";
+# print "sub_type_name     = $sub_type_name   ";
+# print "------ in & fortran_type_decl -----";
 
    # Pick up BSTR errors
    if ($type_name eq 'BSTR') {
@@ -4649,7 +4885,7 @@ sub make_fortran_type_declarations {
    ### Type declarations for INTRINSIC scalars ###
    elsif  ($is_intrinsic_scalar) {  
       ($fortran_type_decl,$fortran_self_decl) =
-         &make_scalar_fortran_types($type_name,$type_size_part,$is_routine_arg);
+         &make_scalar_fortran_types($type_name,$type_len_part,$type_size_part,$is_routine_arg);
    }
 
    ### Type declarations for ARRAYS ###
@@ -4660,7 +4896,7 @@ sub make_fortran_type_declarations {
       }
 
       my ($arg_1_decl,$arg_1_self_decl,$type_size_part) =
-         &make_scalar_fortran_types($type_arg_1,$type_size_part,$is_routine_arg);
+         &make_scalar_fortran_types($type_arg_1,$type_len_part,$type_size_part,$is_routine_arg);
 
       my $dim;
 
@@ -4712,15 +4948,15 @@ sub make_fortran_type_declarations {
 sub make_scalar_fortran_types {
 
    # Extract arguments
-   my ($type_name,$type_size_part,$is_routine_arg) = @_;
+   my ($type_name,$type_len_part,$type_size_part,$is_routine_arg) = @_;
 
    # Locals
    my ($fortran_type_decl,$kind);
 
-   # Get kind= specifier
+   # The kind= specifier
    $kind = "";
 
-   # Is this an INTRINSIC type?
+   # Is this an kinded INTRINSIC{8} type?
    if ($type_name =~ "^(STR)({.*})? *\$"  ||  # For INTRINSIC types
        $type_name =~ "^(BIN)({.*})? *\$"  ||  # Kind is specified in curlies
        $type_name =~ "^(INT)({.*})? *\$"  ||
@@ -4734,7 +4970,7 @@ sub make_scalar_fortran_types {
       }
    } 
 
-   # OK, this is a (NONINTRINSIC) type ...
+   # OK: this is a (NONINTRINSIC) type ...
    else {                              
 
       # This part should be entered only from the array type region of
@@ -4756,48 +4992,69 @@ sub make_scalar_fortran_types {
       }
    }
 
+   # This is the kind and len= parts of the declaration
+   # ... including if perhaps the variable was a routine
+   # argument or a string.
    my $kind_length_part = "";        
+
+   # This is the kind and len=* parts of the declaration
+   # ...  assuming the variable is a string dummy argument
    my $self_kind_length_part = "";                 
 
    # For STR type, set the len= part of the type declaration
    # Append to the kind= part (if any)
    if ($fortran_type_decl eq 'STR') { 
 
-      # Users beware: explicit len= overrides routine arguments len=*. Trust foo!
-      if    ($type_size_part =~ s/^ *len *= *(.*?),//) { $kind_length_part = "(${kind}len=$1)"; }
-      elsif ($type_size_part =~ s/^ *len *= *(.*?)$//) { $kind_length_part = "(${kind}len=$1)"; }
-      elsif ($is_routine_arg==1)                       { $kind_length_part = "(${kind}len=*)"; }
-      else                                             { $kind_length_part = "(${kind}len=STR_SIZE)"; }
+      # Users beware: explicit len= overrides routine arguments len=*.
+      if    ($type_len_part =~ /^\s*len/) { $kind_length_part = "(${kind}$type_len_part)"; }
+      elsif ($is_routine_arg==1)          { $kind_length_part = "(${kind}len=*)"; }
+      else                                { $kind_length_part = "(${kind}len=STR_SIZE)"; }
+
       $self_kind_length_part = "(${kind}len=*)";
+
    }
 
    # If there is a len= declaration, and its not a STR, this must
-   # be an inherited routine, so remove it ...
-   elsif ($type_size_part =~ /^ *len *= */) {
+   # be an inherited routine, so remove the len= part  ...
+   elsif ($type_len_part =~ /^\s*len\s*=\s*/) {
+
       if ($routine{$current_rout_name}{being_inherited}) { 
-         $type_size_part =~ s/^ *len *= *(.*?),//;
-         $type_size_part =~ s/^ *len *= *(.*?)$//;
+
+#         if ($type_size_part =~ /^\s*len\s*=\s*len[(]/) {
+#            my ($left,$middle,$right) = &split_by_first_brackets($type_size_part);
+#            $type_size_part = $right;
+#            $type_size_part =~ s/^\s*,//;
+#         } else {
+#            $type_size_part =~ s/^ *len *= *(.*?),//;
+#            $type_size_part =~ s/^ *len *= *(.*?)$//;
+#         }
+
       } else {
          &report_error("cannot specify len= for intrinsic scalar type \"$type_name\".");
       }
+
    }
 
    # OK, it must be a non-string INTRINSIC kind= declaration
    elsif ($kind ne '') {                  
+
       $kind =~ s/,$//;      # remove comma
       $kind_length_part      = "(${kind})";             # Insert kind= like len=
       $self_kind_length_part = "(${kind})";             # ... for self declaration as well
+
    }  
 
    return ($fortran_type_decl . $kind_length_part,      # Normal declaration
            $fortran_type_decl . $self_kind_length_part, # Self declaration
            $type_size_part);                            # Size part
+
 }
 
-################################################################################
-## Change the lower case use statements by appending _MODULE to used modules.
-## With the only clause, add an underscore to the used routine, or if not
-## using the full generic mechanism, preprend the module name as well
+############################################################################
+# Change the lower case use statements by appending _MODULE to used modules.
+# With the only clause, add an underscore to the used routine, or if not
+# using the full generic mechanism, preprend the module name as well
+############################################################################
 
 sub fortran_change_use_statements {
 
@@ -4816,9 +5073,10 @@ sub fortran_change_use_statements {
 
 }
 
-################################################################################
-## Change square brackets to array constructors. (If preceeded by a backslash,
-## then do not do the replacement). 
+#############################################################################
+# Change square brackets to array constructors. (If preceeded by a backslash,
+# then do not do the replacement). 
+#############################################################################
 
 sub fortran_change_square_brackets {
 
@@ -4832,6 +5090,7 @@ sub fortran_change_square_brackets {
 ################################################################################
 # Generate the routine line. The line is within the scope of a "contains" block.
 ################################################################################
+
 sub do_new_routine_scope {
    if ($do_fortran) {  &fortran_do_new_routine_scope; }
    if ($do_html)    {  &html_do_new_routine_scope; }
@@ -4841,6 +5100,7 @@ sub do_new_routine_scope {
 # Generate the fortran routine statement. The line is within the scope of a 
 # "contains" block.
 ###########################################################################
+
 sub fortran_do_new_routine_scope {
 
   if ($routine{$current_rout_name}{inlined_by_foo}) {
@@ -5301,10 +5561,12 @@ sub convert_dots_to_fortran {
 
 }
 
-################################################################################
+###################################################################
 # Convert the dot notation into HTML.
 # Takes a string as its 1st argument, and returns the HTML version.
 # If $in_comment is set, the dots are conveted within a comment.
+###################################################################
+
 sub dots_to_html {
 
    my ($X,$in_comment) = @_;
@@ -5532,6 +5794,7 @@ sub arg_has_component {
 # of the removal of the string part which has the effect of stripping any array
 # tail part. Then, for array arguments $arg, the routine will return TRUE, but
 # the $arg_type will be wrong and refer to the type of the $arg array head.
+################################################################################
 
 sub is_declared_variable {
 
@@ -5558,6 +5821,7 @@ sub is_declared_variable {
 # $arg_element_type is the type of the scalar element part of the array.
 # $arg_type_head_name is the type head name of the type of variable $arg.
 # It could be blank in the case that $arg_type is scalar.
+################################################################################
 
 sub is_declared_array_variable {
 
@@ -5595,6 +5859,8 @@ sub is_declared_array_variable {
 # Given the $tail_part of an array, e.g. "1,:,b", work out the $type_head_name
 # of the array variable. If the array slice dimension is zero, the
 # $type_head_name is blank.  $tail can also be blank.
+################################################################################
+
 sub array_var_type_head_name {
     my($tail_part) = @_;
     my($type_head_name,$slice_dim);
@@ -5608,9 +5874,11 @@ sub array_var_type_head_name {
 }
 
 
-################################################################################
+###########################################################################
 # Return the fortran slice dimension of $tail, i.e. the slice dimension for
 # a(:,b,1) is 2 if b if of type VEC{INT}.
+###########################################################################
+
 sub slice_dimension {
    my ($tail) = @_;
    my ($index,$cnt);
@@ -5630,6 +5898,7 @@ sub slice_dimension {
 # Return the type of the argument, otherwise return "unknown". The argument may
 # be in fortran form i.e. with % symbol type field separators. If so, the %
 # symbols are converted to dots, since the routine works internally with dots.
+################################################################################
 
 sub type_of_this {
 
@@ -5816,9 +6085,9 @@ sub type_of_this {
   return ('unknown');
 }
 
-#################################################################
-# Analyse a routine name and store all the routine attributes ...
-#################################################################
+#############################################################
+# Analyse a routine name and store all the routine attributes
+#############################################################
 
 sub analyse_rout_name {
 
@@ -6174,15 +6443,16 @@ sub routine_has_arg {
     return ($has);
 }
 
-################################################################################
-# Bracket splitting routines .....
-################################################################################
+############################
+# Bracket splitting routines
+############################
 
-################################################################################
+##########################################################################
 # This routine breaks up the line into what's before the LAST set of round
 # brackets, and what's in the brackets.  For example,
 # &split_by_last_brackets("if ((a) + b(c(d)) == 1) (hi)") returns
 # "if ((a) + b(c(d)) == 1) " and "hi".
+##########################################################################
 
 sub split_by_last_brackets {
 
@@ -6205,11 +6475,12 @@ sub split_by_last_brackets {
    ($head,$tail);
 }
 
-################################################################################
+##########################################################################
 # This routine breaks up the line into what's before the LAST set of round
 # brackets, and what's in the brackets.  For example,
 # &split_by_last_brackets("if ((a) + b(c(d)) == 1) (hi)") returns
 # "if ((a) + b(c(d)) == 1) " and "hi".
+##########################################################################
 
 sub split_by_last_curly_brackets {
 
@@ -6269,12 +6540,13 @@ sub split_by_last_curly_brackets {
 #  ($left_string,$middle_string,$right_string)
 #}
 
-################################################################################
+#####################################################################
 # This routine breaks up the line into what's before the first set of 
 # brackets, what's in the brackets, and what's after the brackets.
 # For example,
 # &split_by_first_brackets("if ((a) + b(c(d)) == 1) (hi)") returns
 # "if ", "(a) + b(c(d)) == 1", and " (hi)".
+#####################################################################
 
 sub split_by_first_brackets {
 
@@ -6323,7 +6595,7 @@ sub has_matching_curly_brackets {
   (($_[0] =~ tr/[{]//) == ($_[0] =~ tr/[}]//));
 }
 
-################################################################################
+###############################################################################
 # This routine breaks up the line into what's before the first set of *curly*
 # brackets, what's in the brackets, and what's after the brackets.
 # For example,
@@ -6332,6 +6604,7 @@ sub has_matching_curly_brackets {
 # If the opening curly bracket is not there, the whole string as the left
 # string. If an opening curly bracket is found but no closing curly bracket, it
 # is an error.
+###############################################################################
 
 sub split_by_first_curly_brackets {
 
@@ -6369,25 +6642,33 @@ sub split_by_first_curly_brackets {
 
   return ($left_string,$middle_string,$right_string)
 }
-################################################################################
-# Tidy the .foo file
-################################################################################
 
-################################################################################
+
+####################
+# Tidy the .foo file
+####################
+
+#####################
 # Open the tidy file.
+#####################
+
 sub tidy_start {
   -f $tidyfile && unlink($tidyfile);
   open(TIDYFILE,">".$tidyfile);
 }
 
-################################################################################
+##############################################
 # End the tidy stuff, and close the tidy file.
+##############################################
+
 sub tidy_end {
   close TIDYFILE;
 }
 
-################################################################################
+###########################################################################
 # Return TRUE if the routine with name $name calls the routine called $call
+###########################################################################
+
 sub routine_calls_this_routine {
     my $name = $_[0];
     my $call = $_[1];
@@ -6406,8 +6687,10 @@ sub routine_calls_this_routine {
     return ($has);
 }
 
-################################################################################
+####################################################################
 # Return TRUE if the routine with name $rout is used in this module.
+####################################################################
+
 sub routine_used {
     my $rout = $_[0];
 
@@ -6416,8 +6699,10 @@ sub routine_used {
     else                          { return(0); }
 }
 
-################################################################################
+############################################################
 # Return TRUE if $data is really some data in module $module
+############################################################
+
 sub is_module_data {
     my $module = $_[0];
     my $data = $_[1];
