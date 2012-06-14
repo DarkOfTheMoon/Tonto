@@ -753,6 +753,7 @@ contains
       cif.find_item("_covariance_matrix",there(1))
 
       ! Read reflections -- must have n_atoms
+      ! WARNING: only read position-ADP2 covariance for now.
       if (there(1) AND present(n_atoms)) then
 
          ! Dimension
@@ -1287,8 +1288,13 @@ contains
       n_r = .reflections.dim - 1
       n_p = .reflections.dim - .n_param
       .chi2      = max(n_r,1)*.reflections.F_chi2/max(n_p,1)
-      .chi2_fit0 = .chi2_fit
       .chi2_fit  = .chi2
+
+      ! debug
+      if (.debugging("update_n_param_and_chi2")) then
+         stdout.text("chi2_fit0 ="//trim(.chi2_fit0.to_str))
+         stdout.text("chi2_fit  ="//trim(.chi2_fit.to_str ))
+      end
 
    end
 
@@ -2075,6 +2081,19 @@ contains
                                   ,.near_0_eigenvalues,.near_0_eigenvectors &
                                   ,.covariance_matrix,.correlation_matrix)
 
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("shifts:")
+      stdout.put(.dX)
+      stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
+      stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
+      stdout.show("tol_0                  =",.tol_0)
+      stdout.show("n_0                    =",.n_0)
+      stdout.show("tol_near_0             =",.tol_near_0)
+      stdout.show("n_near_0               =",.n_near_0)
+      stdout.text("Near_0 eigenvalues:")
+      stdout.put(.near_0_eigenvalues,by_column=TRUE)
+      end
+
       ! Get the maximum shift
       .max_shift = maxval(abs(.dX))
 
@@ -2088,21 +2107,16 @@ contains
       .covariance_matrix = .chi2*.covariance_matrix
 
       ! Set the fit errors e.g. max(.dX/esd)
+      ! Parameter ordering is unique fragment atom order.
       .update_fit_errors
-
-      if (.debugging("solve_normal_equations")) then 
-      stdout.text("shifts:")
-      stdout.put(.dX)
-      stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
-      stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
-      stdout.show("tol_0                  =",.tol_0)
-      stdout.show("n_0                    =",.n_0)
-      stdout.show("tol_near_0             =",.tol_near_0)
-      stdout.show("n_near_0               =",.n_near_0)
-      end
 
       rhs.destroy
       A.destroy
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("shifts before renormalisation:")
+      stdout.put(.dX)
+      end
 
       ! Renormalise shift if too big
       if (.max_shift>.max_allowed_param_shift) then
@@ -2118,7 +2132,9 @@ contains
    end
 
    update_fit_errors
-   ! Set the esd's for the current fit. You have to call this if the
+   ! Set the esd's for the current fit. 
+   ! WARNING: The order of the parameters is not always the same
+   ! between calls of this routine. You *must* call this if the
    ! covariance matrix has been transformed from a unique-fragment
    ! atom ordering to asymmetric-unit ordering.
 
@@ -2130,19 +2146,35 @@ contains
 
       indmax,p :: INT
       val,valmax :: REAL
+      W :: VEC{REAL}*
 
       ! Set variances
       .covariance_matrix.put_diagonal_to(.esd)
-      if (.debugging("set_fit_errors")) then
-      stdout.text("variances:")
-      stdout.put(.esd,by_column=TRUE)
+
+      if (.debugging("update_fit_errors:variances")) then
+         stdout.text("variances:")
+         stdout.put(.esd,by_column=TRUE)
       end
 
       ! Set ESD's
       .esd = sqrt(.esd)
-      if (.debugging("set_fit_errors")) then
-      stdout.text("esd:")
-      stdout.put(.esd,by_column=TRUE)
+
+      if (.debugging("update_fit_errors")) then
+
+         stdout.text("esd:")
+         stdout.put(.esd,by_column=TRUE)
+
+         stdout.text("dX:")
+         stdout.put(.dX,by_column=TRUE)
+
+         W.create(.esd.dim)
+         where (abs(.esd)<TOL(8)); W = ZERO
+         elsewhere;                W = .dX/.esd
+         end
+         stdout.text("dX/esd:")
+         stdout.put(W,by_column=TRUE)
+         W.destroy
+
       end
 
       ! Get the location of the maximum shift on esd
@@ -2151,11 +2183,15 @@ contains
       do p = 1,.esd.dim
 
          val = .esd(p)
-         if (val==ZERO) cycle
 
+         ! Ignore symmetry zero's
+         if (abs(val)<TOL(8)) cycle
+
+         ! Shift on esd
          val = abs(.dX(p)/val)
-         if (val<=valmax) cycle
 
+         ! Set shift on esd if larger ...
+         if (val<=valmax) cycle
          valmax = val
          indmax = p
 
@@ -2167,9 +2203,9 @@ contains
       .max_shift_on_esd     = valmax
 
       ! Debug
-      if (.debugging("set_fit_errors")) then 
-      stdout.show("max_shift_on_esd_ind  =",indmax)
-      stdout.show("max_shift_on_esd      =",valmax)
+      if (.debugging("update_fit_errors")) then 
+         stdout.show("max_shift_on_esd_ind  =",indmax)
+         stdout.show("max_shift_on_esd      =",valmax)
       end
 
    end
@@ -2427,6 +2463,13 @@ contains
       ! chi2 inceased?
       .chi2_increased = .chi2_fit>.chi2_fit0 AND .fit_iteration>.min_iterations
 
+      ! debug
+      if (.debugging("fit_finished")) then
+         stdout.text("In fit finished:")
+         stdout.text("chi2_fit0 ="//trim(.chi2_fit0.to_str))
+         stdout.text("chi2_fit  ="//trim(.chi2_fit.to_str ))
+      end
+
       ! Roll back the parameters is chi2 increases
       ! WARNING: covariances are not rolled back ...
     ! if (.chi2_increased) then
@@ -2619,6 +2662,7 @@ contains
       ! Print how it finished
       if      (.fit_converged)            then; stdout.text("Structure fit converged.")
       else if (.chi2_increased)           then; stdout.text("WARNING: fit stopped: chi2 has increased.")
+                                                stdout.text("WARNING: fit results are unreliable.")
       else if (.too_many_fit_iterations)  then; stdout.text("WARNING: fit stopped: too many iterations.")
       end
 
