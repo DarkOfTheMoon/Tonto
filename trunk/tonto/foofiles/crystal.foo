@@ -3231,6 +3231,11 @@ contains
       ! and their  derivatives
       .make_unique_sf_derivs(sf_e,sf_d,sf_n)
 
+      if (.debugging("get_parameter_shifts")) then
+         stdout.text("sf_e:")
+         stdout.put(sf_e)
+      end
+
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
       Fc.create(n_refl) 
@@ -3240,6 +3245,11 @@ contains
       ! Set the calculated SF's
       .set_F_calc(Fc)
       Fc.destroy
+
+!      if (.debugging("get_parameter_shifts")) then
+!         stdout.text("Fc:")
+!         stdout.put(Fc)
+!      end
 
       ! Make chi2 in F (and I?)
       .make_F_predicted
@@ -3861,6 +3871,7 @@ contains
    
             if (.data.refine_H_U_iso)          then; .make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d,sf_n)
             else
+             ! if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADPx_Y_test(sf_e,sf_d,sf_n)
                if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADPx_Y(sf_e,sf_d,sf_n)
                else;                                 .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n)
                end
@@ -3899,6 +3910,394 @@ contains
 
    end
 
+
+   make_unique_sfd_pos_Y_ADPx_Y_test(sf_e,sf_d,sf_n) ::: private
+   ! Make the unique structure factors and their derivatives "sf_e"
+   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   ! set of atom parameters in .fragment_atom.
+   ! NOTE: this version does *all* parameters, positions and ADPs
+   !       *including* up to 4th order anharmonicity.
+   ! NOTE: the order of the derivatives follows the lexical order 
+   !       defined in GAUSSIAN_DATA
+
+      sf_e :: VEC{CPX}, OUT
+      sf_d :: MAT{CPX}, OUT
+      sf_n :: MAT{CPX}, target, IN
+
+   ENSURE(.data.created, "no reflection data")
+   ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
+   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
+   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,         "sf_n, wrong dim1")
+   ENSURE(sf_n.dim2==.n_unique_frag_atoms,       "sf_n, wrong dim2")
+
+      f_atom :: ATOM*
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      v3   :: VEC{REAL}(10)
+      v4   :: VEC{REAL}(15)
+      sf_u :: VEC{CPX}*
+      k_pt,kU :: MAT{REAL}*
+      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
+      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
+      k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
+      n_k,f,u,k,base,nADP :: INT
+      II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_k = .n_unique_SF_k_pts
+      f24 = QUARTER*SIXTH
+
+      ! Symmetry generated k points
+      k_pt.create(n_k,3)
+      .make_unique_SF_k_pts(k_pt)
+      k1v => k_pt(:,1)
+      k2v => k_pt(:,2)
+      k3v => k_pt(:,3)
+
+      ! K times thermal tensors
+      kU.create(n_k,3)        
+
+      ! Initialize
+      sf_e = ZERO
+      sf_d = ZERO
+
+      ! Base index for unique frag atom
+      base = 0
+
+      ! Make the structure factors and derivatives
+      parallel do u = 1,.n_unique_frag_atoms
+
+         ! Fragment atom
+         f = .unique_frag_atom(u)
+         f_atom => .fragment_atom(f)
+
+         ! k.U
+         kU.to_product_of(k_pt,f_atom.ADP_tensor)
+         u1v => kU(:,1)
+         u2v => kU(:,2)
+         u3v => kU(:,3)
+
+         ! Structure factor, iunique frag atom "u"
+         sf_u => sf_n(:,u)
+
+         ! ADP4's
+         if (f_atom.has_only_pADP4s_and_errors) then
+
+            ! Reorder from lower pyramid -> lexical
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v3,f_atom.pADP_vector(10:19))
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v4,f_atom.pADP_vector(20:34))
+
+            ! Uncompress lower pyramid -> tensor
+            adp3.uncompress_from_pyramid(v3)
+            adp4.uncompress_from_pyramid(v4)
+
+            do k = 1,n_k
+   
+               ! Scattering vector
+               k1 = k1v(k)
+               k2 = k2v(k)
+               k3 = k3v(k)
+
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+   
+               ! Temperature factor (TF)
+               u1 = u1v(k)
+               u2 = u2v(k)
+               u3 = u3v(k)
+               tf = -HALF*(u1*k1+u2*k2+u3*k3)
+               tf = exp(tf)
+
+               ! Third and fourth order corrections
+               c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
+               c4 = adp4.trace_product_with([k1,k2,k3])*f24
+   
+               ! Structure factor x (1 + anharm ...) x TF
+               sfh = sf_u(k) * tf 
+               sf  = sfh * (ONE+II*c3+c4)
+               sf2 = sf  * HALF
+   
+               ! SF contribution (with anhramonic!)
+               sf_e(k) = sf_e(k) + sf
+   
+               ! Pos derivatives
+               sf_d(k,base+ 1) =  II*k1*sf
+               sf_d(k,base+ 2) =  II*k2*sf
+               sf_d(k,base+ 3) =  II*k3*sf
+
+               ! U2 derivatives
+               sf_d(k,base+ 4) = -k1_k1*sf2
+               sf_d(k,base+ 5) = -k2_k2*sf2
+               sf_d(k,base+ 6) = -k3_k3*sf2
+               sf_d(k,base+ 7) = -k1_k2*sf 
+               sf_d(k,base+ 8) = -k1_k3*sf 
+               sf_d(k,base+ 9) = -k2_k3*sf 
+   
+               ! Structure factor x TF (without anharmonic!)
+               sf   = sfh
+
+               ! Multiples of sf
+               sf2  = sf * HALF
+               sf4  = sf * QUARTER
+               sf6  = sf * SIXTH
+               sf24 = sf * f24
+
+               ! U3 derivatives
+               sf_d(k,base+10) = II*k1_k1*k1*sf6
+               sf_d(k,base+11) = II*k2_k2*k2*sf6
+               sf_d(k,base+12) = II*k3_k3*k3*sf6
+               sf_d(k,base+13) = II*k1_k1*k2*sf2
+               sf_d(k,base+14) = II*k1_k1*k3*sf2
+               sf_d(k,base+15) = II*k2_k2*k1*sf2
+               sf_d(k,base+16) = II*k2_k2*k3*sf2
+               sf_d(k,base+17) = II*k3_k3*k1*sf2
+               sf_d(k,base+18) = II*k3_k3*k2*sf2
+               sf_d(k,base+19) = II*k1*k2*k3*sf 
+
+               ! U4 derivatives
+               sf_d(k,base+20) = k1_k1*k1_k1*sf24
+               sf_d(k,base+21) = k2_k2*k2_k2*sf24
+               sf_d(k,base+22) = k3_k3*k3_k3*sf24
+               sf_d(k,base+23) = k1_k1*k1_k2*sf6
+               sf_d(k,base+24) = k1_k1*k1_k3*sf6
+               sf_d(k,base+25) = k2_k2*k1_k2*sf6
+               sf_d(k,base+26) = k2_k2*k2_k3*sf6
+               sf_d(k,base+27) = k3_k3*k1_k3*sf6
+               sf_d(k,base+28) = k3_k3*k2_k3*sf6
+               sf_d(k,base+29) = k1_k1*k2_k2*sf4
+               sf_d(k,base+30) = k1_k1*k3_k3*sf4
+               sf_d(k,base+31) = k2_k2*k3_k3*sf4
+               sf_d(k,base+32) = k1_k1*k2_k3*sf2
+               sf_d(k,base+33) = k2_k2*k1_k3*sf2
+               sf_d(k,base+34) = k3_k3*k1_k2*sf2
+
+            end
+
+         ! ADP3's
+         else if (f_atom.has_only_pADP3s_and_errors) then
+
+            DIE("sorry ...")
+
+         else ! no anharmonicity
+
+            DIE("sorry ...")
+
+         end
+
+
+         ! Analytical result
+         stdout.text("Here is the AD result for atom "//trim(u.to_str))
+         stdout.put(sf_d(:,base+10:base+34))
+
+         ! Do the finite derivatives and stop after u=1
+         sf_d(:,base+10:base+34) = ZERO
+         .make_unique_sfd_pos_Y_ADPx_Y_fd(sf_d(:,base+10:base+34),sf_e,u,sf_n)
+
+      end
+
+      ! Clean
+      kU.destroy
+      k_pt.destroy
+   
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_e)
+         PARALLEL_SUM(sf_d)
+      end
+
+   end
+
+   make_unique_sfd_pos_Y_ADPx_Y_fd(sf_d,sf_e,u,sf_n) ::: private
+   ! Make "sf_d" by finite derivatives
+
+      sf_d :: MAT{CPX}
+      sf_e :: VEC{CPX}
+      u :: INT
+      sf_n :: MAT{CPX}, target
+
+   ENSURE(.data.created, "no reflection data")
+   ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
+   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
+   ENSURE(sf_d.dim2==25,"sf_d, wrong dim2")
+
+      f,p,s :: INT
+      f_atom :: ATOM*
+      step,fac :: REAL
+
+      step = TOL(6)
+      fac  = ONE/(TWO*step)
+
+      sf_d = ZERO
+
+      ! Loop over anharmonic parameters
+      do p = 10,34
+      do s = -1,1,2
+
+         ! Atom for which derivatives are wanted
+         f = .unique_frag_atom(u)
+         f_atom => .fragment_atom(f)
+
+         ! Displace pADP "p"
+         f_atom.pADP_vector(p) = f_atom.pADP_vector(p) + s*step
+
+         ! Get displaced sf_e
+         .make_unique_sfd_pos_Y_ADPx_Y_disp(sf_e,u,sf_n)
+
+         ! Finite difference formula
+         sf_d(:,p-9) = sf_d(:,p-9) + s*fac*sf_e(:)
+
+         ! Undo displacement on "p"
+         f_atom.pADP_vector(p) = f_atom.pADP_vector(p) - s*step
+
+      end
+      end
+
+      stdout.text("Here is the FD result for atom "//trim(u.to_str))
+      stdout.put(sf_d)
+      stop
+
+   end
+
+   make_unique_sfd_pos_Y_ADPx_Y_disp(sf_e,u,sf_n) ::: private
+   ! Make the unique structure factors and their derivatives "sf_e"
+   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   ! set of atom parameters in .fragment_atom.
+   ! NOTE: this version does *all* parameters, positions and ADPs
+   !       *including* up to 4th order anharmonicity.
+   ! NOTE: the order of the derivatives follows the lexical order 
+   !       defined in GAUSSIAN_DATA
+      sf_e :: VEC{CPX}
+      sf_n :: MAT{CPX}, target
+      u :: INT
+
+   ENSURE(.data.created, "no reflection data")
+   ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
+
+      f_atom :: ATOM*
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      v3   :: VEC{REAL}(10)
+      v4   :: VEC{REAL}(15)
+      sf_u :: VEC{CPX}*
+      k_pt,kU :: MAT{REAL}*
+      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
+      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
+      k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
+      n_k,f, k,base,nADP :: INT
+      II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_k = .n_unique_SF_k_pts
+      f24 = QUARTER*SIXTH
+
+      ! Symmetry generated k points
+      k_pt.create(n_k,3)
+      .make_unique_SF_k_pts(k_pt)
+      k1v => k_pt(:,1)
+      k2v => k_pt(:,2)
+      k3v => k_pt(:,3)
+
+      ! K times thermal tensors
+      kU.create(n_k,3)        
+
+      ! Initialize
+      sf_e = ZERO
+
+      ! Base index for unique frag atom
+      base = 0
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+      f_atom => .fragment_atom(f)
+
+      ! k.U
+      kU.to_product_of(k_pt,f_atom.ADP_tensor)
+      u1v => kU(:,1)
+      u2v => kU(:,2)
+      u3v => kU(:,3)
+
+      ! Structure factor, iunique frag atom "u"
+      sf_u => sf_n(:,u)
+
+      ! ADP4's
+      if (f_atom.has_only_pADP4s_and_errors) then
+
+         ! Reorder from lower pyramid -> lexical
+         GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v3,f_atom.pADP_vector(10:19))
+         GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v4,f_atom.pADP_vector(20:34))
+
+         ! Uncompress lower pyramid -> tensor
+         adp3.uncompress_from_pyramid(v3)
+         adp4.uncompress_from_pyramid(v4)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k1v(k)
+            k2 = k2v(k)
+            k3 = k3v(k)
+
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+
+            ! Temperature factor (TF)
+            u1 = u1v(k)
+            u2 = u2v(k)
+            u3 = u3v(k)
+            tf = -HALF*(u1*k1+u2*k2+u3*k3)
+            tf = exp(tf)
+
+            ! Third and fourth order corrections
+            c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
+            c4 = adp4.trace_product_with([k1,k2,k3])*f24
+
+            ! Structure factor x (1 + anharm ...) x TF
+            sfh = sf_u(k) * tf 
+            sf  = sfh * (ONE+II*c3+c4)
+            sf2 = sf  * HALF
+
+            ! SF contribution (with anhramonic!)
+            sf_e(k) = sf_e(k) + sf
+
+         end
+
+      ! ADP3's
+      else if (f_atom.has_only_pADP3s_and_errors) then
+
+         DIE("sorry ...")
+
+      else ! no anharmonicity
+
+         DIE("sorry ...")
+
+      end
+
+      ! Clean
+      kU.destroy
+      k_pt.destroy
+   
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_e)
+      end
+
+   end
+
+
    make_unique_sfd_pos_Y_ADPx_Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
    ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
@@ -3921,17 +4320,22 @@ contains
    ENSURE(sf_n.dim2==.n_unique_frag_atoms,       "sf_n, wrong dim2")
 
       f_atom :: ATOM*
-      k_pt,kU  :: MAT{REAL}*
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      v3   :: VEC{REAL}(10)
+      v4   :: VEC{REAL}(15)
       sf_u :: VEC{CPX}*
+      k_pt,kU :: MAT{REAL}*
       u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
-      u1,u2,u3, k1,k2,k3, tf :: REAL
+      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
       n_k,f,u,k,base,nADP :: INT
-      II,sf,sf2,sf4,sf6,sf24 :: CPX
+      II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
 
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      f24 = QUARTER*SIXTH
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -3974,6 +4378,14 @@ contains
          ! ADP4's
          if (f_atom.has_only_pADP4s_and_errors) then
 
+            ! Reorder from lower pyramid -> lexical
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v3,f_atom.pADP_vector(10:19))
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v4,f_atom.pADP_vector(20:34))
+
+            ! Uncompress lower pyramid -> tensor
+            adp3.uncompress_from_pyramid(v3)
+            adp4.uncompress_from_pyramid(v4)
+
             do k = 1,n_k
    
                ! Scattering vector
@@ -3994,15 +4406,17 @@ contains
                u3 = u3v(k)
                tf = -HALF*(u1*k1+u2*k2+u3*k3)
                tf = exp(tf)
+
+               ! Third and fourth order corrections
+               c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
+               c4 = adp4.trace_product_with([k1,k2,k3])*f24
    
-               ! Structure factor x TF x factor
-               sf   = sf_u(k)      *tf
-               sf2  =          HALF*sf
-               sf4  =       QUARTER*sf
-               sf6  =         SIXTH*sf
-               sf24 = QUARTER*SIXTH*sf
+               ! Structure factor x (1 + anharm ...) x TF
+               sfh = sf_u(k) * tf 
+               sf  = sfh * (ONE+II*c3+c4)
+               sf2 = sf  * HALF
    
-               ! SF contribution
+               ! SF contribution (with anhramonic!)
                sf_e(k) = sf_e(k) + sf
    
                ! Pos derivatives
@@ -4017,6 +4431,15 @@ contains
                sf_d(k,base+ 7) = -k1_k2*sf 
                sf_d(k,base+ 8) = -k1_k3*sf 
                sf_d(k,base+ 9) = -k2_k3*sf 
+   
+               ! Structure factor x TF (without anharmonic!)
+               sf   = sfh
+
+               ! Multiples of sf
+               sf2  = sf * HALF
+               sf4  = sf * QUARTER
+               sf6  = sf * SIXTH
+               sf24 = sf * f24
 
                ! U3 derivatives
                sf_d(k,base+10) = II*k1_k1*k1*sf6
