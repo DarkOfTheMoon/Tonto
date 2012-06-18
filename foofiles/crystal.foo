@@ -824,7 +824,7 @@ contains
    ! Convert the hkl indices to unique reciprocal lattice vectors "k" required
    ! for structure factor calculations.
    ! (c) Dylan Jayatilaka, UWA, feb 1996
-      k :: MAT{REAL}
+      k :: MAT{REAL}, target
 
    ENSURE(.spacegroup.analysed,"spacegroup not analysed")
    ENSURE(.spacegroup.unique_SF_symop.created,"no unique_SF_symop array!")
@@ -834,27 +834,38 @@ contains
    ENSURE(k.dim2==3,"wrong dim2, k")
 
       p,u,n :: INT
-      b,rcm,symop :: MAT{REAL}(3,3)
-      hkl :: VEC{INT}(3)
+      B,rcm,symop :: MAT{REAL}(3,3)
+      k1,k2,k3 :: VEC{REAL}*
+      h1,h2,h3 :: INT
 
+      ! Reciprocal cell matrix
       rcm = TWO*PI*.unit_cell.reciprocal_matrix
+
+      ! Symmetry-generated k points
+      k1 => k(:,1)
+      k2 => k(:,2)
+      k3 => k(:,3)
 
       p = 0
 
       do u = 1,.spacegroup.n_unique_SF_symops
 
          symop = .spacegroup.unique_SF_symop_mat(u)
-         symop = transpose(symop)
-         b = matmul(rcm,symop)
+
+         B.to_product_of(rcm,symop,transpose_b=TRUE)
 
          do n = 1,.data.reflections.dim
+
             p = p + 1
-            hkl(1) = .data.reflections(n).h
-            hkl(2) = .data.reflections(n).k
-            hkl(3) = .data.reflections(n).l
-            k(p,1) = dot_product(b(1,:),hkl)
-            k(p,2) = dot_product(b(2,:),hkl)
-            k(p,3) = dot_product(b(3,:),hkl)
+
+            h1 = .data.reflections(n).h
+            h2 = .data.reflections(n).k
+            h3 = .data.reflections(n).l
+
+            k1(p) = B(1,1)*h1 + B(1,2)*h2 + B(1,3)*h3
+            k2(p) = B(2,1)*h1 + B(2,2)*h2 + B(2,3)*h3
+            k3(p) = B(3,1)*h1 + B(3,2)*h2 + B(3,3)*h3
+
          end
 
       end
@@ -3024,18 +3035,24 @@ contains
 
    fit_rigid_atoms(sf_n) ::: leaky
    ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! Cartesian (bohr) coordinates are used because structure factors
-   ! are aspherical and calculated from the QM wavefunction. 
+   ! "sf_n" are the static (no-thermal motion) *aspherical* *atomic*
+   ! structure factors for the *unique* fragment atoms. 
+   !
    ! NOTE: this routine does only one cycle of fitting with the
-   ! current density matrix i.e. this is a "rigid atom fit".
-   ! NOTE: It's tricky exactly which atom's are used for refinement:
+   !       current density matrix i.e. this is a "rigid atom fit".
+   !
+   ! NOTE: It's tricky exactly which atom's pADPs are used to do the
+   !       refinement:
+   !
    ! * Structure factors are calculated only for *unique* fragment
    !   atoms since the QM wavefunction refers to the fragment_atoms.
+   !   cf. the description of "sf_n" above.
+   !
    ! * However, asymmetric unit atoms are used to "store" the updating
    !   geometry; thus unique fragment atom pADPs and shifts are
-   !   calculated (and derivatives with respect to the fragment atom
-   !   positions and ADPs) but these parameters and shifts are later
-   !   transformed back into asymmetric unit.
+   !   calculated (and derivatives with respect to these unique
+   !   fragment atom positions and ADPs) but these parameters and
+   !   shifts are later transformed back into asymmetric unit.
 
       sf_n :: MAT{CPX}, INOUT
  
@@ -3044,17 +3061,33 @@ contains
    ENSURE(.data_exists,                        "no data")
    ENSURE(.fragment_info_made,                 "no fragment info")
 
+      fac :: REAL
+      v :: VEC{REAL}*
+      dF :: MAT{REAL}*
+
       ! Create refinement arrays & initialize (leaky)
+      ! * asymmetric atom and fragment atom pADPs are set.
       .initialize_fit_data
 
       ! Place asym atom position/ADPs in vector .data.X_fit
-      ! **asymmetric_unit_atom positions and ADPs store geometry
-      ! **unique fragment atoms are actually *refined* cf. sf_n!
+      ! * asymmetric_unit_atom keeps the pADPs
+      ! * unique frag atoms are *refined* cf. sf_n
       .asymmetric_unit_atom.put_pADP_vector_to(.data.X_fit)
+
+      ! If refining, store a copy of the pADPs in .data.X_ref
       if (.data.refine_structure) .data.X_ref = .data.X_fit
 
+      if (.debugging("fit_rigid_atoms")) then
+         stdout.text("X_fit:")
+         fac = STR:conversion_factor("angstrom")
+         v.create(.data.X_fit.dim)
+         .asymmetric_unit_atom.put_pADP_vector_to(v,fac)
+         stdout.put(v,by_column=TRUE)
+         v.destroy
+      end
+
       ! Banner, options/switches, initial parameters,
-      ! start banner, and iteration table header
+      ! start banner, and iteration table header.
       .put_fit_header_info
 
       ! Begin rigid-atom fit loop
@@ -3063,21 +3096,14 @@ contains
          ! Set asym atom positions/ADPs from param vector
          ! **asymmetric_unit_atom positions and ADPs store geometry
          ! **unique fragment atoms are actually refined cf. sf_n!
-         .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
-
-         ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
-         ! >>>fragment_atom must be the same as molecule.atom
-         .set_frag_from_asym_pADPs
+       ! .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
  
-         ! Get unique frag atom shifts in .data.dX_fit  ...
+         ! Get unique *fragment* atom shifts in .data.dX ...
          .get_parameter_shifts(sf_n) ! .data
 
-         ! Update "sf_n", the unique (rigid) frag atom SF's
-         .shift_update_sf_n(sf_n) ! .data.dX_fit are for frag atoms
-
-         ! Change/store unique frag atom to asym atom shifts
+         ! Change/store unique frag atom -> asym atom shifts
          ! Change/store the covariance matrix too.
-         .set_asym_from_ufrag_shifts ! .data.dX_fit is dA
+         .set_asym_from_ufrag_shifts ! .data.dX now for asym atoms
          .set_asym_from_ufrag_cov_mx 
 
          ! Stop symmetry breaking 
@@ -3085,8 +3111,8 @@ contains
          ! the shift to make sure the shift maintains symmetry
          .stabilize_asym_atom_shifts
 
-         ! Store old parameter vector (dA), 
-         ! Add shift to get new .data.X_fit 
+         ! Store old asym-atom parameter vector. 
+         ! Add shift dA to get new .data.X_fit 
          .update_fit_parameters
          .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
 
@@ -3094,6 +3120,16 @@ contains
          ! Copy them to the asymmetric unit atoms.
          .update_fit_errors
          .asymmetric_unit_atom.set_pADP_errors_to(.data.esd)
+
+         ! Set ALL fragment_atom positions/ADPs from asym atoms HERE
+         ! >>>fragment_atom must be the same as molecule.atom
+         dF.create(3,.n_fragment_atoms)
+         .set_frag_from_asym_pADPs(dF)
+
+         ! Update "sf_n", the unique (rigid) frag atom SF's.
+         ! Use the frag atom position shifts "dF".
+         .shift_update_sf_n(sf_n,dF) 
+         dF.destroy
 
          ! Put the iteration results
          .put_fit_iteration_results
@@ -3132,35 +3168,45 @@ contains
    ENSURE(.data_exists,"no diffraction data")
    ENSURE(.fragment_info_made,"no fragment info")
 
-      labels :: VEC{STR}*
-      atoma :: ATOM*
+      X :: VEC{REAL}*
+      labels, refine_U3,refine_U4 :: VEC{STR}*
+      atom_a,atom_f :: ATOM*
       f,a, n_p,n_f :: INT
+      fac :: REAL
+
+      ! Create space for asymmetric unit atom pADPs (leaky)
+      refine_U3 => .data.refine_3rd_order_for_atom
+      refine_U4 => .data.refine_4th_order_for_atom
+      .asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
+
+      if (.debugging("initialize_fit_data")) then
+         stdout.text("asymmetric_unit_atom.pADP_vector:")
+         n_p = .asymmetric_unit_atom.no_of_pADPs
+         fac = STR:conversion_factor("angstrom")
+         X.create(n_p)
+         .asymmetric_unit_atom.put_pADP_vector_to(X,fac)
+         stdout.put(X,by_column=TRUE)
+         X.destroy
+      end
+
+      ! Create space for the fragment_atom pADPs (leaky)
+      do f = 1,.n_fragment_atoms
+         a = .asym_atom_for_frag_atom(f)
+         atom_a => .asymmetric_unit_atom(a)
+         atom_f =>        .fragment_atom(f)
+         n_p = atom_a.no_of_pADPs
+         atom_f.reset_pADPs_and_errors(n_p)
+      end
+
+      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
+      .set_frag_from_asym_pADPs
 
       ! Get labels (leaky)
       labels => .asymmetric_unit_atom.tag_pADP_labels
 
-      ! Create space for parameters (leaky)
-      .asymmetric_unit_atom.reset_pADPs(.data.refine_3rd_order_for_atom,.data.refine_4th_order_for_atom)
-
-      ! Now clone the fragment_atom parameters (leaky)
-      do f = 1,.n_fragment_atoms
-
-         a = .asym_atom_for_frag_atom(f)
-         atoma => .asymmetric_unit_atom(a)
-
-         .fragment_atom(f).pADP_vector.destroy
-         .fragment_atom(f).pADP_vector.create_copy(atoma.pADP_vector)
-
-         .fragment_atom(f).pADP_errors.destroy
-         .fragment_atom(f).pADP_errors.create_copy(atoma.pADP_errors)
-
-      end
-
       ! Set the no. of parameters
       n_p = .asymmetric_unit_atom.no_of_pADPs
       n_f = .fragment_atom.no_of_pADPs
-
-      stdout.show("n_f     =",n_f)
 
       ! Create refinement arrays & initialize (leaky)
       .data.initialize_fit_data(n_p,n_f,labels)
@@ -3175,14 +3221,16 @@ contains
 
    ENSURE(.data_exists,"no diffraction data")
 
-      labels :: VEC{STR}*
+      labels, refine_U3,refine_U4 :: VEC{STR}*
       n_p :: INT
 
       ! Get labels
       labels => .asymmetric_unit_atom.tag_pADP_labels
 
       ! Create space for parameters (leaky)
-      .asymmetric_unit_atom.reset_pADPs(.data.refine_3rd_order_for_atom,.data.refine_4th_order_for_atom)
+      refine_U3 => .data.refine_3rd_order_for_atom
+      refine_U4 => .data.refine_4th_order_for_atom
+      .asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
 
       ! Set the no. of parameters
       n_p = .asymmetric_unit_atom.no_of_pADPs
@@ -3231,10 +3279,10 @@ contains
       ! and their  derivatives
       .make_unique_sf_derivs(sf_e,sf_d,sf_n)
 
-      if (.debugging("get_parameter_shifts")) then
-         stdout.text("sf_e:")
-         stdout.put(sf_e)
-      end
+    ! if (.debugging("get_parameter_shifts")) then
+    !    stdout.text("sf_e:")
+    !    stdout.put(sf_e)
+    ! end
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
@@ -3269,23 +3317,28 @@ contains
       ! Get the unique atom shifts, dX (leaky)
       .solve_normal_equations(dFa)
       dFa.destroy
+
+      if (.debugging("get_parameter_shifts")) then
+         stdout.text("get_parameter_shifts, .data.dX, after:")
+         stdout.put(.data.dX)
+      end
  
    end
 
-   shift_update_sf_n(sf_n) ::: private
-   ! Update the unique *fragment* atom structure factors "sf_n" 
-   ! by the unique *frag* atom positional shift in ".data.dX"
-
+   shift_update_sf_n(sf_n,dF) ::: private
+   ! Update the unique *fragment* atom structure factors "sf_n" with
+   ! the frag atom positional shifts (after stabilization) in "dF"
       sf_n :: MAT{CPX}, target, INOUT
+      dF   :: MAT{REAL}, IN
 
    ENSURE(sf_n.dim1==.n_unique_SF_k_pts,       "sf_n: wrong dim1")
    ENSURE(sf_n.dim2==.n_asymmetric_unit_atoms, "sf_n: wrong dim2")
-   ENSURE(.data.created,                       "no data")
-   ENSURE(.data.dX.created,                    "no data.dX")
+   ENSURE(dF.dim1==3,                          "dF: wrong dim1")
+   ENSURE(dF.dim2==.n_fragment_atoms,          "dF: wrong dim2")
 
-      d1,d2,d3,kr  :: REAL
-      n_k, u,f,n,ub, k :: INT
-      k1,k2,k3 :: VEC{REAL}*
+      d1,d2,d3, k1,k2,k3, kr  :: REAL
+      n_k, u,f, k :: INT
+      k1v,k2v,k3v :: VEC{REAL}*
       sf_u :: VEC{CPX}*
       k_pt :: MAT{REAL}*
 
@@ -3295,12 +3348,9 @@ contains
       .make_unique_SF_k_pts(k_pt)
 
       ! Components of k
-      k1 => k_pt(:,1)
-      k2 => k_pt(:,2)
-      k3 => k_pt(:,3)
-
-      ! Base for ufrag atoms
-      ub = 0
+      k1v => k_pt(:,1)
+      k2v => k_pt(:,2)
+      k3v => k_pt(:,3)
 
       ! Loop over unique *frag* atoms
       do u = 1,.n_unique_frag_atoms
@@ -3308,25 +3358,26 @@ contains
          ! Link ufrag and asym atoms
          f = .unique_frag_atom(u)
 
-         ! No of pADPs
-         n  = .fragment_atom(f).no_of_pADPs
-
          ! Get the shift
-         d1 = .data.dX(ub+1)
-         d2 = .data.dX(ub+2)
-         d3 = .data.dX(ub+3)
+         d1 = dF(1,f)
+         d2 = dF(2,f)
+         d3 = dF(3,f)
 
          ! Structure factors, unique atom "u"
          sf_u => sf_n(:,u)
 
          ! Update sf_u
          do k = 1,n_k
-            kr = k1(k)*d1 + k2(k)*d2 + k3(k)*d3
-            sf_u(k) = sf_u(k) * cmplx(cos(kr),sin(kr),kind=CPX_KIND)
-         end
 
-         ! Increment
-         ub = ub + n
+            k1 = k1v(k)
+            k2 = k2v(k)
+            k3 = k3v(k)
+
+            kr = k1*d1 + k2*d2 + k3*d3
+
+            sf_u(k) = sf_u(k) * cmplx(cos(kr),sin(kr),kind=CPX_KIND)
+
+         end
 
       end
 
@@ -3361,16 +3412,22 @@ contains
 
 !  Refinement: unique frag <-> asym frag parameters
 
-   set_frag_from_asym_pADPs  ::: private
-   ! Set *all* .fragment_atom positions/ADPs from the
-   ! .asymmetric_unit_atom's positions/ADPs
+   set_frag_from_asym_pADPs(dF)  ::: private
+   ! Set *all* .fragment_atom pADPs from the .asymmetric_unit_atom pADPs.
+   ! If "dF" is present, shifts in the frag atom positions are returned.
+      dF :: MAT{REAL}, optional
+
    ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(dF.dim1==3,"wrong dim1, dF")
+   ENSURE(dF.dim2==.n_fragment_atoms,"wrong dim2, dF")
 
       f,a,s :: INT
       f_atom,a_atom :: ATOM* 
       seitz :: MAT3{REAL}*
       CM :: MAT{REAL}(3,3)
       shift :: VEC{REAL}(3)
+      fac :: REAL
+      v :: VEC{REAL}*
 
       ! Symmetry operators & cell matrix
       seitz => .xyz_seitz_matrices
@@ -3391,6 +3448,9 @@ contains
          f_atom =>        .fragment_atom(f)
          a_atom => .asymmetric_unit_atom(a)
 
+         ! Store original position
+         if (present(dF)) dF(:,f) = -f_atom.position
+
          ! Set frag atom pADPs
          f_atom.set_pADP_vector_to(a_atom.pADP_vector)
 
@@ -3402,10 +3462,47 @@ contains
          shift = f_atom.position + shift
          f_atom.set_position(shift)
 
+         ! Store shift
+         if (present(dF)) dF(:,f) = dF(:,f) + f_atom.position
+
+         if (.debugging("set_frag_from_asym_pADPs")) then
+
+            stdout.show("f    =",f)
+            stdout.show("a    =",a)
+            stdout.show("s    =",s)
+
+            fac = STR:conversion_factor("angstrom")
+            v.create(a_atom.pADP_vector.dim)
+            a_atom.put_pADP_vector_to(v,fac)
+            stdout.text("a_atom.pADP_vector:")
+            stdout.put(v,by_column=TRUE)
+
+            stdout.text("shift:")
+            stdout.put(.asym_shift_for_frag_atom(:,f),by_column=TRUE)
+
+            stdout.text("f_atom.pos:")
+            stdout.put(shift,by_column=TRUE)
+
+            f_atom.put_pADP_vector_to(v,fac)
+            stdout.text("f_atom.pADP_vector:")
+            stdout.put(v,by_column=TRUE)
+
+            v.destroy
+
+         end
+
       end
 
       ! Clean
       seitz.destroy
+
+      ! Debug
+      if (present(dF)) then
+      if (.debugging("set_frag_from_asym_pADPs")) then
+         stdout.text("dF:")
+         stdout.put(dF)
+      end
+      end
 
    end
 
@@ -3416,7 +3513,6 @@ contains
 
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
-   ENSURE(.asymmetric_unit_atom.has_all_pADPs_and_errors,"not all pADPs/errors are there")
    ENSURE(.data.created,"no data")
    ENSURE(.data.dX.created,"no data.dX")
 
@@ -3425,6 +3521,12 @@ contains
       seitz :: MAT3{REAL}*
       a_atom :: ATOM*
       X_atom :: ATOM
+
+      ! Debug
+      if (.debugging("set_asym_from_ufrag_shifts")) then 
+      stdout.text("set_asym_from_ufrag_shifts, .data.dX, before:")
+      stdout.put(.data.dX)
+      end
       
       ! Get symops
       seitz => .transposed_xyz_seitz_matrices
@@ -3447,9 +3549,11 @@ contains
          ! Fragment atom, asym atom
          a_atom => .asymmetric_unit_atom(a)
 
-         ! Block limits for pADPs. 
+         ! No of pADPs & a-base
          n  = a_atom.no_of_pADPs
          ab = .asymmetric_unit_atom.no_of_pADPs_up_to_atom(a)
+
+         ! Block limits
          af = ab + 1
          al = ab + n
          uf = ub + 1
@@ -3460,6 +3564,7 @@ contains
          Xpar => .data.dX(uf:ul)
 
          ! Put ufrag shifts at position f1 in "X_atom" (leaky)
+         X_atom.pADP_vector.create(n)
          X_atom.set_pADP_vector_to(Xpar)
 
          ! Change ufrag atom shifts -> asym atom shifts
@@ -3468,8 +3573,10 @@ contains
          ! Store asym shifts in position a0 for asym atom "a"
          X_atom.put_pADP_vector_to(Apar)
 
-         ! Clean, increment
+         ! Clean
          X_atom.destroy_ptr_part
+
+         ! Increment u-base
          ub = ub + n
 
       end
@@ -3483,7 +3590,7 @@ contains
 
       ! Debug
       if (.debugging("set_asym_from_ufrag_shifts")) then 
-      stdout.text(".data.dX:")
+      stdout.text("set_asym_from_ufrag_shifts, .data.dX, after:")
       stdout.put(.data.dX)
       end
 
@@ -3506,7 +3613,7 @@ contains
 
       ! Debug
       if (.debugging("stabilize_asym_atom_shifts")) then 
-      stdout.text(".data.dX:")
+      stdout.text("stabilize_asym_atom_shifts, .data.dX, before:")
       stdout.put(.data.dX)
       end
       
@@ -3539,6 +3646,8 @@ contains
          Xpar => .data.dX(af:al)
 
          ! Set pADPs (leaky)
+         X_atom.pADP_vector.create(n)
+         Y_atom.pADP_vector.create(n)
          X_atom.set_pADP_vector_to(Xpar)
          Y_atom.set_pADP_vector_to(Xpar)
 
@@ -3555,9 +3664,11 @@ contains
          ! Put back shifts
          Y_atom.put_pADP_vector_to(Xpar)
 
-         ! Clean, increment
-         Y_atom.nullify_ptr_part
-         X_atom.nullify_ptr_part
+         ! Clean
+         Y_atom.destroy_ptr_part
+         X_atom.destroy_ptr_part
+
+         ! Increment a-base
          ab = ab + n
 
       end
@@ -3567,7 +3678,7 @@ contains
 
       ! Debug
       if (.debugging("stabilize_asym_atom_shifts")) then 
-      stdout.text(".data.dX:")
+      stdout.text("stabilize_asym_atom_shifts, .data.dX, after:")
       stdout.put(.data.dX)
       end
 
@@ -3582,7 +3693,7 @@ contains
       ! Reset the esd's and maximum shifts on esd
       .data.update_fit_errors
 
-      ! Set asym atom patr value correspondin to the max shift/esd
+      ! Set asym atom par label value corresponding to the max shift/esd
       .data.max_shift_on_esd_par = .asymmetric_unit_atom.tag_pADP_label(.data.max_shift_on_esd_ind)
 
    end
@@ -3609,7 +3720,6 @@ contains
    ! Note: .covariance_matrix is over-written.
    ENSURE(.fragment_info_made,"no fragment info")
    ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
-   ENSURE(.asymmetric_unit_atom.has_all_pADPs_and_errors,"not all pADPs/errors are there")
    ENSURE(.data.created,"no data")
    ENSURE(.data.covariance_matrix.created,"no covariance matrix")
 
@@ -3830,10 +3940,10 @@ contains
 
       ! Rewind coordinates and ADPs if chi2 increases. 
       ! WARNING: errors and cox mx are not rewound.
-      if (.data.chi2_increased) then
-         .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
-         .set_frag_from_asym_pADPs
-      end
+    ! if (.data.chi2_increased) then
+    !    .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
+    !    .set_frag_from_asym_pADPs
+    ! end
 
    end
  
@@ -3919,7 +4029,6 @@ contains
    !       *including* up to 4th order anharmonicity.
    ! NOTE: the order of the derivatives follows the lexical order 
    !       defined in GAUSSIAN_DATA
-
       sf_e :: VEC{CPX}, OUT
       sf_d :: MAT{CPX}, OUT
       sf_n :: MAT{CPX}, target, IN
@@ -3935,12 +4044,13 @@ contains
       f_atom :: ATOM*
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
+      kv   :: VEC{REAL}(3)
       v3   :: VEC{REAL}(10)
       v4   :: VEC{REAL}(15)
       sf_u :: VEC{CPX}*
       k_pt,kU :: MAT{REAL}*
       u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
-      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
+      u1,u2,u3, k1,k2,k3, tf, c3,c4 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
       n_k,f,u,k,base,nADP :: INT
       II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
@@ -3948,7 +4058,6 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
-      f24 = QUARTER*SIXTH
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -3984,7 +4093,7 @@ contains
          sf_u => sf_n(:,u)
 
          ! ADP4's
-         if (f_atom.has_only_pADP4s_and_errors) then
+         if (f_atom.has_only_ADP4s_and_errors) then
 
             ! Reorder from lower pyramid -> lexical
             GAUSSIAN_DATA:reorder_3_to_lower_pyramid(f_atom.pADP_vector(10:19),v3)
@@ -4016,8 +4125,8 @@ contains
                tf = exp(tf)
 
                ! Third and fourth order corrections
-               c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
-               c4 = adp4.trace_product_with([k1,k2,k3])*f24
+               c3 = adp3.contract_with(kv)*SIXTH
+               c4 = adp4.contract_with(kv)*SIXTH*QUARTER
    
                ! Structure factor x (1 + anharm ...) x TF
                sfh = sf_u(k) * tf 
@@ -4047,7 +4156,7 @@ contains
                sf2  = sf * HALF
                sf4  = sf * QUARTER
                sf6  = sf * SIXTH
-               sf24 = sf * f24
+               sf24 = sf * SIXTH*QUARTER
 
                ! U3 derivatives
                sf_d(k,base+10) = II*k1_k1*k1*sf6
@@ -4081,7 +4190,7 @@ contains
             end
 
          ! ADP3's
-         else if (f_atom.has_only_pADP3s_and_errors) then
+         else if (f_atom.has_only_ADP3s_and_errors) then
 
             DIE("sorry ...")
 
@@ -4184,14 +4293,17 @@ contains
    ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
 
       f_atom :: ATOM*
+      adp2 :: MAT{REAL}(3,3)
       adp3 :: MAT3{REAL}(3,3,3)
       adp4 :: MAT4{REAL}(3,3,3,3)
+      kv   :: VEC{REAL}(3)
+      v2   :: VEC{REAL}(6)
       v3   :: VEC{REAL}(10)
       v4   :: VEC{REAL}(15)
       sf_u :: VEC{CPX}*
-      k_pt,kU :: MAT{REAL}*
-      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
-      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
+      k_pt :: MAT{REAL}*
+      k1v,k2v,k3v :: VEC{REAL}*
+      k1,k2,k3, tf, c2,c3,c4 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
       n_k,f, k,base,nADP :: INT
       II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
@@ -4199,7 +4311,123 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
-      f24 = QUARTER*SIXTH
+
+      ! Symmetry generated k points
+      k_pt.create(n_k,3)
+      .make_unique_SF_k_pts(k_pt)
+      k1v => k_pt(:,1)
+      k2v => k_pt(:,2)
+      k3v => k_pt(:,3)
+
+      ! Initialize
+      sf_e = ZERO
+
+      ! Base index for unique frag atom
+      base = 0
+
+      ! Fragment atom
+      f = .unique_frag_atom(u)
+      f_atom => .fragment_atom(f)
+
+      ! Structure factor, iunique frag atom "u"
+      sf_u => sf_n(:,u)
+
+      ! ADP4's
+      if (f_atom.has_only_ADP4s_and_errors) then
+
+         ! Reorder from lower pyramid -> lexical
+         GAUSSIAN_DATA:reorder_2_to_lower_pyramid(f_atom.pADP_vector( 4: 9),v2)
+         GAUSSIAN_DATA:reorder_3_to_lower_pyramid(f_atom.pADP_vector(10:19),v3)
+         GAUSSIAN_DATA:reorder_4_to_lower_pyramid(f_atom.pADP_vector(20:34),v4)
+
+         ! Uncompress lower pyramid -> tensor
+         adp2.uncompress_from_pyramid(v2)
+         adp3.uncompress_from_pyramid(v3)
+         adp4.uncompress_from_pyramid(v4)
+
+         do k = 1,n_k
+
+            ! Scattering vector
+            k1 = k1v(k)
+            k2 = k2v(k)
+            k3 = k3v(k)
+            kv = [k1,k2,k3]
+
+            k1_k1 = k1*k1
+            k2_k2 = k2*k2
+            k3_k3 = k3*k3
+            k1_k2 = k1*k2
+            k1_k3 = k1*k3
+            k2_k3 = k2*k3
+
+            ! Third and fourth order corrections
+            c2 = adp2.contract_with(kv)*HALF
+            c3 = adp3.contract_with(kv)*SIXTH
+            c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+
+            ! Structure factor x (1 + anharm ...) x TF
+            sfh = sf_u(k) * exp(-c2)
+            sf  = sfh * (ONE+II*c3+c4)
+            sf2 = sf  * HALF
+
+            ! SF contribution (with anhramonic!)
+            sf_e(k) = sf_e(k) + sf
+
+         end
+
+      ! ADP3's
+      else if (f_atom.has_only_ADP3s_and_errors) then
+
+         DIE("sorry ...")
+
+      else ! no anharmonicity
+
+         DIE("sorry ...")
+
+      end
+
+      ! Clean
+      k_pt.destroy
+   
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_e)
+      end
+
+   end
+
+   make_unique_sfd_pos_Y_ADPx_Y_disp_old(sf_e,u,sf_n) ::: private
+   ! Make the unique structure factors and their derivatives "sf_e"
+   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   ! set of atom parameters in .fragment_atom.
+   ! NOTE: this version does *all* parameters, positions and ADPs
+   !       *including* up to 4th order anharmonicity.
+   ! NOTE: the order of the derivatives follows the lexical order 
+   !       defined in GAUSSIAN_DATA
+      sf_e :: VEC{CPX}
+      sf_n :: MAT{CPX}, target
+      u :: INT
+
+   ENSURE(.data.created, "no reflection data")
+   ENSURE(.xray_data.created, "no x-ray reflection data")
+   DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
+
+      f_atom :: ATOM*
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      v3   :: VEC{REAL}(10)
+      v4   :: VEC{REAL}(15)
+      sf_u :: VEC{CPX}*
+      k_pt,kU :: MAT{REAL}*
+      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
+      u1,u2,u3, k1,k2,k3, tf, c3,c4 :: REAL
+      k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
+      n_k,f, k,base,nADP :: INT
+      II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
+
+      ! Constants
+      II  = IMAGIFY(ONE)
+      n_k = .n_unique_SF_k_pts
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4231,7 +4459,7 @@ contains
       sf_u => sf_n(:,u)
 
       ! ADP4's
-      if (f_atom.has_only_pADP4s_and_errors) then
+      if (f_atom.has_only_ADP4s_and_errors) then
 
          ! Reorder from lower pyramid -> lexical
          GAUSSIAN_DATA:reorder_3_to_lower_pyramid(f_atom.pADP_vector(10:19),v3)
@@ -4263,8 +4491,8 @@ contains
             tf = exp(tf)
 
             ! Third and fourth order corrections
-            c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
-            c4 = adp4.trace_product_with([k1,k2,k3])*f24
+            c3 = adp3.contract_with([k1,k2,k3])*SIXTH
+            c4 = adp4.contract_with([k1,k2,k3])*SIXTH*QUARTER
 
             ! Structure factor x (1 + anharm ...) x TF
             sfh = sf_u(k) * tf 
@@ -4277,7 +4505,7 @@ contains
          end
 
       ! ADP3's
-      else if (f_atom.has_only_pADP3s_and_errors) then
+      else if (f_atom.has_only_ADP3s_and_errors) then
 
          DIE("sorry ...")
 
@@ -4314,38 +4542,39 @@ contains
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,         "sf_n, wrong dim1")
-   ENSURE(sf_n.dim2==.n_unique_frag_atoms,       "sf_n, wrong dim2")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,  "sf_e, wrong dim")
+   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,  "sf_d, wrong dim1")
+   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,  "sf_n, wrong dim1")
+   ENSURE(sf_n.dim2==.n_unique_frag_atoms,"sf_n, wrong dim2")
 
-      f_atom :: ATOM*
-      adp3 :: MAT3{REAL}(3,3,3)
-      adp4 :: MAT4{REAL}(3,3,3,3)
+      kv   :: VEC{REAL}(3)
+      v2   :: VEC{REAL}(6)
       v3   :: VEC{REAL}(10)
       v4   :: VEC{REAL}(15)
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
       sf_u :: VEC{CPX}*
-      k_pt,kU :: MAT{REAL}*
-      u1v,u2v,u3v, k1v,k2v,k3v :: VEC{REAL}*
-      u1,u2,u3, k1,k2,k3, tf, c3,c4, f24 :: REAL
+      k_pt :: MAT{REAL}*
+      k1v,k2v,k3v :: VEC{REAL}*
+      k1,k2,k3, c2,c3,c4 :: REAL
       k1_k1,k2_k2,k3_k3,k1_k2,k1_k3,k2_k3 :: REAL
       n_k,f,u,k,base,nADP :: INT
-      II,sf,sfh,sf2,sf4,sf6,sf24 :: CPX
+      II,sfh,sf1,sf2,sf4,sf6,sf24 :: CPX
+      f_atom :: ATOM*
 
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
-      f24 = QUARTER*SIXTH
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
       .make_unique_SF_k_pts(k_pt)
+
+      ! k vector components
       k1v => k_pt(:,1)
       k2v => k_pt(:,2)
       k3v => k_pt(:,3)
-
-      ! K times thermal tensors
-      kU.create(n_k,3)        
 
       ! Initialize
       sf_e = ZERO
@@ -4361,30 +4590,33 @@ contains
          f = .unique_frag_atom(u)
          f_atom => .fragment_atom(f)
 
-         ! k.U
-         kU.to_product_of(k_pt,f_atom.ADP_tensor)
-         u1v => kU(:,1)
-         u2v => kU(:,2)
-         u3v => kU(:,3)
-
-       ! stdout.text("u = "//trim(u.to_str))
-       ! stdout.text("u1v:"); stdout.put(u1v,by_column=TRUE)
-       ! stdout.text("u2v:"); stdout.put(u2v,by_column=TRUE)
-       ! stdout.text("u3v:"); stdout.put(u3v,by_column=TRUE)
-
          ! Structure factor, iunique frag atom "u"
          sf_u => sf_n(:,u)
 
          ! ADP4's
-         if (f_atom.has_only_pADP4s_and_errors) then
+         if (f_atom.has_only_ADP4s_and_errors) then
 
             ! Reorder from lexical -> lower pyramid
-            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(v3,f_atom.pADP_vector(10:19))
-            GAUSSIAN_DATA:reorder_4_to_lower_pyramid(v4,f_atom.pADP_vector(20:34))
+            GAUSSIAN_DATA:reorder_2_to_lower_pyramid(f_atom.pADP_vector( 4: 9),v2)
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(f_atom.pADP_vector(10:19),v3)
+            GAUSSIAN_DATA:reorder_4_to_lower_pyramid(f_atom.pADP_vector(20:34),v4)
 
             ! Uncompress lower pyramid -> tensor
+            adp2.uncompress_from_pyramid(v2)
             adp3.uncompress_from_pyramid(v3)
             adp4.uncompress_from_pyramid(v4)
+
+            !  stdout.text("U3:")
+            !  stdout.put(f_atom.pADP_vector(10:19))
+            !  stdout.put(v3,by_column=TRUE)
+            !  stdout.put(adp3)
+
+            !  stdout.text("U4:")
+            !  stdout.put(f_atom.pADP_vector(20:34))
+            !  stdout.put(v4,by_column=TRUE)
+            !  stdout.put(adp4)
+            
+            DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
 
             do k = 1,n_k
    
@@ -4392,56 +4624,60 @@ contains
                k1 = k1v(k)
                k2 = k2v(k)
                k3 = k3v(k)
+               kv = [k1,k2,k3]
 
+               ! Component products
                k1_k1 = k1*k1
                k2_k2 = k2*k2
                k3_k3 = k3*k3
                k1_k2 = k1*k2
                k1_k3 = k1*k3
                k2_k3 = k2*k3
-   
-               ! Temperature factor (TF)
-               u1 = u1v(k)
-               u2 = u2v(k)
-               u3 = u3v(k)
-               tf = -HALF*(u1*k1+u2*k2+u3*k3)
-               tf = exp(tf)
 
-               ! Third and fourth order corrections
-               c3 = adp3.trace_product_with([k1,k2,k3])*SIXTH
-               c4 = adp4.trace_product_with([k1,k2,k3])*f24
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+               c3 = adp3.contract_with(kv)*SIXTH
+               c4 = adp4.contract_with(kv)*SIXTH*QUARTER
+
+             ! stdout.show("c2    =",c2)
+             ! stdout.show("c3    =",c3)
+             ! stdout.show("c4    =",c4)
    
-               ! Structure factor x (1 + anharm ...) x TF
-               sfh = sf_u(k) * tf 
-               sf  = sfh * (ONE+II*c3+c4)
-               sf2 = sf  * HALF
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor, 
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples of *anharmonic* structure factor
+               sf1 = sfh * (ONE + II*c3 + c4)
+               sf2 = sf1 * HALF
    
-               ! SF contribution (with anhramonic!)
-               sf_e(k) = sf_e(k) + sf
+               ! SF contribution (anharmonic!)
+               sf_e(k) = sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+ 1) =  II*k1*sf
-               sf_d(k,base+ 2) =  II*k2*sf
-               sf_d(k,base+ 3) =  II*k3*sf
+               sf_d(k,base+ 1) =  II*k1*sf1
+               sf_d(k,base+ 2) =  II*k2*sf1
+               sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
                sf_d(k,base+ 4) = -k1_k1*sf2
                sf_d(k,base+ 5) = -k2_k2*sf2
                sf_d(k,base+ 6) = -k3_k3*sf2
-               sf_d(k,base+ 7) = -k1_k2*sf 
-               sf_d(k,base+ 8) = -k1_k3*sf 
-               sf_d(k,base+ 9) = -k2_k3*sf 
+               sf_d(k,base+ 7) = -k1_k2*sf1
+               sf_d(k,base+ 8) = -k1_k3*sf1
+               sf_d(k,base+ 9) = -k2_k3*sf1
    
-               ! Structure factor x TF (without anharmonic!)
-               sf   = sfh
+               ! Structure factor (harmonic)
+               sf1  = sfh
 
-               ! Multiples of sf
-               sf2  = sf * HALF
-               sf4  = sf * QUARTER
-               sf6  = sf * SIXTH
-               sf24 = sf * f24
+               ! Multiples of *harmonic* sf 
+               sf2  = sf1 * HALF
+               sf4  = sf1 * QUARTER
+               sf6  = sf1 * SIXTH
+               sf24 = sf1 * SIXTH*QUARTER
 
-               ! U3 derivatives
+               ! U3 derivatives 
                sf_d(k,base+10) = II*k1_k1*k1*sf6
                sf_d(k,base+11) = II*k2_k2*k2*sf6
                sf_d(k,base+12) = II*k3_k3*k3*sf6
@@ -4451,7 +4687,7 @@ contains
                sf_d(k,base+16) = II*k2_k2*k3*sf2
                sf_d(k,base+17) = II*k3_k3*k1*sf2
                sf_d(k,base+18) = II*k3_k3*k2*sf2
-               sf_d(k,base+19) = II*k1*k2*k3*sf 
+               sf_d(k,base+19) = II*k1*k2*k3*sf1
 
                ! U4 derivatives
                sf_d(k,base+20) = k1_k1*k1_k1*sf24
@@ -4473,7 +4709,17 @@ contains
             end
 
          ! ADP3's
-         else if (f_atom.has_only_pADP3s_and_errors) then
+         else if (f_atom.has_only_ADP3s_and_errors) then
+
+            ! Reorder from lexical -> lower pyramid
+            GAUSSIAN_DATA:reorder_2_to_lower_pyramid(f_atom.pADP_vector( 4: 9),v2)
+            GAUSSIAN_DATA:reorder_3_to_lower_pyramid(f_atom.pADP_vector(10:19),v3)
+
+            ! Uncompress lower pyramid -> tensor
+            adp2.uncompress_from_pyramid(v2)
+            adp3.uncompress_from_pyramid(v3)
+            
+            DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
 
             do k = 1,n_k
    
@@ -4481,42 +4727,53 @@ contains
                k1 = k1v(k)
                k2 = k2v(k)
                k3 = k3v(k)
+               kv = [k1,k2,k3]
 
+               ! Component products
                k1_k1 = k1*k1
                k2_k2 = k2*k2
                k3_k3 = k3*k3
                k1_k2 = k1*k2
                k1_k3 = k1*k3
                k2_k3 = k2*k3
+
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+               c3 = adp3.contract_with(kv)*SIXTH
    
-               ! Temperature factor (TF)
-               u1 = u1v(k)
-               u2 = u2v(k)
-               u3 = u3v(k)
-               tf = -HALF*(u1*k1+u2*k2+u3*k3)
-               tf = exp(tf)
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor, 
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples of *anharmonic* structure factor
+               ! -- 3rd order only.
+               sf1 = sfh * (ONE + II*c3)
+               sf2 = sf1 * HALF
    
-               ! Structure factor x TF x factor
-               sf   = sf_u(k)      *tf
-               sf2  =          HALF*sf
-               sf6  =         SIXTH*sf
-   
-               ! SF contribution
-               sf_e(k) = sf_e(k) + sf
+               ! SF contribution (anharmonic!)
+               sf_e(k) = sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+ 1) =  II*k1*sf
-               sf_d(k,base+ 2) =  II*k2*sf
-               sf_d(k,base+ 3) =  II*k3*sf
+               sf_d(k,base+ 1) =  II*k1*sf1
+               sf_d(k,base+ 2) =  II*k2*sf1
+               sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
                sf_d(k,base+ 4) = -k1_k1*sf2
                sf_d(k,base+ 5) = -k2_k2*sf2
                sf_d(k,base+ 6) = -k3_k3*sf2
-               sf_d(k,base+ 7) = -k1_k2*sf 
-               sf_d(k,base+ 8) = -k1_k3*sf 
-               sf_d(k,base+ 9) = -k2_k3*sf 
+               sf_d(k,base+ 7) = -k1_k2*sf1
+               sf_d(k,base+ 8) = -k1_k3*sf1
+               sf_d(k,base+ 9) = -k2_k3*sf1
    
+               ! Structure factor (harmonic!)
+               sf1  = sfh
+
+               ! Multiples of *harmonic* sf
+               sf2  = sf1 * HALF
+               sf6  = sf1 * SIXTH
+
                ! U3 derivatives
                sf_d(k,base+10) = II*k1_k1*k1*sf6
                sf_d(k,base+11) = II*k2_k2*k2*sf6
@@ -4527,11 +4784,19 @@ contains
                sf_d(k,base+16) = II*k2_k2*k3*sf2
                sf_d(k,base+17) = II*k3_k3*k1*sf2
                sf_d(k,base+18) = II*k3_k3*k2*sf2
-               sf_d(k,base+19) = II*k1*k2*k3*sf 
-   
+               sf_d(k,base+19) = II*k1*k2*k3*sf1
+
             end
 
-         else ! no anharmonicity
+         else ! NO anharmonicity
+
+            ! Reorder from lexical -> lower pyramid
+            GAUSSIAN_DATA:reorder_2_to_lower_pyramid(f_atom.pADP_vector( 4: 9),v2)
+
+            ! Uncompress lower pyramid -> tensor
+            adp2.uncompress_from_pyramid(v2)
+            
+            DIE_IF(NOT adp2.equals(f_atom.ADP_tensor),"ADP2 not equal to ADP_tensor")
 
             do k = 1,n_k
    
@@ -4539,33 +4804,45 @@ contains
                k1 = k1v(k)
                k2 = k2v(k)
                k3 = k3v(k)
+               kv = [k1,k2,k3]
+
+               ! Component products
+               k1_k1 = k1*k1
+               k2_k2 = k2*k2
+               k3_k3 = k3*k3
+               k1_k2 = k1*k2
+               k1_k3 = k1*k3
+               k2_k3 = k2*k3
+
+               ! U tensor contracted with k vector
+               c2 = adp2.contract_with(kv)*HALF
+
+             ! stdout.show("c2    =",c2)
    
-               ! Temperature factor (TF)
-               u1 = u1v(k)
-               u2 = u2v(k)
-               u3 = u3v(k)
-               tf = -HALF*(u1*k1+u2*k2+u3*k3)
-               tf = exp(tf)
+               ! Static structure factor x TF
+               ! i.e. dynamic structure factor, 
+               ! in the harmonic approximation
+               sfh = sf_u(k) * exp(-c2)
+
+               ! Multiples *harmonic* structure factor
+               sf1 = sfh 
+               sf2 = sf1 * HALF
    
-               ! Structure factor x TF x factor
-               sf  = sf_u(k) * tf
-               sf2 = HALF*sf
-   
-               ! SF contribution
-               sf_e(k) = sf_e(k) + sf
+               ! SF contribution (harmonic)
+               sf_e(k) = sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+1) =  II*k1*sf
-               sf_d(k,base+2) =  II*k2*sf
-               sf_d(k,base+3) =  II*k3*sf
+               sf_d(k,base+ 1) =  II*k1*sf1
+               sf_d(k,base+ 2) =  II*k2*sf1
+               sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
-               sf_d(k,base+4) = -k1*k1*sf2
-               sf_d(k,base+5) = -k2*k2*sf2
-               sf_d(k,base+6) = -k3*k3*sf2
-               sf_d(k,base+7) = -k1*k2*sf 
-               sf_d(k,base+8) = -k1*k3*sf 
-               sf_d(k,base+9) = -k2*k3*sf 
+               sf_d(k,base+ 4) = -k1_k1*sf2
+               sf_d(k,base+ 5) = -k2_k2*sf2
+               sf_d(k,base+ 6) = -k3_k3*sf2
+               sf_d(k,base+ 7) = -k1_k2*sf1
+               sf_d(k,base+ 8) = -k1_k3*sf1
+               sf_d(k,base+ 9) = -k2_k3*sf1
    
             end
 
@@ -4577,7 +4854,6 @@ contains
       end
 
       ! Clean
-      kU.destroy
       k_pt.destroy
    
       if (DO_IN_PARALLEL) then
@@ -4586,6 +4862,7 @@ contains
       end
 
    end
+
 
    make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d,sf_n) ::: private
    ! Make the unique structure factors and their derivatives "sf_e"
@@ -5601,7 +5878,6 @@ contains
       ! Get just the positional covariance matrix (sigh)
       f1b = 0
       c1b = 0
-
       do f1 = 1,.n_fragment_atoms
 
          n1  = .fragment_atom(f1).no_of_pADPs
