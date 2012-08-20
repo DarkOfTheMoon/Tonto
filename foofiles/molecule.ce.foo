@@ -36,26 +36,6 @@ contains
 !  Read CIF block options
 !  ======================
 
-   read_CIF ::: leaky
-   ! Read in CIF information, reset name of Job to cif file name
-      self :: PTR
-
-      head :: STR
-
-      if (.cif.destroyed) .cif.create
-      .cif.read_keywords
-
-      if (.cif.file_name/=" " AND .cif.data_block_name/=" ") then
-
-         ! Reset name to the crystal data name
-         head = .cif.file_name.filename_head
-         .name = head.trim // "_" // .cif.data_block_name
-         WARN("Job name has now been set to: "//.name.trim)
-
-      end
-
-   end
-
    read_CX_file_name 
    ! Read the CX file name
       stdin.read(.CX_file_name)
@@ -66,14 +46,49 @@ contains
       stdin.read(.CX_uses_angstrom)
    end
 
+   read_CX_isosurface ::: leaky
+   ! Read in special crystalexplorer isosurface data. This only works
+   ! if there is a .saved.cluster created . This CX isosurface differs from a normal
+   ! isosurface in that the default box sizes for the isosurface are set from
+   ! the cluster fragment (as opposed to the .atom list for normal isosurfaces),
+   ! and there is a default isosurface kind, which is the "stockholder_density".
+   ! NOTE: the isosurface has its own plotgrid, different from that used in 
+   ! normal density plots. 
+
+   ENSURE(.saved.created,"no saved molecule")
+   ENSURE(.saved.cluster.created,"no saved cluster data")
+   ENSURE(.saved.cluster.info_made, "no saved cluster info")
+   ENSURE(.saved.atom.created,"no saved atom list")
+   ENSURE(.atom.created,"no atom list")
+
+      if (.isosurface.destroyed) .isosurface.create(.atom)
+
+      .isosurface.plot_grid.set_defaults(.saved.atom)
+      .isosurface.plot_grid.n_x = 2**ISOSURFACE_MINIMUM_SCAN_LEVEL + 1
+      .isosurface.plot_grid.set_points_widths_origin
+
+      .isosurface.iso_kind = "stockholder_weight"  
+
+      !!!!!!!!!!!!!!!!!!!!!!!!!
+      .isosurface.read_keywords
+      !!!!!!!!!!!!!!!!!!!!!!!!!
+
+      ! Use unit cell as bbox if requested
+      if (.isosurface.plot_grid.use_unit_cell_as_bbox) then
+         WARN("resetting plot axes, plot widths from unit cell")
+         .isosurface.plot_grid.set_bbox_from_unit_cell(.saved.cluster.crystal.unit_cell)
+      end
+
+   end
+
 !  =========================
 !  Process CIF block options
 !  =========================
 
    process_CIF_for_CX ::: leaky
-   ! Process and entire .cif file by reading all acceptable data blocks (i.e.
-   ! those with crystal and atom information) and then writing this information
-   ! to a crystal explorer information file. 
+   ! Process the entire .cif file by reading *all* acceptable data
+   ! blocks (i.e. those with crystal and atom information) and then
+   ! writing this information to a CE information file. 
       self :: PTR
 
    ENSURE(.CX_file_name/=" ","no CX file name")
@@ -94,12 +109,12 @@ contains
       do
 
          ! Loop ooooover crystal data blocks
-         .CE:find_CIF_crystal_data_block(cif,found)
+         .::find_CIF_crystal_data_block(cif,found)
          if (NOT found) exit ! None left
 
          ! Read in asymmetric unit, and crystal info
-         .CE:read_CIF_atoms(cif)            
-         .CE:read_CIF_crystal(cif)
+         .XTAL:read_CIF_atoms(cif)            
+         .XTAL:read_CIF_crystal(cif)
 
          ! Create the cluster
          .cluster.create(.crystal)
@@ -110,12 +125,12 @@ contains
          .cluster.put
 
          ! Write out the data
-         .CE:put_CX_data(CX_file,cif)       
+         .::put_CX_data(CX_file,cif)       
          CX_uses_angstrom  = .CX_uses_angstrom
 
          ! Destroy self, create from cif
-         .destroy                             
-         .create
+         .BASE:destroy                             
+         .BASE:create
          .CX_uses_angstrom = CX_uses_angstrom
 
          ! Next structure
@@ -138,17 +153,17 @@ contains
       ! Find a data block name
       if (.cif.data_block_name==" ") then
          WARN("no CIF data block as specified, looking for first acceptable data block")
-         .CE:find_CIF_crystal_data_block(.cif)
+         .::find_CIF_crystal_data_block(.cif)
       end
 
       ! Find the data block
-      MOLECULE.CE::open_CIF_at_data_block(.cif)
+      ::open_CIF_at_data_block(.cif)
 
       ! Read in atoms of asymmetric unit
-      .CE:read_CIF_atoms(.cif)   
+      .XTAL:read_CIF_atoms(.cif)   
 
       ! Read crystal info
-      .CE:read_CIF_crystal(.cif) 
+      .XTAL:read_CIF_crystal(.cif) 
 
    end
 
@@ -196,144 +211,6 @@ contains
 
    end
 
-!  ========
-!  Read CIF
-!  ========
-
-   read_CIF_crystal(cif) ::: leaky
-   ! Read crystal unit cell and spacegroup information (but NOT atom
-   ! positions) from a CIF file called "cif".
-   ! NOTE: only to be called after read the .atoms from the CIF
-      cif :: CIF
-
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-
-      ! Open the CIF if needed
-      if (NOT cif.file.is_open) cif.open
-
-      ! Create the crystal; it shouldn't really exist beforehand
-      WARN_IF(.crystal.created,"crystal data already defined!")
-      if (.crystal.destroyed) .crystal.create
-
-      ! Read in the crystal from the CIF
-      .crystal.read_CIF(cif,skip_atoms=TRUE)
-
-      ! Only continue if there are some atoms ...
-      if (NOT associated(.atom)) return
- 
-      ! This sets up all the unit cell etc information arrays
-      ! *assuming* the atoms correspond to the asymmetric unit
-      .CE:set_atoms_and_crystal(cif) 
-
-      ! Create and read (assumed!) xray data; atoms must exist
-      if (.crystal.xray_data.destroyed) .crystal.xray_data.create
-      .crystal.assign_xray ! Assumed
-      .crystal.data.read_CIF(cif,.atom.dim)
-
-   end
-
-   read_CIF_atoms(cif) ::: leaky
-   ! Read atom information from a Crystallographic Information File, "cif".
-   ! NOTE: Any previous atom information in destroyed.
-      cif :: CIF
-
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-
-      ! Open the CIF
-      if (NOT cif.file.is_open) cif.open
-
-      ! Read the atoms from the CIF
-      if (.atom.created) then
-         .atom.nullify_basis_part
-         .atom.destroy
-      end
-      .atom.read_CIF(cif)
-
-      ! Set defaults and bases
-      .spin_multiplicity = .default_spin_multiplicity
-      .set_atom_info
-      .resolve_basis_info
-
-      ! Resolve axes in crystal is there
-      if (.crystal.destroyed) return
-      if (NOT .crystal.spacegroup.analysed) return
- 
-      .CE:set_atoms_and_crystal(cif) 
-
-   end
-
-   set_atoms_and_crystal(cif) ::: private, leaky
-   ! Set the atom and crystal information when processing the CIF.
-   ! We may have to reset H atom positions.
-      cif :: CIF
-
-   ENSURE(.atom.created,"no atoms")
-   ENSURE(.crystal.created,"no crystal")
- 
-      H_bond_length :: VEC{REAL}*
-      has_Hs,reset :: BIN
-
-      ! Change atom positions to cartesian
-      .resolve_axis_system
-
-      ! If the hydrogen's are all single bonded, reset the simple way.
-      ! If disordered, this code assumes the disordered atoms are
-      ! proximate to their bonded neighbours.
-      if (.atom.has_all_Hs_single_bonded(has_Hs)) then
-
-         if (has_Hs) then
-         if (cif.apply_BH_bond_length) .atom.set_bond_lengths(5,1,cif.BH_bond_length) 
-         if (cif.apply_CH_bond_length) .atom.set_bond_lengths(6,1,cif.CH_bond_length) 
-         if (cif.apply_NH_bond_length) .atom.set_bond_lengths(7,1,cif.NH_bond_length) 
-         if (cif.apply_OH_bond_length) .atom.set_bond_lengths(8,1,cif.OH_bond_length) 
-         end
-
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-
-      else ! There are floating hydrogens or multiple bonded H's ...
-
-         ! Analyse the fragment symmetry information
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
-
-         ! Use the crystal to reset the hydrogen bond lengths
-         H_bond_length.create(5,8)
-         H_bond_length(5) =  cif.BH_bond_length
-         H_bond_length(6) =  cif.CH_bond_length
-         H_bond_length(7) =  cif.NH_bond_length
-         H_bond_length(8) =  cif.OH_bond_length
-         .crystal.reset_H_bond_lengths_in(.atom,H_bond_length,reset)
-         H_bond_length.destroy
-
-         ! Return if nothing was done
-         if (NOT reset) return
-
-         if (.atom.has_disorder) then
-            WARN_IF(.atom.has_disorder,"DISORDERED ASYMMETRIC CELL MAY BE PRUNED")
-            WARN_IF(.atom.has_disorder,"SOME ATOM INFORMATION MAY BE LOST")
-         end
-
-         ! Re-analyse the fragment symmetry information
-         ! Maybe not all things in here need doing again ...
-         .crystal.destroy_asymmetric_unit
-         .crystal.make_fragment_data(.atom,assign_atom=TRUE,warnings=FALSE)
-
-      end
-
-   end
-
-   read_CIF_ADPs(cif) ::: leaky
-   ! Read atom ADP information from a Crystallographic Information File, "cif".
-      cif :: CIF
-   ENSURE(cif.start_of_data>0,"no start of data in CIF")
-   ENSURE(cif.end_of_data>cif.start_of_data,"no end of data in CIF")
-   ENSURE(.crystal.created,"must have crystal information")
-      if (NOT cif.file.is_open) cif.open
-      .atom.read_CIF_ADPs(cif)
-      .resolve_axis_system
-   end
-
 !  ===
 !  Put
 !  ===
@@ -341,7 +218,7 @@ contains
    put_CX_data
    ! Output information that Crystal Explorer requires to the file 
    ! with name ".CX_file_name".
-      .CE:put_CX_data(.cif)
+      .::put_CX_data(.cif)
    end
 
    put_CX_data(cif)
@@ -352,13 +229,17 @@ contains
       CX_file :: TEXTFILE*
 
       if (.CX_file_name/=" ") then
+
          CX_file.create(.CX_file_name)
          CX_file.open(for="write")
-         .CE:put_CX_data(CX_file,cif)
+         .::put_CX_data(CX_file,cif)
          CX_file.close
          CX_file.destroy
+
       else
-         .CE:put_CX_data(TEXTFILE::stdout,cif)
+
+         .::put_CX_data(TEXTFILE::stdout,cif)
+
       end
 
    end

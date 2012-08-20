@@ -154,6 +154,7 @@ my @scope = undef;            # The nested list of current scoping units.
 # Routines, variables and types
 ###############################
 
+my $routine;                  # Stores routine attributes
 my %called_routines;          # The Tonto module name, and fortran name of called routines.
 my %usd;                      # The list of used routines.
 my %routine_calls;            # The list of routine calls for each routine
@@ -186,6 +187,7 @@ my $skip_tidy_out;
 
 my $module_name;              # The name of the current module/type
 my $module_full_name;         # The name of the current module/type with dotted part
+my $module_sub_name;          # The name of the current submodule (dotted) name
 my $module_fort_type;         # Fortran module name -- without submodule part
 my $module_fort_name;         # Fortran module name, for USE statements
 my $module_self_decl;         # Fortran module name for :: self declarations
@@ -1696,7 +1698,7 @@ sub process_foo_line {
    }
 
    # The following is if we are in a routine body in some scope ...
-   if (&scope_has_routine)                { &do_routine_body; }
+   if    (&scope_has_routine)             { &do_routine_body; }
    elsif (&scope_has_program)             { &do_program_scope; }
 
    # Print the processed line!
@@ -2058,46 +2060,69 @@ sub store_ensure_statements {
 
 sub check_for_first_noncomment_line {
 
+   # Set current routine name
    my $name = $current_rout_name;
 
-   return if (! defined $name);
-   return if (! defined $routine{$name});
-   return if (! &scope_has_routine);
-   return if ($scopeunit    eq 'interface'); # Skip interface bodies
-   return if ($oldscopeunit eq 'interface'); 
+   # Are we in a routine?
+   return if (! defined $name);              # no routine name
+   return if (! defined $routine{$name});    # no routine name (overkill?)
+   return if (! &scope_has_routine);         # not in a routine
+   return if ($scopeunit    eq 'interface'); # skip interface bodies
+   return if ($oldscopeunit eq 'interface'); # skip bodies of interface bodies
 
    # Now we are in a routine scope
+ # print "line = $_";
+ # print "first_active_line = $routine{$name}{first_active_line}";
 
-      $routine{$name}{first_local_var_decl} = undef;
-   
-      if (defined $routine{$name}{first_active_line} &&
-                  $routine{$name}{first_active_line} == 1) {
-             $routine{$name}{first_active_line} = undef; # Stop looking
-      }
-      elsif (
-          defined $routine{$name}{first_active_line} && 
-                  $routine{$name}{first_active_line} == 0 && (   # This is set to 0 if in a routine
-          $_[0] =~ '^\s*[a-zA-Z.]' || 
-          $_[0] =~ '^\s*#' ) && # WARNING: active line if preprocessor directive
-          $_[0] !~ '::'      && 
-          $_[0] !~ ' use '   &&
-          $_[0] !~ 'ENSURE'  &&
-          $_[0] !~ 'DIE_IF'  ) {
-             $routine{$name}{first_active_line} = 1;  
-             $routine{$name}{in_routine_body} = 1;  
-      }
+   # First local var is set undefined
+   $routine{$name}{first_local_var_decl} = undef;
 
-      if (defined $routine{$name}{first_noncomment_line} &&
-                  $routine{$name}{first_noncomment_line} == 1) {
-             $routine{$name}{first_noncomment_line} = undef; # Stop looking
-      }
-      elsif (
-          defined $routine{$name}{first_noncomment_line} && 
-                  $routine{$name}{first_noncomment_line} == 0 && ( # This is set to 0 if in a routine
-          $_[0] =~ '^\s*[a-zA-Z.]' || 
-          $_[0] =~ '^\s*#' ) ) { # WARNING: active line if preprocessor directive
-             $routine{$name}{first_noncomment_line} = 1;  
-      }
+   if    (defined $routine{$name}{first_active_line}             # First active line
+          &&      $routine{$name}{first_active_line} == 1        # previously found?
+         ) {                                                   
+                                                               
+          # Yay!                                               
+          $routine{$name}{first_active_line} = undef;            # Stop looking
+        # print "unset active line";
+                                                               
+   }                                                           
+   elsif (defined $routine{$name}{first_active_line}             # First active line not found?
+          &&      $routine{$name}{first_active_line} == 0        # Note: set to 0 if in a routine
+          && ( $_[0] =~ '^\s*[a-zA-Z.]'                          # line begins with lowercase letter
+            || $_[0] =~ '^\s*#'                                  # line is not a preprocessor macro
+            )                                                    # WARNING: active if inside preprocessor directive
+          &&   $_[0] !~ ' :: '                                   # no variable declaration
+          &&   $_[0] !~ ' use '                                  # no use statement
+          &&   $_[0] !~ 'ENSURE'                                 # no ENSURE precondition
+          &&   $_[0] !~ 'DIE_IF'  ) {                            # no DIE_IF precondition
+                                                               
+          # Yay!                                               
+          $routine{$name}{first_active_line} = 1;                # Found first active code line
+          $routine{$name}{in_routine_body} = 1;                  # We are out of the routine preamble
+        # print "active line";
+
+   }
+
+   if    (defined $routine{$name}{first_noncomment_line}         # First non comment line
+          &&      $routine{$name}{first_noncomment_line} == 1) { # previously found?
+
+          # Yay!
+          $routine{$name}{first_noncomment_line} = undef;        # This is not the fist non comment line
+        # print "unset first noncomment line";
+
+   }
+   elsif (defined $routine{$name}{first_noncomment_line}         # First non comment not found
+          &&      $routine{$name}{first_noncomment_line} == 0    # Note: set to 0 if in routine
+          && ( $_[0] =~ '^\s*[a-zA-Z.]'                          # line begins with lowercase
+            || $_[0] =~ '^\s*#'                                  # ...  and is not preprocessor directive
+             )                                                   # WARNING: active line if preprocessor directive
+          ) { 
+
+          # Yay!
+          $routine{$name}{first_noncomment_line} = 1;  
+        # print "first noncomment line";
+
+   }
 
 }
 
@@ -2108,7 +2133,7 @@ sub check_for_first_noncomment_line {
 
 sub analyse_interface_scope {
   # Analyse the routine name
-  &analyse_rout_name($_[0]);
+  &analyse_routine_name($_[0]);
   $routine{$current_rout_name}{real_name} = $current_rout_name;
 }
 
@@ -3102,6 +3127,7 @@ sub analyse_new_module_scope {
   my %info = &analyse_type_name($module_full_name,0);
 
   $module_name       = $info{type_name};           # Chops the dotted part, but includes curlies ...
+  $module_sub_name   = $info{sub_type_name};       # This is the dotted part
   $module_fort_type  = $info{fortran_type_name};   # Fortran type name -- without submodule part
   $module_fort_name  = $info{fortran_mod_name};    # Fortran module name for USE statements
   $module_self_decl  = $info{fortran_self_decl};   # Fortran module name for :: self declarations
@@ -3620,7 +3646,7 @@ sub fortran_do_new_end_scope {
 sub analyse_new_routine_scope {
 
   # Expecting a subroutine/function line
-  &analyse_rout_name($_[0]);
+  &analyse_routine_name($_[0]);
 
   # Assign global variable types to local
   # Don't do this for routines that are within interfaces.
@@ -5166,9 +5192,9 @@ sub module_colon_to_fortran {
     return $X;
   }
 
- # NON-GENERIC routine calls
+ # NON-GENERIC procedures ...
 
-  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/g) { # A function call
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+)?::(\w+)/g) { # A function 
      my $pre = $PREMATCH.$1;
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
@@ -5177,6 +5203,7 @@ sub module_colon_to_fortran {
 #print "pre = $pre";
 #print "last = $last";
      my $rout_type = $2; 
+     if (! defined $2)  { $rout_type = $module_full_name; } 
      my $rout = $3; 
      my $post = $POSTMATCH;
      my %info = &analyse_type_name($rout_type);
@@ -5199,6 +5226,7 @@ sub module_colon_to_fortran {
      if    ($do_generic)     { $X = $pre.$rout.$post; } 
      elsif ($is_module_data) { $X = $pre.$rout.$post; } 
      else                    { $X = $pre.$fortran_mod_name."_".$rout.$post; }
+#print "X = $X";
      if ($do_routine_calls && $pass==2) {
          my $call = $rout_type . "::" . $rout;
          my $short_name = $routine{$current_rout_name}{short_name};
@@ -5210,13 +5238,16 @@ sub module_colon_to_fortran {
      }
   }
 
-  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)::(\w+)/) { # Routine call, anywhere, not a function
-     my $pre = $PREMATCH.$1;                             # and starting from a new line
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+)?::(\w+)/) { # Routine call, anywhere, not a function
+     my $pre = $PREMATCH.$1;                         # and starting from a new line
      my $rout_type = $2; 
      my $rout = $3; 
      my $post = $POSTMATCH;
+     if (! defined $2) { $rout_type = $module_full_name; } 
      my %info = &analyse_type_name($rout_type);
      &analyse_type_name($rout_type);
+#print "rout = $rout";
+#print "rout_type = $rout_type";
      $rout_type = $info{type_name}; # reset to generic type
      if (! defined $tonto_type_info{$rout_type}) {
        &report_error("type \"$rout_type\" in explicit module call was not declared in \"$typesfile\".");
@@ -5229,6 +5260,7 @@ sub module_colon_to_fortran {
      $called_routines{$rout_type}{$rout}{non_generic_call} = 1;
      if ($do_generic) { $X = $pre."call ".$rout.$post; } 
      else             { $X = $pre."call ".$fortran_mod_name."_".$rout.$post; }
+#print "X = $X";
      if ($do_routine_calls && $pass==2) {
          my $call = $rout_type . "::" . $rout;
          my $short_name = $routine{$current_rout_name}{short_name};
@@ -5239,10 +5271,10 @@ sub module_colon_to_fortran {
      }
   }
 
- # GENERIC routine calls
+ # GENERIC procedures ...
 
-  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function call
-     my $pre = $PREMATCH.$1;
+  while ($X =~ /([(,=>*+-]\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/g) { # A function - must be fully
+     my $pre = $PREMATCH.$1;                                    # module-dismabiguated
      next if ($pre =~ /"$/); # skip quoted calls
      my $last = $pre; $last = chop($last);
      if ($last eq '.') { next };
@@ -5278,9 +5310,9 @@ sub module_colon_to_fortran {
      }
   }
 
-  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) { # Routine call, anywhere not a function
-     my $pre = $PREMATCH.$1;                            # and starting from a new line
-     my $rout_type = $2; 
+  if ($X =~ /(^\s*|;\s*)([A-Z][A-Z_0-9{,}.]+):(\w+)/) {  # Routine call, anywhere not a function
+     my $pre = $PREMATCH.$1;                             # and starting from a new line
+     my $rout_type = $2;                                 # Must be fully disambiguated
      my $rout = $3; 
      my $post = $POSTMATCH;
      my %info = &analyse_type_name($rout_type);
@@ -5331,8 +5363,9 @@ sub convert_dots_to_fortran {
   my ($pre,$left,$right,$i);
   my ($rout,$post,$fixedpost,$arg,$call,$underscore,$arg_type);
   my ($fortran_type_name,$fortran_mod_name,$sub_mod_name);
+  my ($is_generic_submod);
 
-  # Loop over $i-length substring on the line $X
+  # Loop over $i-position substring on the line $X
   $i = 0;
   THIS : while ($i < length $X) {
 
@@ -5347,15 +5380,21 @@ sub convert_dots_to_fortran {
           if (! &outside_of_string($left)) { next THIS; }
     
           # Decode the right of the dot - or keep looking if not understandable
-          if ($right !~ /^([A-Z_]+:)?([a-zA-Z_]\w*)(.*)/s) { next THIS; }
+          if ($right !~ /^([A-Z_]*::?)?([a-zA-Z_]\w*)(.*)/s) { next THIS; }
 
           # Extract the explicit submodule name $1 if any
-          # Remove its trailing colon
+          # Remove its trailing colon(s)
           undef $sub_mod_name;
           if (defined $1) {  
              $sub_mod_name = $1; 
-             $sub_mod_name =~ s/:$//; 
+             $is_generic_submod = 1;
+             if    ($sub_mod_name =~ s/::$//) { $is_generic_submod = 0; } 
+             elsif ($sub_mod_name =~ s/:$// ) { $is_generic_submod = 1; }
+             if ($sub_mod_name eq '') { $sub_mod_name = $module_sub_name; }
           }
+
+        # print "right = $right";
+        # print "sub   = >>${sub_mod_name}<<";
 
           # Extract the routine name, and what comes after it
           $rout = $2;
@@ -5381,9 +5420,9 @@ sub convert_dots_to_fortran {
           if ($pre =~ m'((?:;|^|\))\s*)$'o) {$call = 'call ';}
           else                              {$call = '';}
     
-       # print "arg       = $arg";
-       # print "rout      = $rout";
-       # print "has_comp  = " . &arg_has_component($arg, $rout);
+          #print "arg       = $arg";
+          #print "rout      = $rout";
+          #print "has_comp  = " . &arg_has_component($arg, $rout);
     
           # Check if $rout is a component of $arg
           if (&arg_has_component($arg, $rout)) {              
@@ -5448,7 +5487,7 @@ sub convert_dots_to_fortran {
                 $rout = 'associated';
                 $underscore = '';
                 $done = 1;
-              # Modify argumentless "destroyeded" statements -> NOT associated
+              # Modify argumentless "destroyed" statements -> NOT associated
               } elsif ($post !~ '^[(]' && $rout =~ m'^destroyed$'o) { 
                 $rout = 'NOT associated';
                 $underscore = '';
@@ -5464,8 +5503,10 @@ sub convert_dots_to_fortran {
                   # Get arg type from the local variable table
                   $arg_type = $local_var_info{$arg}{full_type_name};
 
+                  #print "arg_type  = $arg_type";
+
                   if (defined $arg_type) {
-                     if (defined $sub_mod_name) {         # arg wont be a local_var
+                     if (defined $sub_mod_name && $sub_mod_name ne '') {         # arg wont be a local_var
                         $arg_type = $arg_type . '.' . $sub_mod_name; 
                         my %info = &analyse_type_name($arg_type);
                         $fortran_type_name = $info{fortran_type_name}; 
@@ -5529,7 +5570,7 @@ sub convert_dots_to_fortran {
                   # If no generic interfaces are being used, scrub interface
                   # and place fortran module name, including submodule name,
                   # in front of routine name, and forget the underscore
-                  if ($do_generic) {
+                  if ($do_generic && $is_generic_submod) {
                        $underscore = '_';
                   } else {
                        $rout = $fortran_mod_name . '_' . $rout;
@@ -6087,9 +6128,10 @@ sub type_of_this {
 
 #############################################################
 # Analyse a routine name and store all the routine attributes
+# -- this takes the routine line $X as the argument
 #############################################################
 
-sub analyse_rout_name {
+sub analyse_routine_name {
 
     # $X is the routine line
     my ($X) = @_;
@@ -6215,6 +6257,13 @@ sub analyse_rout_name {
     $routine{$name}{real_name} = $real_name;
     $routine{$name}{ensure_statements} = $ensure;
 
+#print "=== analyse_routine_name ===";
+#print "routine    = $routine";
+#print "name       = $name";
+#print "real_name  = $real_name";
+#print "short_name = $short_name";
+#print "============================";
+
     # Add to the routine name stack. Needed for routines within interface blocks
     # within routine declaration parts. Set $current_rout_name to the unique $real_name
     $current_rout_name = $name;
@@ -6246,77 +6295,216 @@ sub analyse_rout_name {
 
     # Analyse routine attributes (after the ::: specifier)
     if ($attr ne '') {
-      $attr =~ s/(get_from.*)[)]\s*,/$1,/;        # remove last bracket
-      $attr =~ s/(get_from.*)[)]\s*$/$1/;         # remove last bracket
-#print "attr   =$attr";
+
+      # Remove last bracket and EOL crap
+      $attr =~ s/(get_from.*)[)]\s*,/$1,/;        
+      $attr =~ s/(get_from.*)[)]\s*$/$1/;
+      # print "attr   =$attr";
+
+      # Split procedure-attribute line
       my @tmp = split(/\s*,?\s+/,$attr);
-#print "tmp    =@tmp";
+      #print "tmp    =@tmp";
+
+      # Process each attribute
       foreach (@tmp) {
-        /^leaky/            && do { $routine{$name}{leaky}=1;            next}; # has a memeory leak
-        /^private/          && do { $routine{$name}{private}=1;          next}; # generic interface made private
-        /^public/           && do { $routine{$name}{public}=1;           next}; # specific interface made public
-        /^selfless/         && do { $routine{$name}{selfless}=1;         next}; # self is not first argument
-        /^functional/       && do { $routine{$name}{functional}=1;       next}; # first arg is function, return REAL
-        /^routinal/         && do { $routine{$name}{routinal}=1;         next}; # first arg is function
-        /^pure/             && do { $routine{$name}{pure}=1;             next}; # pure routine
-        /^always_pure/      && do { $routine{$name}{always_pure}=1;             # must always be pure (no macro override)
-                                    $routine{$name}{pure}=1;             next};
-        /^elemental/        && do { $routine{$name}{elemental}=1;               # elemental routine
-                                    $routine{$name}{pure}=1;             next};
-        /^always_elemental/ && do { $routine{$name}{always_elemental}=1;        # must always be elemental
-                                    $routine{$name}{pure}=1;             next};
-        /^recursive/        && do { $routine{$name}{recursive}=1;        next}; # recursive
-        /^get_from/         && do { /[(]\s*([^ ]*)/; # remove first brackets
-                                    $routine{$name}{inherited}=1;               # inherited routine
-                                    my $loc=$1;                                 # where inherited from
-                                    if ($loc=~/([^ ]*):([^ ,]*)/) {             # MOD:xxxx
-                                       if ($1 ne '' ) {
-                                       $routine{$name}{parent_module} =$1;      # module name
-                                       } else {
-                                       $routine{$name}{parent_module} =$module_full_name;
-                                       }
-                                       $routine{$name}{parent_routine}=$2;      # new routine name
-                                    } elsif ($loc=~/([A-Z][\w{,}.]*[\w}])/) {        # MOD
-                                       $routine{$name}{parent_module} =$1;      # full mod name
-                                       $routine{parent_routine} =undef;         # no routine name
-                                    } elsif ($loc=~/([^ ,]+)/) {                # xxxx
-                                       $routine{$name}{parent_module} =$module_full_name;
-                                       $routine{$name}{parent_routine}=$1;      # new routine name
-                                    } else {                                    # ( ,
-                                       $routine{$name}{parent_module} =$module_full_name;
-                                       $routine{parent_routine} =undef;         # no routine name
-                                    }
-                                    $inherit_string = "";                       # the inherit match string
-#print "---inherit---";
-#print "parent=$1";
-#print "-------------";
-                                                                         next}; # 
-        /^template/         && do { $routine{$name}{template}=1;         next}; # will be inherited, treated above
-        /^inlined_by_foo/   && do { $routine{$name}{inlined_by_foo}=1;   next}; # will manually inlined
-        '=>'                && do { $n_define_type++;                           # A=>B aliases
-                                    my $n = $n_define_type; 
-                                    $_ =~ /([^ ]*)\s*=>\s*([^ ]*)/;
-                                    my $old = $1;
-                                    my $new = $2;
-                                    $old_define_type[$n] = $old;
-                                    $new_define_type[$n] = $new;
-                                    my %info; my @type_arg;                     # A{X}=>B{Y} alias?
-                                    %info = &analyse_type_name($old,0);
-                                    @type_arg = @{$info{type_arg}};
-                                    $old_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
-                                    %info = &analyse_type_name($new,0);
-                                    @type_arg = @{$info{type_arg}};
-                                    $new_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
-#print "---alias-----";
-#print "X      =$X";
-#print "_      =$_";
-#print "old    =$old";
-#print "new    =$new";
-#print "-------------";
-                                                                         next};
+
+        # memory leak expected
+        /^leaky/ && do { 
+           $routine{$name}{leaky}=1;
+           next
+        }; 
+
+        # generic interfac to be made private
+        /^private/ && do { 
+           $routine{$name}{private}=1; 
+           next
+        }; 
+
+        # specific interface to be made public
+        /^public/ && do { 
+           $routine{$name}{public}=1; 
+           next
+        }; 
+
+        # self is not first argument
+        /^selfless/  && do { 
+           $routine{$name}{selfless}=1; 
+           next
+        }; 
+
+        # self is a function which returns REAL
+        /^functional/ && do { 
+           $routine{$name}{functional}=1; 
+           next
+        }; 
+
+        # self is a function or procedure
+        /^routinal/ && do { 
+           $routine{$name}{routinal}=1; 
+           next
+        }; 
+
+        # pure procedure, no side effects (depends on PURE macro)
+        /^pure/ && do { 
+           $routine{$name}{pure}=1; 
+           next
+        }; 
+
+        # proceudre is *always* pure (no macro override)
+        /^always_pure/ && do { 
+           $routine{$name}{always_pure}=1; 
+           $routine{$name}{pure}=1; 
+           next
+        };
+
+        # elemental routine
+        /^elemental/ && do { 
+           $routine{$name}{elemental}=1; 
+           $routine{$name}{pure}=1; 
+           next
+        };
+
+        # proceudre is *always* elemental (no macro override)
+        /^always_elemental/ && do { 
+           $routine{$name}{always_elemental}=1; 
+           $routine{$name}{pure}=1; next
+        };
+
+        # recursive procedure
+        /^recursive/ && do { 
+           $routine{$name}{recursive}=1; 
+           next
+        }; 
+
+#        /^get_from/ && do { 
+#        
+#           # where inherited from
+#           /[(]\s*([^ ]*)/; 
+#           my $loc=$1;                                 
+#
+#           # inherited routine
+#           $routine{$name}{inherited}=1;               
+#
+#           # MOD:xxxx
+#           if ($loc =~ /([^ ]*):([^ ,]*)/ ) {             
+#              if ($1 ne '') { $routine{$name}{parent_module} =$1; } 
+#              else          { $routine{$name}{parent_module} = $module_full_name; }
+#              $routine{$name}{parent_routine}=$2;      # new routine name
+#           } 
+#           
+#           # MOD
+#           elsif ($loc =~ /([A-Z][\w{,}.]*[\w}])/ ) {        
+#              $routine{$name}{parent_module} =$1;      # full mod name
+#              $routine{parent_routine} =undef;         # no routine name
+#           } 
+#           
+#           # xxxx
+#           elsif ($loc =~ /([^ ,]+)/ ) {                
+#              $routine{$name}{parent_module} =$module_full_name;
+#              $routine{$name}{parent_routine}=$1;      # new routine name
+#           } 
+#           
+#           # ( ,
+#           else {                                    
+#              $routine{$name}{parent_module} =$module_full_name;
+#              $routine{parent_routine} =undef;         # no routine name
+#           }
+#
+#           # the inherit match string
+#           $inherit_string = ""; 
+#           
+#           next;
+#        }; 
+
+        /^get_from/ && do { 
+
+           # Set inherited routine
+           $routine{$name}{inherited} = 1;               
+        
+           # Where inherited from?
+           /[(]\s*([^ ]*)/; 
+           my $loc = $1;                                 
+
+           # $loc = MOD:xxxx is explicit
+           if ($loc =~ /^([^ ]*):([^ ,]*)/ ) {             
+              if ($1 ne '') { $routine{$name}{parent_module} = $1; } 
+              else          { $routine{$name}{parent_module} =$module_full_name; }
+              $routine{$name}{parent_routine}=$2;      # xxxx routine name
+           } 
+           
+           # $loc = MOD is just the module name
+#           elsif ($loc =~ /([A-Z][A-Z0-9_{,}.]*])/ ) {  
+           elsif ($loc =~ /^([A-Z][\w{,}.]*[\w}])/ ) {        
+              $routine{$name}{parent_module} = $1;     # full mod name
+              $routine{parent_routine} = undef;        # routine name unchanged
+           } 
+           
+           # $loc = xxxx
+           elsif ($loc =~ /^([a-z][a-zA-Z0-9_]*)/ ) {    
+              $routine{$name}{parent_module} = $module_full_name;
+              $routine{$name}{parent_routine}= $1;      # xxxx routine name
+           } 
+           
+           # $loc = "( ,"
+           else {                                    
+              $routine{$name}{parent_module} =$module_full_name;
+              $routine{parent_routine} = undef;        # routine name unchanged
+           }
+
+           # the inherit match string
+           $inherit_string = "";                       
+           next
+
+        }; 
+
+        # to be inherited only, treated above
+        /^template/ && do { 
+           $routine{$name}{template}=1; 
+           next
+        }; 
+
+        # will be manually inlined by foo
+        /^inlined_by_foo/ && do { 
+           $routine{$name}{inlined_by_foo}=1; 
+           next
+        }; 
+
+        # A=>B aliases
+        '=>' && do { 
+
+           $n_define_type++;                           
+           my $n = $n_define_type; 
+           $_ =~ /([^ ]*)\s*=>\s*([^ ]*)/;
+           my $old = $1;
+           my $new = $2;
+           $old_define_type[$n] = $old;
+           $new_define_type[$n] = $new;
+
+           #print "---alias-----";
+           #print "X      =$X";
+           #print "_      =$_";
+           #print "old    =$old";
+           #print "new    =$new";
+           #print "-------------";
+
+           # A{X}=>B{Y} alias?
+           my %info; my @type_arg;                     
+           %info = &analyse_type_name($old,0);
+           @type_arg = @{$info{type_arg}};
+           $old_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
+           %info = &analyse_type_name($new,0);
+           @type_arg = @{$info{type_arg}};
+           $new_expand_type[$n] = [ &get_all_type_arguments(\@type_arg) ];
+
+           next
+        };
+
+        # Unrecognized attribute
         &report_error("unexpected routine attribute, \"$_\".");
-      }
-    }
+
+      }; # foreach
+
+    }; # attr ne ''
 
     # Routines which are in interfaces are selfless.
     if ($#scope > 2) { $routine{$name}{selfless} = 1; }   
