@@ -1982,19 +1982,23 @@ contains
    ENSURE(.crystal.created,"no crystal info")
    ENSURE(.basis_info_made,"no basis info")
 
-      Fc :: VEC{CPX}*
+      Fc, tfc :: VEC{CPX}*
       Fm,Fexp,Fsig,alpha,Fcr,Fci, X, wt, xa,ya,za,a2 :: VEC{REAL}*
-      fac_times_alpha,k1,k2,k3, u1,u2,u3, tf, ga,gb :: VEC{REAL}*
+      fac_times_alpha, tf2,tf3,tf4, ga,gb :: VEC{REAL}*
       ra :: VEC{REAL}(3)
       overlapping_atom, pi,pj,pn :: VEC{INT}*
       skipa0,skipab,skipa,skipb :: VEC{BIN}*
-      k_pts,kU,pt,grida,gridb,bf_save, CC :: MAT{REAL}*
+      adp2 :: MAT{REAL}(3,3)
+      adp3 :: MAT3{REAL}(3,3,3)
+      adp4 :: MAT4{REAL}(3,3,3,3)
+      k_pts,pt,grida,gridb,bf_save, CC :: MAT{REAL}*
       sha :: SHELL1
       bf_skip :: VEC{VEC_{BIN}}*
       bf_grid :: VEC{MAT_{REAL}}*
       fac,cutoff,rf, val :: REAL
       n_refl,n_k,n_pt,n_keep, c,ca,cb, oa,fsa,lsa,fba, ob,fsb,lsb :: INT
       sa,fa,la,na, sb,fb,lb,nb, as, a,b,i,j,n,p :: INT
+      atom_c :: ATOM*
 
       ! Number of reflections
       n_refl = .crystal.n_refl
@@ -2033,14 +2037,10 @@ contains
       ! Symmetry generated K points and SF's
       n_k = .crystal.n_unique_SF_k_pts
       k_pts.create(n_k,3)
-      kU.create(n_k,3)
 
       ! Make list of symmetry non-equivalent symops
       ! and the necessary k points
       .crystal.make_unique_SF_k_pts(k_pts)
-      k1 => k_pts(:,1)
-      k2 => k_pts(:,2)
-      k3 => k_pts(:,3)
 
       ! Basis function cutoff
       cutoff = .becke_grid.basis_function_cutoff
@@ -2060,6 +2060,7 @@ contains
       constraint = ZERO
 
       ! Loop over integration atoms "c"
+      ! -- Must we loop on all, or just asymmetric unit?
       parallel do c = 1,.n_atom
 
          ! Repetition factor for this atom
@@ -2088,18 +2089,63 @@ contains
          bf_skip.create(.n_shell)
          bf_grid.create(.n_shell)
 
-         ! Temperature factor for this atom for all k_pts
-         kU.to_product_of(k_pts,.atom(c).ADP_tensor)
-         u1 => kU(:,1); u2 => kU(:,2); u3 => kU(:,3)
+         ! Focus on atom c
+         atom_c => .atom(c)
 
-         ! Make the effective density matrix "X", fold into "wt"
-         X.create(n_pt)
-         tf.create(n_k)
-         tf = exp(-HALF*(u1*k1+u2*k2+u3*k3))
-         .crystal.sum_unique_sf_pts(X,k_pts,pt,tf,Fcr,Fci)
-         wt = rf * wt * X
-         tf.destroy
-         X.destroy
+         ! Harmonic temperature factor (for each reflection)
+         atom_c.put_ADP2_to(adp2)
+         tf2.create(n_k)
+         tf2.to_contraction_i2_of(k_pts,adp2)
+         tf2 = exp(-HALF*tf2)
+
+         ! Die if there are only ADP3s
+         DIE_IF(atom_c.has_only_ADP3s_and_errors,"3rd order ADPs with Hirshfeld-atom XCW not yet implemented")
+
+         ! Anharmonic temperature factor?
+         if (atom_c.has_only_ADP4s_and_errors) then
+
+            ! Get anharmonic constants
+            atom_c.put_ADP3_to(adp3)
+            atom_c.put_ADP4_to(adp4)
+
+            ! Temperature factor contributions
+            tfc.create(n_k)
+            tf3.create(n_k)
+            tf4.create(n_k)
+
+            ! Harmonic and anharmonic temperature factors (for each reflection)
+            tf3.to_contraction_i2_of(k_pts,adp3)
+            tf4.to_contraction_i2_of(k_pts,adp4)
+            tfc = tf2 * SIXTH * cmplx(SIX + QUARTER*tf4,-tf3,kind=CPX_KIND)
+
+            ! Get effective density "X"
+            X.create(n_pt)
+            .crystal.sum_unique_sf_pts(X,k_pts,pt,tfc,Fcr,Fci)
+
+            ! Fold effective density "X" into "wt"
+            wt = rf * wt * X
+
+            ! Clean
+            X.destroy
+            tf4.destroy
+            tf3.destroy
+            tfc.destroy
+            tf2.destroy
+
+         else
+
+            ! Get effective density "X"
+            X.create(n_pt)
+            .crystal.sum_unique_sf_pts(X,k_pts,pt,tf2,Fcr,Fci)
+
+            ! Fold effective density "X" into "wt"
+            wt = rf * wt * X
+
+            ! Clean
+            X.destroy
+            tf2.destroy
+
+         end
 
          ! Loop c-overlapping atoms a
          do ca = 1,overlapping_atom.dim
@@ -2263,7 +2309,6 @@ contains
       za.destroy
       ya.destroy
       xa.destroy
-      kU.destroy
       k_pts.destroy
       Fci.destroy
       Fcr.destroy
