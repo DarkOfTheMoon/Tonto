@@ -1334,6 +1334,332 @@ contains
 
    end
 
+!  ================
+!  Molden interface
+!  ================
+
+   read_molden_file(file_name) ::: leaky
+   ! Read a Molden output file
+      file_name :: STR, optional
+
+   ENSURE(NOT .use_spherical_basis,"not implemented")
+
+      molden_file :: TEXTFILE*
+      archive :: ARCHIVE
+      pos :: VEC{REAL}(3)
+      orb :: VEC{REAL}*
+      fac,n_e,val,energy,occ :: REAL
+      name,units,item,label,spin :: STR
+      found,is_unrestricted :: BIN
+      line, a,i,f,Z :: INT
+
+      ! Destroy existing basis, and atom list
+      if (.basis.created) .basis.destroy
+      if (.atom.created)  .atom.destroy
+
+      ! Create scfdata
+      .scfdata.destroy
+      .scfdata.create
+
+      ! Get file name
+      if (present(file_name)) then;              name = file_name
+      else if (NOT stdin.buffer_exhausted) then; stdin.read(name) 
+      else;                                      name = .name
+      end
+
+      ! Open Molden file
+      molden_file.create(name)
+      molden_file.open(for="read")
+
+      ! Find [ATOMS] block
+      molden_file.look_for("[ATOMS]")
+      DIE_IF(NOT found, "No [ATOMS] line")
+      DIE_IF(molden_file.n_line_items/=2, "Expecting two items on [ATOMS] line")
+
+      ! Read units
+      molden_file.skip_next_item
+      molden_file.read(units)
+      fac = ONE
+      if (units=="Angs") fac = BOHR_PER_ANGSTROM
+      
+      ! Store start of atoms list
+      molden_file.read_line
+      line = molden_file.line_number + 1
+
+      ! Get no. of atoms ...
+      .n_atom = 0
+      do
+         molden_file.read(item)
+         if (item=="[Molden") exit
+         DIE_IF(molden_file.end_of_file,"file ended unexpectedly")
+         .n_atom = .n_atom + 1
+      end
+
+      ! Create atom list
+      .atom.create(.n_atom)
+
+      ! Move back to atoms line
+      molden_file.move_to_line(line)
+
+      ! For each atom a: read label, Z, coordinates
+      do a = 1,.n_atom
+
+         ! Read label
+         molden_file.read(label)
+
+         ! Read Z
+         molden_file.skip_next_item
+         molden_file.read(Z)
+
+         ! Set
+         .atom(a).set_atomic_number(Z)
+         .atom(a).set_label(label)
+
+         ! Read position, change units
+         molden_file.read(pos)
+         pos = fac*pos
+         .atom(a).set_position(pos)
+
+         ! Set basis label
+         .atom(a).set_basis_label("molden-"//trim(.atom(a).chemical_symbol))
+
+      end
+
+      ! Read basis set
+      molden_file.look_for("[GTO]",found=found)
+      DIE_IF(NOT found, "No [GTO] line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on [GTO] line")
+
+      ! Create basis -- Different one for every atom
+      .basis.create(.n_atom)
+      do a = 1,.n_atom
+         .basis(a).read_molden
+         .basis(a).set_label(.atom(a).basis_label)
+      end
+
+      ! Find [MO] tag
+      molden_file.look_for("[MO]",found=found)
+      DIE_IF(NOT found, "No [MO] line")
+      DIE_IF(molden_file.n_line_items/=1, "Expecting only one item on [MO] line")
+      line = molden_file.line_number + 1
+
+      ! Any Beta tag?
+      molden_file.look_for("Beta",found=is_unrestricted)
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+
+      ! Get no. of electrons
+      n_e = ZERO
+      do
+         molden_file.look_for("Occup=",found=found)
+         if (NOT found) exit
+         molden_file.skip_next_item
+         molden_file.read(val)
+         n_e = n_e + val
+      end 
+
+      ! Now set charge
+      .charge = .atom.no_of_electrons - nint(n_e)
+
+      ! Set multiplicity
+      .spin_multiplicity = .::default_spin_multiplicity
+
+      ! Finally: set atom info & basis info
+      .::set_atom_info
+      .::resolve_basis_info
+
+      ! Create MO arrays
+      .orbital_energies.destroy
+      .molecular_orbitals.destroy
+
+      if (is_unrestricted) then
+
+         .scfdata.set_scf_kind("uhf")
+
+         .orbital_energies.create(.n_bf,"unrestricted")
+         .orbital_energies.alpha = ZERO
+         .orbital_energies.beta = ZERO
+
+         .molecular_orbitals.create(.n_bf,"unrestricted")
+         .molecular_orbitals.alpha = ZERO
+         .molecular_orbitals.beta = ZERO
+
+      else
+
+         .scfdata.set_scf_kind("rhf")
+
+         .orbital_energies.create(.n_bf,"restricted")
+         .orbital_energies.restricted = ZERO
+
+         .molecular_orbitals.create(.n_bf,"restricted")
+         .molecular_orbitals.restricted = ZERO
+
+      end
+
+      ! Set occupation numbers
+      spin = .scfdata.spinorbital_kind
+      .occupation_numbers.destroy
+      .occupation_numbers.create(.n_bf,spin)
+      .occupation_numbers.set_to_zero
+      .::set_scf_occupations(spin)
+
+      ! Move back to [MO]'s
+      molden_file.move_to_line(line)
+      orb.create(.n_bf)
+
+      ! Read in orbitals and energies.
+      i = 0
+      do
+
+         molden_file.look_for("Ene=",found=found)
+
+         if (NOT found) exit
+
+         ! Read energy
+         molden_file.skip_next_item
+         molden_file.read(energy)
+
+         ! Read spin
+         molden_file.skip_next_item
+         molden_file.read(spin)
+
+         ! Read occupation
+         molden_file.skip_next_item
+         molden_file.read(occ)
+
+         ! Read orbital
+         do f = 1,.n_bf
+            molden_file.skip_next_item
+            molden_file.read(orb(f))
+         end
+
+         ! Increment orbital
+         if (spin=="Alpha") i = i + 1
+         DIE_IF(i>.n_bf,"too many orbitals specified")
+
+         ! Assign MO's
+         if (is_unrestricted) then
+
+            select case (spin)
+               case ("Alpha")
+                  .orbital_energies.alpha(i) = energy
+                  .molecular_orbitals.alpha(:,i) = orb
+               case ("Beta")
+                  .orbital_energies.beta(i) = energy
+                  .molecular_orbitals.beta(:,i) = orb
+               case default
+                  DIE("unknown spin: "//trim(spin))
+            end
+
+         else
+
+            select case (spin)
+               case ("Alpha")
+                  .orbital_energies.restricted(i) = energy
+                  .molecular_orbitals.restricted(:,i) = orb
+               case default
+                  DIE("unexpected spin: "//trim(spin))
+            end
+
+         end
+
+      end 
+
+      orb.destroy
+
+      ! Swap orbital order
+      if (is_unrestricted) then
+         .::swap_molden_orbital_order(.molecular_orbitals.alpha,"row")
+         .::swap_molden_orbital_order(.molecular_orbitals.beta,"row")
+      else
+         .::swap_molden_orbital_order(.molecular_orbitals.restricted,"row")
+      end
+
+
+      ! Make density matrix
+      .::make_scf_density_matrix
+
+      ! Save data in archive files
+      archive.set_defaults
+
+      archive.set(.name,"density_matrix")
+      archive.write(.density_matrix)
+
+      archive.set(.name,"molecular_orbitals")
+      archive.write(.molecular_orbitals)
+
+      archive.set(.name,"orbital_energies")
+      archive.write(.orbital_energies)
+
+      ! Set crystal data
+      if (associated(.crystal)) then
+         .::resolve_axis_system
+         .crystal.make_fragment_data(.atom,assign_atom=TRUE)
+      end
+
+   end
+
+   swap_molden_orbital_order(X,swap)
+   ! Swap the order of orbitals on matrix "X" after reading a
+   ! molden input file, for "swap" equal to "row" or "1", or
+   ! "coloumn" or "2".  This is nearly the same as gaussian.
+      X :: MAT{REAL}
+      swap :: STR
+
+      s,f,l,ls,fg,lg,i,j :: INT
+      fac :: VEC{REAL}*
+      ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
+
+      select case (swap)
+
+         case("row","1")
+            do s = 1,.n_shell
+               f  = .first_basis_fn_for_shell(s)
+               l  = .last_basis_fn_for_shell(s)
+               ls = .angular_moment_for_shell(s)
+               ENSURE(ls<=4,"cannot yet convert order for h shells")
+               if (ls==3) then ! swap f functions
+                  X(f:l,:) = X(f-1+ff,:)
+               end
+               if (ls>1) then  ! normalisation factors
+                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                  fg = lg + 1     
+                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                  do i = f,l
+                     X(i,:) = X(i,:)*fac(i-f+1)
+                  end
+               end
+            end
+
+         case("column","2")
+            do s = 1,.n_shell
+               f  = .first_basis_fn_for_shell(s)
+               l  = .last_basis_fn_for_shell(s)
+               ls = .angular_moment_for_shell(s)
+               ENSURE(ls<=4,"cannot yet convert order for h shells")
+               if (ls==3) then ! swap f functions
+                  X(:,f:l) = X(:,f-1+ff)
+               end
+               if (ls>1) then  ! normalisation factors
+                  lg = GAUSSIAN_DATA:n_comp_up_to(ls-1)
+                  fg = lg + 1     
+                  lg = lg + GAUSSIAN_DATA:n_comp(ls)
+                  fac => GAUSSIAN_DATA::normalising_factors(fg:lg)
+                  do j = f,l
+                     X(:,j) = X(:,j)*fac(j-f+1)
+                  end
+               end
+            end
+
+         case default
+            DIE("unknown swap kind, "//trim(swap))
+
+      end
+
+   end
+
 !  ======================
 !  Gaussian chk interface
 !  ======================
@@ -2573,10 +2899,13 @@ contains
    ! normalisation factors which are not used in Tonto.
       X :: MAT{REAL}
       swap :: STR
+
       s,f,l,ls,fg,lg,i,j :: INT
       fac :: VEC{REAL}*
       ff :: VEC{INT}(10) = (/ 1, 2, 3, 5, 6, 4, 9, 7, 8, 10 /)
+
       select case (swap)
+
          case("row","1")
             do s = 1,.n_shell
                f  = .first_basis_fn_for_shell(s)
@@ -2596,6 +2925,7 @@ contains
                   end
                end
             end
+
          case("column","2")
             do s = 1,.n_shell
                f  = .first_basis_fn_for_shell(s)
@@ -2615,9 +2945,12 @@ contains
                   end
                end
             end
+
          case default
             DIE("unknown swap kind, "//trim(swap))
+
       end
+
    end
 
 !  ========================
@@ -4475,120 +4808,121 @@ contains
       ! Do it: make the density matrix
       select case (scf_method)
 
-       case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
-
-         ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
-         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
-
-         if (use_pFON) then
-
-            D  => .density_matrix.restricted
-            MO => .molecular_orbitals.restricted
-            F  => .fock_matrix.restricted
-            T = .scfdata.temperature_for_pFON
-            ::make_finite_T_density_matrix(D,MO,F,T,.n_a)
-            D = TWO*D
-
-         else
-
-            MO => .molecular_orbitals.restricted(:,1:.n_a)
+         case ("rhf","rks","xray_rks","xray_rhf","noninteracting-group-rhf")
+         
+            ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
+            ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+          
+            if (use_pFON) then
+          
+               D  => .density_matrix.restricted
+               MO => .molecular_orbitals.restricted
+               F  => .fock_matrix.restricted
+               T = .scfdata.temperature_for_pFON
+               ::make_finite_T_density_matrix(D,MO,F,T,.n_a)
+               D = TWO*D
+          
+            else
+          
+               MO => .molecular_orbitals.restricted(:,1:.n_a)
+               D  => .density_matrix.restricted
+               D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
+          
+            end
+          
+            if (scf_method(1:4)=="xray" AND .scfdata.stabilize_density) .::stabilize(D)
+          
+            .::put_debug(D,"make_scf_density_matrix: restricted density matrix")
+         
+         case ("progroup")
+         
+            ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
+            ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+            ENSURE(present(n_a),"n_a must be specified")
+            
+            MO => .molecular_orbitals.restricted(:,1:n_a)
             D  => .density_matrix.restricted
             D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-
-         end
-
-         if (scf_method(1:4)=="xray" AND .scfdata.stabilize_density) .::stabilize(D)
-
-         .::put_debug(D,"make_scf_density_matrix: restricted density matrix")
-
-       case ("progroup")
-
-         ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
-         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
-         ENSURE(present(n_a),"n_a must be specified")
-
-         MO => .molecular_orbitals.restricted(:,1:n_a)
-         D  => .density_matrix.restricted
-         D.to_scaled_product_of(MO,MO,fac=TWO,transpose_b=TRUE)
-
-       case ("rohf")
-
-         ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
-
-         MOa => .molecular_orbitals.restricted(:,1:.n_a)
-         MOb => .molecular_orbitals.restricted(:,1:.n_b)
-         Da  => .density_matrix.alpha
-         Db  => .density_matrix.beta
-         Da.to_product_of(MOa,MOa,transpose_b=TRUE)
-         Db.to_product_of(MOb,MOb,transpose_b=TRUE)
-
-       case ("uhf","uks","xray_uhf","xray_uks", &
-             "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
-
-         ENSURE(.molecular_orbitals.created("unrestricted"),"no MO's")
-
-         if (use_pFON) then
-
-            MOa => .molecular_orbitals.alpha
-            MOb => .molecular_orbitals.beta
-            Da  => .density_matrix.alpha
-            Db  => .density_matrix.beta
-            Fa  => .fock_matrix.alpha
-            Fb  => .fock_matrix.beta
-            T = .scfdata.temperature_for_pFON
-            ::make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
-            ::make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
-
-         else
-
-            MOa => .molecular_orbitals.alpha(:,1:.n_a)
-            MOb => .molecular_orbitals.beta(:,1:.n_b)
+         
+         case ("rohf")
+         
+            ENSURE(.molecular_orbitals.created("restricted"),"no MO's")
+            
+            MOa => .molecular_orbitals.restricted(:,1:.n_a)
+            MOb => .molecular_orbitals.restricted(:,1:.n_b)
             Da  => .density_matrix.alpha
             Db  => .density_matrix.beta
             Da.to_product_of(MOa,MOa,transpose_b=TRUE)
             Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+         
+         case ("uhf","uks","xray_uhf","xray_uks", &
+               "pnd_uhf","pnd_uks","xray_pnd_uhf","xray_pnd_uks")
+         
+            ENSURE(.molecular_orbitals.created("unrestricted"),"no MO's")
+          
+            if (use_pFON) then
+          
+               MOa => .molecular_orbitals.alpha
+               MOb => .molecular_orbitals.beta
+               Da  => .density_matrix.alpha
+               Db  => .density_matrix.beta
+               Fa  => .fock_matrix.alpha
+               Fb  => .fock_matrix.beta
+               T = .scfdata.temperature_for_pFON
+               ::make_finite_T_density_matrix(Da,MOa,Fa,T,.n_a)
+               ::make_finite_T_density_matrix(Db,MOb,Fb,T,.n_b)
+          
+            else
+          
+               MOa => .molecular_orbitals.alpha(:,1:.n_a)
+               MOb => .molecular_orbitals.beta(:,1:.n_b)
+               Da  => .density_matrix.alpha
+               Db  => .density_matrix.beta
+               Da.to_product_of(MOa,MOa,transpose_b=TRUE)
+               Db.to_product_of(MOb,MOb,transpose_b=TRUE)
+          
+            end
+         
+         case ("ghf")
+         
+            ENSURE(.molecular_orbitals.created("general"),"no MO's")
+            ENSURE(.spin_multiplicity==1,"this is not a singlet state")
+            
+            MO => .molecular_orbitals.general(:,1:.n_e)
+            D  => .density_matrix.general
+            D.to_product_of(MO,MO,transpose_b=TRUE)
+         
+         case ("rchf")
+         
+            ENSURE(.molecular_orbitals.created("restricted_complex"),"no MO's")
+            
+            CMO => .molecular_orbitals.restricted_complex(:,1:.n_a)
+            CD  => .density_matrix.restricted_complex
+            CD.to_product_of(CMO,CMO,dagger_b=TRUE)
+            CD = TWO*CD
+         
+         case ("uchf")
+         
+            ENSURE(.molecular_orbitals.created("unrestricted_complex"),"no MO's")
+            
+            CMOa => .molecular_orbitals.alpha_complex(:,1:.n_a)
+            CMOb => .molecular_orbitals.beta_complex(:,1:.n_b)
+            CDa  => .density_matrix.alpha_complex
+            CDb  => .density_matrix.beta_complex
+            CDa.to_product_of(CMOa,CMOa,dagger_b=TRUE)
+            CDb.to_product_of(CMOb,CMOb,dagger_b=TRUE)
+         
+         case ("gchf")
+         
+            ENSURE(.molecular_orbitals.created("general_complex"),"no MO's")
+            
+            CMO => .molecular_orbitals.general_complex(:,1:.n_e)
+            CD  => .density_matrix.general_complex
+            CD.to_product_of(CMO,CMO,dagger_b=TRUE)
+         
+         case default
 
-         end
-
-       case ("ghf")
-
-         ENSURE(.molecular_orbitals.created("general"),"no MO's")
-         ENSURE(.spin_multiplicity==1,"this is not a singlet state")
-
-         MO => .molecular_orbitals.general(:,1:.n_e)
-         D  => .density_matrix.general
-         D.to_product_of(MO,MO,transpose_b=TRUE)
-
-       case ("rchf")
-
-         ENSURE(.molecular_orbitals.created("restricted_complex"),"no MO's")
-
-         CMO => .molecular_orbitals.restricted_complex(:,1:.n_a)
-         CD  => .density_matrix.restricted_complex
-         CD.to_product_of(CMO,CMO,dagger_b=TRUE)
-         CD = TWO*CD
-
-       case ("uchf")
-
-         ENSURE(.molecular_orbitals.created("unrestricted_complex"),"no MO's")
-
-         CMOa => .molecular_orbitals.alpha_complex(:,1:.n_a)
-         CMOb => .molecular_orbitals.beta_complex(:,1:.n_b)
-         CDa  => .density_matrix.alpha_complex
-         CDb  => .density_matrix.beta_complex
-         CDa.to_product_of(CMOa,CMOa,dagger_b=TRUE)
-         CDb.to_product_of(CMOb,CMOb,dagger_b=TRUE)
-
-       case ("gchf")
-
-         ENSURE(.molecular_orbitals.created("general_complex"),"no MO's")
-
-         CMO => .molecular_orbitals.general_complex(:,1:.n_e)
-         CD  => .density_matrix.general_complex
-         CD.to_product_of(CMO,CMO,dagger_b=TRUE)
-
-       case default
-         DIE("unknown SCF kind, "//trim(scf_method))
+            DIE("unknown SCF kind, "//trim(scf_method))
 
       end
 
@@ -7298,6 +7632,11 @@ contains
    put_debug(X,name) ::: get_from(DEBUG, TYPE=>MAT{REAL})
    ! Put *array* "X" to output, with descriptor "name", if the debug switch for
    ! it has been set.
+   end
+
+   put_debug_2D(X,name) ::: get_from(DEBUG, TYPE=>MAT{REAL})
+   ! Put *matrix* "X" to output as a raw 2D array, with descriptor
+   ! "name", if the debug switch for it has been set.
    end
 
    put_debug(X,name) ::: get_from(DEBUG, TYPE=>MAT{CPX})
