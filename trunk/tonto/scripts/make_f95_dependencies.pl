@@ -292,7 +292,7 @@ if (defined @incs || defined @modules) {
     }
 
 }
-
+ 
 print OUTFILE "#Dependencies of all files produced:\n";
 
 if (defined @modlist) {
@@ -307,6 +307,31 @@ print OUTFILE "\n\n";             # Add newline to .dep file
 close(OUTFILE);
 
 
+# Graph dependency file                  
+
+open(OUTFILE,">" . $depsfile . ".gv" ) or die "Cannot open $depsfile.gv for writing.\n";
+
+print OUTFILE "#Graph of usage for $base:\n";
+
+if (defined @modlist) {
+  &PrintGraph(@dependencies, &uniq(@incs));
+}
+print OUTFILE "\n\n";             # Add newline to .gv file
+close(OUTFILE);
+
+
+
+# ===================================================
+# &PrintGraph(list);
+# ===================================================
+
+sub PrintGraph {
+    foreach $word (@_) {
+       $word = basename($word);
+       $word =~ s/_module\.mod//;
+       print OUTFILE "$word -> $base\n";
+    }
+}
 
 
 # ===================================================
