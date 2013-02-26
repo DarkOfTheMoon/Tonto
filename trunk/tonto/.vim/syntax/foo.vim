@@ -378,32 +378,132 @@ let b:current_syntax = "fortran"
 " Insert modifications for Foo
 
 syn keyword fortranStructure PTR 
+
 syn match   fortranConditional "end"
+
 syn keyword fortranType leaky recursive routinal functional get_from
 syn keyword fortranType pure always_pure elemental always_elemental
-syn keyword fortranType SELF_TYPE ELEMENT_TYPE
-syn keyword fortranType OBJECT INTRINSIC KEY VAL
-syn keyword fortranType TYPES SYSTEM PARALLEL
+
+" Built-in and virtual types
+
+syn keyword fortranType SELF_TYPE
+syn keyword fortranType ELEMENT_TYPE
+syn keyword fortranType OBJECT
+syn keyword fortranType INTRINSIC 
+syn keyword fortranType MAP KEY VAL
+
+" Derived types and system
+
+syn keyword fortranType TYPES 
+syn keyword fortranType SYSTEM 
+syn keyword fortranType TIME
+syn keyword fortranType PARALLEL
+syn keyword fortranType COMMAND_LINE
+
+" Intrinsic types and arrays
+
 syn keyword fortranType STR BSTR BIN INT REAL CPX
-syn keyword fortranType VEC MAT MAT3 MAT4 MAT5 MAT6 MAT7
+syn keyword fortranType VEC  MAT  MAT3  MAT4  MAT5  MAT6  MAT7
 syn keyword fortranType VEC_ MAT_ MAT3_ MAT4_ MAT5_ MAT6_ MAT7_
-syn keyword fortranType HASH
-syn keyword fortranType OPVECTOR OPMATRIX RYS
-syn keyword fortranType BUFFER FILE TEXTFILE ARCHIVE TIME UNIT_NUMBER
-syn keyword fortranType GAUSSIAN_DATA
-syn keyword fortranType GAUSSIAN GAUSSIAN2 GAUSSIAN4 
+syn keyword fortranType OPVECTOR OPMATRIX
+
+" Files & IO
+
+syn keyword fortranType ARCHIVE
+syn keyword fortranType TEXTFILE
+syn keyword fortranType FILE
+syn keyword fortranType CIF
+syn keyword fortranType BUFFER 
+syn keyword fortranType UNIT_NUMBER
+
+" Gaussians, basis functions and shells
+
+syn keyword fortranType GAUSSIAN
+syn keyword fortranType GAUSSIAN2
+syn keyword fortranType GAUSSIAN4 
+
 syn keyword fortranType SHELL SHELL1 SHELL2 SHELL4 
-syn keyword fortranType SHELLVEC SHELLPAIR SHELLPAIRVEC SHELLQUARTET SHELL1PAIR SHELL1QUARTET
-syn keyword fortranType BASIS BASISVEC ATOM ATOMVEC
-syn keyword fortranType COPPENSORBITAL COPPENSORBITALVEC COPPENSBASIS COPPENSBASISVEC
-syn keyword fortranType PLOTGRID QUADRATURE LEBEDEV BECKE_GRID DFTGRID
-syn keyword fortranType DIIS DIFFRACTION_DATA SCFDATA INTERPOLATOR ROBY
-syn keyword fortranType REFLECTION REFLECTIONVEC SLATERSHELL SLATERBASIS
+syn keyword fortranType SHELLPAIR  SHELLQUARTET 
+syn keyword fortranType SHELL1PAIR SHELL1QUARTET
+syn keyword fortranType SLATERSHELL 
+syn keyword fortranType COPPENSORBITAL 
+
+" Bases
+
+syn keyword fortranType BASIS
+syn keyword fortranType SLATERBASIS
+syn keyword fortranType COPPENSBASIS
+
+" Integrals
+
+syn keyword fortranType RYS
+syn keyword fortranType GAUSSIAN_DATA
 syn keyword fortranType RMS_INDICES RMS2_INDICES
-syn keyword fortranType IRREP IRREPVEC POINTGROUP SPACEGROUP UNIT_CELL CRYSTAL CLUSTER CIF
-syn keyword fortranType COLOUR COLOURFUNCTION MARCHINGCUBE MARCHINGCUBEVEC ISOSURFACE
-syn keyword fortranType MOLECULE MOLECULE.MAIN 
+
+" DFT and numerical integration
+
+syn keyword fortranType BECKE_GRID
+syn keyword fortranType LEBEDEV 
+syn keyword fortranType QUADRATURE 
+
+" Symmetry
+
+syn keyword fortranType SPACEGROUP 
+syn keyword fortranType POINTGROUP
+syn keyword fortranType IRREP
+
+" Crystals, unit cells and reflection data
+
+syn keyword fortranType CRYSTAL
+syn keyword fortranType UNIT_CELL 
+syn keyword fortranType DIFFRACTION_DATA 
+syn keyword fortranType REFLECTION 
+
+" Colours
+
+syn keyword fortranType COLOUR
+syn keyword fortranType COLOURFUNCTION 
+
+" Plots and isosurfaces
+
+syn keyword fortranType ISOSURFACE 
+syn keyword fortranType PLOTGRID 
+syn keyword fortranType MARCHINGCUBE
+
+" SCF & wavefunctions
+
+syn keyword fortranType SCFDATA 
+syn keyword fortranType DIIS 
+
+" Properties and analysis
+
+syn keyword fortranType INTERPOLATOR
+syn keyword fortranType ROBY
+
+" Atoms, clusters and molecules
+
+syn keyword fortranType ATOM 
+syn keyword fortranType CLUSTER
+syn keyword fortranType MOLECULE 
+syn keyword fortranType MOLECULE.BASE 
+syn keyword fortranType MOLECULE.CE
+syn keyword fortranType MOLECULE.CP
+syn keyword fortranType MOLECULE.FOCK
+syn keyword fortranType MOLECULE.GEM
+syn keyword fortranType MOLECULE.GRID
+syn keyword fortranType MOLECULE.INTS
+syn keyword fortranType MOLECULE.MAIN
+syn keyword fortranType MOLECULE.MISC
+syn keyword fortranType MOLECULE.PLOT
+syn keyword fortranType MOLECULE.PROP
+syn keyword fortranType MOLECULE.REL
+syn keyword fortranType MOLECULE.SCF
+syn keyword fortranType MOLECULE.TAD
+syn keyword fortranType MOLECULE.XTAL
+
 syn keyword fortranOperator AND OR NOT IN INOUT OUT
+
 hi! link fortranContinueMark NONE
 hi! Identifier term=underline ctermfg=Black guifg=Black
+
 set comments=:!
