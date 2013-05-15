@@ -31,6 +31,7 @@ my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
 my $REAL_KIND = 8;                    # The default real kind
 my $CPX_KIND = 8;                     # The default complex kind
+my $BRACES_EXPANDING = '';            # The default for braces expanding 
 
 my $show_help = 0;
 my $show_defaults = 0;
@@ -108,6 +109,16 @@ if ($MAKE ne '') {
   $have_gnu_make = &check_is_GNU_make;
   &print_boolean($have_gnu_make);
 }
+
+print STDERR "Checking for brace expansion ...";
+$shell = $ENV{'SHELL'};
+if ($shell =~ /bash/i) {
+  $BRACES_EXPANDING = '+B';
+  &print_result($BRACES_EXPANDING);
+} else {
+  &print_result('None');
+}
+
 
 print STDERR "Checking for Fortran compiler ...";
 if (defined $FC && $FC ne '') {
@@ -461,6 +472,7 @@ sub do_substitutions_into_Makefile {
     s/\@SRCDIR\@/$SRCDIR/g;
     s/\@PERL\@/$PERL/g;
     s/\@MAKE\@/$MAKE/g;
+    s/\@BRACESEXPANDING\@/$BRACES_EXPANDING/g;
     s/\@OS\@/$OS/g;
     s/\@FC\@/$FULLFC/g;
     s/\@FOPTNS_TYPE\@/$FOPTNS_TYPE/g;
