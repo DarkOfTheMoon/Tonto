@@ -168,6 +168,8 @@ if ($agreed>0)    {print "  $agreed gave correct results.\n";}
 if ($disagreed>0) {print "  $disagreed gave incorrect results.\n";}
 if ($failed>0)    {print "  $failed failed to run correctly.\n";}
 
+$exit_code = ($failed>0) ? 1 : 0;
+exit($exit_code);
 
 sub analyse_arguments {
 # Analyse the command line arguments
