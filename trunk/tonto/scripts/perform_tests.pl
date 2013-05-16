@@ -93,12 +93,13 @@ foreach my $job (@jobs) {
 
          # cmp returns 0 if they are equal
          # So $ok is 1 (true) if they are equal
-         my $ok;
-         $ok = -e $output && ! system("$cmp $testdir/$job/$output $output");
+         my ($ok,$ref);
+         $ref = &escape("$testdir/$job/$output");
+         $ok = -e $output && ! system("$cmp $ref $output");
 
          # Copy failed output files back
          if (! $ok) {
-            copy($output,"$testdir/$job/$output".".bad");
+            copy($output, $ref . ".bad" );
          }
 
       }
@@ -112,8 +113,9 @@ foreach my $job (@jobs) {
 
          # cmp returns 0 if they are equal
          # So $ok is 1 (true) if they are equal
-         my $ok;
-         $ok = -e $output && ! system("$cmp $testdir/$job/$output $output");
+         my ($ok,$ref);
+         $ref = &escape("$testdir/$job/$output");
+         $ok = -e $output && ! system("$cmp $ref $output");
 
          # Copy failed output files back
          if (! $ok) {
@@ -171,6 +173,7 @@ if ($failed>0)    {print "  $failed failed to run correctly.\n";}
 my $exit_code = ($agreed != $njobs) ? 1 : 0;
 exit($exit_code);
 
+#*******************************************************************************
 sub analyse_arguments {
 # Analyse the command line arguments
    my ($arg,$argerr);
@@ -235,3 +238,10 @@ EOF
    }
 }
 
+#*******************************************************************************
+sub escape {
+# Escape bash arguent
+   my $arg = shift;
+   $arg =~ s/([^a-zA-Z0-9])/\\$1/g;
+   return $arg;
+}
