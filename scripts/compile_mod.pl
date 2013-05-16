@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # compile_mod.pl
 #
 # This is a Perl script that will check to see if a module really needs

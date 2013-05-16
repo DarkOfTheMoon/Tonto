@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # Compare two .mod files which are given on the command line.
 #
 # Note that if a compiler (i.e. a compiler and operating system) is specified on
