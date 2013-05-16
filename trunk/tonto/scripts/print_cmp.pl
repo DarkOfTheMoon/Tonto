@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 #*******************************************************************************
 # This script is to print out the byte numbers of differences between two files.
 # It prints them in both the forward and reverse directions.

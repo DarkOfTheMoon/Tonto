@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # ==================================================================
 #
 # This perl script adds dependencies for Fortran 95 files whose 

@@ -1,4 +1,4 @@
-#/usr/bin/tcsh /usr/bin/perl
+#!/usr/bin/perl
 
 #  Run this script to configure the Makefile for your system.
 #  It runs some tests such as determining what your compiler is.
@@ -110,14 +110,14 @@ if ($MAKE ne '') {
   &print_boolean($have_gnu_make);
 }
 
-print STDERR "Checking for brace expansion ...";
-$shell = $ENV{'SHELL'};
-if ($shell =~ /bash/i) {
-  $BRACES_EXPANDING = '+B';
-  &print_result($BRACES_EXPANDING);
-} else {
-  &print_result('None');
-}
+# print STDERR "Checking for brace expansion ...";
+# $shell = $ENV{'SHELL'};
+# if ($shell =~ /bash/i) { # This if bash is set in Makefile.in
+#   $BRACES_EXPANDING = '+B';
+#   &print_result($BRACES_EXPANDING);
+# } else {
+#   &print_result('None');
+# }
 
 
 print STDERR "Checking for Fortran compiler ...";

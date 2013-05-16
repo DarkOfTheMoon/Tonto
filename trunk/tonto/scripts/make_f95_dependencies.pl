@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # ============================================================================
 #
 # This perl script makes dependency files from Fortran 95 source code.

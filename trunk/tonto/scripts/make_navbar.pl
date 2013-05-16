@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # This script makes the TONTO-nav-bar.html from the .html files.
 #
 # ! $Id$
