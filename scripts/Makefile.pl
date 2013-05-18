@@ -27,6 +27,7 @@ my $f95_compiler = 0;                 # Whether is an f95 compiler or just f90.
 my $PLATFORM_ID = '';                 # e.g. LAHEY-lf95-on-WINDOWS
 my $PLATFORM_ID_ = '';                # e.g. LAHEY_lf95_on_WINDOWS
 my $PLATFORM_INFO_FILE = '';          # This is the compiler vendor and operating system
+my $SVN_VERSION = `svnversion`;       # The svn version 
 my $INT_KIND = 4;                     # The default integer kind
 my $BIN_KIND = 4;                     # The default logical kind
 my $REAL_KIND = 8;                    # The default real kind
@@ -480,6 +481,7 @@ sub do_substitutions_into_Makefile {
     s/\@PLATFORM_INFO_FILE\@/$PLATFORM_INFO_FILE/g;
     s/\@PLATFORM_ID\@/$PLATFORM_ID/g;
     s/\@PLATFORM_ID_\@/$PLATFORM_ID_/g;
+    s/\@SVN_VERSION\@/$SVN_VERSION/g;
     s/\@INT_KIND\@/$INT_KIND/g;
     s/\@BIN_KIND\@/$BIN_KIND/g;
     s/\@REAL_KIND\@/$REAL_KIND/g;
