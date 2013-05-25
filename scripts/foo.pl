@@ -2088,9 +2088,9 @@ sub check_for_first_noncomment_line {
    }                                                           
    elsif (defined $routine{$name}{first_active_line}             # First active line not found?
           &&      $routine{$name}{first_active_line} == 0        # Note: set to 0 if in a routine
-          && ( $_[0] =~ '^\s*[a-zA-Z.]'                          # line begins with lowercase letter
-            || $_[0] =~ '^\s*#'                                  # line is not a preprocessor macro
-            )                                                    # WARNING: active if inside preprocessor directive
+          &&   $_[0] =~ '^\s*[a-zA-Z.]'                          # line begins with lowercase letter
+          &&   $_[0] !~ '^\s*#'                                  # line is not a preprocessor macro
+                                                                 # WARNING: active if inside preprocessor directive
           &&   $_[0] !~ ' :: '                                   # no variable declaration
           &&   $_[0] !~ ' use '                                  # no use statement
           &&   $_[0] !~ 'ENSURE'                                 # no ENSURE precondition
