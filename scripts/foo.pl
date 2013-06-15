@@ -1049,7 +1049,10 @@ sub analyse_variable_declaration {
 
     # Analyse the type declaration line
 
-    if ($X =~ '\s+::\s+([A-Z][\w{,}.()-=+*/:]*[*]?)') {
+
+    if ($X =~ '\s+::\s+([A-Z][\w{,}.()-=+*/:?]*[*]?)') {
+
+    # Allow question mark in type declaration for inherits
 
         my $typ = $1;
         my $dec = $PREMATCH;
@@ -1061,7 +1064,8 @@ sub analyse_variable_declaration {
         my %info; undef %info;
         my $var;
 
-        while ($dec =~ /([a-zA-Z]\w*)/g) {         # Look for the declared variables, repeatedly
+        # Look for the declared variables, repeatedly
+        while ($dec =~ /([a-zA-Z]\w*)/g) {         
 
             if ($typ eq 'PTR')          { last; }
             if ($typ eq 'IN')           { last; }
@@ -1077,6 +1081,7 @@ sub analyse_variable_declaration {
             if ($var eq 'DEFAULT')      { last; }
             if ($var eq 'NULL')         { last; }
 
+            # Adjust STR(len=xxx) function result types
             if ($var eq $function_result && 
                 defined $module_full_name &&
                 defined $current_rout_name) {
@@ -1162,9 +1167,14 @@ sub analyse_variable_declaration {
 #print "line = $X";
 #print "info = ",%info;
 
-               if ($typ eq 'PTR' || $typ eq 'IN' || $typ eq 'INOUT' || $typ eq 'OUT')   {
+               if ($typ eq 'PTR'   || 
+                   $typ eq 'IN'    || 
+                   $typ eq 'INOUT' || 
+                   $typ eq 'OUT'   || 
+                   $typ eq 'allocatable')   {
                  &report_error("attribute \"$typ\" is not a valid type for variable \"$var\".");
                }
+
                my $type = $info{type_name};
                my $ptrp = $info{type_ptr_part};
                if (! defined $tonto_type_info{$type} && $ptrp eq '') {
@@ -1172,12 +1182,12 @@ sub analyse_variable_declaration {
                }
 
                # Correct any attributes not in the type.
-               if ($post =~ /\bprivate\b/ )  { $info{type_is_private} = 1; } 
-               else                          { $info{type_is_private} = 0; }
+               if ($post =~ /\bprivate\b/ )  { $info{type_is_private}  = 1; } 
+               else                          { $info{type_is_private}  = 0; }
                if ($post =~ /\breadonly\b/ ) { $info{type_is_readonly} = 1; } 
                else                          { $info{type_is_readonly} = 0; }
                if ($post =~ /\bPTR\b/ || 
-                   $post =~ /\bpointer\b/ ) { $info{type_ptr_part} = '*'}
+                   $post =~ /\bpointer\b/ )  { $info{type_ptr_part}    = '*'}
 
 #if ($post =~ /private/ ) { 
 #print "line = $X"; 
@@ -1205,9 +1215,10 @@ sub analyse_variable_declaration {
 #print "CHECK, type_ptr_part    ",$var_info->{$var}{type_ptr_part};
 #print "CHECK, is_routine_arg   ",$var_info->{$var}{is_routine_arg};
 
-        } # end declared vars
+        } # end while over declared vars
 
     } # end type declaration line
+
 }
 
 
@@ -1231,12 +1242,12 @@ sub analyse_type_name {
   my ($type_len_part,$type_size_part,$type_array_part,$type_ptr_part,$type_is_private);
 
   # Extract type name
-  $full_type_name =~ '^\s*([A-Z][\w\d{,}(=)]*[A-Z\d}])'; 
-  $type_name = $1;               # TONTO type name including curlies, AND sub type...
+  $full_type_name =~ '^\s*([A-Z][\w\d{,}(=)]*[A-Z\d}?])'; 
+  $type_name = $1;               # TONTO type name including curlies, AND sub type, AND question at end
   $type_name =~ s/[(][^)]*$//;   # Remove unclosed parentheses at end, if there
 
   # Extract type-head and type-arg part e.g. type-head{type-arg}
-  $type_name =~ /^([A-Z][A-Z_0-9]*)([{].*[}])?/;
+  $type_name =~ /^([A-Z][A-Z_0-9?]*)([{].*[}])?/;
   $type_head_name = $1;          # Type head, without curlies e.g. VEC in VEC{STR}
   $type_arg_part  = $2;          # These are the curlies e.g.  {STR} in VEC{STR}
 
@@ -1244,7 +1255,7 @@ sub analyse_type_name {
   my $tmp = $type_name; 
   $full_type_name =~ /^\Q$tmp\E/; 
   $right = $POSTMATCH;           # e.g. '.DYLAN' in 'VEC{REAL}.DYLAN"
-  if ($right =~ /^[.]([A-Z][A-Z_0-9]*)/) {
+  if ($right =~ /^[.]([A-Z][A-Z_0-9?]*)/) {
      $sub_type_name = $1;        # Only the subtype/submodule dotted part at end
      $right = $POSTMATCH;        # e.g. 'DYLAN' in 'VEC{REAL}.DYLAN' 
   } else {
@@ -1295,14 +1306,12 @@ sub analyse_type_name {
 #  print "type_size_part    =",$type_size_part;
 #  print "----end analyse_type_name---------------";
 
-  # Extract pointer-declaration part
-  if ($right =~ /^\s*[*]/) {
-     $type_ptr_part = '*';       # The star at the end, if any
-  } else {
-     $type_ptr_part = '';
-  }
+  # Extract pointer/allocatable declaration part
+  if    ($right =~ /^\s*[*]/) { $type_ptr_part = '*';  } # The star at the end, if any
+  elsif ($right =~ /^\s*[@]/) { $type_ptr_part = '@';  } # The @ at the end, if any
+  else                        { $type_ptr_part = '';   }
 
-  # Get all the type arguments, within curlies {blah,blah}  ...
+  # Get all the type arguments, within curlies e.g. blah in {blah,blah}  ...
   my $n_type_args = 0;
   my @type_arg    = undef;
 
@@ -1312,11 +1321,16 @@ sub analyse_type_name {
      $type_arg_list = $1;
      $type_arg[0] = '0';
      if ($type_arg_list !~ '{' &&
-         $type_arg_list !~ ',' ) {        # Get the only type arg
+         $type_arg_list !~ ',' ) {        
+
+        # Get the only type arg
         $n = 1;
         $n_type_args = $n;
         $type_arg[$n] = $type_arg_list;  
-     } else {                             # Look for multiple type args
+
+     } else {                             
+
+        # Look for multiple type args
         $n = 0;
         my ($left,$middle,$right);
         while ($type_arg_list ne '' ) {
@@ -1414,7 +1428,7 @@ sub analyse_type_name {
   $info{type_arg}          = \@type_arg;         # The list of type arguments
   $info{type_array_part}   = $type_array_part;   # The part giving the dimensions of the array
   $info{type_size_part}    = $type_size_part;    # As above, but without parentheses around
-  $info{type_ptr_part}     = $type_ptr_part;     # Is '*' for pointer type declarations, else blank
+  $info{type_ptr_part}     = $type_ptr_part;     # Is '*' or '@' for pointer type declarations, else blank
   $info{is_intrinsic_type} = $is_intrinsic_type; # Is TRUE if intrinsic type (including parameterised kind= types)
   $info{is_array_type}     = $is_array_type;     # Is TRUE for array types
   $info{is_array_type}     = $is_array_type;     # Is TRUE for array types
@@ -1981,6 +1995,7 @@ sub analyse_module_scope {
        # Keep used module
        $used_modules{$current_type_name} = 1;
     }
+
 }
 
 ##############################################################
@@ -2012,7 +2027,7 @@ sub analyse_routine_scope {
      return; }
 
   # Analyse any variable declaration lines
-  if ($_[0] =~ m' *:: *[A-Z][\w{,}()]'o ) {
+  if ($_[0] =~ m' *:: *[A-Z][\w{,}()?]'o ) {
      $X = $_[0];
 #print "analyse-routine-scope";
 #print "line = $X";
@@ -2887,9 +2902,9 @@ sub convert_inherited_type_arg_macros {
 
       my ($i,$j,$narg,$oldarg,$newarg);
       
- # print "YUP, line= $input_line";
- # print "YUP, line= $fortran_out";
- # print "n-def-typ= $n_define_type";
+   # print "YUP, line= $input_line";
+   # print "YUP, line= $fortran_out";
+   # print "n-def-typ= $n_define_type";
 
       # Do type substitutions
       if ($n_define_type>0) {
@@ -2909,10 +2924,10 @@ sub convert_inherited_type_arg_macros {
             # Replace
             $fortran_out =~ s/${oldarg}/${newarg}/g;
 
- # print "i      = $i     ";
- # print "oldarg = $oldarg";
- # print "newarg = $newarg";
- # print "YUP, line= $fortran_out";
+   # print "i      = $i     ";
+   # print "oldarg = $oldarg";
+   # print "newarg = $newarg";
+   # print "YUP, line= $fortran_out";
 
             # Do implied (type-arg) replacements
             my @old = @{$old_expand_type[$i]};
@@ -4776,28 +4791,34 @@ sub fortran_add_include_files {
 
 sub fortran_change_variable_declarations {
 
-   if ($fortran_out !~ m'\s+::\s+'o) { return; } # variable declaration line.
+   # Variable declaration line.
+   if ($fortran_out !~ m'\s+::\s+'o) { return; } 
 
    my ($pre,$post,$var1,$vars,$type_name,$attr,$assign,$command);
 
-   $fortran_out =~/(\w+)/;              # Get the variable names
+   # Get the variable names
+   $fortran_out =~/(\w+)/;              
    $pre = $PREMATCH;
    $var1 = $1; 
    $vars = $1; 
    $post = $POSTMATCH;
    
    $post =~/(^.*)(\s+::\s+)/;
-   if (defined $1) { $vars .= $1; }     # More than one variable
+
+   # More than one variable?
+   if (defined $1) { $vars .= $1; }     
    $post = $POSTMATCH;
    
-   $type_name = '';                     # Get type name
+   # Get type name
+   $type_name = '';                     
    $post =~ '^([*\w{,}.()-=+/:%]*[\w})][*]?)';
    # this is not working for declarations that include whitespace.  It really
    # should check for bracketed things and ignore whitespace within those.
    if (defined $1) { $type_name = $1; }
    $post = $POSTMATCH;
    
-   $attr = '';                          # Get variable attributes
+   # Get variable attributes (pointer, allocatable, etc?)
+   $attr = '';                          
    if ($post =~ /^\s*(.*?)((?:DEFAULT)|(?:=)|(?:;))/) {
       $attr = $1; $post = $2.$POSTMATCH; 
    } else {
@@ -4805,15 +4826,18 @@ sub fortran_change_variable_declarations {
       $attr =~ s/^\s*//;
    }
    
-   $assign = '';                        # Get any assignment
+   # Get any assignment part in type declaration
+   $assign = '';                        
    if ($post =~/^\s*(DEFAULT.*)/) {
       $assign = ' '.$1; $post = $POSTMATCH; }
    if ($post =~/^\s*(=.*)/) {
       $assign = ' '.$1; $post = $POSTMATCH; }
    
-   $command = '';                       # Get any appended commands
+   # Get any appended commands
+   $command = '';                       
    if ($post =~/^\s*(;\s*.*)/) { $command = $1; }
    
+   # Define fortran_out and get out for non-local (routine argument)
    if ($type_name eq 'PTR'   ||
        $type_name eq 'IN'    ||
        $type_name eq 'INOUT' ||
@@ -4829,6 +4853,7 @@ sub fortran_change_variable_declarations {
       return;
    }
 
+   # It's a local variable
    my $var_info  = $local_var_info{$var1};
 
    my $fortran_type_decl = $var_info->{fortran_type_decl};
@@ -4843,10 +4868,12 @@ sub fortran_change_variable_declarations {
      &report_error("variable \"$var1\" does not have a known type.");
    }
 
+   # Set the ptr part
    my $ptr = "";
-   if ($type_ptr_part eq '*' &&
-       $attr !~ /(PTR|pointer)/) { $ptr = ", PTR"; }
+   if ($type_ptr_part eq '*' && $attr !~ /(PTR|pointer)/) { $ptr = ", PTR"; }
+   if ($type_ptr_part eq '@' && $attr !~ /(allocatable)/) { $ptr = ", allocatable"; }
 
+   # Define fortran_out
    $fortran_out = "$pre$fortran_type_decl$ptr$attr :: $vars$assign$command"; 
    $fortran_out =~ s/\s*::\s*/ :: /;
 }
@@ -4903,6 +4930,7 @@ sub make_fortran_type_declarations {
    if ($type_name eq 'BSTR') {
      &report_error("Do not use BSTR to declare variables, use STR(len=BSTR_SIZE).");
    }
+
    # Pick up CHR errors
    elsif ($type_name =~ '^CHR') {            
      &report_error("Do not use CHR to declare variables, use STR(len=1).");
@@ -5380,6 +5408,7 @@ sub convert_dots_to_fortran {
           if (! &outside_of_string($left)) { next THIS; }
     
           # Decode the right of the dot - or keep looking if not understandable
+          # Lower case a-z necessary below? --dylan
           if ($right !~ /^([A-Z_]*::?)?([a-zA-Z_]\w*)(.*)/s) { next THIS; }
 
           # Extract the explicit submodule name $1 if any
@@ -6433,7 +6462,6 @@ sub analyse_routine_name {
            } 
            
            # $loc = MOD is just the module name
-#           elsif ($loc =~ /([A-Z][A-Z0-9_{,}.]*])/ ) {  
            elsif ($loc =~ /^([A-Z][\w{,}.]*[\w}])/ ) {        
               $routine{$name}{parent_module} = $1;     # full mod name
               $routine{parent_routine} = undef;        # routine name unchanged
@@ -6480,12 +6508,12 @@ sub analyse_routine_name {
            $old_define_type[$n] = $old;
            $new_define_type[$n] = $new;
 
-           #print "---alias-----";
-           #print "X      =$X";
-           #print "_      =$_";
-           #print "old    =$old";
-           #print "new    =$new";
-           #print "-------------";
+         # print "---alias-----";
+         # print "X      =$X";
+         # print "_      =$_";
+         # print "old    =$old";
+         # print "new    =$new";
+         # print "-------------";
 
            # A{X}=>B{Y} alias?
            my %info; my @type_arg;                     
