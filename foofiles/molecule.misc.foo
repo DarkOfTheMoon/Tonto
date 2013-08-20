@@ -3091,6 +3091,101 @@ contains
 
    end
 
+   make_fermi_contact_terms
+   ! subroutine to calculate fermi contact terms
+   a,i,c,sgn,na,nb :: INT
+   fermi_terms,GN :: VEC{REAL}*
+   grid :: MAT{REAL}*
+   value :: REAL
+   int_width :: BIN
+
+   grid.create(.n_atom,3)
+   
+    ENSURE(.molecular_orbitals.alpha.created,"no alpha orbitals")
+    ENSURE(.molecular_orbitals.beta.created,"no beta orbitals")
+
+   ! grid containing positions of all nuclei in da molecule
+    do i = 1,.n_atom
+        grid(i,1:3)=.atom(i).position
+    end
+   
+   ! the data is obtained from CRC handbook of chemistry and physics 86th
+   ! edition section 9 molecular structure and spectroscopy 9-92
+   WARN("Experimantal implementation, only few g-factors are accounted for,")
+   WARN("hence you will see contact spin density, but other parameters migh be missed in the table!")
+   GN.create(100)
+   GN=ZERO
+   GN(1)=TWO*2.792847337
+   GN(6)=TWO*0.7024118
+   GN(7)=0.4037610
+   GN(8)=TWO/FIVE*(-1.8937)
+   GN(29)=TWO/THREE*2.2721
+
+   stdout.flush
+   stdout.text("number of atoms:    ")
+   stdout.flush
+   stdout.put(.n_atom)
+   stdout.flush
+   stdout.put(grid.dim1)
+   stdout.flush
+   stdout.text("atomic grid:     ")
+   stdout.flush
+   stdout.put(grid)
+   stdout.flush
+    na = .n_a
+    nb = .n_b
+
+!  lets evaluate the spin density at each nucleus
+   sgn=-1
+   fermi_terms.create(.n_atom)
+   .GRID:make_density_grid(fermi_terms,grid,sgn)
+
+! from a.u. to MHz we are following Morton & Preston J. Mag. Resonance 30, 577-582, (1978) 
+!    fermi_terms=fermi_terms*104.98*NUCLEAR_MAGNETON_SI/PLANCK_SI/1000000.0
+!   do i=1,.n_atom
+!     fermi_terms(i)=fermi_terms(i)*GN(.atom(i).atomic_number)
+!   end do
+      int_width=TRUE
+      stdout.dash(int_fields=2,real_fields=5)
+      stdout.flush
+      stdout.text("fermi contact terms for atoms:  ")
+      stdout.flush
+      stdout.put("i", int_width )
+      stdout.put("Atom", int_width )
+      stdout.put("spin density")
+      stdout.put("MHz")
+      stdout.put("Gauss")
+      stdout.put("mT")
+      stdout.put("10(-4) cm-1")
+      stdout.flush
+      stdout.dash(int_fields=2, real_fields=5)
+      do a = 1, .n_atom
+         stdout.put(a)
+         stdout.put(.atom(a).label, int_width = TRUE)
+         value=fermi_terms(a)
+         stdout.put(value)
+! from a.u. to MHz we are following Morton & Preston J. Mag. Resonance 30, 577-582, (1978) 
+         value=fermi_terms(a)*104.98*NUCLEAR_MAGNETON_SI/PLANCK_SI/1000000.0
+         value=value*GN(.atom(a).atomic_number)
+         stdout.put(value)
+! from MHz to Guass following Stasko et al. ESR spektroskopia, STU, Bratislava, 1989 (textbook)
+         value=value/2.80247
+         stdout.put(value)
+         value=value/10.0d0
+         stdout.put(value)
+         value=value*2.80247*10.0d0*0.333564
+         stdout.put(value)
+
+         stdout.flush
+      end
+      stdout.dash(int_fields=2, real_fields=5)
+      stdout.flush
+
+   fermi_terms.destroy
+   grid.destroy
+
+   end
+
    put_overlap_eigenvalues
    ! Calculate the overlap matrix eigenvalues
    ENSURE(.basis_info_made, "no basis info")
@@ -5241,4 +5336,464 @@ contains
 
    end
 
+!  ================
+!  mp2 & electron correlation (Malcek & Bucinsky) 
+!  ================
+
+   mp2
+   ! MP2; selecting the kind of HF approach  
+
+    ENSURE(.basis_info_made, "no basis info")
+    ENSURE(.atom.created,  "no atom list")
+    ENSURE(.molecular_orbitals.created,"no molecular orbitals")
+
+     select case (.scfdata.scf_kind)
+
+        case ("rhf")
+
+    ENSURE(.molecular_orbitals.restricted.created,"no molecular orbitals")
+    ENSURE(.orbital_energies.restricted.created,"no orbital energies")
+
+    .::make_mp2
+
+        case ("uhf")
+
+    ENSURE(.molecular_orbitals.alpha.created,"no alpha orbitals")
+    ENSURE(.molecular_orbitals.beta.created,"no beta orbitals")
+    ENSURE(.orbital_energies.alpha.created,"no alpha energies")
+    ENSURE(.orbital_energies.beta.created,"no beta energies")
+
+    .::make_u_mp2
+
+        case ("gchf")
+
+    ENSURE(.molecular_orbitals.general_complex.created,"no molecular orbitals")
+    ENSURE(.orbital_energies.general.created,"no orbital energies")
+
+    .::make_gc_mp2
+
+       case default 
+    DIE ("unimplemented")
+
+    end
+
+   end
+
+   make_mp2
+   ! Calculate the electron repulsion integrals (ERI's) in the MO basis from the
+   ! AO integrals and make restricted MP2 in core
+      v :: MAT4{REAL}*
+      E2 :: REAL 
+      virt,ram_lim,Escf :: REAL
+      eval :: VEC{REAL}*
+      a,b,r,s,fa,lr :: INT
+ 
+     eval.create(.n_bf)
+     eval = .orbital_energies.restricted
+
+     stdout.flush
+     stdout.text(" Orbital energies:")
+     stdout.flush
+     stdout.put(eval)
+
+     virt=real(.n_bf)**4*8/1024**3
+     stdout.flush
+     ram_lim= 4.0  ! in Gb
+     stdout.show("Needed space for ERI in RAM (in Gb)",virt)
+     if (virt > ram_lim) then
+        stdout.show(" Current RAM limit is (in Gb)",ram_lim)
+        DIE(" Current RAM limit has been exceeded! ")
+     end if   
+
+    .::set_MO_limits(eval,fa,lr)
+
+     v.create(.n_bf,.n_bf,.n_bf,.n_bf)
+     v=ZERO
+    .FOCK:make_MO_ERI_integrals(v)
+
+     stdout.flush
+     stdout.text(" The MP2 correlation loops beginning! ")
+
+     E2=ZERO
+
+      ! Based on Szabo, Ostlund Book, p. 352, eq. 6.74
+      ! a,b are occupied spinorbitals
+      ! r,s are virtual orbitals
+
+    ! In the case of chosen MO limits
+       do a = fa,.n_e/2
+         do b = fa,.n_e/2
+           do r = .n_e/2+1,lr
+             do s = .n_e/2+1,lr
+               E2=E2+TWO*v(a,b,r,s)*v(r,s,a,b)/(eval(a)+eval(b)-eval(r)-eval(s))
+               E2=E2-v(a,b,r,s)*v(r,s,b,a)/(eval(a)+eval(b)-eval(r)-eval(s))
+             end
+           end
+         end
+       end
+
+     Escf = .SCF:scf_energy
+
+     stdout.flush
+     stdout.text(" MP2 results (in Hartree)")
+     stdout.show("SCF energy= ",Escf)
+     stdout.show("MP2 correlation energy= ",E2)
+     stdout.show("Total MP2 energy= ",E2+Escf)
+     stdout.flush
+
+    v.destroy
+    eval.destroy
+
+   end
+
+   make_u_mp2
+   ! Calculate the electron repulsion integrals (ERI's) in the uMO basis from the
+   ! AO integrals and make unrestricted MP2  
+ 
+      vaa,vab,vbb :: MAT4{REAL}*
+      E2,E :: REAL 
+      virt,ram_lim :: REAL
+      evala,evalb :: VEC{REAL}*
+      a,b,r,s,fa,fb,lr,ls :: INT
+ 
+     evala.create(.n_bf)
+     evalb.create(.n_bf)
+     evala = .orbital_energies.alpha       
+     evalb = .orbital_energies.beta      
+
+     stdout.flush
+     stdout.text(" Alpha orbital unrestricted energies:")
+     stdout.flush
+     stdout.put(evala)
+     stdout.text(" Beta orbital unrestricted energies:")
+     stdout.flush
+     stdout.put(evalb)
+
+     virt=(real(.n_bf)**4*8/1024**3)*3
+     stdout.flush
+     ram_lim= 4.0 ! in Gb
+     stdout.show("Needed space for ERI in RAM (in Gb)",virt)
+     if (virt > ram_lim) then
+        stdout.show(" Current RAM limit is (in Gb)",ram_lim)
+        DIE(" Current RAM limit has been exceeded! ")
+     end if   
+
+      stdout.text(" Alpha orbital limits:  ")
+      .::set_MO_limits(evala,fa,lr)
+      stdout.text(" Beta orbital limits:  ")
+      .::set_MO_limits(evalb,fb,ls)
+  !   fa=1; fb=1; lr=.n_bf; ls=.n_bf
+
+     vaa.create(.n_bf,.n_bf,.n_bf,.n_bf)
+     vab.create(.n_bf,.n_bf,.n_bf,.n_bf)
+     vbb.create(.n_bf,.n_bf,.n_bf,.n_bf)
+     vaa=ZERO; vab=ZERO; vbb=ZERO  
+    .FOCK:make_u_MO_ERI_integrals(vaa,vbb,vab)
+
+     stdout.flush
+     stdout.text(" The MP2 correlation loops beginning! ")
+
+     E2=ZERO
+     E=ZERO
+
+      ! Based on Szabo, Ostlund Book, p. 352, eq. 6.74
+      ! a,b are occupied spinorbitals
+      ! r,s are virtual orbitals
+
+    ! Full system
+      !do a = 1,.n_e/2
+      !  do b = 1,.n_e/2
+      !    do r = .n_e/2+1,.n_bf
+      !      do s = .n_e/2+1,.n_bf
+
+    ! In the case of chosen MO limits
+       ! Vaa
+       do a = fa,.n_a
+         do b = fa,.n_a
+           do r = .n_a+1,lr
+             do s = .n_a+1,lr
+               E=E+vaa(a,b,r,s)*vaa(r,s,a,b)/(evala(a)+evala(b)-evala(r)-evala(s))
+               E=E-vaa(a,b,r,s)*vaa(r,s,b,a)/(evala(a)+evala(b)-evala(r)-evala(s))
+             end
+           end
+         end
+       end
+     
+     E2=E
+     stdout.show(" Eaa= ",E2/TWO)
+     stdout.text(" aaaa finished ")
+     E=ZERO
+       ! Vbb
+       do a = fb,.n_b
+         do b = fb,.n_b
+           do r = .n_b+1,ls
+             do s = .n_b+1,ls
+               E=E+vbb(a,b,r,s)*vbb(r,s,a,b)/(evalb(a)+evalb(b)-evalb(r)-evalb(s))
+               E=E-vbb(a,b,r,s)*vbb(r,s,b,a)/(evalb(a)+evalb(b)-evalb(r)-evalb(s))
+             end
+           end
+         end
+       end
+
+     stdout.show(" Ebb= ",E/TWO)
+     E2=E2+E
+     stdout.text(" bbbb finished ")
+     E=ZERO
+       ! Vab = Vba
+       do a = fa,.n_a
+         do b = fb,.n_b
+           do r = .n_a+1,lr
+             do s = .n_b+1,ls
+               E=E+vab(a,b,r,s)*vab(r,s,a,b)/(evala(a)+evalb(b)-evala(r)-evalb(s))
+             end
+           end
+         end
+       end
+       
+     stdout.show(" Eab= ",E)
+     stdout.text(" aabb finished ")
+     E2=E2+E*TWO
+     E2=E2/TWO
+
+     E = ZERO
+     E = .SCF:scf_energy
+
+     stdout.flush
+     stdout.text(" MP2 results (in Hartree)")
+     stdout.show("SCF energy= ",E)
+     stdout.show("MP2 correlation energy= ",E2)
+     stdout.show("Total MP2 energy= ",E2+E)
+     stdout.flush
+
+     vaa.destroy; vab.destroy; vbb.destroy;
+     evala.destroy; evalb.destroy
+
+   end
+
+   make_gc_mp2
+   ! Calculate the electron repulsion integrals (ERI's) in the gc_MO basis from the
+   ! AO integrals and make general complex MP2  
+ 
+      v :: MAT4{CPX}*
+      E2 :: CPX 
+      virt,ram_lim,E :: REAL
+      eval :: VEC{REAL}*
+      a,b,r,s,fa,lr :: INT
+ 
+     eval.create(2*.n_bf)
+     eval = .orbital_energies.general
+
+     stdout.flush
+     stdout.text(" Orbital energies:")
+     stdout.flush
+     stdout.put(eval)
+
+     virt=real(2*.n_bf)**4*8*2/1024**3
+     stdout.flush
+     ram_lim= 4.0
+     stdout.show("Needed space for ERI in RAM (in Gb)",virt)
+     if (virt > ram_lim) then
+        stdout.show(" Current RAM limit is (in Gb)",ram_lim)
+        DIE(" Current RAM limit has been exceeded! ")
+     end if   
+
+    .::set_MO_limits_gc(eval,fa,lr)
+  !   fa=1; lr=2*.n_bf; 
+
+     v.create(2*.n_bf,2*.n_bf,2*.n_bf,2*.n_bf)
+     v=(ZERO,ZERO)
+    .FOCK:make_gc_MO_ERI_integrals(v)
+
+     stdout.flush
+     stdout.text(" The MP2 correlation loops beginning! ")
+
+     E2=(ZERO,ZERO)
+
+      ! Based on Szabo, Ostlund Book, p. 352, eq. 6.74
+      ! a,b are occupied spinorbitals
+      ! r,s are virtual orbitals
+
+    ! In the case of chosen MO limits
+       do a = fa,.n_e
+      !   do b = fa,.n_e
+         do b = a+1,.n_e
+           do r = .n_e+1,lr
+      !      do s = .n_e+1,lr
+            do s =  r+1,lr
+               E2=E2+(v(a,b,r,s)-v(a,b,s,r))*conjg(v(a,b,r,s)-v(a,b,s,r))/(eval(a)+eval(b)-eval(r)-eval(s))
+!              E2=E2+(v(a,b,r,s)-v(a,b,s,r))*conjg(v(r,s,a,b)-v(r,s,b,a))/(eval(a)+eval(b)-eval(r)-eval(s))
+!               E2=E2+(v(a,b,r,s)-v(a,b,s,r))**2/(eval(a)+eval(b)-eval(r)-eval(s))
+!              E2=E2+v(a,b,r,s)*conjg(v(r,s,a,b))/(eval(a)+eval(b)-eval(r)-eval(s))
+!              E2=E2-v(a,b,r,s)*conjg(v(r,s,b,a))/(eval(a)+eval(b)-eval(r)-eval(s))
+             end
+           end
+         end
+       end
+      
+     E2=E2/TWO
+
+     E = ZERO
+     E = .SCF:scf_energy
+
+     stdout.flush
+     stdout.text(" MP2 results (in Hartree)")
+     stdout.show("SCF energy= ",E)
+     stdout.show("MP2 correlation energy= ",E2)
+     stdout.show("Total MP2 energy= ",real(E2)+E)
+     stdout.flush
+     WARN(" gchf MP2 has not been completely benchmarked, yet! ")
+     stdout.flush
+
+     v.destroy
+     eval.destroy
+
+   end
+
+   set_MO_limits(eval,fa,lr)
+   ! Finding the lowest and highest MO
+   ! which will define the active space
+    eval :: VEC{REAL}
+    fa,lr :: INT
+    Emax,Emin,Edel :: REAL 
+    a,r,i :: INT
+    
+     ! Set_MO_limits
+     ! these should be read from stdin, currently set on hard here in
+      Emin= -5.0
+      Emax=  100.0
+      Edel=  0.1
+
+     fa=1
+     lr=.n_bf   
+   
+     if (eval(.n_e/2) < Emin) then
+     DIE("Emin is too high, no occupied orbitals")
+     end if
+     if (eval(.n_e/2+1) > Emax) then 
+     DIE("Emax is too low, no virtual orbitals")
+     end if
+
+   ! fa means first a (occupied)
+   do a = 1,.n_e/2
+      if (eval(a) > Emin) then
+
+     stdout.show("found Emin",a)
+
+        do i =a,2,-1
+          if (eval(i)-eval(i-1) > Edel) then
+            fa=i
+     stdout.show("found fa",fa)
+            exit
+          else
+            fa=i-1
+          end if
+        end do
+
+        exit
+      end if
+    end do
+
+   ! lr means last r (virtual)
+    do r = .n_e/2+1,.n_bf
+      if (eval(r) > Emax) then
+
+        do i =r,.n_bf
+          if (eval(i)-eval(i-1) > Edel) then
+            lr=i-1
+            exit
+          else
+            lr=i
+          end if
+        end do
+
+        exit
+      end if
+    end do
+
+     stdout.flush
+     stdout.text("First active occupied orbital=")
+     stdout.put(fa)
+     stdout.put(eval(fa))
+     stdout.flush
+     stdout.text("Last active virtual orbital=")
+     stdout.put(lr)
+     stdout.put(eval(lr))
+     stdout.flush
+
+   end
+
+   set_MO_limits_gc(eval,fa,lr)
+   ! Finding the lowest and highest MO
+   ! which will define the active space
+    eval :: VEC{REAL}
+    fa,lr :: INT
+    Emax,Emin,Edel :: REAL 
+    a,r,i :: INT
+    
+     ! Set_MO_limits
+     ! these should be read from stdin, currently set on hard here in
+      Emin= -5.0
+      Emax=  100.0
+      Edel=  0.1
+
+     fa=1
+     lr=2*.n_bf   
+   
+     if (eval(.n_e) < Emin) then
+     DIE("Emin is too high, no occupied orbitals")
+     end if
+     if (eval(.n_e+1) > Emax) then 
+     DIE("Emax is too low, no virtual orbitals")
+     end if
+
+   ! fa means first a (occupied)
+   do a = 1,.n_e
+      if (eval(a) > Emin) then
+
+     stdout.show("found Emin",a)
+
+        do i =a,2,-1
+          if (eval(i)-eval(i-1) > Edel) then
+            fa=i
+     stdout.show("found fa",fa)
+            exit
+          else
+            fa=i-1
+          end if
+        end do
+
+        exit
+      end if
+    end do
+
+   ! lr means last r (virtual)
+    do r = .n_e+1,2*.n_bf
+      if (eval(r) > Emax) then
+
+        do i =r,2*.n_bf
+          if (eval(i)-eval(i-1) > Edel) then
+            lr=i-1
+            exit
+          else
+            lr=i
+          end if
+        end do
+
+        exit
+      end if
+    end do
+
+     stdout.flush
+     stdout.text("First active occupied orbital=")
+     stdout.put(fa)
+     stdout.put(eval(fa))
+     stdout.flush
+     stdout.text("Last active virtual orbital=")
+     stdout.put(lr)
+     stdout.put(eval(lr))
+     stdout.flush
+
+   end
+
 end
+
