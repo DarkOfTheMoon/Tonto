@@ -3290,6 +3290,13 @@ contains
       .data.set_F_calc(F_calc)
    end
 
+   set_I_calc(I_calc)
+   ! Set the calculated structure factors
+      I_calc :: VEC{REAL}, IN
+   ENSURE(.data_exists,"no diffraction data")
+      .data.set_I_calc(I_calc)
+   end
+
    make_F_predicted
    ! Make the predicted magnitude of structure factors, including possibly
    ! an overall scale factor and extinction correction
@@ -3297,11 +3304,20 @@ contains
       .data.make_F_predicted
    end
 
-   extinction_correction result (res)
+!magda_beginning
+   make_I_predicted
+   ! Make the predicted magnitude of structure factors, including possibly
+   ! an overall scale factor and extinction correction
+   ENSURE(.data_exists,"no diffraction data")
+      .data.make_I_predicted
+   end
+!magda_end
+
+   F_extinction_correction result (res)
    ! Return the extinction correction  factors "res" to the calculated
    ! individual structure factors.
       res :: VEC{REAL}(.data.reflections.dim)
-      res = .data.extinction_correction
+      res = .data.F_extinction_correction
    end
 
    n_param result (res)
@@ -3445,7 +3461,10 @@ contains
        ! .asymmetric_unit_atom.set_pADP_vector_to(.data.X_fit)
  
          ! Get unique *fragment* atom shifts in .data.dX ...
+
+         !magda_beginning
          .get_parameter_shifts(sf_n) ! .data
+         !magda_end
 
          ! Change/store unique frag atom -> asym atom shifts
          ! Change/store the covariance matrix too.
@@ -3596,9 +3615,25 @@ contains
 
    end
 
-!  Refinement: shifts and SF update
+!magda_beginning
+!  Choosing F or F^2 refinement
+   get_parameter_shifts(sf_n)
+   ! Get the param shifts -- either F or F2
+      sf_n :: MAT{CPX}, INOUT
 
-   get_parameter_shifts(sf_n) ::: leaky, private
+   ENSURE(.data.created,"no data")
+
+      if(.data.refine_F) then;  .get_parameter_shifts_F(sf_n)
+      else;                .get_parameter_shifts_I(sf_n)
+      end
+
+   end
+
+!magda_end
+
+!  Refinement: shifts and SF update for F refinement
+
+   get_parameter_shifts_F(sf_n) ::: leaky, private
    ! Get the *asym* atom shifts ".data.dX" by solving the
    ! normal equations, using:
    ! * "sf_n", the unique *fragment* atom structure factors
@@ -3646,7 +3681,7 @@ contains
       ! Set the calculated SF's
       .set_F_calc(Fc)
 
-      if (.debugging("get_parameter_shifts")) then
+      if (.debugging("get_parameter_shifts_F")) then
          stdout.text("Fc:")
          stdout.put(Fc)
       end
@@ -3671,13 +3706,100 @@ contains
       .solve_normal_equations(dFa)
       dFa.destroy
 
-      if (.debugging("get_parameter_shifts")) then
-         stdout.text("get_parameter_shifts, .data.dX, after:")
+      if (.debugging("get_parameter_shifts_F")) then
+         stdout.text("get_parameter_shifts_F, .data.dX, after:")
          stdout.put(.data.dX)
       end
  
    end
 
+!magda_beginning
+
+!  Refinement: shifts and SF update for F^2 refinement
+
+   get_parameter_shifts_I(sf_n) ::: leaky, private
+   ! Get the *asym* atom shifts ".data.dX" by solving the
+   ! normal equations, using:
+   ! * "sf_n", the unique *fragment* atom structure factors
+   !   for the symmetry related k points
+   ! * ".data.X_ref", the *asym* atom parameters 
+   !   (positions and ADP's) 
+   ! "sf_n" is updated by the shift amount at the end. 
+
+      sf_n :: MAT{CPX}, INOUT
+
+   ENSURE(sf_n.dim1==.n_unique_SF_k_pts,        "sf_n: wrong dim1")
+   ENSURE(sf_n.dim2==.asymmetric_unit_atom.dim, "sf_n: wrong dim2")
+   ENSURE(.data.created,                        "no data")
+   ENSURE(.fragment_info_made,                  "no fragment info")
+
+      dIa  :: MAT{REAL}*
+      sf_d,dFc :: MAT{CPX}*
+      sf_e,Fc :: VEC{CPX}*
+      n_refl,n_k,n_p :: INT
+
+      ! Constants
+      n_refl = .n_refl
+      n_k    = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry generated structure factors
+      sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
+      sf_e.create(n_k)     ! Symmetry generated SF's
+
+      ! Make the symmetry-generated structure factors 
+      ! and their  derivatives
+      .make_unique_sf_derivs(sf_e,sf_d,sf_n)
+
+    ! if (.debugging("get_parameter_shifts")) then
+    !    stdout.text("sf_e:")
+    !    stdout.put(sf_e)
+    ! end
+
+      ! Sum the symmetry-generated SF's to get
+      ! the actual structure factors Fc
+      Fc.create(n_refl) 
+      .sum_unique_sf(Fc,sf_e)
+      sf_e.destroy
+
+      ! Set the calculated SF's
+      .set_F_calc(Fc)
+
+      .set_I_calc(abs(Fc))
+
+      if (.debugging("get_parameter_shifts_I")) then
+         stdout.text("Ic:")
+         stdout.put(.data.I_calc)
+      end
+      Fc.destroy
+
+      ! Make chi2 in F^2
+      .make_I_predicted
+
+      ! Sum the symmetry-generated SF's to get 
+      ! the derivative structure factors dFc
+      dFc.create(n_refl,n_p)  
+      .sum_unique_sf_derivs_t(dFc,sf_d)
+      sf_d.destroy
+
+      ! Get the derivative squared absolute SF's, 
+      ! ... unique fragment atoms only
+      dIa.create(n_refl,n_p)
+      .d_F_abs_2_dX(dIa,dFc)
+      dFc.destroy
+
+      ! Get the unique atom shifts, dX (leaky)
+      .solve_normal_equations(dIa)
+      dIa.destroy
+
+      if (.debugging("get_parameter_shifts_I")) then
+         stdout.text("get_parameter_shifts_I, .data.dX, after:")
+         stdout.put(.data.dX)
+      end
+ 
+   end
+
+!magda_end
    shift_update_sf_n(sf_n,dF) ::: private
    ! Update the unique *fragment* atom structure factors "sf_n" with
    ! the frag atom positional shifts (after stabilization) in "dF"
@@ -6099,6 +6221,18 @@ contains
       .data.d_F_abs_dX(res,dFdX)
    end
 
+!magda_beginning
+   d_F_abs_2_dX(res,dFdX)
+   ! Evaluate "res", the derivative of the F_abs with respect to some
+   ! parameters X (e.g. thermal parameters) given "dFdX", the
+   ! derivatives of the complex structure factors  w.r.t. the X
+   ! parameters. 
+      res :: MAT{REAL}, OUT
+      dFdX :: MAT{CPX}, IN
+   ENSURE(.data_exists,"no diffraction data")
+      .data.d_F_abs_2_dX(res,dFdX)
+   end
+!magda_end
    solve_normal_equations(dFdX) ::: leaky
    ! Get the ".dX" in the parameters by solving the normal
    ! equations, given "dFdX", the derivatives of the absolute
@@ -7672,7 +7806,7 @@ contains
       dF.create(n_refl)
       dF = (.data.reflections.F_exp - .data.reflections.F_pred) &
           * .data.reflections.F_calc/abs(.data.reflections.F_calc)
-      dF = dF/.extinction_correction
+      dF = dF/.F_extinction_correction
 
       ! Calculate residual map
       k_dot_rn.create(n_refl)
