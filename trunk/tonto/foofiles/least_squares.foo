@@ -1,0 +1,1334 @@
+!-------------------------------------------------------------------------------
+!
+! LEAST_SQUARES: For performing an iteration of least squares
+!
+! Copyright (C) Dylan Jayatilaka 2013
+!
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Library General Public
+! License as published by the Free Software Foundation; either
+! version 2 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Library General Public License for more details.
+!
+! You should have received a copy of the GNU Library General Public
+! License along with this library; if not, write to the
+! Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+! Boston, MA  02111-1307, USA.
+!
+!-------------------------------------------------------------------------------
+
+module LEAST_SQUARES
+
+   implicit none
+
+   debug_list :: VEC{STR}*, private  DEFAULT_NULL
+
+contains
+
+!  ==========
+!  Allocation
+!  ==========
+
+   create ::: get_from(OBJECT), leaky
+   ! Create an object
+      self :: PTR
+   end
+
+   destroy ::: get_from(OBJECT), leaky
+   ! Destroy an object
+   end
+
+   nullify_ptr_part
+   ! Nullify the pointer parts of the diffraction data object
+
+      nullify(.X)
+      nullify(.X0)
+      nullify(.dX)
+      nullify(.X_labels)
+      nullify(.dYdX)
+
+      nullify(.near_0_eigenvalues)
+      nullify(.near_0_eigenvectors)
+
+      nullify(.esd)
+      nullify(.covariance_matrix)
+      nullify(.correlation_matrix)
+
+      nullify(.table)
+
+   end
+
+   destroy_ptr_part ::: leaky
+   ! Erase all pointer information
+
+      .X.destroy
+      .X0.destroy
+      .dX.destroy
+      .X_labels.destroy
+      .dYdX.destroy
+
+      .near_0_eigenvalues.destroy
+      .near_0_eigenvectors.destroy
+
+      .esd.destroy
+      .covariance_matrix.destroy
+      .correlation_matrix.destroy
+
+      .table.destroy
+
+   end
+
+   created result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has been created
+      self :: PTR
+      res :: BIN
+   end
+
+   destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
+   ! Returns true if self has *not* been created
+      self :: PTR
+      res :: BIN
+   end
+
+   create_copy(object) ::: get_from(OBJECT), leaky
+   ! Create a copy of object
+   end
+
+   copy(object) ::: leaky
+   ! Copy the object
+      object :: LEAST_SQUARES, IN
+
+      self = object
+
+      .nullify_ptr_part
+
+      if (object.X.created)                    .X.create_copy(object.X)
+      if (object.X0.created)                   .X0.create_copy(object.X0)
+      if (object.dX.created)                   .dX.create_copy(object.dX)
+      if (object.X_labels.created)             .X_labels.create_copy(object.X_labels)
+      if (object.dYdX.created)                 .dYdX.create_copy(object.dYdX)
+
+      if (object.near_0_eigenvalues.created)   .near_0_eigenvalues.create_copy(object.near_0_eigenvalues)
+      if (object.near_0_eigenvectors.created)  .near_0_eigenvectors.create_copy(object.near_0_eigenvectors)
+
+      if (object.esd.created)                  .esd.create_copy(object.esd)
+      if (object.covariance_matrix.created)    .covariance_matrix.create_copy(object.covariance_matrix)
+      if (object.correlation_matrix.created)   .correlation_matrix.create_copy(object.correlation_matrix)
+
+      if (object.table.created)                .table.create_copy(object.table)
+   
+   end
+
+
+!  ===========
+!  Set methods
+!  ===========
+
+   set_defaults ::: leaky
+   ! Set default values
+
+      .n_parameters                = 0
+      .n_data                      = 0
+                                  
+      ! Penalty
+      .chi2                        = ZERO
+      .chi20                       = ZERO
+                                  
+      ! Iterations                
+      .iterations                  = 0
+      .max_iterations              = LEAST_SQUARES_MAX_ITER
+      .min_iterations              = LEAST_SQUARES_MIN_ITER  
+                                  
+      ! Convergence               
+      .converged                   = FALSE
+      .chi2_increased              = FALSE
+      .too_many_iterations         = FALSE
+                                  
+      ! Shifts                    
+      .max_shift                   = ZERO
+      .max_shift_tol               = LEAST_SQUARES_MAX_SHIFT_TOL
+      .max_shift_on_esd            = ZERO
+      .max_shift_on_esd_tol        = LEAST_SQUARES_MAX_SHIFT_ON_ESD_TOL
+      .max_shift_on_esd_ind        = 0
+      .max_shift_on_esd_par        = " "
+
+      ! Singularities
+      .n_0                         = 0
+      .tol_0                       = LEAST_SQUARES_TOL_0
+      .n_near_0                    = 0
+      .tol_near_0                  = LEAST_SQUARES_TOL_NEAR_0
+
+      ! Output control
+      .show_fit_output             = FALSE
+      .display_near_0_eigenvectors = FALSE
+      .display_correlation_matrix  = FALSE
+      .min_correlation             = LEAST_SQUARES_MIN_CORRELATION
+
+      ! Table (leaky)
+      .set_default_table
+
+   end
+
+   set_default_table ::: leaky
+   ! Create the default LS output table
+
+      ! Create the table (leaky)
+      .table.create(8)
+
+      ! Table headings
+      .table(1).set_heading("Fit")
+      .table(1).set_subhead("Iter")
+      .table(2).set_heading("chi2")
+      .table(3).set_heading("R")
+      .table(4).set_heading("R_w")
+      .table(5).set_heading("Max.")
+      .table(5).set_subhead("Shift")
+      .table(5).set_sb3head("/esd")
+      .table(6).set_heading("Max.")
+      .table(6).set_subhead("Shift")
+      .table(6).set_sb3head("param")
+      .table(7).set_heading("No. of")
+      .table(7).set_subhead("params")
+      .table(8).set_heading("No. of")
+      .table(8).set_subhead("eig's")
+      .table(8).set_sb3head("near 0")
+
+      ! Table widths (needs to be here because of label width)
+      .table(1).set_width_from(LEAST_SQUARES_MAX_ITER) ! Iter
+      .table(2).set_width_from(TEN**3)                 ! chi2
+      .table(3).set_width_from(ONE)                    ! R
+      .table(4).set_width_from(ONE)                    ! Rw
+      .table(5).set_width_from(TEN*TEN)                ! Max shift/esd
+   !  .table(6).set_width_from(labels)                 ! Max shift par
+      .table(7).set_width(3)                           ! n_param
+      .table(8).set_width(3)                           ! n_near_0
+
+   end
+
+   set_n_parameters(n) ::: leaky
+   ! Set the number of parameters ".n_parameters" to "n"
+   ! NOTE: this must be called to ensure all arrays are created
+      n :: INT, IN
+
+   ENSURE(n>0,"must be +ve")
+
+      .n_parameters = n
+
+      ! Allocate 
+      .X.create(n)
+      .X0.create(n)
+      .dX.create(n)
+      .X_labels.create(n)
+
+      .esd.create(n)
+      .covariance_matrix.create(n,n)
+      .correlation_matrix.create(n,n)
+
+      ! Table size
+      .table(7).set_width(log10(n)+1)  ! n_param
+      .table(8).set_width(log10(n)+1)  ! n_near_0
+
+   end
+
+   set_n_data(n) ::: leaky
+   ! Set the number of data points ".n_data" to "n"
+   ! NOTE: .n_parameters must have been set already
+   ! NOTE: this must be called to ensure all arrays are created
+      n :: INT, IN
+
+   ENSURE(n>0,"must be +ve")
+
+      .n_data = n
+
+      ! Allocate the arrays
+      .dYdX.create(n,.n_parameters)
+
+   end
+
+   set_chi2(val) 
+   ! Set the ".chi2" to "val" and save old value in "chi20"
+      val :: REAL, IN
+
+   ENSURE(chi2>0,"must be +ve")
+
+      .chi20 = .chi2
+      .chi2  = val
+
+   end
+
+   set_X(v) 
+   ! Set the parameter vector ".X" to "v"
+      v :: VEC{REAL}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( v.dim==.n_parameters,"wrong size, v")
+
+      .X = v
+
+   end
+
+   set_dX(v) 
+   ! Set the parameter shifts ".dX" to "v", save ".X" in ".X0", and
+   ! update parameter vector ".X".
+      chi2 :: REAL, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( v.dim ==.n_parameters,"wrong size, v")
+
+      .dX = v
+      .X0 = .X
+      .X  = .X + v
+
+   end
+
+   set_X_labels(v) 
+   ! Set the parameter labels ".X_labels" to "v"
+      v :: VEC{STR}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( v.dim==.n_parameters,"wrong size, v")
+
+      .X = v
+
+   end
+
+   set_dYdX(mx) 
+   ! Set the derivatives ".dYdX" to "m"
+      m :: MAT{REAL}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE(.n_data>0,"n_data has not been set")
+   ENSURE(m.dim1==.n_parameters,"wrong dim1, m")
+   ENSURE(m.dim2==.n_data,      "wrong dim2, m")
+
+      .dYdX = m
+
+   end
+
+
+!  ============
+!  Read methods
+!  ============
+
+   read_keywords ::: get_from(OBJECT), recursive, leaky
+   ! Read data from "stdin" using keyword style input.
+      self :: PTR
+   end
+
+   process_keyword(keyword) ::: leaky
+   ! Process command "keyword". Any required data needed by the "keyword" is
+   ! inputted from "stdin".
+      self :: PTR
+      keyword :: STR
+
+      word :: STR
+
+      word = keyword
+      word.to_lower_case
+
+      select case (word)
+
+         case ("}                             ")  ! exit read_loop
+
+         case ("debug_off                     "); .read_debug_off
+         case ("debug_on                      "); .read_debug_on
+         case ("display_correlation_matrix=   "); .read_display_corr_matrix
+         case ("display_near_0_eigenvectors=  "); .read_display_near_0_evecs
+
+         case ("max_iterations=               "); .read_max_iterations
+         case ("max_shift_on_esd_tol=         "); .read_max_shift_on_esd_tol
+         case ("max_shift_tol=                "); .read_max_shift_tol
+         case ("min_iterations=               "); .read_min_iterations
+         case ("min_correlation=              "); .read_min_correlation
+
+         case ("put                           "); .put
+         case ("put_debug_list                "); .put_debug_list
+
+         case ("redirect                      "); .redirect
+         case ("revert                        "); .revert
+
+         case ("show_fit_output=              "); .read_show_fit_output
+
+         case ("tolerance_0=                  "); .read_tol_0
+         case ("tolerance_near_0=             "); .read_tol_near_0
+
+         case default;                       UNKNOWN(word)
+
+      end
+
+   end
+
+! Reading
+
+   read_display_corr_matrix
+   ! Read whether to display the correlation matrix.
+      stdin.read(.display_correlation_matrix)
+   end
+
+   read_display_near_0_evecs
+   ! Read whether to display the near 0 eigenvectros of the correlation matrix.
+      stdin.read(.display_near_0_eigenvectors)
+   end
+
+   read_max_iterations
+   ! Read the maximum number of iterations
+      stdin.read(.max_iterations)
+      ENSURE(.max_iterations>-1,"max_iterations must be non-negative")
+      ENSURE(.max_iterations>.min_iterations,"max_iterations must be greater than min_iterations")
+   end
+
+   read_max_shift_tol
+   ! Read the maximum allowed shift in a parameter
+      stdin.read(.max_shift_tol)
+      ENSURE(.max_shift_tol>ZERO,"must be +ve!")
+   end
+
+   read_max_shift_on_esd_tol
+   ! Read the maximum allowed shift-on-esd ratio, for a parameter
+      stdin.read(.max_shift_on_esd_tol)
+      ENSURE(.max_shift_on_esd_tol>ZERO,"must be +ve!")
+   end
+
+   read_min_iterations
+   ! Read the minimum number of iterations
+      stdin.read(.min_iterations)
+      ENSURE(.min_iterations>-1,"min_iterations must be non-negative")
+      ENSURE(.max_iterations>.min_iterations,"min_iterations must be smaller than max_iterations")
+   end
+
+   read_min_correlation
+   ! Read the minimum correlation between parameters before reporting
+      stdin.read(.min_correlation)
+      ENSURE(.min_correlation.is_in_range([ZERO,ONE]),,"must be in range [0,1]")
+   end
+
+   redirect ::: get_from(OBJECT), leaky
+   ! Redirect input
+   end
+
+   revert ::: get_from(OBJECT), leaky
+   ! Revert back to previous stdin file
+   end
+
+   read_show_fit_output ::: private
+   ! Read wether to show the rejected reflections
+      stdin.read(.show_fit_output)
+   end
+
+   read_tol_0
+   ! Read the tolerance for deciding on zero eigenvalues in solving
+   ! the normal equations.
+      stdin.read(.tol_0)
+      ENSURE(.tol_0>ZERO,"tol_0 must be positive")
+      ENSURE(.tol_0<.tol_near_0,"tol_0 must be smaller than tol_near_0")
+   end
+
+   read_tol_near_0
+   ! Read the tolerance for deciding on *near* zero eigenvalues in
+   ! solving the normal equations.
+      stdin.read(.tol_near_0)
+      ENSURE(.tol_near_0>ZERO,"tol_near_0 must be positive")
+      ENSURE(.tol_0<.tol_near_0,"tol_near_0 must be bigger than tol_0")
+   end
+
+
+!  ==============
+!  Debug printing
+!  ==============
+
+   read_debug_on ::: get_from(DEBUG), leaky
+   ! Read a debug descriptor and add it to the list.
+   end
+
+   read_debug_off ::: get_from(DEBUG), leaky
+   ! Read a debug descriptor and remove it from the list.
+   end
+
+   debugging(name) result (res) ::: get_from(DEBUG)
+   ! Return TRUE if the debug switch "name" has been set.
+   end
+
+   put_debug_list ::: get_from(DEBUG)
+   ! Put of the list of debug switches
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>REAL)
+   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>VEC{REAL})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT{REAL})
+   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
+   ! it has been set.
+   end
+
+
+
+!  ===============================
+!  Least-squares: Normal equations
+!  ===============================
+
+   solve_normal_equations(dYdX) ::: template, leaky
+   ! Get the ".dX" in some parameter vector by solving the normal
+   ! equations, given "dYdX", the derivatives of Y w.r.t. X. 
+      dYdX :: MAT{REAL}, IN
+
+   ENSURE(dYdX.dim1==.reflections.n_refl, "wrong size, dYdX")
+   ENSURE(dYdX.dim2==.dX.dim, "incompatible .dX and dYdX")
+
+      A,dY :: MAT{REAL}*
+      rhs,sig,del :: VEC{REAL}*
+      n_refl,n_p,i,j :: INT
+      fac :: REAL
+ 
+      ! Constants
+      n_refl = .reflections.n_refl
+      n_p    = dYdX.dim2
+ 
+      ! Arrays
+      A.create(n_p,n_p)
+      rhs.create(n_p)
+      del.create(n_refl)
+      dY.create(n_refl,n_p)
+      sig.create(n_refl)
+
+      ! Make derivatives of Y_pred
+      .make_d_Y_pred_dX(dY,sig,del,dYdX)
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("dY:")
+      stdout.put(dY)
+      end
+
+      ! Make the normal matrix
+      do i = 1,n_p
+      do j = 1,n_p
+         A(i,j) = VEC{REAL}:sum(sig*dY(:,i)*dY(:,j))
+      end
+      end
+      sig.destroy
+
+      ! Make the rhs
+      do i = 1,n_p
+         rhs(i) = VEC{REAL}:sum(del*dY(:,i))
+      end
+
+      dY.destroy
+      del.destroy
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("A:")
+      stdout.put(A)
+      stdout.text("rhs:")
+      stdout.put(rhs)
+      end
+
+      ! Solve for the shifts .dX (leaky)
+      A.solve_ill_linear_equations(rhs,.dX,.tol_0,.n_0,.tol_near_0,.n_near_0 &
+                                  ,.near_0_eigenvalues,.near_0_eigenvectors &
+                                  ,.covariance_matrix,.correlation_matrix)
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("shifts:")
+      stdout.put(.dX)
+      stdout.show("Normal equations check =",maxval(abs(matmul(A,.dX)-rhs)))
+      stdout.show("Smallest eigenvalue    =",minval(abs(.near_0_eigenvalues)))
+      stdout.show("tol_0                  =",.tol_0)
+      stdout.show("n_0                    =",.n_0)
+      stdout.show("tol_near_0             =",.tol_near_0)
+      stdout.show("n_near_0               =",.n_near_0)
+      stdout.text("Near_0 eigenvalues:")
+      stdout.put(.near_0_eigenvalues,by_column=TRUE)
+      end
+
+      ! Get the maximum shift
+      .max_shift = maxval(abs(.dX))
+
+      ! Set the number of parameters
+      .n_param = n_p - .n_near_0 
+
+      ! Update chi2
+      .update_n_param_and_chi2
+
+      ! Set the full covariance matrix
+      .covariance_matrix = .chi2*.covariance_matrix
+
+      ! Set the fit errors e.g. max(.dX/esd)
+      ! Parameter ordering is unique fragment atom order.
+      .update_fit_errors
+
+      rhs.destroy
+      A.destroy
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("shifts before renormalisation:")
+      stdout.put(.dX)
+      end
+
+      ! Renormalise shift if too big
+      if (.max_shift>.max_allowed_param_shift) then
+         fac = .max_allowed_param_shift/.max_shift
+         .dX = fac * .dX
+      end
+
+      if (.debugging("solve_normal_equations")) then 
+      stdout.text("shifts after renormalisation:")
+      stdout.put(.dX)
+      end
+
+   end
+
+
+   update_fit_errors
+   ! Set the esd's for the current fit. 
+   ! WARNING: The order of the parameters is not always the same
+   ! between calls of this routine. You *must* call this if the
+   ! covariance matrix has been transformed from a unique-fragment
+   ! atom ordering to asymmetric-unit ordering.
+
+   ENSURE(.covariance_matrix.created,"no covariance_matrix")
+   ENSURE(.esd.created,"no esd")
+   ENSURE(.dX.created,"no dX")
+   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
+   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
+
+      indmax,p :: INT
+      val,valmax :: REAL
+      W :: VEC{REAL}*
+
+      ! Set variances
+      .covariance_matrix.put_diagonal_to(.esd)
+
+      if (.debugging("update_fit_errors:variances")) then
+         stdout.text("variances:")
+         stdout.put(.esd,by_column=TRUE)
+      end
+
+      ! Set ESD's
+      .esd = sqrt(.esd)
+
+      if (.debugging("update_fit_errors")) then
+
+         stdout.text("esd:")
+         stdout.put(.esd,by_column=TRUE)
+
+         stdout.text("dX:")
+         stdout.put(.dX,by_column=TRUE)
+
+         W.create(.esd.dim)
+         where (abs(.esd)<TOL(8)); W = ZERO
+         elsewhere;                W = .dX/.esd
+         end
+         stdout.text("dX/esd:")
+         stdout.put(W,by_column=TRUE)
+         W.destroy
+
+      end
+
+      ! Get the location of the maximum shift on esd
+      indmax = 0
+      valmax = ZERO
+      do p = 1,.esd.dim
+
+         val = .esd(p)
+
+         ! Ignore symmetry zero's
+         if (abs(val)<TOL(8)) cycle
+
+         ! Shift on esd
+         val = abs(.dX(p)/val)
+
+         ! Set shift on esd if larger ...
+         if (val<=valmax) cycle
+         valmax = val
+         indmax = p
+
+      end
+
+      ! Assign maximum index
+      DIE_IF(indmax==0,"no maximum index found!")
+      .max_shift_on_esd_ind = indmax
+      .max_shift_on_esd     = valmax
+
+      ! Debug
+      if (.debugging("update_fit_errors")) then 
+         stdout.show("max_shift_on_esd_ind  =",indmax)
+         stdout.show("max_shift_on_esd      =",valmax)
+      end
+
+   end
+
+   update_refinement_errors
+   ! Update the esd's for the current fit. 
+   ! NOTE: must have updated X_ref and X_ref0
+
+   ENSURE(.covariance_matrix.created,"no covariance_matrix")
+   ENSURE(.esd.created,"no esd")
+   ENSURE(.dX.created,"no dX")
+   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
+   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
+   ENSURE(.X_ref.created,"no X_ref")
+   ENSURE(.X_ref0.created,"no X_ref0")
+
+      n_p,indmax,p :: INT
+      val,valmax :: REAL
+      dX :: VEC{REAL}*
+ 
+      ! Constants
+      n_p = .esd.dim
+
+      ! Set the change in paramts between fits
+      dX.create(n_p)
+      dX = .X_ref - .X_ref0
+
+      ! Get the location of the maximum shift on esd
+      indmax = 0
+      valmax = ZERO
+      do p = 1,n_p
+
+         val = .esd(p)
+         if (val==ZERO) cycle
+
+         val = abs(dX(p)/val)
+         if (val<=valmax) cycle
+
+         valmax = val
+         indmax = p
+
+      end
+
+      ! Assign maximum index
+      DIE_IF(indmax==0,"no maximum index found!")
+      .max_refshift_on_esd_ind = indmax
+      .max_refshift_on_esd     = valmax
+
+      ! Debug
+      if (.debugging("update_refinement_errors")) then 
+      stdout.show("max_refshift_on_esd_ind  =",indmax)
+      stdout.show("max_refshift_on_esd      =",valmax)
+      .max_refshift_on_esd     = valmax
+      stdout.text(".esd:")
+      stdout.put(.esd,by_column=TRUE)
+      end
+
+      ! Clean
+      dX.destroy
+
+   end
+
+!  Normal equations derivative
+
+   d_F_pred_dX(res,sig,del,dFdX)
+   ! Evaluate "res", the derivative of the F_pred with respect to some
+   ! parameters X (e.g. thermal parameters) given "dFdX", the
+   ! derivatives of the absolute structure factors  w.r.t. the X
+   ! parameters. Includes derivatives w.r.t. the scale factor, but
+   ! extinction is treated as a constant and should be OFF for exact
+   ! results. Also makes "sig" and "del" required for the normal
+   ! equations.
+      res :: MAT{REAL}, OUT
+      sig,del :: VEC{REAL}, OUT
+      dFdX :: MAT{REAL}, IN
+
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
+   ENSURE( del.dim1==.reflections.n_refl, "wrong size, del")
+   ENSURE( res.dim1==.reflections.n_refl, "wrong size, res")
+   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
+   ENSURE(dFdX.dim2==res.dim2, "incompatible res, dFdX")
+
+      ref :: REFLECTION*
+      Ft,Fx,dt,db,ext,angle_bit,d_scale :: VEC{REAL}*
+      top,bot,extn,F_exp,F_sig,F_abs,F_til,sig2,F_es2,F_ts2,fac,dsp,ext4,dX,val1,val2,dF :: REAL
+      n_refl,n_p,p,n :: INT
+ 
+      ! Constants
+      n_refl = .reflections.n_refl
+      n_p = dFdX.dim2
+
+      ! Temporaries
+      Ft.create(n_refl)
+      Fx.create(n_refl)
+      dt.create(n_refl)
+      db.create(n_refl)
+ 
+      ! Extinction factor part
+      ext.create(n_refl)
+      ext = .F_extinction_correction(.extinction_factor)
+
+      ! Angle bit, extinction factor folded in
+      angle_bit.create(n_refl)
+      angle_bit = .extinction_factor*.extinction_angle_part
+
+      ! Make temporaries for derivative of scale, extinction, F_abs
+      top = ZERO
+      bot = ZERO
+
+      do n = 1,n_refl
+
+         extn   = ext(n)
+         ref    => .reflections(n)
+
+         F_exp  = ref.F_exp
+         F_sig  = ref.F_sigma
+         F_abs  = abs(ref.F_calc)
+         F_til  = extn*F_abs
+         sig2   = ONE/(F_sig*F_sig)
+
+         F_es2  = F_exp*sig2
+         F_ts2  = F_til*sig2
+
+         top    = top + F_til*F_es2
+         bot    = bot + F_til*F_ts2
+
+         ext4   = extn*extn
+         ext4   = ext4*ext4
+         dX     = -HALF*ext4*angle_bit(n)*F_abs
+         dX     = ONE + F_abs*dX
+
+         dt(n)  = F_es2*extn*dX
+         db(n)  = extn*F_ts2*dX
+         Ft(n)  = F_til
+         Fx(n)  = .scale_factor*extn*dX
+
+         ! Return these
+         sig(n) = sig2
+         del(n) = (F_exp - ref.F_pred)*sig2
+
+      end
+
+      angle_bit.destroy
+      ext.destroy
+ 
+      ! Derivative of the scale factor
+      d_scale.create(n_p)
+      bot = ONE/bot
+      fac = -TWO*top*bot*bot
+      do p = 1,n_p
+         val1 = ZERO
+         val2 = ZERO
+         do n = 1,n_refl
+            dF = dFdX(n,p) 
+            val1 = val1 + dt(n)*dF
+            val2 = val2 + db(n)*dF
+         end
+         d_scale(p) = bot*val1 + fac*val2
+      end
+
+      db.destroy
+      dt.destroy
+
+      ! Derivative of F_pred or F^m
+      do p = 1,n_p
+         dsp = d_scale(p)
+         do n = 1,n_refl
+            res(n,p) = dsp*Ft(n) + Fx(n) * dFdX(n,p) 
+         end
+      end
+
+      ! Clean up
+      d_scale.destroy
+      Fx.destroy; Ft.destroy
+
+   end
+
+   d_F2_pred_dX(res,sig,del,dF2dX)
+   ! Evaluate "res", the derivative of the F2_pred with respect to some
+   ! parameters X (e.g. thermal parameters) given "dF2dX", the
+   ! derivatives of the square absolute structure factors  w.r.t. the X
+   ! parameters. Includes derivatives w.r.t. the scale factor, but
+   ! extinction is treated as a constant and should be OFF for exact
+   ! results. Also makes "sig" and "del" required for the normal
+   ! equations.
+      res :: MAT{REAL}, OUT
+      sig,del :: VEC{REAL}, OUT
+      dF2dX :: MAT{REAL}, IN
+
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F2_calc, "no calculated structure factors")
+   ENSURE(.reflections.have_F2_exp, "no experimental structure factors")
+   ENSURE(.reflections.have_F2_sigma, "no structure factor errors")
+   ENSURE( del.dim1==.reflections.n_refl, "wrong size, del")
+   ENSURE( res.dim1==.reflections.n_refl, "wrong size, res")
+   ENSURE(dF2dX.dim1==.reflections.n_refl, "wrong size, dF")
+   ENSURE(dF2dX.dim2==res.dim2, "incompatible res, dFdX")
+
+      ref :: REFLECTION*
+      F2,dt,db,d_scale :: VEC{REAL}*
+      I_clc,top,bot,F2_exp,F2_sig,sig2,F2_es2,F2_ts2,fac,dsp,val1,val2,dF2 :: REAL
+      n_refl,n_p,p,n :: INT
+ 
+      ! Constants
+      n_refl = .reflections.n_refl
+      n_p = dF2dX.dim2
+
+      ! Temporaries
+      F2.create(n_refl)
+      dt.create(n_refl)
+      db.create(n_refl)
+ 
+
+      ! Make temporaries for derivative of scale, extinction, F_abs
+      top = ZERO
+      bot = ZERO
+
+      do n = 1,n_refl
+
+         ref    => .reflections(n)
+
+         F2_exp  = ref.F2_exp
+         F2_sig  = ref.F2_sigma
+         F2_clc  = ref.F2_calc
+         sig2   = ONE/(F2_sig*F2_sig)
+
+         F2_es2  = F2_exp*sig2
+         F2_ts2  = F2_clc*sig2
+
+         top    = top + F2_clc*F2_es2
+         bot    = bot + F2_clc*F2_ts2
+
+         dt(n)  = F2_es2
+         db(n)  = F2_ts2
+         F2(n)  = F2_clc
+
+         ! Return these
+         sig(n) = sig2
+         del(n) = (F2_exp - ref.F2_pred)*sig2
+
+      end
+
+      ! Derivative of the scale factor
+      d_scale.create(n_p)
+      bot = ONE/bot
+      fac = -TWO*top*bot*bot
+      do p = 1,n_p
+         val1 = ZERO
+         val2 = ZERO
+         do n = 1,n_refl
+            dF2 = dF2dX(n,p) 
+            val1 = val1 + dt(n)*dF2
+            val2 = val2 + db(n)*dF2
+         end
+         d_scale(p) = bot*val1 + fac*val2
+      end
+
+      db.destroy
+      dt.destroy
+
+      ! Derivative of F2_pred
+      do p = 1,n_p
+         dsp = d_scale(p)
+         do n = 1,n_refl
+            res(n,p) = dsp*F2(n) + .scale_factor * dF2dX(n,p) 
+         end
+      end
+
+      ! Clean up
+      d_scale.destroy
+      F2.destroy
+
+   end
+
+
+!  Fit/refinement iteration control
+
+   update_fit_parameters
+   ! Update i.e. increment the fit parameters
+
+      ! Next iteration
+      .iteration = .iteration + 1
+
+      ! Save and increment parameters
+      .set_dX
+
+   end
+
+!  Fit/refinement iteration control
+ 
+   fit_finished result (res)
+   ! Return whether the LS has finished
+      res :: BIN
+
+      ! Converged?
+      .converged = .max_shift_on_esd<.max_shift_on_esd_tol &
+               AND .iteration>=.min_iterations
+
+      ! chi2 inceased?
+      .chi2_increased = .chi2>.chi20 AND .iteration>.min_iterations
+
+      ! Roll back the parameters is chi2 increases
+      ! WARNING: covariances are not rolled back ...
+    ! if (.chi2_increased) then
+    !    .X_fit    = .X_fit0
+    !    .chi2_fit = .chi2_fit0
+    ! end
+
+      ! Too many fit iterations?
+      .too_many_iterations = .iteration>.max_iterations
+
+      ! Set finished
+      res = .converged OR .chi2_increased OR .too_many_iterations
+
+   end
+
+!  Fit/refinement output
+
+   put_table_headings
+   ! Put the fit table header
+      .table.put_headings
+   end
+
+   put_table_body
+   ! Print the current iterations results
+
+      ! Set table body (leaky)
+      .table(1).create_values([.iteration])
+      .table(2).create_values([.chi2])
+      .table(3).create_values([.r_factor])
+      .table(4).create_values([.weighted_r_factor])
+      .table(5).create_values([.max_shift_on_esd])
+      .table(6).create_values([.max_shift_on_esd_par])
+      .table(7).create_values([.n_param])
+      .table(8).create_values([.n_near_0])
+
+      ! Put out the body
+      .table.put_body
+
+      ! Clear thje columns for next time (UNleaky!)
+      .table.clear_columns
+
+   end
+
+   put_refinement_table_body
+   ! Print the current iterations results
+
+      ! Set table body (leaky)
+      .ref_table(1).create_values([.ref_iteration])
+      .ref_table(2).create_values([.fit_iteration])
+      .ref_table(3).create_values([.chi2_ref0])
+      .ref_table(4).create_values([.chi2_ref])
+      .ref_table(5).create_values([.F_r_factor])
+      .ref_table(6).create_values([.F_weighted_r_factor])
+      .ref_table(7).create_values([.max_refshift_on_esd])
+      .ref_table(8).create_values([.max_refshift_on_esd_par])
+      .ref_table(9).create_values([.n_param])
+
+      ! Put out the body
+      .ref_table.put_body
+
+      ! Clear thje columns for next time (UNleaky!)
+      .ref_table.clear_columns
+
+   end
+
+   put_results
+   ! Put the fit-iteration footer and fit results
+
+      ! Table footer
+      .table.put_footer
+
+      ! Results
+      stdout.flush
+      stdout.text("=====================")
+      stdout.text("Least-squares results")
+      stdout.text("=====================")
+      stdout.flush
+
+      ! Print how it finished
+      if      (.converged)            then; stdout.text("Least-squares converged.")
+      else if (.chi2_increased        then; stdout.text("Warning: fit stopped: chi2 has increased.")
+                                            stdout.text("Warning: fit results are unreliable.")
+      else if (.too_many_iterations)  then; stdout.text("Warning: fit stopped: too many iterations.")
+      end
+
+      ! Put final fitting statistics
+      .reflections.put_F_statistics(show_chi2=FALSE)
+      stdout.show("# of fit parameters, N_p    =", .n_param)
+      stdout.show("chi^2(N_p)                  =",.chi2)
+      stdout.show("Goodness of fit (N_p)       =", sqrt(.chi2))
+      stdout.show("Effective (mean) sigma^2    =",.reflections.sigma2_eff)
+
+      ! Analysis
+      stdout.flush
+      stdout.text("An analysis of the fit is in the file 'stdout.fit_analysis'")
+
+   end
+
+   put_near_0_eigenvectors
+   ! Put the near zero (linearly dependent) parameter eigenvectors
+
+      if (.near_0_eigenvectors.created) then
+      if (.near_0_eigenvectors.dim>0) then
+
+         stdout.flush
+         stdout.text("Near 0 eigenvalues of the normal matrix:")
+         stdout.put(.near_0_eigenvalues)
+         stdout.flush
+         stdout.text("Near 0 eigenvectors of the normal matrix:")
+         stdout.put(.near_0_eigenvectors)
+
+      end
+      end
+
+   end
+
+
+!  ==============
+!  Output methods
+!  ==============
+
+   put
+   ! Put out the diffraction data to file "out"
+
+      stdout.flush
+      stdout.text("Diffraction information:")
+      stdout.show("data_kind                     =", .data_kind)
+
+      if (.reflections.created) then
+      stdout.text("Reflection data:")
+      stdout.flush
+      .put_reflection_data
+      end
+
+   end
+
+   put_statistics(show_chi2)
+   ! Output the structure factor goodness of fit statistics.
+      show_chi2 :: BIN, optional
+
+      select case (.data_kind)
+         case ("free-neutron-f");  .reflections.put_statistics("Free Neutron F's",show_chi2)
+         case ("free-neutron-f2"); .reflections.put_statistics("Free Neutron F2's",show_chi2)
+         case ("free-pnd-f");      .reflections.put_statistics("Free PND F's",show_chi2)
+         case ("free-x-ray-f");    .reflections.put_statistics("Free X-ray F's",show_chi2)
+         case ("free-x-ray-f2");   .reflections.put_statistics("Free X-ray F2's",show_chi2)
+         case ("neutron-f");       .reflections.put_statistics("Neutron F's",show_chi2)
+         case ("neutron-f2");      .reflections.put_statistics("Neutron F2's",show_chi2)
+         case ("pnd-f");           .reflections.put_statistics("PND F's",show_chi2)
+         case ("x-ray-f");         .reflections.put_statistics("X-ray F's",show_chi2)
+         case ("x-ray-f2");        .reflections.put_statistics("X-ray F2's",show_chi2)
+         case default; UNKNOWN(.data_kind)
+      end
+
+   end
+
+   put_F2_free_stats
+   ! Output the F2 goodness of fit statistics
+      .reflections.put_F2_free_stats
+      .put_correction_data
+   end
+
+   put_correction_data
+   ! Output the correction data
+
+      stdout.flush
+      stdout.show("Using scale factor(s)          =", .optimise_scale)
+      stdout.show("Using extinction               =", .optimise_extinction)
+      stdout.show("Thermal smearing model         =", .thermal_smearing_model)
+      stdout.show("Fragment partition model       =", .partition_model)
+      stdout.show("Correct dispersion?            =", .correct_dispersion)
+
+      if (.optimise_extinction) then;
+      stdout.show("Optimize extinction            =", TRUE)
+      stdout.show("Secondary extinction factor    =", .extinction_factor)
+      else
+      stdout.show("Optimize extinction            =", FALSE)
+      end
+
+      if (.optimise_scale) then
+
+        if (.use_multiple_scale_factors) then
+      stdout.show("Using multiple scale factors   =", TRUE)
+      stdout.show("Scale factors                  =", .scale_factors)
+        else
+      stdout.show("Using single scale factor      =", TRUE)
+      stdout.show("Scale factor                   =", .scale_factors(1))
+        end
+
+      else
+      stdout.show("Optimize scale factor          =", FALSE)
+      end
+
+   end
+
+   put_qq_plot
+   ! Output a qq plot to stdout.
+   ! It is a plot of the experimental quantile vs expected quantile.
+   ENSURE(.reflections.created, "no reflection data")
+      .reflections.put_qq_plot
+   end
+
+   put_labelled_qq_plot
+   ! Output a qq plot to stdout.
+   ! It is a plot of the experimental quantile vs expected quantile.
+   ENSURE(.reflections.created, "no reflection data")
+      .reflections.put_labelled_qq_plot
+   end
+
+   put_chi2_vs_angle_plot
+   ! Output a table with the chi2 for the structure factor data set
+   ! broken into 20 sections.
+      num_sections :: INT
+      n,num,k,n_refl :: INT
+      section_for :: VEC{INT}*
+      stl,stl_min,stl_max,chi2,width,stl_mean :: REAL
+
+      num_sections = 20
+      n_refl = .reflections.n_refl
+      REFLECTION:set_wavelength(.wavelength)
+
+      ! Work out the limits of the sin(theta)/lambda.
+      stl_min = 1000
+      stl_max = ZERO
+      do n =1,n_refl
+         stl = .reflections(n).sin_theta_on_lambda
+         if (stl < stl_min) stl_min = stl
+         if (stl > stl_max) stl_max = stl
+      end
+      width = (TOL(3) + stl_max - stl_min)/num_sections
+
+      section_for.create(n_refl)
+      ! Determine which section each reflection belongs to.
+      do n = 1,n_refl
+         stl = .reflections(n).sin_theta_on_lambda
+         section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
+      end
+
+      stdout.flush
+      stdout.text("Chi^2 vs angle plot")
+      stdout.flush
+      stdout.text("sin(theta)/lambda in Angstrom^(-1)")
+      stdout.show("Smallest sin(theta)/lambda  =",stl_min)
+      stdout.show("Largest sin(theta)/lambda   =",stl_max)
+      stdout.flush
+      stdout.put("stl")
+      stdout.put("chi^2")
+      stdout.flush
+      stdout.dash(real_fields=2)
+
+      do n = 1, num_sections
+
+         chi2 = ZERO
+         num = 0
+         stl_mean = stl_min + (n - HALF) * width
+         do k = 1, n_refl
+           if (n==section_for(k)) then
+             chi2 = chi2 + .reflections(k).z_statistic_squared
+             num = num + 1
+           end
+         end
+
+         stdout.put(stl_mean)
+
+         if (num==0) then
+           stdout.flush
+           cycle
+         else
+           chi2 = chi2 / max(num - .n_param,1)
+           stdout.put(chi2)
+           stdout.flush
+         end
+
+      end
+
+      stdout.flush
+
+      section_for.destroy
+
+   end
+
+   put_pred_vs_obs_plots
+   ! Output some different plots about the obs vs. predicted structure factors.
+      ext :: VEC{REAL}*
+      ext_refs :: VEC{REFLECTION}*
+      n,n_refl :: INT
+      y,w :: REAL
+
+      n_refl = .reflections.n_refl
+      REFLECTION:set_wavelength(.wavelength)
+
+      stdout.text("The effects of angle.")
+      stdout.text("Scatter plot of z = (pred-obs)/sigma vs. sin(theta)/lambda")
+      do n = 1,n_refl
+         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).z_statistic)
+         stdout.flush
+      end
+      stdout.flush
+
+      stdout.text("The effects of angle.")
+      stdout.text("Scatter plot of Delta = (pred-obs) vs. sin(theta)/lambda")
+      do n = 1,n_refl
+         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(.reflections(n).delta)
+         stdout.flush
+      end
+      stdout.flush
+
+      stdout.text("The effects of intensity.")
+      stdout.text("Scatter plot of z = (pred-obs)/sigma vs obs")
+      do n = 1,n_refl
+         stdout.put(.reflections(n).obs)
+         stdout.put(.reflections(n).z_statistic)
+         stdout.flush
+      end
+      stdout.flush
+
+      ext_refs.create(n_refl)
+      ext.create(n_refl)
+      ext = .F_extinction_correction
+      ext_refs.set_F_exp(.reflections.F_pred)
+      ext_refs.set_F_pred(.reflections.F_pred * ext)
+      ext_refs.set_F_sigma(.reflections.F_sigma)
+      ext.destroy
+
+      if (NOT .optimise_extinction) return
+
+      stdout.text("The effects of extinction.")
+
+      w = ZERO
+      y = ZERO
+      do n=1,n_refl
+       y = y + abs(ext_refs(n).F_z)
+       w = w + abs(ext_refs(n).F_r)
+      end
+      y = y / n_refl
+      w = w / n_refl
+      stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/F_sigma is ",y)
+      stdout.show("Average value of abs(extinction correction) is ",w)
+      stdout.flush
+
+      stdout.text("The effects of intensity on extinction.")
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred")
+      do n=1,n_refl
+       stdout.put(ext_refs(n).F_pred)
+       stdout.put(ext_refs(n).F_z)
+       stdout.flush
+      end
+      stdout.flush
+
+      stdout.text("The effects of scattering angle on extinction.")
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda")
+      do n = 1,n_refl
+         stdout.put(.reflections(n).sin_theta_on_lambda)
+         stdout.put(ext_refs(n).F_z)
+         stdout.flush
+      end
+      ext_refs.destroy
+
+      stdout.flush
+   end
+
+
+end
