@@ -48,6 +48,10 @@ contains
       nullify(.X)
       nullify(.X0)
       nullify(.dX)
+      nullify(.Y)
+      nullify(.Y0)
+      nullify(.dY)
+      nullify(.inv_sigma)
       nullify(.X_labels)
       nullify(.dYdX)
 
@@ -68,6 +72,10 @@ contains
       .X.destroy
       .X0.destroy
       .dX.destroy
+      .Y.destroy
+      .Y0.destroy
+      .dY.destroy
+      .inv_sigma.destroy
       .X_labels.destroy
       .dYdX.destroy
 
@@ -109,6 +117,10 @@ contains
       if (object.X.created)                    .X.create_copy(object.X)
       if (object.X0.created)                   .X0.create_copy(object.X0)
       if (object.dX.created)                   .dX.create_copy(object.dX)
+      if (object.Y.created)                    .Y.create_copy(object.Y)
+      if (object.Y0.created)                   .Y0.create_copy(object.Y0)
+      if (object.dY.created)                   .dY.create_copy(object.dY)
+      if (object.inv_sigma.created)            .inv_sigma.create_copy(object.inv_sigma)
       if (object.X_labels.created)             .X_labels.create_copy(object.X_labels)
       if (object.dYdX.created)                 .dYdX.create_copy(object.dYdX)
 
@@ -246,6 +258,9 @@ contains
 
       ! Allocate the arrays
       .dYdX.create(n,.n_parameters)
+      .Y.create(n)
+      .Y0.create(n)
+      .dY.create(n)
 
    end
 
@@ -258,6 +273,18 @@ contains
       .chi20 = .chi2
       .chi2  = val
 
+   end
+
+   set(X,Y,Y0,sigma,dYdX)
+   ! Initialise least squares
+   X,Y,Y0,sigma   :: VEC{REAL}, IN
+   dYdX :: MAT{REAL}
+   .set_n_parameters(X.dim)
+   .set_n_data(Y.dim)
+   .set_X(X)
+   .set_Ys(Y,Y0)
+   .set_inv_sigma(sigma)
+   .set_dYdX(dYdX)
    end
 
    set_X(v) 
@@ -285,6 +312,30 @@ contains
 
    end
 
+   set_Y(v) 
+   ! Set the parameter vector ".Y" to "v"
+      v :: VEC{REAL}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( v.dim==.n_parameters,"wrong size, v")
+
+      .Y = v
+
+   end
+
+   set_Ys(v,v0) 
+   ! Set the parameter vector ".X" to "v"
+      v,v0 :: VEC{REAL}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( v.dim==.n_parameters,"wrong size, v")
+
+      .Y0 = v0
+      .Y = v
+      .dY = .Y-.Y0
+
+   end
+
    set_X_labels(v) 
    ! Set the parameter labels ".X_labels" to "v"
       v :: VEC{STR}, IN
@@ -309,6 +360,16 @@ contains
 
    end
 
+   set_inv_sigma(sigma) 
+   ! Set the parameter vector ".Y" to "v"
+      sigma :: VEC{REAL}, IN
+
+   ENSURE(.n_parameters>0,"n_parameters has not been set")
+   ENSURE( sigma.dim==.n_parameters,"wrong size, sigma")
+
+      .Y = ONE/sigma
+
+   end
 
 !  ============
 !  Read methods
@@ -473,11 +534,84 @@ contains
 
 
 
+   the_chi2 result (res) ::: pure
+   ! Return the chi2 between the predicted and observed structure
+   ! factors. The sum of squares is divided by max(.dim-1,1)
+      self :: IN
+      res :: REAL
+      z :: REAL
+      n :: INT
+
+      res = ZERO
+
+      do n = 1,.n_data
+         z = (.Y(n) - .Y0(n))*.inv_sigma(n)
+         res = res + z*z
+      end
+
+      res = res / max(.n_data-.n_parameters-.n_near_0)
+
+   end
+
+   goodness_of_fit result (res) ::: pure
+   ! Return the goodness-of-fit between the predicted and observed
+   ! structure factors
+      self :: IN
+      res :: REAL
+      res = sqrt(.chi2)
+   end
+
+   r_factor result (res) ::: pure
+   ! Return the r factor between the predicted and observed structure
+   ! factors
+      self :: IN
+      res :: REAL
+      top,bot :: REAL
+      n :: INT
+
+      top = ZERO
+      bot = ZERO
+
+      do n=1,size(self)
+         top = top + abs(.Y(n) - .Y0(n))
+         bot = bot + abs(.Y0(n))
+      end
+
+      res = top / bot
+
+   end
+
+
+   weighted_r_factor result (res) ::: pure
+   ! Return the weighted r factor for the structure factors
+      self :: IN
+      res :: REAL
+      top,bot,z,b :: REAL
+      n :: INT
+
+      top = ZERO
+      bot = ZERO
+
+      do n = 1,.dim
+
+         z = .Y(n)*(.Y(n)-.Y0(n))*.inv_sigma(n)
+         b = .Y0(n)*.inv_sigma(n)
+
+         top = top + z*z
+         bot = bot + b*b
+
+      end
+
+      res = sqrt(top/bot)
+
+   end
+
+
 !  ===============================
 !  Least-squares: Normal equations
 !  ===============================
 
-   solve_normal_equations(dYdX) ::: template, leaky
+   solve_normal_equations(dYdX) ::: leaky
    ! Get the ".dX" in some parameter vector by solving the normal
    ! equations, given "dYdX", the derivatives of Y w.r.t. X. 
       dYdX :: MAT{REAL}, IN
@@ -485,45 +619,42 @@ contains
    ENSURE(dYdX.dim1==.reflections.n_refl, "wrong size, dYdX")
    ENSURE(dYdX.dim2==.dX.dim, "incompatible .dX and dYdX")
 
-      A,dY :: MAT{REAL}*
-      rhs,sig,del :: VEC{REAL}*
-      n_refl,n_p,i,j :: INT
+      A :: MAT{REAL}*
+      rhs,inv_sigma2,delta :: VEC{REAL}*
+      n_p,i,j :: INT
       fac :: REAL
  
+      ! Next iteration
+      .iteration = .iteration + 1
+
+      ! Save and increment parameters
+      .set_dX
+
       ! Constants
-      n_refl = .reflections.n_refl
-      n_p    = dYdX.dim2
+      n_p    = .n_parameters
  
       ! Arrays
       A.create(n_p,n_p)
       rhs.create(n_p)
-      del.create(n_refl)
-      dY.create(n_refl,n_p)
-      sig.create(n_refl)
-
-      ! Make derivatives of Y_pred
-      .make_d_Y_pred_dX(dY,sig,del,dYdX)
-
-      if (.debugging("solve_normal_equations")) then 
-      stdout.text("dY:")
-      stdout.put(dY)
-      end
+      inv_sigma2.create(n_p)
 
       ! Make the normal matrix
+      inv_sigma2.create(n_p)
+      inv_sigma2 = .inv_sigma*.inv_sigma
       do i = 1,n_p
       do j = 1,n_p
-         A(i,j) = VEC{REAL}:sum(sig*dY(:,i)*dY(:,j))
+         A(i,j) = VEC{REAL}:sum(inv_sigma2*.dYdX(:,i)*.dYdX(:,j))
       end
       end
-      sig.destroy
+      inv_sigma2.destroy
 
       ! Make the rhs
+      delta.create(.n_data)
+      delta = (.Y-.Y0)*.inv_sigma
       do i = 1,n_p
-         rhs(i) = VEC{REAL}:sum(del*dY(:,i))
+         rhs(i) = VEC{REAL}:sum(delta*.dYdX(:,i))
       end
-
-      dY.destroy
-      del.destroy
+      delta.destroy
 
       if (.debugging("solve_normal_equations")) then 
       stdout.text("A:")
@@ -553,18 +684,21 @@ contains
       ! Get the maximum shift
       .max_shift = maxval(abs(.dX))
 
-      ! Set the number of parameters
-      .n_param = n_p - .n_near_0 
-
-      ! Update chi2
-      .update_n_param_and_chi2
-
       ! Set the full covariance matrix
+      .chi2_0 = .chi2
+      .chi2 = .the_chi2
       .covariance_matrix = .chi2*.covariance_matrix
+
+      ! Set variances
+      .covariance_matrix.put_diagonal_to(.esd)
+
+      ! Set ESD's
+      .esd = sqrt(.esd)
 
       ! Set the fit errors e.g. max(.dX/esd)
       ! Parameter ordering is unique fragment atom order.
-      .update_fit_errors
+      
+      .update_shift_info
 
       rhs.destroy
       A.destroy
@@ -575,8 +709,8 @@ contains
       end
 
       ! Renormalise shift if too big
-      if (.max_shift>.max_allowed_param_shift) then
-         fac = .max_allowed_param_shift/.max_shift
+      if (.max_shift>.tol_max_shift) then
+         fac = .tol_max_shift/.max_shift
          .dX = fac * .dX
       end
 
@@ -587,52 +721,15 @@ contains
 
    end
 
-
-   update_fit_errors
+   update_shift_info
    ! Set the esd's for the current fit. 
    ! WARNING: The order of the parameters is not always the same
    ! between calls of this routine. You *must* call this if the
    ! covariance matrix has been transformed from a unique-fragment
    ! atom ordering to asymmetric-unit ordering.
 
-   ENSURE(.covariance_matrix.created,"no covariance_matrix")
-   ENSURE(.esd.created,"no esd")
-   ENSURE(.dX.created,"no dX")
-   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
-   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
-
       indmax,p :: INT
       val,valmax :: REAL
-      W :: VEC{REAL}*
-
-      ! Set variances
-      .covariance_matrix.put_diagonal_to(.esd)
-
-      if (.debugging("update_fit_errors:variances")) then
-         stdout.text("variances:")
-         stdout.put(.esd,by_column=TRUE)
-      end
-
-      ! Set ESD's
-      .esd = sqrt(.esd)
-
-      if (.debugging("update_fit_errors")) then
-
-         stdout.text("esd:")
-         stdout.put(.esd,by_column=TRUE)
-
-         stdout.text("dX:")
-         stdout.put(.dX,by_column=TRUE)
-
-         W.create(.esd.dim)
-         where (abs(.esd)<TOL(8)); W = ZERO
-         elsewhere;                W = .dX/.esd
-         end
-         stdout.text("dX/esd:")
-         stdout.put(W,by_column=TRUE)
-         W.destroy
-
-      end
 
       ! Get the location of the maximum shift on esd
       indmax = 0
@@ -667,293 +764,6 @@ contains
 
    end
 
-   update_refinement_errors
-   ! Update the esd's for the current fit. 
-   ! NOTE: must have updated X_ref and X_ref0
-
-   ENSURE(.covariance_matrix.created,"no covariance_matrix")
-   ENSURE(.esd.created,"no esd")
-   ENSURE(.dX.created,"no dX")
-   ENSURE(.esd.dim==.covariance_matrix.dim1,"esd: incompatible with covariance_matrix")
-   ENSURE(.esd.dim==.dX.dim,"esd: incompatible with dX")
-   ENSURE(.X_ref.created,"no X_ref")
-   ENSURE(.X_ref0.created,"no X_ref0")
-
-      n_p,indmax,p :: INT
-      val,valmax :: REAL
-      dX :: VEC{REAL}*
- 
-      ! Constants
-      n_p = .esd.dim
-
-      ! Set the change in paramts between fits
-      dX.create(n_p)
-      dX = .X_ref - .X_ref0
-
-      ! Get the location of the maximum shift on esd
-      indmax = 0
-      valmax = ZERO
-      do p = 1,n_p
-
-         val = .esd(p)
-         if (val==ZERO) cycle
-
-         val = abs(dX(p)/val)
-         if (val<=valmax) cycle
-
-         valmax = val
-         indmax = p
-
-      end
-
-      ! Assign maximum index
-      DIE_IF(indmax==0,"no maximum index found!")
-      .max_refshift_on_esd_ind = indmax
-      .max_refshift_on_esd     = valmax
-
-      ! Debug
-      if (.debugging("update_refinement_errors")) then 
-      stdout.show("max_refshift_on_esd_ind  =",indmax)
-      stdout.show("max_refshift_on_esd      =",valmax)
-      .max_refshift_on_esd     = valmax
-      stdout.text(".esd:")
-      stdout.put(.esd,by_column=TRUE)
-      end
-
-      ! Clean
-      dX.destroy
-
-   end
-
-!  Normal equations derivative
-
-   d_F_pred_dX(res,sig,del,dFdX)
-   ! Evaluate "res", the derivative of the F_pred with respect to some
-   ! parameters X (e.g. thermal parameters) given "dFdX", the
-   ! derivatives of the absolute structure factors  w.r.t. the X
-   ! parameters. Includes derivatives w.r.t. the scale factor, but
-   ! extinction is treated as a constant and should be OFF for exact
-   ! results. Also makes "sig" and "del" required for the normal
-   ! equations.
-      res :: MAT{REAL}, OUT
-      sig,del :: VEC{REAL}, OUT
-      dFdX :: MAT{REAL}, IN
-
-   ENSURE(.reflections.created,"no reflection data")
-   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
-   ENSURE(.reflections.have_F_exp, "no experimental structure factors")
-   ENSURE(.reflections.have_F_sigma, "no structure factor errors")
-   ENSURE( del.dim1==.reflections.n_refl, "wrong size, del")
-   ENSURE( res.dim1==.reflections.n_refl, "wrong size, res")
-   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dF")
-   ENSURE(dFdX.dim2==res.dim2, "incompatible res, dFdX")
-
-      ref :: REFLECTION*
-      Ft,Fx,dt,db,ext,angle_bit,d_scale :: VEC{REAL}*
-      top,bot,extn,F_exp,F_sig,F_abs,F_til,sig2,F_es2,F_ts2,fac,dsp,ext4,dX,val1,val2,dF :: REAL
-      n_refl,n_p,p,n :: INT
- 
-      ! Constants
-      n_refl = .reflections.n_refl
-      n_p = dFdX.dim2
-
-      ! Temporaries
-      Ft.create(n_refl)
-      Fx.create(n_refl)
-      dt.create(n_refl)
-      db.create(n_refl)
- 
-      ! Extinction factor part
-      ext.create(n_refl)
-      ext = .F_extinction_correction(.extinction_factor)
-
-      ! Angle bit, extinction factor folded in
-      angle_bit.create(n_refl)
-      angle_bit = .extinction_factor*.extinction_angle_part
-
-      ! Make temporaries for derivative of scale, extinction, F_abs
-      top = ZERO
-      bot = ZERO
-
-      do n = 1,n_refl
-
-         extn   = ext(n)
-         ref    => .reflections(n)
-
-         F_exp  = ref.F_exp
-         F_sig  = ref.F_sigma
-         F_abs  = abs(ref.F_calc)
-         F_til  = extn*F_abs
-         sig2   = ONE/(F_sig*F_sig)
-
-         F_es2  = F_exp*sig2
-         F_ts2  = F_til*sig2
-
-         top    = top + F_til*F_es2
-         bot    = bot + F_til*F_ts2
-
-         ext4   = extn*extn
-         ext4   = ext4*ext4
-         dX     = -HALF*ext4*angle_bit(n)*F_abs
-         dX     = ONE + F_abs*dX
-
-         dt(n)  = F_es2*extn*dX
-         db(n)  = extn*F_ts2*dX
-         Ft(n)  = F_til
-         Fx(n)  = .scale_factor*extn*dX
-
-         ! Return these
-         sig(n) = sig2
-         del(n) = (F_exp - ref.F_pred)*sig2
-
-      end
-
-      angle_bit.destroy
-      ext.destroy
- 
-      ! Derivative of the scale factor
-      d_scale.create(n_p)
-      bot = ONE/bot
-      fac = -TWO*top*bot*bot
-      do p = 1,n_p
-         val1 = ZERO
-         val2 = ZERO
-         do n = 1,n_refl
-            dF = dFdX(n,p) 
-            val1 = val1 + dt(n)*dF
-            val2 = val2 + db(n)*dF
-         end
-         d_scale(p) = bot*val1 + fac*val2
-      end
-
-      db.destroy
-      dt.destroy
-
-      ! Derivative of F_pred or F^m
-      do p = 1,n_p
-         dsp = d_scale(p)
-         do n = 1,n_refl
-            res(n,p) = dsp*Ft(n) + Fx(n) * dFdX(n,p) 
-         end
-      end
-
-      ! Clean up
-      d_scale.destroy
-      Fx.destroy; Ft.destroy
-
-   end
-
-   d_F2_pred_dX(res,sig,del,dF2dX)
-   ! Evaluate "res", the derivative of the F2_pred with respect to some
-   ! parameters X (e.g. thermal parameters) given "dF2dX", the
-   ! derivatives of the square absolute structure factors  w.r.t. the X
-   ! parameters. Includes derivatives w.r.t. the scale factor, but
-   ! extinction is treated as a constant and should be OFF for exact
-   ! results. Also makes "sig" and "del" required for the normal
-   ! equations.
-      res :: MAT{REAL}, OUT
-      sig,del :: VEC{REAL}, OUT
-      dF2dX :: MAT{REAL}, IN
-
-   ENSURE(.reflections.created,"no reflection data")
-   ENSURE(.reflections.have_F2_calc, "no calculated structure factors")
-   ENSURE(.reflections.have_F2_exp, "no experimental structure factors")
-   ENSURE(.reflections.have_F2_sigma, "no structure factor errors")
-   ENSURE( del.dim1==.reflections.n_refl, "wrong size, del")
-   ENSURE( res.dim1==.reflections.n_refl, "wrong size, res")
-   ENSURE(dF2dX.dim1==.reflections.n_refl, "wrong size, dF")
-   ENSURE(dF2dX.dim2==res.dim2, "incompatible res, dFdX")
-
-      ref :: REFLECTION*
-      F2,dt,db,d_scale :: VEC{REAL}*
-      I_clc,top,bot,F2_exp,F2_sig,sig2,F2_es2,F2_ts2,fac,dsp,val1,val2,dF2 :: REAL
-      n_refl,n_p,p,n :: INT
- 
-      ! Constants
-      n_refl = .reflections.n_refl
-      n_p = dF2dX.dim2
-
-      ! Temporaries
-      F2.create(n_refl)
-      dt.create(n_refl)
-      db.create(n_refl)
- 
-
-      ! Make temporaries for derivative of scale, extinction, F_abs
-      top = ZERO
-      bot = ZERO
-
-      do n = 1,n_refl
-
-         ref    => .reflections(n)
-
-         F2_exp  = ref.F2_exp
-         F2_sig  = ref.F2_sigma
-         F2_clc  = ref.F2_calc
-         sig2   = ONE/(F2_sig*F2_sig)
-
-         F2_es2  = F2_exp*sig2
-         F2_ts2  = F2_clc*sig2
-
-         top    = top + F2_clc*F2_es2
-         bot    = bot + F2_clc*F2_ts2
-
-         dt(n)  = F2_es2
-         db(n)  = F2_ts2
-         F2(n)  = F2_clc
-
-         ! Return these
-         sig(n) = sig2
-         del(n) = (F2_exp - ref.F2_pred)*sig2
-
-      end
-
-      ! Derivative of the scale factor
-      d_scale.create(n_p)
-      bot = ONE/bot
-      fac = -TWO*top*bot*bot
-      do p = 1,n_p
-         val1 = ZERO
-         val2 = ZERO
-         do n = 1,n_refl
-            dF2 = dF2dX(n,p) 
-            val1 = val1 + dt(n)*dF2
-            val2 = val2 + db(n)*dF2
-         end
-         d_scale(p) = bot*val1 + fac*val2
-      end
-
-      db.destroy
-      dt.destroy
-
-      ! Derivative of F2_pred
-      do p = 1,n_p
-         dsp = d_scale(p)
-         do n = 1,n_refl
-            res(n,p) = dsp*F2(n) + .scale_factor * dF2dX(n,p) 
-         end
-      end
-
-      ! Clean up
-      d_scale.destroy
-      F2.destroy
-
-   end
-
-
-!  Fit/refinement iteration control
-
-   update_fit_parameters
-   ! Update i.e. increment the fit parameters
-
-      ! Next iteration
-      .iteration = .iteration + 1
-
-      ! Save and increment parameters
-      .set_dX
-
-   end
-
 !  Fit/refinement iteration control
  
    fit_finished result (res)
@@ -961,7 +771,7 @@ contains
       res :: BIN
 
       ! Converged?
-      .converged = .max_shift_on_esd<.max_shift_on_esd_tol &
+      .converged = .max_shift_on_esd<.tol_max_shift_on_esd &
                AND .iteration>=.min_iterations
 
       ! chi2 inceased?
@@ -999,7 +809,7 @@ contains
       .table(4).create_values([.weighted_r_factor])
       .table(5).create_values([.max_shift_on_esd])
       .table(6).create_values([.max_shift_on_esd_par])
-      .table(7).create_values([.n_param])
+      .table(7).create_values([.n_parameters])
       .table(8).create_values([.n_near_0])
 
       ! Put out the body
@@ -1010,27 +820,6 @@ contains
 
    end
 
-   put_refinement_table_body
-   ! Print the current iterations results
-
-      ! Set table body (leaky)
-      .ref_table(1).create_values([.ref_iteration])
-      .ref_table(2).create_values([.fit_iteration])
-      .ref_table(3).create_values([.chi2_ref0])
-      .ref_table(4).create_values([.chi2_ref])
-      .ref_table(5).create_values([.F_r_factor])
-      .ref_table(6).create_values([.F_weighted_r_factor])
-      .ref_table(7).create_values([.max_refshift_on_esd])
-      .ref_table(8).create_values([.max_refshift_on_esd_par])
-      .ref_table(9).create_values([.n_param])
-
-      ! Put out the body
-      .ref_table.put_body
-
-      ! Clear thje columns for next time (UNleaky!)
-      .ref_table.clear_columns
-
-   end
 
    put_results
    ! Put the fit-iteration footer and fit results
@@ -1053,15 +842,9 @@ contains
       end
 
       ! Put final fitting statistics
-      .reflections.put_F_statistics(show_chi2=FALSE)
-      stdout.show("# of fit parameters, N_p    =", .n_param)
+      stdout.show("# of fit parameters, N_p    =", .n_parameters)
       stdout.show("chi^2(N_p)                  =",.chi2)
       stdout.show("Goodness of fit (N_p)       =", sqrt(.chi2))
-      stdout.show("Effective (mean) sigma^2    =",.reflections.sigma2_eff)
-
-      ! Analysis
-      stdout.flush
-      stdout.text("An analysis of the fit is in the file 'stdout.fit_analysis'")
 
    end
 
@@ -1087,248 +870,6 @@ contains
 !  ==============
 !  Output methods
 !  ==============
-
-   put
-   ! Put out the diffraction data to file "out"
-
-      stdout.flush
-      stdout.text("Diffraction information:")
-      stdout.show("data_kind                     =", .data_kind)
-
-      if (.reflections.created) then
-      stdout.text("Reflection data:")
-      stdout.flush
-      .put_reflection_data
-      end
-
-   end
-
-   put_statistics(show_chi2)
-   ! Output the structure factor goodness of fit statistics.
-      show_chi2 :: BIN, optional
-
-      select case (.data_kind)
-         case ("free-neutron-f");  .reflections.put_statistics("Free Neutron F's",show_chi2)
-         case ("free-neutron-f2"); .reflections.put_statistics("Free Neutron F2's",show_chi2)
-         case ("free-pnd-f");      .reflections.put_statistics("Free PND F's",show_chi2)
-         case ("free-x-ray-f");    .reflections.put_statistics("Free X-ray F's",show_chi2)
-         case ("free-x-ray-f2");   .reflections.put_statistics("Free X-ray F2's",show_chi2)
-         case ("neutron-f");       .reflections.put_statistics("Neutron F's",show_chi2)
-         case ("neutron-f2");      .reflections.put_statistics("Neutron F2's",show_chi2)
-         case ("pnd-f");           .reflections.put_statistics("PND F's",show_chi2)
-         case ("x-ray-f");         .reflections.put_statistics("X-ray F's",show_chi2)
-         case ("x-ray-f2");        .reflections.put_statistics("X-ray F2's",show_chi2)
-         case default; UNKNOWN(.data_kind)
-      end
-
-   end
-
-   put_F2_free_stats
-   ! Output the F2 goodness of fit statistics
-      .reflections.put_F2_free_stats
-      .put_correction_data
-   end
-
-   put_correction_data
-   ! Output the correction data
-
-      stdout.flush
-      stdout.show("Using scale factor(s)          =", .optimise_scale)
-      stdout.show("Using extinction               =", .optimise_extinction)
-      stdout.show("Thermal smearing model         =", .thermal_smearing_model)
-      stdout.show("Fragment partition model       =", .partition_model)
-      stdout.show("Correct dispersion?            =", .correct_dispersion)
-
-      if (.optimise_extinction) then;
-      stdout.show("Optimize extinction            =", TRUE)
-      stdout.show("Secondary extinction factor    =", .extinction_factor)
-      else
-      stdout.show("Optimize extinction            =", FALSE)
-      end
-
-      if (.optimise_scale) then
-
-        if (.use_multiple_scale_factors) then
-      stdout.show("Using multiple scale factors   =", TRUE)
-      stdout.show("Scale factors                  =", .scale_factors)
-        else
-      stdout.show("Using single scale factor      =", TRUE)
-      stdout.show("Scale factor                   =", .scale_factors(1))
-        end
-
-      else
-      stdout.show("Optimize scale factor          =", FALSE)
-      end
-
-   end
-
-   put_qq_plot
-   ! Output a qq plot to stdout.
-   ! It is a plot of the experimental quantile vs expected quantile.
-   ENSURE(.reflections.created, "no reflection data")
-      .reflections.put_qq_plot
-   end
-
-   put_labelled_qq_plot
-   ! Output a qq plot to stdout.
-   ! It is a plot of the experimental quantile vs expected quantile.
-   ENSURE(.reflections.created, "no reflection data")
-      .reflections.put_labelled_qq_plot
-   end
-
-   put_chi2_vs_angle_plot
-   ! Output a table with the chi2 for the structure factor data set
-   ! broken into 20 sections.
-      num_sections :: INT
-      n,num,k,n_refl :: INT
-      section_for :: VEC{INT}*
-      stl,stl_min,stl_max,chi2,width,stl_mean :: REAL
-
-      num_sections = 20
-      n_refl = .reflections.n_refl
-      REFLECTION:set_wavelength(.wavelength)
-
-      ! Work out the limits of the sin(theta)/lambda.
-      stl_min = 1000
-      stl_max = ZERO
-      do n =1,n_refl
-         stl = .reflections(n).sin_theta_on_lambda
-         if (stl < stl_min) stl_min = stl
-         if (stl > stl_max) stl_max = stl
-      end
-      width = (TOL(3) + stl_max - stl_min)/num_sections
-
-      section_for.create(n_refl)
-      ! Determine which section each reflection belongs to.
-      do n = 1,n_refl
-         stl = .reflections(n).sin_theta_on_lambda
-         section_for(n) = ceiling((TOL(3) + stl - stl_min) / width)
-      end
-
-      stdout.flush
-      stdout.text("Chi^2 vs angle plot")
-      stdout.flush
-      stdout.text("sin(theta)/lambda in Angstrom^(-1)")
-      stdout.show("Smallest sin(theta)/lambda  =",stl_min)
-      stdout.show("Largest sin(theta)/lambda   =",stl_max)
-      stdout.flush
-      stdout.put("stl")
-      stdout.put("chi^2")
-      stdout.flush
-      stdout.dash(real_fields=2)
-
-      do n = 1, num_sections
-
-         chi2 = ZERO
-         num = 0
-         stl_mean = stl_min + (n - HALF) * width
-         do k = 1, n_refl
-           if (n==section_for(k)) then
-             chi2 = chi2 + .reflections(k).z_statistic_squared
-             num = num + 1
-           end
-         end
-
-         stdout.put(stl_mean)
-
-         if (num==0) then
-           stdout.flush
-           cycle
-         else
-           chi2 = chi2 / max(num - .n_param,1)
-           stdout.put(chi2)
-           stdout.flush
-         end
-
-      end
-
-      stdout.flush
-
-      section_for.destroy
-
-   end
-
-   put_pred_vs_obs_plots
-   ! Output some different plots about the obs vs. predicted structure factors.
-      ext :: VEC{REAL}*
-      ext_refs :: VEC{REFLECTION}*
-      n,n_refl :: INT
-      y,w :: REAL
-
-      n_refl = .reflections.n_refl
-      REFLECTION:set_wavelength(.wavelength)
-
-      stdout.text("The effects of angle.")
-      stdout.text("Scatter plot of z = (pred-obs)/sigma vs. sin(theta)/lambda")
-      do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
-         stdout.put(.reflections(n).z_statistic)
-         stdout.flush
-      end
-      stdout.flush
-
-      stdout.text("The effects of angle.")
-      stdout.text("Scatter plot of Delta = (pred-obs) vs. sin(theta)/lambda")
-      do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
-         stdout.put(.reflections(n).delta)
-         stdout.flush
-      end
-      stdout.flush
-
-      stdout.text("The effects of intensity.")
-      stdout.text("Scatter plot of z = (pred-obs)/sigma vs obs")
-      do n = 1,n_refl
-         stdout.put(.reflections(n).obs)
-         stdout.put(.reflections(n).z_statistic)
-         stdout.flush
-      end
-      stdout.flush
-
-      ext_refs.create(n_refl)
-      ext.create(n_refl)
-      ext = .F_extinction_correction
-      ext_refs.set_F_exp(.reflections.F_pred)
-      ext_refs.set_F_pred(.reflections.F_pred * ext)
-      ext_refs.set_F_sigma(.reflections.F_sigma)
-      ext.destroy
-
-      if (NOT .optimise_extinction) return
-
-      stdout.text("The effects of extinction.")
-
-      w = ZERO
-      y = ZERO
-      do n=1,n_refl
-       y = y + abs(ext_refs(n).F_z)
-       w = w + abs(ext_refs(n).F_r)
-      end
-      y = y / n_refl
-      w = w / n_refl
-      stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/F_sigma is ",y)
-      stdout.show("Average value of abs(extinction correction) is ",w)
-      stdout.flush
-
-      stdout.text("The effects of intensity on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred")
-      do n=1,n_refl
-       stdout.put(ext_refs(n).F_pred)
-       stdout.put(ext_refs(n).F_z)
-       stdout.flush
-      end
-      stdout.flush
-
-      stdout.text("The effects of scattering angle on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda")
-      do n = 1,n_refl
-         stdout.put(.reflections(n).sin_theta_on_lambda)
-         stdout.put(ext_refs(n).F_z)
-         stdout.flush
-      end
-      ext_refs.destroy
-
-      stdout.flush
-   end
 
 
 end
