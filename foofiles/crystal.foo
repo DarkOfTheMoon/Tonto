@@ -103,6 +103,8 @@ contains
       nullify(.gtr)
 
       nullify(.sf_for_unique_frag_atom)
+      nullify(.sf_e)
+      nullify(.sf_d)
 
       nullify(.data)
 
@@ -134,6 +136,8 @@ contains
    ! Erase all data pointer information
 
       .sf_for_unique_frag_atom.destroy
+      .sf_e.destroy
+      .sf_d.destroy
 
       nullify(.data)
 
@@ -3547,7 +3551,46 @@ contains
    ! Make and put the *predicted* x-ray F's in "Y"
       Y :: VEC{REAL}, OUT
 
+      ! Get complex structure factors
+      .put_xray_F_help
+
+      ! Apply experimental corrections & set "Y"
       .data.put_xray_F(Y)
+
+   end
+
+   put_xray_F_help ::: private, leaky
+   ! Make and put the complex structure factors reflections(:).calc.
+   ! Also make ".sf_d" the derivative structure factors since it is
+   ! efficient to do so at the same time.
+
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
+
+      dFa  :: MAT{REAL}*
+      dFc :: MAT{CPX}*
+      Fc :: VEC{CPX}*
+      n_refl,n_k,n_p :: INT
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      n_k    = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Make the structure factors and derivatives (leaky, sf_d)
+      .make_unique_sf_derivs
+
+      ! Sum the symmetry-generated SF's to get
+      ! the actual structure factors Fc
+      Fc.create(n_refl) 
+      .spacegroup.sum_unique_sf(Fc,.sf_e,.data.reflections)
+
+      ! Partially clean ...
+      .sf_e.destroy
+
+      ! Set the calculated SF's
+      .reflections.set_calc_to(Fc)
 
    end
 
@@ -3576,24 +3619,24 @@ contains
       n_pADPs = .no_of_pADPs
 
       ! Set the asymmetric unit pADP derivatives
-      .make_xray_dF(dY(:,1:n_pADPs))
+      .put_xray_dF_help(dY(:,1:n_pADPs))
 
       ! Set scale and extinction-factor derivatives
       .data.put_xray_dF(dY(:,n_pADPs+1:))
 
    end
 
-   put_xray_dF_body(dY) ::: leaky, private
+   put_xray_dF_help(dY) ::: private
    ! Get the *asym* atom shifts ".data.dX" by solving the
    ! normal equations, using:
    ! * "sf_n", the unique *fragment* atom structure factors
    !   for the symmetry related k points
    ! * ".data.X_ref", the *asym* atom parameters 
    !   (positions and ADP's) 
-   ! "sf_n" is updated by the shift amount at the end. 
 
-   ENSURE(.data.created,                        "no data")
-   ENSURE(.fragment_info_made,                  "no fragment info")
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
 
       dFa  :: MAT{REAL}*
       sf_d,dFc :: MAT{CPX}*
@@ -3601,32 +3644,25 @@ contains
       n_refl,n_k,n_p :: INT
 
       ! Constants
-      n_refl = .n_refl
+      n_refl = .data.reflections.n_refl
       n_k    = .n_unique_SF_k_pts
       n_p    = .asymmetric_unit_atom.no_of_pADPs
 
-      ! Symmetry generated structure factors
-      sf_d.create(n_k,n_p) ! Symmetry generated SF derivatives
-      sf_e.create(n_k)     ! Symmetry generated SF's
+      ! Symmetry-generated structure factors
+      sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      sf_e.create(n_k)     ! dynamic SF's
 
-      ! Make the symmetry-generated structure factors 
-      ! and their  derivatives
-      .make_unique_sf_derivs(sf_e,sf_d,sf_n)
+      ! Make the structure factors and derivatives
+      .make_unique_sf_derivs(sf_e,sf_d)
 
       ! Sum the symmetry-generated SF's to get
       ! the actual structure factors Fc
       Fc.create(n_refl) 
-      .sum_unique_sf(Fc,sf_e)
+      .spacegroup.sum_unique_sf(Fc,sf_e,.data.reflections)
       sf_e.destroy
 
       ! Set the calculated SF's
-      .set_F_calc(Fc)
-
-      if (.debugging("get_parameter_shifts_F")) then
-         stdout.text("Fc:")
-         stdout.put(Fc)
-      end
-      Fc.destroy
+      .reflections.set_calc_to(Fc)
 
       ! Make chi2 in F 
       .make_F_predicted
@@ -3641,9 +3677,50 @@ contains
       ! ... unique fragment atoms only
       n_p = .no_of_parameters
       dFa.create(n_refl,n_p)
-      .d_F_pred_dX(dFa,dFc)
-      dFc.destroy
+      .d_F_pred_dX(Y,dFc)
  
+   end
+
+   d_F_abs_dX(res,dFdX)
+   ! Evaluate "res", the derivative of the F_abs with respect to some
+   ! parameters X (e.g. thermal parameters) given "dFdX", the
+   ! derivatives of the *complex* structure factors  w.r.t. the X
+   ! parameters. 
+      res :: MAT{REAL}, OUT
+      dFdX :: MAT{CPX}, IN
+
+   ENSURE(.reflections.created,"no reflection data")
+   ENSURE(.reflections.have_F_calc, "no calculated structure factors")
+   ENSURE( res.dim1==.reflections.n_refl, "wrong size, res")
+   ENSURE(dFdX.dim1==.reflections.n_refl, "wrong size, dFdX")
+   ENSURE(dFdX.dim2==res.dim2, "incompatible res, dFdX")
+
+      F_con :: VEC{CPX}*
+      F_abi :: VEC{REAL}*
+      F_cal :: CPX
+      n_refl,n_p,p,n :: INT
+ 
+      n_refl = .reflections.n_refl
+      n_p = dFdX.dim2
+
+      F_con.create(n_refl)
+      F_abi.create(n_refl)
+
+      do n = 1,n_refl
+         F_cal    = .reflections(n).F_calc
+         F_con(n) = conjg(F_cal)
+         F_abi(n) = ONE/abs(F_cal)
+      end
+
+      do p = 1,n_p
+      do n = 1,n_refl
+         res(n,p) = F_abi(n) * REALIFY(F_con(n) * dFdX(n,p))
+      end
+      end
+
+      F_abi.destroy
+      F_con.destroy
+
    end
 
    finish_xray_F_fit 
@@ -3677,54 +3754,71 @@ contains
 !  Structure factor derivatives
 !  ============================
 
-   make_unique_sf_derivs(sf_e,sf_d,sf_n)
-   ! Make "sf_e" and "sf_d", the symmetry-related thermally-smeared
-   ! structure factors and their derivatives, from "sf_n" the *unique*
-   ! .fragment_atom structure factors and the ".fragment_atom.ADP_tensor".
+   make_unique_sf_derivs ::: leaky
+   ! Make ".sf_e" and ".sf_d", the symmetry-related dynamic structure
+   ! factors and their derivatives, from ".asf" (the *unique* frag.
+   ! atom structure factors) and the ".fragment_atom.ADP_tensor".
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
+      sf_e :: VEC{CPX}*
+      sf_d :: MAT{CPX}*
 
    ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
    ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
    ENSURE(.data.created,                         "no data")
 
+      ! Constants
+      n_refl = .data.reflections.n_refl
+      n_k    = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
+
       ! Refine positions and ADPs
       if (.data.refine_positions_and_ADPs) then  
 
-         if (.data.refine_U_iso_for_atom.created) then  ! ... and refine some atoms isotropically
-                                                     .make_unique_sfd_pos_Y_Uiso_Y(sf_e,sf_d)
-         else if (.data.refine_H_ADPs) then           ! ... and refine H ADP's
-   
-            if (.data.refine_H_U_iso)          then; .make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d)
-            else
-               if (.data.refine_anharmonicity) then; .make_unique_sfd_pos_Y_ADP4_Y(sf_e,sf_d)
-               else;                                 .make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d)
+         if (.data.refine_U_iso_for_atom.created) then  
+                                                        ! Refine some atoms isotropically
+                                                        .make_unique_sfd_pos_Y_Uiso_Y
+         else if (.data.refine_H_ADPs) then           
+            if (.data.refine_H_U_iso) then
+                                                        ! Refine H ADP's isotropically
+                                                        .make_unique_sfd_pos_Y_Hiso_Y
+            else                                        
+               if (.data.refine_anharmonicity) then
+                                                        ! Refine some atoms anharmonically
+                                                        .make_unique_sfd_pos_Y_ADP4_Y
+               else
+                                                        ! Refine *all* atoms ansitropic
+                                                        .make_unique_sfd_pos_Y_ADP__Y
                end
             end
-   
-         else                                        ! ... and don't refine H ADP's
-
-                                                     .make_unique_sfd_pos_Y_HADP_N(sf_e,sf_d)
+         else                                        
+                                                        ! Don't refine H ADP's at all
+                                                        .make_unique_sfd_pos_Y_HADP_N
          end
 
       ! Refine positions only, not ADPs
       else if (.data.refine_positions_only) then 
 
-                                                     .make_unique_sfd_pos_Y_ADP__N(sf_e,sf_d) 
+                                                        ! Refine only positions
+                                                        .make_unique_sfd_pos_Y_ADP__N
 
       ! Refine ADP's only, not positions
       else if (.data.refine_ADPs_only) then      
 
-         if (.data.refine_H_ADPs) then               ! ... and refine H ADP's
-   
-            if (.data.refine_H_U_iso) then;          .make_unique_sfd_pos_N_Hiso_Y(sf_e,sf_d)
-            else;                                    .make_unique_sfd_pos_N_ADP__Y(sf_e,sf_d)
+         if (.data.refine_H_ADPs) then               
+            if (.data.refine_H_U_iso) then
+                                                        ! Refine *only* H ADP's isotropically
+                                                        .make_unique_sfd_pos_N_Hiso_Y
+            else
+                                                        ! Refine *only* H ADP's anisotropically
+                                                        .make_unique_sfd_pos_N_ADP__Y
             end
-
-         else                                        ! ... and don't refine H ADP's
-   
-                                                     .make_unique_sfd_pos_N_HADP_N(sf_e,sf_d)
+         else                                        
+                                                        ! Refine *only* non-H ADP's
+                                                        .make_unique_sfd_pos_N_HADP_N
          end
 
       ! wtf?
@@ -3737,23 +3831,18 @@ contains
    end
 
 
-   make_unique_sfd_pos_Y_ADP4_Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_ADP4_Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does *all* parameters, positions and ADPs
    !       *including* up to 4th order anharmonicity.
    ! NOTE: the order of the derivatives follows the lexical order 
    !       defined in GAUSSIAN_DATA
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(NOT .data.refine_anharmonicity, "must be refining anharmonicity")
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,  "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,  "sf_d, wrong dim1")
 
       kv   :: VEC{REAL}(3)
       adp2 :: MAT{REAL}(3,3)
@@ -3775,6 +3864,11 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -3786,8 +3880,8 @@ contains
       k3v => k_pt(:,3)
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -3843,20 +3937,20 @@ contains
                sf2 = sf1 * HALF
    
                ! SF contribution (anharmonic!)
-               sf_e(k) = sf_e(k) + sf1
+               .sf_e(k) = .sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+ 1) =  II*k1*sf1
-               sf_d(k,base+ 2) =  II*k2*sf1
-               sf_d(k,base+ 3) =  II*k3*sf1
+               .sf_d(k,base+ 1) =  II*k1*sf1
+               .sf_d(k,base+ 2) =  II*k2*sf1
+               .sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
-               sf_d(k,base+ 4) = -k1_k1*sf2
-               sf_d(k,base+ 5) = -k2_k2*sf2
-               sf_d(k,base+ 6) = -k3_k3*sf2
-               sf_d(k,base+ 7) = -k1_k2*sf1
-               sf_d(k,base+ 8) = -k1_k3*sf1
-               sf_d(k,base+ 9) = -k2_k3*sf1
+               .sf_d(k,base+ 4) = -k1_k1*sf2
+               .sf_d(k,base+ 5) = -k2_k2*sf2
+               .sf_d(k,base+ 6) = -k3_k3*sf2
+               .sf_d(k,base+ 7) = -k1_k2*sf1
+               .sf_d(k,base+ 8) = -k1_k3*sf1
+               .sf_d(k,base+ 9) = -k2_k3*sf1
    
                ! Structure factor (harmonic)
                sf1  = sfh
@@ -3868,33 +3962,33 @@ contains
                sf24 = sf1 * SIXTH*QUARTER
 
                ! U3 derivatives 
-               sf_d(k,base+10) = -II*k1_k1*k1*sf6
-               sf_d(k,base+11) = -II*k2_k2*k2*sf6
-               sf_d(k,base+12) = -II*k3_k3*k3*sf6
-               sf_d(k,base+13) = -II*k1_k1*k2*sf2
-               sf_d(k,base+14) = -II*k1_k1*k3*sf2
-               sf_d(k,base+15) = -II*k2_k2*k1*sf2
-               sf_d(k,base+16) = -II*k2_k2*k3*sf2
-               sf_d(k,base+17) = -II*k3_k3*k1*sf2
-               sf_d(k,base+18) = -II*k3_k3*k2*sf2
-               sf_d(k,base+19) = -II*k1*k2*k3*sf1
+               .sf_d(k,base+10) = -II*k1_k1*k1*sf6
+               .sf_d(k,base+11) = -II*k2_k2*k2*sf6
+               .sf_d(k,base+12) = -II*k3_k3*k3*sf6
+               .sf_d(k,base+13) = -II*k1_k1*k2*sf2
+               .sf_d(k,base+14) = -II*k1_k1*k3*sf2
+               .sf_d(k,base+15) = -II*k2_k2*k1*sf2
+               .sf_d(k,base+16) = -II*k2_k2*k3*sf2
+               .sf_d(k,base+17) = -II*k3_k3*k1*sf2
+               .sf_d(k,base+18) = -II*k3_k3*k2*sf2
+               .sf_d(k,base+19) = -II*k1*k2*k3*sf1
 
                ! U4 derivatives
-               sf_d(k,base+20) = k1_k1*k1_k1*sf24
-               sf_d(k,base+21) = k2_k2*k2_k2*sf24
-               sf_d(k,base+22) = k3_k3*k3_k3*sf24
-               sf_d(k,base+23) = k1_k1*k1_k2*sf6
-               sf_d(k,base+24) = k1_k1*k1_k3*sf6
-               sf_d(k,base+25) = k2_k2*k1_k2*sf6
-               sf_d(k,base+26) = k2_k2*k2_k3*sf6
-               sf_d(k,base+27) = k3_k3*k1_k3*sf6
-               sf_d(k,base+28) = k3_k3*k2_k3*sf6
-               sf_d(k,base+29) = k1_k1*k2_k2*sf4
-               sf_d(k,base+30) = k1_k1*k3_k3*sf4
-               sf_d(k,base+31) = k2_k2*k3_k3*sf4
-               sf_d(k,base+32) = k1_k1*k2_k3*sf2
-               sf_d(k,base+33) = k2_k2*k1_k3*sf2
-               sf_d(k,base+34) = k3_k3*k1_k2*sf2
+               .sf_d(k,base+20) = k1_k1*k1_k1*sf24
+               .sf_d(k,base+21) = k2_k2*k2_k2*sf24
+               .sf_d(k,base+22) = k3_k3*k3_k3*sf24
+               .sf_d(k,base+23) = k1_k1*k1_k2*sf6
+               .sf_d(k,base+24) = k1_k1*k1_k3*sf6
+               .sf_d(k,base+25) = k2_k2*k1_k2*sf6
+               .sf_d(k,base+26) = k2_k2*k2_k3*sf6
+               .sf_d(k,base+27) = k3_k3*k1_k3*sf6
+               .sf_d(k,base+28) = k3_k3*k2_k3*sf6
+               .sf_d(k,base+29) = k1_k1*k2_k2*sf4
+               .sf_d(k,base+30) = k1_k1*k3_k3*sf4
+               .sf_d(k,base+31) = k2_k2*k3_k3*sf4
+               .sf_d(k,base+32) = k1_k1*k2_k3*sf2
+               .sf_d(k,base+33) = k2_k2*k1_k3*sf2
+               .sf_d(k,base+34) = k3_k3*k1_k2*sf2
 
             end
 
@@ -3938,20 +4032,20 @@ contains
                sf2 = sf1 * HALF
    
                ! SF contribution (anharmonic!)
-               sf_e(k) = sf_e(k) + sf1
+               .sf_e(k) = .sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+ 1) =  II*k1*sf1
-               sf_d(k,base+ 2) =  II*k2*sf1
-               sf_d(k,base+ 3) =  II*k3*sf1
+               .sf_d(k,base+ 1) =  II*k1*sf1
+               .sf_d(k,base+ 2) =  II*k2*sf1
+               .sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
-               sf_d(k,base+ 4) = -k1_k1*sf2
-               sf_d(k,base+ 5) = -k2_k2*sf2
-               sf_d(k,base+ 6) = -k3_k3*sf2
-               sf_d(k,base+ 7) = -k1_k2*sf1
-               sf_d(k,base+ 8) = -k1_k3*sf1
-               sf_d(k,base+ 9) = -k2_k3*sf1
+               .sf_d(k,base+ 4) = -k1_k1*sf2
+               .sf_d(k,base+ 5) = -k2_k2*sf2
+               .sf_d(k,base+ 6) = -k3_k3*sf2
+               .sf_d(k,base+ 7) = -k1_k2*sf1
+               .sf_d(k,base+ 8) = -k1_k3*sf1
+               .sf_d(k,base+ 9) = -k2_k3*sf1
    
                ! Structure factor (harmonic!)
                sf1  = sfh
@@ -3961,16 +4055,16 @@ contains
                sf6  = sf1 * SIXTH
 
                ! U3 derivatives
-               sf_d(k,base+10) = -II*k1_k1*k1*sf6
-               sf_d(k,base+11) = -II*k2_k2*k2*sf6
-               sf_d(k,base+12) = -II*k3_k3*k3*sf6
-               sf_d(k,base+13) = -II*k1_k1*k2*sf2
-               sf_d(k,base+14) = -II*k1_k1*k3*sf2
-               sf_d(k,base+15) = -II*k2_k2*k1*sf2
-               sf_d(k,base+16) = -II*k2_k2*k3*sf2
-               sf_d(k,base+17) = -II*k3_k3*k1*sf2
-               sf_d(k,base+18) = -II*k3_k3*k2*sf2
-               sf_d(k,base+19) = -II*k1*k2*k3*sf1
+               .sf_d(k,base+10) = -II*k1_k1*k1*sf6
+               .sf_d(k,base+11) = -II*k2_k2*k2*sf6
+               .sf_d(k,base+12) = -II*k3_k3*k3*sf6
+               .sf_d(k,base+13) = -II*k1_k1*k2*sf2
+               .sf_d(k,base+14) = -II*k1_k1*k3*sf2
+               .sf_d(k,base+15) = -II*k2_k2*k1*sf2
+               .sf_d(k,base+16) = -II*k2_k2*k3*sf2
+               .sf_d(k,base+17) = -II*k3_k3*k1*sf2
+               .sf_d(k,base+18) = -II*k3_k3*k2*sf2
+               .sf_d(k,base+19) = -II*k1*k2*k3*sf1
 
             end
 
@@ -4012,20 +4106,20 @@ contains
                sf2 = sf1 * HALF
    
                ! SF contribution (harmonic)
-               sf_e(k) = sf_e(k) + sf1
+               .sf_e(k) = .sf_e(k) + sf1
    
                ! Pos derivatives
-               sf_d(k,base+ 1) =  II*k1*sf1
-               sf_d(k,base+ 2) =  II*k2*sf1
-               sf_d(k,base+ 3) =  II*k3*sf1
+               .sf_d(k,base+ 1) =  II*k1*sf1
+               .sf_d(k,base+ 2) =  II*k2*sf1
+               .sf_d(k,base+ 3) =  II*k3*sf1
 
                ! U2 derivatives
-               sf_d(k,base+ 4) = -k1_k1*sf2
-               sf_d(k,base+ 5) = -k2_k2*sf2
-               sf_d(k,base+ 6) = -k3_k3*sf2
-               sf_d(k,base+ 7) = -k1_k2*sf1
-               sf_d(k,base+ 8) = -k1_k3*sf1
-               sf_d(k,base+ 9) = -k2_k3*sf1
+               .sf_d(k,base+ 4) = -k1_k1*sf2
+               .sf_d(k,base+ 5) = -k2_k2*sf2
+               .sf_d(k,base+ 6) = -k3_k3*sf2
+               .sf_d(k,base+ 7) = -k1_k2*sf1
+               .sf_d(k,base+ 8) = -k1_k3*sf1
+               .sf_d(k,base+ 9) = -k2_k3*sf1
    
             end
 
@@ -4037,25 +4131,19 @@ contains
       k_pt.destroy
    
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
 
-   make_unique_sfd_pos_Y_ADP__Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_ADP__Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does *all* parameters, positions and ADPs
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
 
@@ -4073,6 +4161,11 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4085,8 +4178,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4114,17 +4207,17 @@ contains
             sf  = sf_u(k) * tf
             sf2 = HALF*sf
 
-            sf_e(k) = sf_e(k) + sf
+            .sf_e(k) = .sf_e(k) + sf
 
-            sf_d(k,base+1) =   II*k1k*sf
-            sf_d(k,base+2) =   II*k2k*sf
-            sf_d(k,base+3) =   II*k3k*sf
-            sf_d(k,base+4) = -k1k*k1k*sf2
-            sf_d(k,base+5) = -k2k*k2k*sf2
-            sf_d(k,base+6) = -k3k*k3k*sf2
-            sf_d(k,base+7) = -k1k*k2k*sf 
-            sf_d(k,base+8) = -k1k*k3k*sf 
-            sf_d(k,base+9) = -k2k*k3k*sf 
+            .sf_d(k,base+1) =   II*k1k*sf
+            .sf_d(k,base+2) =   II*k2k*sf
+            .sf_d(k,base+3) =   II*k3k*sf
+            .sf_d(k,base+4) = -k1k*k1k*sf2
+            .sf_d(k,base+5) = -k2k*k2k*sf2
+            .sf_d(k,base+6) = -k3k*k3k*sf2
+            .sf_d(k,base+7) = -k1k*k2k*sf 
+            .sf_d(k,base+8) = -k1k*k3k*sf 
+            .sf_d(k,base+9) = -k2k*k3k*sf 
 
          end
 
@@ -4135,24 +4228,18 @@ contains
       k_pt.destroy
    
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_Y_ADP__N(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_ADP__N ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does positions *only*
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without ADP's")
@@ -4171,6 +4258,11 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4183,8 +4275,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4211,11 +4303,11 @@ contains
 
             sf  = sf_u(k) * tf
 
-            sf_e(k) = sf_e(k) + sf
+            .sf_e(k) = .sf_e(k) + sf
 
-            sf_d(k,base+1) =   II*k1k*sf
-            sf_d(k,base+2) =   II*k2k*sf
-            sf_d(k,base+3) =   II*k3k*sf
+            .sf_d(k,base+1) =   II*k1k*sf
+            .sf_d(k,base+2) =   II*k2k*sf
+            .sf_d(k,base+3) =   II*k3k*sf
 
          end
 
@@ -4226,24 +4318,18 @@ contains
       k_pt.destroy
    
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_N_ADP__Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_N_ADP__Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does ADPs *only*
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without positions")
@@ -4261,6 +4347,11 @@ contains
 
       ! Constants
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4273,8 +4364,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4302,14 +4393,14 @@ contains
             sf  = sf_u(k) * tf
             sf2 = HALF*sf
 
-            sf_e(k) = sf_e(k) + sf
+            .sf_e(k) = .sf_e(k) + sf
 
-            sf_d(k,base+4) = -k1k*k1k*sf2
-            sf_d(k,base+5) = -k2k*k2k*sf2
-            sf_d(k,base+6) = -k3k*k3k*sf2
-            sf_d(k,base+7) = -k1k*k2k*sf 
-            sf_d(k,base+8) = -k1k*k3k*sf 
-            sf_d(k,base+9) = -k2k*k3k*sf 
+            .sf_d(k,base+4) = -k1k*k1k*sf2
+            .sf_d(k,base+5) = -k2k*k2k*sf2
+            .sf_d(k,base+6) = -k3k*k3k*sf2
+            .sf_d(k,base+7) = -k1k*k2k*sf 
+            .sf_d(k,base+8) = -k1k*k3k*sf 
+            .sf_d(k,base+9) = -k2k*k3k*sf 
 
          end
 
@@ -4320,24 +4411,18 @@ contains
       k_pt.destroy
    
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_Y_Hiso_Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_Hiso_Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does H_U_iso=TRUE derivatives.
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without H ADP's")
@@ -4356,6 +4441,11 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4368,8 +4458,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4398,17 +4488,17 @@ contains
                sf = sf_u(k) * tf
                sf2 = HALF*sf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) =   II*k1k*sf
-               sf_d(k,base+2) =   II*k2k*sf
-               sf_d(k,base+3) =   II*k3k*sf
-               sf_d(k,base+4) = -k1k*k1k*sf2
-               sf_d(k,base+5) = -k2k*k2k*sf2
-               sf_d(k,base+6) = -k3k*k3k*sf2
-               sf_d(k,base+7) = -k1k*k2k*sf 
-               sf_d(k,base+8) = -k1k*k3k*sf 
-               sf_d(k,base+9) = -k2k*k3k*sf 
+               .sf_d(k,base+1) =   II*k1k*sf
+               .sf_d(k,base+2) =   II*k2k*sf
+               .sf_d(k,base+3) =   II*k3k*sf
+               .sf_d(k,base+4) = -k1k*k1k*sf2
+               .sf_d(k,base+5) = -k2k*k2k*sf2
+               .sf_d(k,base+6) = -k3k*k3k*sf2
+               .sf_d(k,base+7) = -k1k*k2k*sf 
+               .sf_d(k,base+8) = -k1k*k3k*sf 
+               .sf_d(k,base+9) = -k2k*k3k*sf 
 
             end
 
@@ -4425,17 +4515,17 @@ contains
                sf  = sf_u(k) * tf
                sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) = II*k1k*sf
-               sf_d(k,base+2) = II*k2k*sf
-               sf_d(k,base+3) = II*k3k*sf
-               sf_d(k,base+4) = sf2
-               sf_d(k,base+5) = sf2
-               sf_d(k,base+6) = sf2
-               sf_d(k,base+7) = ZERO
-               sf_d(k,base+8) = ZERO
-               sf_d(k,base+9) = ZERO
+               .sf_d(k,base+1) = II*k1k*sf
+               .sf_d(k,base+2) = II*k2k*sf
+               .sf_d(k,base+3) = II*k3k*sf
+               .sf_d(k,base+4) = sf2
+               .sf_d(k,base+5) = sf2
+               .sf_d(k,base+6) = sf2
+               .sf_d(k,base+7) = ZERO
+               .sf_d(k,base+8) = ZERO
+               .sf_d(k,base+9) = ZERO
 
             end
 
@@ -4448,24 +4538,18 @@ contains
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_N_Hiso_Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_N_Hiso_Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version *no* positions and does H_U_iso=TRUE derivatives.
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without positions")
@@ -4483,6 +4567,11 @@ contains
 
       ! Constants
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4495,8 +4584,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4525,14 +4614,14 @@ contains
                sf = sf_u(k) * tf
                sf2 = HALF*sf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+4) = -k1k*k1k*sf2
-               sf_d(k,base+5) = -k2k*k2k*sf2
-               sf_d(k,base+6) = -k3k*k3k*sf2
-               sf_d(k,base+7) = -k1k*k2k*sf 
-               sf_d(k,base+8) = -k1k*k3k*sf 
-               sf_d(k,base+9) = -k2k*k3k*sf 
+               .sf_d(k,base+4) = -k1k*k1k*sf2
+               .sf_d(k,base+5) = -k2k*k2k*sf2
+               .sf_d(k,base+6) = -k3k*k3k*sf2
+               .sf_d(k,base+7) = -k1k*k2k*sf 
+               .sf_d(k,base+8) = -k1k*k3k*sf 
+               .sf_d(k,base+9) = -k2k*k3k*sf 
 
             end
 
@@ -4549,11 +4638,11 @@ contains
                sf  = sf_u(k) * tf
                sf2 = -HALF*sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+4) = sf2
-               sf_d(k,base+5) = sf2
-               sf_d(k,base+6) = sf2
+               .sf_d(k,base+4) = sf2
+               .sf_d(k,base+5) = sf2
+               .sf_d(k,base+6) = sf2
 
             end
 
@@ -4566,24 +4655,18 @@ contains
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_Y_Uiso_Y(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_Uiso_Y ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does U_iso for the requested atoms.
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without H ADP's")
@@ -4592,7 +4675,7 @@ contains
       sf_u :: VEC{CPX}*
       u1,u2,u3,k1,k2,k3 :: VEC{REAL}*
       k1k,k2k,k3k,tf :: REAL
-      n_k,f,u,k,base :: INT
+      n_k,n_p, f,u,k,base :: INT
       II,sf,sf2 :: CPX
       asf :: MAT{CPX}*
 
@@ -4602,6 +4685,12 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      ! >> This is the point of this routine <<
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4614,8 +4703,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4644,17 +4733,17 @@ contains
                sf = sf_u(k) * tf
                sf2 = HALF*sf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) =   II*k1k*sf
-               sf_d(k,base+2) =   II*k2k*sf
-               sf_d(k,base+3) =   II*k3k*sf
-               sf_d(k,base+4) = -k1k*k1k*sf2
-               sf_d(k,base+5) = -k2k*k2k*sf2
-               sf_d(k,base+6) = -k3k*k3k*sf2
-               sf_d(k,base+7) = -k1k*k2k*sf 
-               sf_d(k,base+8) = -k1k*k3k*sf 
-               sf_d(k,base+9) = -k2k*k3k*sf 
+               .sf_d(k,base+1) =   II*k1k*sf
+               .sf_d(k,base+2) =   II*k2k*sf
+               .sf_d(k,base+3) =   II*k3k*sf
+               .sf_d(k,base+4) = -k1k*k1k*sf2
+               .sf_d(k,base+5) = -k2k*k2k*sf2
+               .sf_d(k,base+6) = -k3k*k3k*sf2
+               .sf_d(k,base+7) = -k1k*k2k*sf 
+               .sf_d(k,base+8) = -k1k*k3k*sf 
+               .sf_d(k,base+9) = -k2k*k3k*sf 
 
             end
 
@@ -4671,17 +4760,14 @@ contains
                sf  = sf_u(k) * tf
                sf2 = -HALF * sf * (k1k*k1k+k2k*k2k+k3k*k3k) * THIRD
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) = II*k1k*sf
-               sf_d(k,base+2) = II*k2k*sf
-               sf_d(k,base+3) = II*k3k*sf
-               sf_d(k,base+4) = sf2
-               sf_d(k,base+5) = sf2
-               sf_d(k,base+6) = sf2
-               sf_d(k,base+7) = ZERO
-               sf_d(k,base+8) = ZERO
-               sf_d(k,base+9) = ZERO
+               .sf_d(k,base+1) = II*k1k*sf
+               .sf_d(k,base+2) = II*k2k*sf
+               .sf_d(k,base+3) = II*k3k*sf
+               .sf_d(k,base+4) = sf2
+               .sf_d(k,base+5) = sf2
+               .sf_d(k,base+6) = sf2
 
             end
 
@@ -4694,26 +4780,20 @@ contains
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
 
    end
 
 
-   make_unique_sfd_pos_Y_HADP_N(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_Y_HADP_N ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does *not* do H ADPs
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    DIE_IF(.data.refine_anharmonicity, "don't refine anharmonicity without H ADP's")
@@ -4732,6 +4812,11 @@ contains
       ! Constants
       II  = IMAGIFY(ONE)
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4744,8 +4829,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4775,17 +4860,17 @@ contains
                sf = sf_u(k) * tf
                sf2 = HALF*sf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) =   II*k1k*sf
-               sf_d(k,base+2) =   II*k2k*sf
-               sf_d(k,base+3) =   II*k3k*sf
-               sf_d(k,base+4) = -k1k*k1k*sf2
-               sf_d(k,base+5) = -k2k*k2k*sf2
-               sf_d(k,base+6) = -k3k*k3k*sf2
-               sf_d(k,base+7) = -k1k*k2k*sf 
-               sf_d(k,base+8) = -k1k*k3k*sf 
-               sf_d(k,base+9) = -k2k*k3k*sf 
+               .sf_d(k,base+1) =   II*k1k*sf
+               .sf_d(k,base+2) =   II*k2k*sf
+               .sf_d(k,base+3) =   II*k3k*sf
+               .sf_d(k,base+4) = -k1k*k1k*sf2
+               .sf_d(k,base+5) = -k2k*k2k*sf2
+               .sf_d(k,base+6) = -k3k*k3k*sf2
+               .sf_d(k,base+7) = -k1k*k2k*sf 
+               .sf_d(k,base+8) = -k1k*k3k*sf 
+               .sf_d(k,base+9) = -k2k*k3k*sf 
 
             end
 
@@ -4801,11 +4886,11 @@ contains
 
                sf  = sf_u(k) * tf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+1) = II*k1k*sf
-               sf_d(k,base+2) = II*k2k*sf
-               sf_d(k,base+3) = II*k3k*sf
+               .sf_d(k,base+1) = II*k1k*sf
+               .sf_d(k,base+2) = II*k2k*sf
+               .sf_d(k,base+3) = II*k3k*sf
 
             end
 
@@ -4818,25 +4903,19 @@ contains
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
 
-   make_unique_sfd_pos_N_HADP_N(sf_e,sf_d) ::: private
-   ! Make the unique structure factors and their derivatives "sf_e"
-   ! and "sf_d" corresponding to the unique_SF_k_pts from  the given
+   make_unique_sfd_pos_N_HADP_N ::: private
+   ! Make the unique structure factors and their derivatives ".sf_e"
+   ! and ".sf_d" corresponding to the unique_SF_k_pts from  the given
    ! set of atom parameters in .fragment_atom.
    ! NOTE: this version does *not* do positions *nor* H ADPs
    !       i.e. it only does heavy atom ADPs
 
-      sf_e :: VEC{CPX}, OUT
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,         "sf_e, wrong dim")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,         "sf_d, wrong dim1")
-   ENSURE(sf_d.dim2==.n_asymmetric_unit_atoms*9, "sf_d, wrong dim2")
    ENSURE(.data.created, "no reflection data")
    ENSURE(.xray_data.created, "no x-ray reflection data")
    ENSURE(.unique_atom_for_frag_atom.created,"no crystal unique_atom_for_frag_atom")
@@ -4855,6 +4934,11 @@ contains
 
       ! Constants
       n_k = .n_unique_SF_k_pts
+      n_p    = .asymmetric_unit_atom.no_of_pADPs
+
+      ! Symmetry-generated structure factors (leaky!)
+      .sf_d.create(n_k,n_p) ! dynamic SF derivatives
+      .sf_e.create(n_k)     ! dynamic SF's
 
       ! Symmetry generated k points
       k_pt.create(n_k,3)
@@ -4867,8 +4951,8 @@ contains
       kU.create(n_k,3)        
 
       ! Initialize
-      sf_e = ZERO
-      sf_d = ZERO
+      .sf_e = ZERO
+      .sf_d = ZERO
 
       ! Make the structure factors and derivatives
       parallel do u = 1,.n_unique_frag_atoms
@@ -4898,14 +4982,14 @@ contains
                sf = sf_u(k) * tf
                sf2 = HALF*sf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
-               sf_d(k,base+4) = -k1k*k1k*sf2
-               sf_d(k,base+5) = -k2k*k2k*sf2
-               sf_d(k,base+6) = -k3k*k3k*sf2
-               sf_d(k,base+7) = -k1k*k2k*sf 
-               sf_d(k,base+8) = -k1k*k3k*sf 
-               sf_d(k,base+9) = -k2k*k3k*sf 
+               .sf_d(k,base+4) = -k1k*k1k*sf2
+               .sf_d(k,base+5) = -k2k*k2k*sf2
+               .sf_d(k,base+6) = -k3k*k3k*sf2
+               .sf_d(k,base+7) = -k1k*k2k*sf 
+               .sf_d(k,base+8) = -k1k*k3k*sf 
+               .sf_d(k,base+9) = -k2k*k3k*sf 
 
             end
 
@@ -4921,7 +5005,7 @@ contains
 
                sf  = sf_u(k) * tf
 
-               sf_e(k) = sf_e(k) + sf
+               .sf_e(k) = .sf_e(k) + sf
 
             end
 
@@ -4934,8 +5018,8 @@ contains
       k_pt.destroy
 
       if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-         PARALLEL_SUM(sf_d)
+         PARALLEL_SUM(.sf_e)
+         PARALLEL_SUM(.sf_d)
       end
 
    end
@@ -5199,7 +5283,7 @@ contains
       n_refl,n_k,n_p :: INT
 
       ! Constants
-      n_refl = .n_refl
+      n_refl = .data.reflections.n_refl
       n_k    = .n_unique_SF_k_pts
       n_p    = .asymmetric_unit_atom.no_of_pADPs
 
@@ -5280,7 +5364,7 @@ contains
       n_refl,n_k,n_p :: INT
 
       ! Constants
-      n_refl = .n_refl
+      n_refl = .data.reflections.n_refl
       n_k    = .n_unique_SF_k_pts
       n_p    = .asymmetric_unit_atom.no_of_pADPs
 
