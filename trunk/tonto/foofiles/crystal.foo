@@ -90,6 +90,8 @@ contains
       nullify(.repetition_factor)
       nullify(.asym_atom_rep_factor)
       nullify(.asym_atom_stabilizer)
+      nullify(.ufrag_atom_rep_factor)
+      nullify(.ufrag_atom_stabilizer)
 
       nullify(.unit_cell_connection)
       nullify(.uc_vdw_connection)
@@ -186,6 +188,8 @@ contains
       if (NOT .use_manual_repetition_factors) .repetition_factor.destroy
       .asym_atom_rep_factor.destroy
       .asym_atom_stabilizer.destroy
+      .ufrag_atom_rep_factor.destroy
+      .ufrag_atom_stabilizer.destroy
 
       .unit_cell_connection.destroy
       .uc_vdw_connection.destroy
@@ -273,6 +277,8 @@ contains
       if (crystal.repetition_factor.created)             .repetition_factor.create_copy(crystal.repetition_factor)
       if (crystal.asym_atom_rep_factor.created)          .asym_atom_rep_factor.create_copy(crystal.asym_atom_rep_factor)
       if (crystal.asym_atom_stabilizer.created)          .asym_atom_stabilizer.create_copy(crystal.asym_atom_stabilizer)
+      if (crystal.ufrag_atom_rep_factor.created)         .ufrag_atom_rep_factor.create_copy(crystal.ufrag_atom_rep_factor)
+      if (crystal.ufrag_atom_stabilizer.created)         .ufrag_atom_stabilizer.create_copy(crystal.ufrag_atom_stabilizer)
 
       if (crystal.unit_cell_connection.created)          .unit_cell_connection.create_copy(crystal.unit_cell_connection)
       if (crystal.uc_vdw_connection.created)             .uc_vdw_connection.create_copy(crystal.uc_vdw_connection)
@@ -439,6 +445,7 @@ contains
       ! Z factors and zep. factors for SF calculations
       .make_repetition_factors     
       .make_asym_atom_rep_factors     
+      .make_ufrag_atom_rep_factors     
       .Z = .z_factor
 
       ! Symops which leave fragment_geometry unchanged
@@ -1851,10 +1858,12 @@ contains
 
       tol = TOL(2)/maxval(.unit_cell.length)
       tol = TOL(3)                        ! <--- getting this number wrong can stuff things
+
       .asym_atom_rep_factor.destroy
       .asym_atom_stabilizer.destroy
       .asym_atom_rep_factor.create(.n_asymmetric_unit_atoms)
       .asym_atom_stabilizer.create(.n_asymmetric_unit_atoms)
+
       do a = 1,.n_asymmetric_unit_atoms
          pa = .asymmetric_unit_geometry(:,a)
          .put_to_unit_cell(pa)
@@ -1869,6 +1878,50 @@ contains
          end
          .asym_atom_rep_factor(a) = n_same
       end
+
+   end
+
+   make_ufrag_atom_rep_factors ::: leaky, private
+   ! The number of times a unique fragmentic cell atom with index "u"
+   ! is mapped into itself under the symmetry group is the
+   ! ".ufrag_atom_rep_factor(u)". Also record the stabilizing
+   ! operations in ".ufrag_atom_stabilizer(u)[:]". These are used in
+   ! atomic-type structure factor calculations based on the asymmetric
+   ! cell geometry.
+
+   ENSURE(.fragment_geometry.created, "no fragment_geometry!")
+
+      pu,pn :: VEC{REAL}(3)
+      u,n,n_same :: INT
+      same :: BIN
+      tol :: REAL
+
+      tol = TOL(2)/maxval(.unit_cell.length)
+      tol = TOL(3)                        ! <--- getting this number wrong can stuff things
+
+      .ufrag_atom_rep_factor.destroy
+      .ufrag_atom_stabilizer.destroy
+      .ufrag_atom_rep_factor.create(.n_unique_frag_atoms)
+      .ufrag_atom_stabilizer.create(.n_unique_frag_atoms)
+
+      do u = 1,.n_unique_frag_unit_atoms
+
+         pu = .ufragmetric_unit_geometry(:,u)
+         .put_to_unit_cell(pu)
+
+         n_same = 0
+         do n = 1,.spacegroup.n_seitz
+            pn = pu
+            .transform_position(pn,n,to_unit_cell=TRUE)
+            same = pu.same_as(pn,tol)
+            if (NOT same) cycle
+            n_same = n_same + 1
+            .ufrag_atom_stabilizer(u).element.append(n)
+         end
+         .ufrag_atom_rep_factor(u) = n_same
+
+      end
+
    end
 
 
@@ -3428,7 +3481,66 @@ contains
 
    end
 
-!  Clean up asymmetric atom dX
+   set_asym_from_ufrag_atoms ::: private
+   ! Set the asymmetric unit atom pADPs from the the unique
+   ! .fragment_atom pADPs.
+
+   ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(.asymmetric_unit_atom.created,"no asymmetric_unit_atom")
+
+      u,f,a,s, n :: INT
+      seitz :: MAT3{REAL}*
+      f_atom,a_atom :: ATOM*
+      X_atom :: ATOM
+      pos,shift :: VEC{REAL}(3)
+      
+      ! Get inverse symops
+      seitz => .transposed_xyz_seitz_matrices
+
+      ! Loop over unique frag atoms
+      ! Order of asym atoms is the same.
+      do u = 1,.n_unique_frag_atoms
+
+         ! Link ufrag and asym atoms
+         f = .unique_frag_atom(u)
+         a = .asym_atom_for_frag_atom(f)
+         s = .asym_symop_for_frag_atom(f)
+
+         ! Unique frag atom, Asym atom
+         f_atom => .fragment_atom(f)
+         a_atom => .asymmetric_unit_atom(a)
+
+         ! Backwards-shift ufrag atom
+         shift = .asym_shift_for_frag_atom(:,f)
+         .unit_cell.change_from_fractional(shift)
+         pos = f_atom.position - shift
+
+         ! No of pADPs & abase
+         n  = a_atom.no_of_pADPs
+
+         ! Set ufrag pADPs in "X_atom" with back shift (leaky)
+         X_atom.nullify_ptr_part
+         X_atom.pADP_vector.create(n)
+         X_atom.set_pADP_vector(f_atom.pADP_vector)
+         X_atom.set_position(pos)
+
+         ! Change ufrag -> asym atom pADPs
+         X_atom.transform_pADP_vector_with(seitz(:,:,s))
+
+         ! Store asym shifts in position a0 for asym atom "a"
+         a_atom.set_pADP_vector_to(X_atom.pADP_vector)
+
+         ! Clean
+         X_atom.destroy_ptr_part
+
+      end
+
+      ! Clean
+      seitz.destroy
+
+   end
+
+!  OLD Clean up asymmetric atom dX
 
    clean_up_asym_atom_shifts(dX) ::: selfless
    ! Stabilize "dX", parameter vector for asymmetric atom *shifts* 
@@ -3508,6 +3620,101 @@ contains
 
          ! Put back shifts
          dX(af:al) = bX
+         bX.destroy
+
+         ! Clean
+         X_atom.destroy_ptr_part
+
+         ! Increment a-base
+         base = base + n
+
+      end
+
+      ! Clean
+      seitz.destroy
+
+   end
+
+!  Clean up unique fragment atom shifts dX
+
+   clean_up_ufrag_atom_shifts(dX) ::: selfless
+   ! Stabilize "dX", parameter vector for ufrag atom *shifts* 
+   ! in positions and ADP's, removing any symmetry breaking.
+   ! This version for least-squares optimization.
+      dX :: VEC{REAL}, INOUT
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Set parameters
+      .stabilize_ufrag_atom_shifts(dX)
+
+   end
+
+   stabilize_ufrag_atom_shifts(dX) ::: pure
+   ! Stabilize "dX", parameter vector for ufrag atom *shifts* 
+   ! in positions and ADP's, removing any symmetry breaking.
+      self :: IN
+      dX :: VEC{REAL}, INOUT
+
+   ENSURE(.fragment_info_made,"no fragment info")
+   ENSURE(.data.created,"no data")
+
+      u,f, n,base,ff,fl, n_stab,s,t :: INT
+      stabilizer :: VEC{INT}*
+      bX :: VEC{REAL}*
+      seitz :: MAT3{REAL}*
+      X_atom :: ATOM
+      f_atom :: ATOM*
+
+      ! Get symops
+      seitz => .xyz_seitz_matrices
+
+      ! Base for asym atom shifts
+      base = 0
+
+      ! Symmetrize the asym atom positions/ADP's
+      ! We can use the asym atom stabilizers for the ufrag
+      do u = 1,.n_unique_frag_atoms
+
+         f      =  .unique_frag_atom(u)
+         f_atom => .fragment_atom(f)
+
+         ! List of stabilizer symops
+         stabilizer => .ufrag_atom_stabilizer(u).element
+
+         ! Any stabilizers?
+         n_stab = stabilizer.dim
+         if (n_stab<=1) cycle
+
+         ! Block limits
+         n  = f_atom.no_of_pADPs
+         ff = base + 1
+         fl = base + n
+         
+         ! Block of X-ray shifts
+         bX.create(n)
+         bX = dX(ff:fl)
+
+         ! Set atom pADPs to block-of-shifts (leaky)
+         X_atom.pADP_vector.create(n)
+         X_atom.set_pADP_vector_to(bX)
+
+         ! Apply symops to X_atom, accumulate in bX
+         bX = ZERO
+         do s = 2,n_stab
+            t = stabilizer(s)
+            X_atom.transform_pADP_vector_with(seitz(:,:,t))
+            bX = bX + X_atom.pADP_vector
+         end
+
+         ! Stabilize
+         bX = (ONE/REALIFY(n_stab)) * bX
+
+         ! Put back shifts
+         dX(ff:fl) = bX
          bX.destroy
 
          ! Clean
@@ -3725,33 +3932,33 @@ contains
 !  Fit X-ray F's
 !  =============
 
-   LS_fit_to_xray_F ::: leaky
-   ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! NOTE: this routine does only one cycle of fitting with the
-   !       current density matrix i.e. this is a "rigid atom fit".
-   ! NOTE: Structure factors in .sf_for_unique_frag_atom must be
-   !       provided for *symmetry-unique* fragment atoms since 
-   !       the QM wavefunction refers to the fragment_atoms. 
-   !    => However, the .asymmetric_unit_atom parameters are those
-   !       which are actually fitted.
+   LS_fit_to ::: template
+   ! Fit the Hirshfeld atoms to the observations.
  
    ENSURE(.sf_for_unique_frag_atom.created,"no SF's for unique frag.  atoms")
    ENSURE(.data.created,                   "no diffraction data")
    ENSURE(.fragment_info_made,             "no fragment info")
 
       ! Initialize (leaky)
-      .init_xray_F_fit
+      .init_X?_fit
 
       ! Do fit
-      .data.LS_fit.do_fit(::put_xray_F_to              &
-                         ,::put_xray_dF_to             &
-                         ,::clean_up_asym_atom_shifts  &
-                         ,::set_xray_F_params_to       &
-                         ,::set_xray_F_covariances)
+      .data.LS_fit.do_fit(::put_X?_to                  &
+                         ,::put_D?_to                  &
+                         ,::clean_up_ufrag_atom_shifts &
+                         ,::set_X?_params_to)
 
       ! Finalize (leaky)
-      .finish_xray_fit("Tonto X-ray F fit.")
+      .finish_fit("Tonto X? fit.")
 
+   end
+
+   LS_fit_to_xray_F ::: get_from(::LS_fit_to, X?=> xray_F, D?=>xray_dF), leaky
+   ! Fit the Hirshfeld atoms to the observations.
+   end
+
+   LS_fit_to_xray_F2 ::: get_from(::LS_fit_to, X?=> xray_F2, D?=>xray_dF2), leaky
+   ! Fit the Hirshfeld atoms to the observations.
    end
 
 ! Initialize F
@@ -3763,77 +3970,8 @@ contains
    ENSURE(.data.reflections.created,"no reflections")
    ENSURE(.data.data_kind=="xray-f","wrong data_kind: "//trim(.data.data_kind))
 
-      ! Initialize asymmetric unit atom pADPs
-      ! => These are the parameters which are refined
-      .init_asymmetric_unit_atom_pADPs
-
-      ! Initialize the fragment_atom pADPs (leaky)
-      .init_fragment_atom_pADPs
-
       ! Initialize the F fit parameters
       .init_F_fit_parameters
-
-   end
-
-   init_asymmetric_unit_atom_pADPs ::: leaky, private
-   ! Initialize the .asymmetric_unit_atom pADP vectors.
-
-   ENSURE(.fragment_info_made,"no fragment info")
-   ENSURE(.data.created,"no data")
-
-      refine_U3,refine_U4 :: VEC{STR}*
-
-      ! Create space for asymmetric unit atom pADPs (leaky)
-      refine_U3 => .data.refine_3rd_order_for_atom
-      refine_U4 => .data.refine_4th_order_for_atom
-      .asymmetric_unit_atom.reset_pADPs_and_errors(refine_U3,refine_U4)
-
-   end
-
-   init_fragment_atom_pADPs ::: leaky, private
-   ! Initialize the .fragment_atom pADP vectors.
-
-   ENSURE(.fragment_info_made,"no fragment info")
-
-      atom_a,atom_f :: ATOM*
-      f,a, n_p :: INT
-
-      ! Create space for the fragment_atom pADPs (leaky)
-      do f = 1,.n_fragment_atoms
-         a      =  .asym_atom_for_frag_atom(f)
-         atom_a => .asymmetric_unit_atom(a)
-         atom_f =>        .fragment_atom(f)
-         n_p    = atom_a.no_of_pADPs
-         atom_f.reset_pADPs_and_errors(n_p)
-      end
-
-      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
-      .set_frag_from_asym_pADPs
-
-   end
-
-   init_ufrag_atom_pADPs ::: leaky, private
-   ! Initialize the unique .fragment_atom pADPs.
-   ! Also: initialize asymmetric_uniT_atom pADPs.
-   ! These are the pADPs which are optimized!
-
-   ENSURE(.fragment_info_made,"no fragment info")
-
-      atom_a,atom_f :: ATOM*
-      u,f,a, n_p :: INT
-
-      ! Create space for the fragment_atom pADPs (leaky)
-      do u = 1,.n_unique_frag_atoms
-         f      =  .unique_frag_atom(u)
-         a      =  .asym_atom_for_frag_atom(f)
-         atom_a => .asymmetric_unit_atom(a)
-         atom_f =>        .fragment_atom(f)
-         n_p    = atom_a.no_of_pADPs
-         atom_f.reset_pADPs_and_errors(n_p)
-      end
-
-      ! Set fragment_atom pADPs from asymmetric unit atom pADPs
-      .set_frag_from_asym_pADPs
 
    end
 
@@ -3863,8 +4001,8 @@ contains
       X_label.create(n_p)
 
       ! Set pADP part of parameter vector
-      .asymmetric_unit_atom.put_pADP_vector_to(X(1:n_pADPs))
-      .asymmetric_unit_atom.put_tag_pADP_labels_to(X_label(1:n_pADPs))
+      .fragment_atom(.unique_frag_atom).put_pADP_vector_to(X(1:n_pADPs))
+      .fragment_atom(.unique_frag_atom).put_tag_pADP_labels_to(X_label(1:n_pADPs))
 
       ! Set the experimental parameter part of the parameter vector
       X(n_p+1:)        = .data.LS_corrections.X
@@ -3894,6 +4032,200 @@ contains
    set_xray_F_params_to(X) ::: selfless
    ! Set the parameters which define the x-ray Fs, to "X".
    ! This version for least-squares optimization.
+      X :: VEC{REAL}, IN
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Set parameters
+      .set_xray_F_params(X)
+
+   end
+
+   set_xray_F_params(X) ::: private
+   ! Set the atom pADPs which define the x-ray Fs, to "X".
+      X :: VEC{REAL}, IN
+
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflections")
+   ENSURE(X.dim==.no_of_parameters,"wrong size, X")
+
+      n_pADPs :: INT
+
+      ! Get no. of pADPs
+      n_pADPs = .no_of_pADPs
+
+      ! Set the pADPs
+      .fragment_atom(.unique_atom).set_pADP_vector_to(X(1:n_pADPs))
+      .set_asym_from_ufrag_atoms
+      .set_frag_from_asym_pADPs
+
+      ! Set scale factors & extinction corrections
+      .data.set_F_parameters(X(n_pADPs+1:))
+
+   end
+
+   put_xray_F_to(Y) ::: selfless
+   ! Make and put the *predicted* x-ray F's in "Y"
+   ! This version for least-squares optimization.
+      Y :: VEC{REAL}, OUT
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Get F_pred
+      .put_xray_F(Y)
+
+   end
+
+   put_xray_F(Y) ::: private
+   ! Make and put the *predicted* x-ray F's in "Y"
+      Y :: VEC{REAL}, OUT
+
+      ! Get complex structure factors
+      .put_xray_F_help
+
+      ! Apply experimental corrections & set "Y"
+      .data.put_xray_F(Y)
+
+   end
+
+   put_xray_F_help ::: leaky, private
+   ! Make and put the complex structure factors reflections(:).calc.
+   ! Also: set .reflections(:).cal = abs(.reflections(:).calc))
+
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
+
+      sf_e,F :: VEC{CPX}*
+      n_refl,n_k :: INT
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      n_k     = .n_unique_SF_k_pts
+
+      ! Create arrays
+      F.create(n_refl) 
+      sf_e.create(n_k)
+
+      ! Symmetry-generated unique SF'd
+      .make_unique_xray_sf(sf_e)
+
+      ! Sum the symmetry-generated SF's to get
+      ! the actual structure factors F
+      .spacegroup.sum_unique_sf(F,sf_e,.data.reflections)
+      sf_e.destroy
+
+      ! Set the calculated SF's
+      .reflections.set_calc_to(F)
+
+      ! Set F_cal = |F_calc|
+      .reflections.set_cal_to_abs_calc
+
+      ! Clean
+      F.destrroy
+
+   end
+
+   put_xray_dF_to(dY) ::: selfless
+   ! Make and put the derivative of the *predicted* x-ray F's in "dY"
+   ! This version for least-squares optimization.
+      dY :: MAT{REAL}, OUT
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Get F_pred derivatives
+      .put_xray_dF(dY)
+
+   end
+
+   put_xray_dF(dY) ::: private
+   ! Make and put the derivative of the *predicted* x-ray F's in "dY"
+      dY :: MAT{REAL}, OUT
+
+      n_pADPs :: INT
+
+      ! Get no. of pADPs
+      n_pADPs = .no_of_pADPs
+
+      ! Set the asymmetric unit pADP derivatives
+      .put_xray_dF_help(dY(:,1:n_pADPs))
+
+      ! Set scale and extinction-factor derivatives
+      .data.put_xray_dF(dY(:,n_pADPs+1:))
+
+   end
+
+   put_xray_dF_help(dY) ::: leaky, private
+   ! Make and put the derivatives of the *predicted* x-ray F's in "dY"
+   ! NOTE: assumes reflections(:).calc and reflections(:).abs made
+      dY :: MAT{REAL}, OUT
+
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
+
+      sf_d,dF :: MAT{CPX}*
+      F_con :: VEC{CPX}*
+      F_abi :: VEC{REAL}*
+      n_refl,n_pADPs,n_k :: INT
+
+      ! Constants
+      n_refl  = .data.reflections.n_refl
+      n_pADPs = .no_of_pADPs
+      n_k     = .n_unique_SF_k_pts
+
+      ! Create derivatives
+      dF.create(n_refl,n_pADPs)  
+      sf_d.create(n_k,n_p)
+
+      ! Symmetry-generated unique SF'd
+      .make_unique_xray_sf_derivs(sf_d)
+
+      ! Sum the symmetry-generated SF's to get the
+      ! derivative complex structure factors dF
+      .sum_unique_sf_derivs_t(dF,sf_d)
+      sf_d.destroy
+
+      ! New tempraries
+      F_con.create(n_refl)
+      F_abi.create(n_refl)
+
+      ! Get (F_calc)*
+      .data.reflections.put_calc_to(F_con)
+      F_con = conjg(F_con)
+
+      ! Get 1/(F_abs)
+      .data.reflections.put_cal_to(F_abi)
+      F_abi = ONE/F_abi
+
+      ! Set the derivative
+      do p = 1,n_pADPs
+      do n = 1,n_refl
+         Y(n,p) = F_abi(n) * REALIFY(F_con(n) * dF(n,p))
+      end
+      end
+
+      ! Clean
+      F_abi.destroy
+      F_con.destroy
+ 
+   end
+
+
+! F set/put routines
+
+   set_xray_F_params_to(X) ::: selfless
+   ! Set the parameters which define the x-ray Fs, to "X".
+   ! This version for least-squares optimization.
       X :: VEC{REAL}, OUT
 
       self :: DIFFRACTION_DATA*
@@ -3906,38 +4238,7 @@ contains
 
    end
 
-
-
-   LS_fit_to_xray_F2 ::: leaky
-   ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! NOTE: this routine does only one cycle of fitting with the
-   !       current density matrix i.e. this is a "rigid atom fit".
-   ! NOTE: Structure factors in .sf_for_unique_frag_atom must be
-   !       provided for *symmetry-unique* fragment atoms since 
-   !       the QM wavefunction refers to the fragment_atoms. 
-   !    => However, the .asymmetric_unit_atom parameters are those
-   !       which are actually fitted.
- 
-   ENSURE(.sf_for_unique_frag_atom.created,"no SF's for unique frag.  atoms")
-   ENSURE(.data.created,                   "no diffraction data")
-   ENSURE(.fragment_info_made,             "no fragment info")
-
-      ! Initialize (leaky)
-      .init_xray_F2_fit
-
-      ! Do fit
-      .data.LS_fit.do_fit(::put_xray_F2_to              &
-                         ,::put_xray_dF2_to             &
-                         ,::clean_up_asym_atom_shifts  &
-                         ,::set_xray_F2_params_to       &
-                         ,::set_xray_F2_covariances)
-
-      ! Finalize (leaky)
-      .finish_xray_fit("Tonto X-ray F2 fit.")
-
-   end
-
-   set_xray_F2_params(X) ::: private
+   set_xray_F_params(X) ::: private
    ! Set the parameters which define the x-ray Fs, to "X".
       X :: VEC{REAL}, OUT
 
@@ -3955,6 +4256,278 @@ contains
 
       ! Set fragment from asym unit atom pADPs
       .set_frag_from_asym_pADPs
+
+      ! Set scale factors & extinction corrections
+      .data.set_F_parameters(X(n_pADPs+1:))
+
+   end
+
+   put_xray_F_to(Y) ::: selfless
+   ! Make and put the *predicted* x-ray F's in "Y"
+   ! This version for least-squares optimization.
+      Y :: VEC{REAL}, OUT
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Get F_pred
+      .put_xray_F(Y)
+
+   end
+
+   put_xray_F(Y) ::: private
+   ! Make and put the *predicted* x-ray F's in "Y"
+      Y :: VEC{REAL}, OUT
+
+      ! Get complex structure factors
+      .put_xray_F_help
+
+      ! Apply experimental corrections & set "Y"
+      .data.put_xray_F(Y)
+
+   end
+
+   put_xray_F_help ::: leaky, private
+   ! Make and put the complex structure factors reflections(:).calc.
+   ! Also: set .reflections(:).cal = abs(.reflections(:).calc))
+
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
+
+      sf_e,F :: VEC{CPX}*
+      n_refl,n_k :: INT
+
+      ! Constants
+      n_refl = .data.reflections.dim
+      n_k     = .n_unique_SF_k_pts
+
+      ! Create arrays
+      F.create(n_refl) 
+      sf_e.create(n_k)
+
+      ! Symmetry-generated unique SF'd
+      .make_unique_xray_sf(sf_e)
+
+      ! Sum the symmetry-generated SF's to get
+      ! the actual structure factors F
+      .spacegroup.sum_unique_sf(F,sf_e,.data.reflections)
+      sf_e.destroy
+
+      ! Set the calculated SF's
+      .reflections.set_calc_to(F)
+
+      ! Set F_cal = |F_calc|
+      .reflections.set_cal_to_abs_calc
+
+      ! Clean
+      F.destrroy
+
+   end
+
+   put_xray_dF_to(dY) ::: selfless
+   ! Make and put the derivative of the *predicted* x-ray F's in "dY"
+   ! This version for least-squares optimization.
+      dY :: MAT{REAL}, OUT
+
+      self :: DIFFRACTION_DATA*
+
+      ! Recover self
+      .set_from_saved_self
+
+      ! Get F_pred derivatives
+      .put_xray_dF(dY)
+
+   end
+
+   put_xray_dF(dY) ::: private
+   ! Make and put the derivative of the *predicted* x-ray F's in "dY"
+      dY :: MAT{REAL}, OUT
+
+      n_pADPs :: INT
+
+      ! Get no. of pADPs
+      n_pADPs = .no_of_pADPs
+
+      ! Set the asymmetric unit pADP derivatives
+      .put_xray_dF_help(dY(:,1:n_pADPs))
+
+      ! Set scale and extinction-factor derivatives
+      .data.put_xray_dF(dY(:,n_pADPs+1:))
+
+   end
+
+   put_xray_dF_help(dY) ::: leaky, private
+   ! Make and put the derivatives of the *predicted* x-ray F's in "dY"
+   ! NOTE: assumes reflections(:).calc and reflections(:).abs made
+      dY :: MAT{REAL}, OUT
+
+   ENSURE(.data.created,            "no data")
+   ENSURE(.data.reflections.created,"no reflection data")
+   ENSURE(.fragment_info_made,      "no fragment info")
+
+      sf_d,dF :: MAT{CPX}*
+      F_con :: VEC{CPX}*
+      F_abi :: VEC{REAL}*
+      n_refl,n_pADPs,n_k :: INT
+
+      ! Constants
+      n_refl  = .data.reflections.n_refl
+      n_pADPs = .no_of_pADPs
+      n_k     = .n_unique_SF_k_pts
+
+      ! Create derivatives
+      dF.create(n_refl,n_pADPs)  
+      sf_d.create(n_k,n_p)
+
+      ! Symmetry-generated unique SF'd
+      .make_unique_xray_sf_derivs(sf_d)
+
+      ! Sum the symmetry-generated SF's to get the
+      ! derivative complex structure factors dF
+      .sum_unique_sf_derivs_t(dF,sf_d)
+      sf_d.destroy
+
+      ! New tempraries
+      F_con.create(n_refl)
+      F_abi.create(n_refl)
+
+      ! Get (F_calc)*
+      .data.reflections.put_calc_to(F_con)
+      F_con = conjg(F_con)
+
+      ! Get 1/(F_abs)
+      .data.reflections.put_cal_to(F_abi)
+      F_abi = ONE/F_abi
+
+      ! Set the derivative
+      do p = 1,n_pADPs
+      do n = 1,n_refl
+         Y(n,p) = F_abi(n) * REALIFY(F_con(n) * dF(n,p))
+      end
+      end
+
+      ! Clean
+      F_abi.destroy
+      F_con.destroy
+ 
+   end
+
+   finish_xray_F_fit 
+   ! Wrap-up a rigid-atom fit to X-ray F's
+   ! WRONG
+
+      ! Table footer and final results
+      .put_fit_footer_info
+
+      ! Set the fragment covariances from cov matrix
+      .set_fragment_errors
+
+      ! Print out bond length, angle, torsion tables with errors
+      .put_bond_info_with_errors
+
+      ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
+      ! .fragment_atom, which *must* be assigned since it must point 
+      ! to molecule.atom
+      .asymmetric_unit_atom.destroy
+      .asymmetric_unit_geometry.destroy
+      .asymmetric_unit_source = "tonto-rigid-atom-x-ray-F-fit"
+      .set_defaults(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
+
+      ! Put fit analysis statistics
+      if (NOT .data.refine_structure) .put_fitting_plots
+
+   end
+
+!  =============
+!  Fit X-ray F2's
+!  =============
+
+! Initialize F2
+
+   init_xray_F2_fit ::: leaky, private
+   ! Initialize a rigid-atom fit to x-ray F's
+
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflections")
+   ENSURE(.data.data_kind=="xray-f","wrong data_kind: "//trim(.data.data_kind))
+
+      ! Initialize the F fit parameters
+      .init_F2_fit_parameters
+
+   end
+
+   init_F2_fit_parameters ::: leaky, private
+   ! Initialize parameters for a rigid-atom fit to x-ray F's.
+   ! Position-ADP parameters come first, then experimental parameters.
+
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflections")
+   ENSURE(.data.data_kind=="xray-f","wrong data_kind: "//trim(.data.data_kind))
+
+      n_p,n_pADPs,n_d :: INT
+      X,Y0,sigma :: VEC{REAL}*
+      X_labels :: VEC{STR}*
+
+      ! Get initial scale factors/extinction paramters (leaky)
+      .data.LS_corrections.set_show_fit_output(FALSE)
+      .data.make_xray_F2_pred
+
+      ! Set parameters
+      n_p     = .no_of_parameters
+      n_pADPs = .no_of_pADPs
+      n_d     = .data.reflections.dim
+
+      ! Create parameter vector and labels
+      X.create(n_p)
+      X_label.create(n_p)
+
+      ! Set pADP part of parameter vector
+      .fragment_atom(.unique_frag_atom).put_pADP_vector_to(X(1:n_pADPs))
+      .fragment_atom(.unique_frag_atom).put_tag_pADP_labels_to(X_label(1:n_pADPs))
+
+      ! Set the experimental parameter part of the parameter vector
+      X(n_p+1:)        = .data.LS_corrections.X
+      X_labels(n_p+1:) = .data.LS_corrections.X_labels
+
+      ! Initialize F data
+      Y0.create(n_d)
+      sigma.create(n_d)
+      .data.reflections.put_obs_to(Y0)
+      .data.reflections.put_sigma_to(sigma)
+
+      ! Set up least squares
+      .data.LS_fit.create
+      .data.LS_fit.initialize(X,Y0,sigma,X_labels)
+
+      ! Clean
+      sigma.destroy
+      Y0.destroy
+      Y.destroy
+      X_label.destroy
+      X.destroy
+
+   end
+
+! F2 set/put routines
+
+   set_xray_F2_params(X) ::: private
+   ! Set the parameters which define the x-ray Fs, to "X".
+      X :: VEC{REAL}, OUT
+
+   ENSURE(.data.created,"no data")
+   ENSURE(.data.reflections.created,"no reflections")
+   ENSURE(X.dim==.no_of_parameters,"wrong size, X")
+
+      n_pADPs :: INT
+
+      ! Get no. of pADPs
+      n_pADPs = .no_of_pADPs
+
+      ! Set the asymmetric unit pADPs
+      .fragment_atom(.unique_frag_atom).set_pADP_vector_to(X(1:n_pADPs))
 
       ! Set scale factors & extinction corrections
       .data.set_F2_parameters(X(n_pADPs+1:))
@@ -4164,7 +4737,7 @@ contains
    set_xray_F2_params_to(X) ::: selfless
    ! Set the parameters which define the x-ray F2s, to "X".
    ! This version for least-squares optimization.
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
       self :: DIFFRACTION_DATA*
 
@@ -4178,7 +4751,7 @@ contains
 
    set_xray_F2_params(X) ::: private
    ! Set the parameters which define the x-ray F2s, to "X".
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
    ENSURE(.data.created,"no data")
    ENSURE(.data.reflections.created,"no reflections")
@@ -4189,10 +4762,9 @@ contains
       ! Get no. of pADPs
       n_pADPs = .no_of_pADPs
 
-      ! Set the asymmetric unit pADPs
-      .asymmetric_unit_atom.set_pADP_vector_to(X(1:n_pADPs))
-
-      ! Set fragment from asym unit atom pADPs
+      ! Set the pADPs
+      .fragment_atom(.unique_atom).set_pADP_vector_to(X(1:n_pADPs))
+      .set_asym_from_ufrag_atoms
       .set_frag_from_asym_pADPs
 
       ! Set scale factors & extinction corrections
@@ -4346,7 +4918,7 @@ contains
  
    end
 
-   finish_xray_fit (source) 
+   finish_fit (source) 
    ! Wrap-up a rigid-atom fit to X-ray F's
    ! WRONG
       source :: STR
@@ -4393,10 +4965,9 @@ contains
 
       ! Do fit
       .data.LS_fit.do_fit(::put_neutron_F2_to              &
-                         ,::put_neutron_dF2_to             &
-                         ,::clean_up_asym_atom_shifts  &
-                         ,::set_neutron_F2_params_to       &
-                         ,::set_neutron_F2_covariances)
+                         ,::put_neutron_dF2_to          &
+                         ,::clean_up_ufrag_atom_shifts  &
+                         ,::set_neutron_F2_params_to)
 
       ! Finalize (leaky)
       .finish_neutron_fit("Tonto neutron F2 fit.")
@@ -4416,11 +4987,8 @@ contains
       ! Get no. of pADPs
       n_pADPs = .no_of_pADPs
 
-      ! Set the asymmetric unit pADPs
+      ! FIX Set the asymmetric unit pADPs
       .asymmetric_unit_atom.set_pADP_vector_to(X(1:n_pADPs))
-
-      ! Set fragment from asym unit atom pADPs
-      .set_frag_from_asym_pADPs
 
       ! Set scale factors & extinction corrections
       .data.set_F2_parameters(X(n_pADPs+1:))
@@ -4655,11 +5223,8 @@ contains
       ! Get no. of pADPs
       n_pADPs = .no_of_pADPs
 
-      ! Set the asymmetric unit pADPs
+      ! FIX Set the asymmetric unit pADPs
       .asymmetric_unit_atom.set_pADP_vector_to(X(1:n_pADPs))
-
-      ! Set fragment from asym unit atom pADPs
-      .set_frag_from_asym_pADPs
 
       ! Set scale factors & extinction corrections
       .data.set_F2_parameters(X(n_pADPs+1:))
