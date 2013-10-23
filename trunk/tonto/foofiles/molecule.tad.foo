@@ -119,18 +119,6 @@ contains
 
    fit_Hirshfeld_atoms ::: leaky
    ! Fit the Hirshfeld atoms to the calculated structure factors.
-   ! Cartesian (bohr) coordinates are used because structure factors
-   ! are aspherical and calculated from the QM wavefunction. 
-   ! NOTE: this routine does only one cycle of fitting with the
-   ! current density matrix i.e. this is a "rigid atom fit".
-   ! NOTE: It's tricky exactly which atom's are used for refinement:
-   ! * Structure factors are calculated only for *unique* fragment
-   !   atoms since the QM wavefunction refers to the fragment_atoms.
-   ! * However, asymmetric unit atoms are used to "store" the updating
-   !   geometry; thus unique fragment atom pADPs and shifts are
-   !   calculated (and derivatives with respect to the fragment atom
-   !   positions and ADPs) but these parameters and shifts are later
-   !   transformed back into asymmetric unit.
 
    ENSURE(.atom.created, "no atoms to fit")
    ENSURE(.becke_grid.created,"no becke_grid")
@@ -142,35 +130,18 @@ contains
 
       asf :: MAT{CPX}*
 
-      if (.BASE:debugging("fit_Hirshfeld_atoms")) then
-         stdout.text(">>fit_Hirshfeld_atoms")
-         stdout.text("fragment_atom (before):")
-         .crystal.fragment_atom.put_coordinates_and_ADPs
-         stdout.text("fragment_atom.pADP_vector (before):")
-         .crystal.fragment_atom.put_pADPs
-      end
-
       ! Set up becke integration grid (leaky)
       .SCF:make_Hirshfeld_inputs
 
-      if (.BASE:debugging("fit_Hirshfeld_atoms")) then
-         stdout.text(">>fit_Hirshfeld_atoms")
-         stdout.text("fragment_atom (after):")
-         .crystal.fragment_atom.put_coordinates_and_ADPs
-         stdout.text("fragment_atom.pADP_vector (after):")
-         .crystal.fragment_atom.put_pADPs
+      ! Make static aspherical atomic SF's for symmetry-unique fragment atoms
+      .crystal.sf_for_unique_frag_atom.destroy
+      if      (.invariom_refinement) then;            .::get_unique_invariom_SFs
+      else if (.crystal.data.use_Voronoi_atoms) then; .::get_unique_Voronoi_atom_SFs
+      else;                                           .::get_unique_Hirshfeld_atom_SFs
       end
 
-      ! Static atomic SF's for symmetry-unique fragment atoms (asf)
-      if      (.invariom_refinement) then;            .::get_unique_invariom_SFs(asf)
-      else if (.crystal.data.use_Voronoi_atoms) then; .::get_unique_Voronoi_atom_SFs(asf)
-      else;                                           .::get_unique_Hirshfeld_atom_SFs(asf)
-      end
-
-      ! >>>>> Do the fit <<<<<<
-      .crystal.set_sf_for_unique_frag_atoms(asf)
-    ! .crystal.fit_rigid_atoms(sf_n)
-      .crystal.fit_F
+      ! Do the fit 
+      .crystal.LS_fit
 
       ! Write the CIF files
       .BASE:put_CIF           ! Standard CIF, asymmetric unit with errors
@@ -178,9 +149,6 @@ contains
       .BASE:put_molecule_CIF  ! Accurate CIF, whole fragment, no errors, no covariance
       .BASE:put_NKA_cartesian
       .BASE:put_excel_crystal
- 
-      ! Clean up
-      sf_n.destroy
 
       ! Delete stored matrices
       .BASE:delete_scf_archives(keep_DM=TRUE)
@@ -192,13 +160,12 @@ contains
 
    end
    
-   get_unique_Hirshfeld_atom_SFs(asf) ::: leaky, private
+   get_unique_Hirshfeld_atom_SFs ::: leaky, private
    ! Get "asf", the static atomic structure factors, evaluated at the
    ! symmetry-related K points, for all symmetry-unique fragment atoms.
    ! NOTE: "asf" is the FT rho_a(r), eqn (3) in Jayatilaka 2008,
    ! Acta Cryst A 64 p. 383-393. It is also f_a(q) in eqn (11) except
    ! without the thermal smearing factor.
-      asf :: MAT{CPX}*
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
@@ -210,6 +177,7 @@ contains
    ENSURE(.crystal.xray_data.created, "no x-ray reflection data")
    ENSURE(.crystal.fragment_info_made, "no crystal fragment info")
 
+      asf :: MAT{CPX}*
       sf_u :: VEC{CPX}*
       Wc,wt, xa,ya,za,a2 :: VEC{REAL}*
       rho, k1,k2,k3, r1,r2,r3, ga,gb :: VEC{REAL}*
@@ -519,12 +487,14 @@ contains
          stdout.put(asf)
       end
 
+      ! Store the structure factors
+      .crystal.sf_for_unique_frag_atom => asf
+
    end
    
-   get_unique_Voronoi_atom_SFs(sf_n) ::: leaky, private
+   get_unique_Voronoi_atom_SFs ::: leaky, private
    ! Get "sf_n", the structure factors for the symmetry related 
    ! K points with *no* thermal smearing, for every unique atom. 
-      sf_n :: MAT{CPX}*
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
@@ -536,6 +506,7 @@ contains
    ENSURE(.crystal.asym_atom_for_frag_atom.created,"no crystal asym_atom_for_frag_atom")
    ENSURE(.density_matrix.created, "no density matrix")
 
+      sf_n :: MAT{CPX}*
       sf_u :: VEC{CPX}*
       wt :: VEC{REAL}*
       rho, k1,k2,k3, r1,r2,r3 :: VEC{REAL}*
@@ -624,12 +595,14 @@ contains
          PARALLEL_SUM(sf_n)
       end
 
+      ! Store the structure factors
+      .crystal.sf_for_unique_frag_atom => sf_n
+
    end
 
-   get_unique_invariom_SFs(sf_n) ::: private
+   get_unique_invariom_SFs ::: private
    ! Get "sf_n", the structure factors for the symmetry related 
    ! K points with *no* thermal smearing, for every unique invariom. 
-      sf_n :: MAT{CPX}*
 
    ENSURE(.basis_info_made,"no basis info")
    ENSURE(.atom.created,"no atom list")
@@ -646,6 +619,7 @@ contains
    ENSURE(sf_n.dim1==.crystal.n_unique_SF_k_pts, "wrong dim1, sf_n")
    ENSURE(sf_n.dim2==.crystal.asymmetric_unit_atom.dim, "wrong dim2, sf_n")
 
+      sf_n :: MAT{CPX}* ! <=== Make this
       k_pt,pt :: MAT{REAL}*
       wt,rho,Wa, k1,k2,k3,r1,r2,r3 :: VEC{REAL}*
       k1k,k2k,k3k,kr,rf :: REAL
@@ -725,6 +699,9 @@ contains
       end
 
       .BASE:put_debug(sf_n,"get_unique_atom_sfs")
+
+      ! Store the structure factors
+      .crystal.sf_for_unique_frag_atom => sf_n
 
    end
 
