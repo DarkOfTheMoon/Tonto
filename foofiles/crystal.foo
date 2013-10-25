@@ -3776,9 +3776,7 @@ contains
 
    end
 
-!  =============
-!  Fit X-ray F's
-!  =============
+!  Least-squares method-specific fit
 
    LS_fit_to ::: template
    ! Fit the Hirshfeld atoms to the observations.
@@ -3788,7 +3786,7 @@ contains
    ENSURE(.fragment_info_made,             "no fragment info")
 
       ! Get initial scale factors/extinction paramters (leaky)
-      .data.LS_corrections.set_show_fit_output(FALSE)
+      .data.LS_exp.set_show_fit_output(FALSE)
       .data.make_X?_pred
 
       ! Initialize (leaky)
@@ -3796,9 +3794,9 @@ contains
 
       ! Do fit
       .data.do_fit(::put_X?_to                  &
-                         ,::put_D?_to                  &
-                         ,::clean_up_ufrag_atom_shifts &
-                         ,::set_X?_params_to)
+                  ,::put_D?_to                  &
+                  ,::clean_up_ufrag_atom_shifts &
+                  ,::set_X?_params_to)
 
       ! Finalize (leaky)
       .finish_fit("Tonto X? fit.")
@@ -3842,8 +3840,8 @@ contains
       .fragment_atom(.unique_frag_atom).put_tag_pADP_labels_to(X_labels(1:n_pADPs))
 
       ! Set the experimental parameter part of the parameter vector
-      X(n_p+1:)        = .data.LS_corrections.X
-      X_labels(n_p+1:) = .data.LS_corrections.X_labels
+      X(n_p+1:)        = .data.LS_exp.X
+      X_labels(n_p+1:) = .data.LS_exp.X_labels
 
       ! Initialize F data
       Y0.create(n_d)
@@ -3863,7 +3861,34 @@ contains
 
    end
 
-! F/F2 set/put routines
+   finish_fit(source) 
+   ! Wrap-up a rigid-atom fit to X-ray F's
+   ! WRONG
+      source :: STR
+
+      ! Table footer and final results
+      .put_fit_footer_info
+
+      ! Set the fragment covariances from cov matrix
+      .set_fragment_errors
+
+      ! Print out bond length, angle, torsion tables with errors
+      .put_bond_info_with_errors
+
+      ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
+      ! .fragment_atom, which *must* be assigned since it must point 
+      ! to molecule.atom
+      .asymmetric_unit_atom.destroy
+      .asymmetric_unit_geometry.destroy
+      .asymmetric_unit_source = source
+      .set_defaults(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
+
+      ! Put fit analysis statistics
+      if (NOT .data.refine_structure) .put_fitting_plots
+
+   end
+
+!   Set parameters (export X -> fragment_atoms)
 
    set_params_to(X) ::: template, selfless
    ! Set the parameters which define the observations to "X".
@@ -3929,6 +3954,8 @@ contains
    set_neutron_F2_params(X) ::: get_from(CRYSTAL:set_params, Y?=>neutron_F2), private
    ! Set the atom pADPs which define the observations, to "X".
    end
+
+!   Put calc/pred observations (fragment_atom obs -> Y)
 
    put_pred_to(Y) ::: template, selfless
    ! Make and put the *predicted* observations in "Y"
@@ -4036,6 +4063,8 @@ contains
    ! Make and put the complex structure factors reflections(:).calc.
    ! Also: set .reflections(:).cal
    end
+
+!   Put derivative observations (fragment_atom dobs-> dY)
 
    put_dY_to(dY) :::template 
    ! Make and put the derivative of the *predicted* obs in "dY"
@@ -4209,35 +4238,6 @@ contains
    end
 
 
-   finish_fit(source) 
-   ! Wrap-up a rigid-atom fit to X-ray F's
-   ! WRONG
-      source :: STR
-
-      ! Table footer and final results
-      .put_fit_footer_info
-
-      ! Set the fragment covariances from cov matrix
-      .set_fragment_errors
-
-      ! Print out bond length, angle, torsion tables with errors
-      .put_bond_info_with_errors
-
-      ! Finally: remake .asymmetric_unit_atom/unit_cell geometry from
-      ! .fragment_atom, which *must* be assigned since it must point 
-      ! to molecule.atom
-      .asymmetric_unit_atom.destroy
-      .asymmetric_unit_geometry.destroy
-      .asymmetric_unit_source = source
-      .set_defaults(.fragment_atom,assign_atom=TRUE,warnings=FALSE)
-
-      ! Put fit analysis statistics
-      if (NOT .data.refine_structure) .put_fitting_plots
-
-   end
-
-
-
 !  =======================================
 !  X-ray structure factors and derivatives
 !  =======================================
@@ -4385,108 +4385,6 @@ contains
       else
 
          DIE("you aren't refining anything!")
-
-      end 
-
-   end
-
-   make_unique_neutron_sf(sf_e) ::: pure, private
-   ! Make ".sf_e", the symmetry-related dynamic structure factors,
-   ! from ".sf_for_unique_frag_atom", the *unique* frag. atom struct
-   ! factors, and the ".fragment_atom.ADP_tensor".
-      self :: IN
-      sf_e :: VEC{CPX}, OUT
-
-   ENSURE(.data.created,                     "no reflection data")
-   ENSURE(.neutron_data.created,             "no neutron reflection data")
-   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array")
-   ENSURE(.sf_for_unique_frag_atom.created,  "no sf_for_unique_frag_atom")
-   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,     "sf_e, wrong dim")
-
-      k_pt,kU  :: MAT{REAL}*
-      u1,u2,u3,k1,k2,k3 :: VEC{REAL}*
-      k1k,k2k,k3k,tf,b :: REAL
-      n_k,f,u,k :: INT
-      sf :: CPX
-
-      ! Constants
-      n_k = .n_unique_SF_k_pts
-
-      ! Symmetry generated k points
-      k_pt.create(n_k,3)
-      .make_unique_SF_k_pts(k_pt)
-      k1 => k_pt(:,1)
-      k2 => k_pt(:,2)
-      k3 => k_pt(:,3)
-
-      ! K times thermal tensors
-      kU.create(n_k,3)        
-
-      ! Initialize
-      sf_e = ZERO
-
-      ! Make the structure factors
-      parallel do u = 1,.n_unique_frag_atoms
-
-         f = .unique_frag_atom(u)
-
-         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
-
-         u1 => kU(:,1)
-         u2 => kU(:,2)
-         u3 => kU(:,3)
-
-         ! Scattering length
-         b = .fragment_atom(f).neutron_scattering_length
-
-         do k = 1,n_k
-
-            k1k = k1(k)
-            k2k = k2(k)
-            k3k = k3(k)
-
-            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
-
-            sf  = b * tf
-
-            sf_e(k) = sf_e(k) + sf
-
-         end
-
-      end
-
-      ! Clean
-      kU.destroy
-      k_pt.destroy
-
-      if (DO_IN_PARALLEL) then
-         PARALLEL_SUM(sf_e)
-      end
-
-   end
-
-   make_unique_neutron_sf_derivs(sf_d) ::: pure, private
-   ! Make the unique dynamic structure factors derivatives "sf_d"
-   ! corresponding to k points from ".make_unique_SF_k_pts from", 
-   ! and for the pADPs in the unique ".fragment_atoms"
-      self :: IN
-      sf_d :: MAT{CPX}, OUT
-
-   ENSURE(.data.created,                     "no reflection data")
-   ENSURE(.neutron_data.created,             "no neutron reflection data")
-   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array")
-   ENSURE(.sf_for_unique_frag_atom.created,  "no sf_for_unique_frag_atom")
-   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,     "sf_d, wrong dim1")
-   ENSURE(sf_d.dim1==.n_unique_frag_atoms,   "sf_d, wrong dim2")
-
-      ! Refine positions and ADPs
-      if (.data.refine_positions_and_ADPs) then  
-
-                                                    ! Refine *all* atoms ansitropic
-                                                    .make_unique_sfd_pos_Y_ADP__Y_neutron(sf_d)
-      else
-
-         DIE("you can only refine both positions and ADPs!")
 
       end 
 
@@ -5553,9 +5451,111 @@ contains
    end
 
 
-!  =======================================
-!  Neutron derivatives
-!  =======================================
+!  =========================================
+!  Neutron structure factors and derivatives
+!  =========================================
+
+   make_unique_neutron_sf(sf_e) ::: pure, private
+   ! Make ".sf_e", the symmetry-related dynamic structure factors,
+   ! from ".sf_for_unique_frag_atom", the *unique* frag. atom struct
+   ! factors, and the ".fragment_atom.ADP_tensor".
+      self :: IN
+      sf_e :: VEC{CPX}, OUT
+
+   ENSURE(.data.created,                     "no reflection data")
+   ENSURE(.neutron_data.created,             "no neutron reflection data")
+   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array")
+   ENSURE(.sf_for_unique_frag_atom.created,  "no sf_for_unique_frag_atom")
+   ENSURE(sf_e.dim ==.n_unique_SF_k_pts,     "sf_e, wrong dim")
+
+      k_pt,kU  :: MAT{REAL}*
+      u1,u2,u3,k1,k2,k3 :: VEC{REAL}*
+      k1k,k2k,k3k,tf,b :: REAL
+      n_k,f,u,k :: INT
+      sf :: CPX
+
+      ! Constants
+      n_k = .n_unique_SF_k_pts
+
+      ! Symmetry generated k points
+      k_pt.create(n_k,3)
+      .make_unique_SF_k_pts(k_pt)
+      k1 => k_pt(:,1)
+      k2 => k_pt(:,2)
+      k3 => k_pt(:,3)
+
+      ! K times thermal tensors
+      kU.create(n_k,3)        
+
+      ! Initialize
+      sf_e = ZERO
+
+      ! Make the structure factors
+      parallel do u = 1,.n_unique_frag_atoms
+
+         f = .unique_frag_atom(u)
+
+         kU.to_product_of(k_pt,.fragment_atom(f).ADP_tensor)
+
+         u1 => kU(:,1)
+         u2 => kU(:,2)
+         u3 => kU(:,3)
+
+         ! Scattering length
+         b = .fragment_atom(f).neutron_scattering_length
+
+         do k = 1,n_k
+
+            k1k = k1(k)
+            k2k = k2(k)
+            k3k = k3(k)
+
+            tf = exp(-HALF*(u1(k)*k1k+u2(k)*k2k+u3(k)*k3k))
+
+            sf  = b * tf
+
+            sf_e(k) = sf_e(k) + sf
+
+         end
+
+      end
+
+      ! Clean
+      kU.destroy
+      k_pt.destroy
+
+      if (DO_IN_PARALLEL) then
+         PARALLEL_SUM(sf_e)
+      end
+
+   end
+
+   make_unique_neutron_sf_derivs(sf_d) ::: pure, private
+   ! Make the unique dynamic structure factors derivatives "sf_d"
+   ! corresponding to k points from ".make_unique_SF_k_pts from", 
+   ! and for the pADPs in the unique ".fragment_atoms"
+      self :: IN
+      sf_d :: MAT{CPX}, OUT
+
+   ENSURE(.data.created,                     "no reflection data")
+   ENSURE(.neutron_data.created,             "no neutron reflection data")
+   ENSURE(.unique_atom_for_frag_atom.created,"no unique_atom_for_frag_atom array")
+   ENSURE(.sf_for_unique_frag_atom.created,  "no sf_for_unique_frag_atom")
+   ENSURE(sf_d.dim1==.n_unique_SF_k_pts,     "sf_d, wrong dim1")
+   ENSURE(sf_d.dim1==.n_unique_frag_atoms,   "sf_d, wrong dim2")
+
+      ! Refine positions and ADPs
+      if (.data.refine_positions_and_ADPs) then  
+
+                                                    ! Refine *all* atoms ansitropic
+                                                    .make_unique_sfd_pos_Y_ADP__Y_neutron(sf_d)
+      else
+
+         DIE("you can only refine both positions and ADPs!")
+
+      end 
+
+   end
 
    make_unique_sfd_pos_Y_ADP__Y_neutron(sf_d) ::: pure, private
    ! Make the unique dynamic structure factors derivatives "sf_d"
@@ -5637,6 +5637,7 @@ contains
       end
 
    end
+
 
 !  ============================
 !  Structure refinement methods
@@ -6614,39 +6615,6 @@ contains
    ! Return TRUE if the debug switch "name" has been set.
    end
 
-   put_debug_list ::: get_from(DEBUG)
-   ! Put of the list of debug switches
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>REAL)
-   ! Put *number* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>VEC{INT})
-   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>VEC{REAL})
-   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT{REAL})
-   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT{CPX})
-   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
-
-   put_debug(X,name) ::: get_from(DEBUG, X?=>MAT3{REAL})
-   ! Put *array* "X" to output, with descriptor "name", if the debug switch for
-   ! it has been set.
-   end
 
 !  ====
 !  Dump
@@ -6721,6 +6689,7 @@ contains
    dmpp(object_name) ::: get_from(OBJECT)
    ! Dump pointer object data as text
    end
+
 
 !  ===========
 !  Put methods
@@ -7406,9 +7375,9 @@ contains
    end
 
 
-!  ================================
-!  Put Fragment related information
-!  ================================
+!  =================
+!  Put fragment info
+!  =================
 
    put_fragment_data ::: private
    ! Put fragment information to file "out". Optional "atom" list may
@@ -7579,9 +7548,9 @@ contains
    end
 
 
-!  ==================================
-!  Put reflection related information
-!  ==================================
+!  ===================
+!  Put reflection info
+!  ===================
 
    put_reflection_data
    ! Put out the reflection data to file "out".  Both Neutron and 
