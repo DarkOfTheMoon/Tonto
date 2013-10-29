@@ -2845,32 +2845,33 @@ sub fortran_process_case_statements {
 #######################################################################
 
 sub fortran_process_error_management {
+
   my($error_string,$name);
 
   $name = $current_rout_name;
+
   if (defined $routine{$name}{pure}) {
+
     $fortran_out =~ s/ENSURE.*$//o;
     $fortran_out =~ s/VERIFY.*$//o;
     $fortran_out =~ s/DIE_IF.*$//o;
     $fortran_out =~ s/WARN_IF.*$//o;
     $fortran_out =~ s/DIE\(".*$//o;
     $fortran_out =~ s/WARN\(".*$//o;
+
   } else {
+
     $error_string = "$module_full_name:${routine{$name}{real_name}} ... ";
+
     if ($fortran_out =~ 'ENSURE') { $fortran_out =~ s/(^.*), *"([^"]*)"/$1,"$error_string$2"/m; }
     if ($fortran_out =~ 'VERIFY') { $fortran_out =~ s/(^.*), *"([^"]*)"/$1,"$error_string$2"/m; }
     if ($fortran_out =~ 'DIE_IF') { $fortran_out =~ s/(^.*), *"([^"]*)"/$1,"$error_string$2"/m; }
     if ($fortran_out =~ 'WARN_IF') { $fortran_out =~ s/(^.*), *"([^"]*)"/$1,"$error_string$2"/m; }
     if ($fortran_out =~ 'DIE\("') { $fortran_out =~ s/DIE\("/DIE\("$error_string/m; }
     if ($fortran_out =~ 'WARN\("') { $fortran_out =~ s/WARN\("/WARN\("$error_string/m; }
+
   }
 
-# # Split the ENSURE & DIE_IF off the STACK; this also bloats the code.
-# if ($fortran_out =~ '^ *STACK') {
-#   $fortran_out =~  s/\)( *)ENSURE\(/\)\n$1ENSURE\(/;
-#   $fortran_out =~  s/\)( *)ENSURE[\$]\(/\)\n$1ENSURE[\$]\(/;
-#   $fortran_out =~  s/\)( *)DIE_IF\(/\)\n$1DIE_IF\(/;
-# }
 }
 
 #########################################################
