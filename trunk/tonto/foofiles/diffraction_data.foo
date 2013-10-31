@@ -88,9 +88,8 @@ contains
 
       if (.reflections.created) then
 
-         .scale_factor = ONE
          .exp_scale_factor = ONE
-         .extinction_factor = ZERO
+         .Larsen_extinction_factor = ZERO
          .reflections.destroy
          .scale_factors.destroy
 
@@ -177,8 +176,8 @@ contains
 
       ! Experimental corrections
       .exp_scale_factor       = ONE
-      .optimise_extinction    = DIFFRACTION_DATA_OPTIMISE_EXTINCTION
-      .extinction_factor      = DIFFRACTION_DATA_EXTINCTION_FACTOR
+      .use_Larsen_extinction    = DIFFRACTION_DATA_OPTIMISE_EXTINCTION
+      .Larsen_extinction_factor = ZERO 
       .correct_dispersion     = DIFFRACTION_DATA_CORRECT_DISPERSION
 
       ! Agreement statistics
@@ -194,22 +193,6 @@ contains
       .refine_H_U_iso           = FALSE
       .refine_anharmonicity     = FALSE
       .restart_HAR_with_promolecule = FALSE
-
-      ! Refine/fit iteration termination
-      .max_iterations           = DIFFRACTION_DATA_MAX_ITER
-      .min_iterations           = DIFFRACTION_DATA_MIN_ITER  
-      .max_allowed_param_shift  = DIFFRACTION_DATA_MAX_ALLOWED_SHIFT
-
-      ! Least squares options (zero/near zero eigenvalues)
-      .tol_for_shift_on_esd     = DIFFRACTION_DATA_TOL_FOR_SHIFT_ON_ESD
-      .tol_0                    = DIFFRACTION_DATA_TOL_0
-      .tol_near_0               = DIFFRACTION_DATA_TOL_NEAR_0
-
-      ! Refinement/fit output control
-      .show_fit_output             = FALSE
-      .display_near_0_eigenvectors = FALSE
-      .display_correlation_matrix  = FALSE
-      .min_correlation             = DIFFRACTION_DATA_MIN_CORRELATION
 
       ! Set the for a LS rigid-atom fit
       .destroy_LS_rigid_fit_data
@@ -233,9 +216,12 @@ contains
       if (.reflections.destroyed) return
  
       ! If reflections are to be manuially scaled
-      if (.reflections.have_obs AND NOT .exp_scale_factor.equals(ONE)) then
+      if (.reflections.have_obs) then
+         if (NOT .exp_scale_factor.equals(ONE)) then
          .reflections.scale_obs_and_sigma(.exp_scale_factor)
          .exp_scale_factor = ONE
+         end
+         .set_obs_on_sigma
       end
 
       if (present(unit_cell))  .set_theta_angles(unit_cell.reciprocal_matrix)
@@ -324,7 +310,7 @@ contains
 
       do n = 1,n_refl
 
-         H = .reflections.indices(n)
+         H = .reflections.miller_indices(n)
 
          ! Count the times H maps to itself
          u = 1
@@ -344,18 +330,37 @@ contains
    ! all the .theta values, which are used later all over the place ...
       reciprocal_matrix :: MAT{REAL}(3,3), IN
 
-      H,K :: VEC{INT}(3)
+      H,K :: VEC{REAL}(3)
       sin_theta :: REAL
+      stl :: REAL
       n :: INT
 
       do n = 1,.reflections.n_refl
 
-         H = .reflections.indices(n)
+         H = .reflections.miller_indices(n)
  
          K.to_product_of(reciprocal_matrix,H)
  
          sin_theta = HALF* K.norm * .wavelength
          .reflections(n).theta = asin(sin_theta)
+         stl = HALF * K.norm 
+         .reflections(n).stl = stl
+
+      end
+
+   end
+
+   set_obs_on_sigma
+   ! This routine is called after the reflections are read in, in order to set
+   ! all the .theta values, which are used later all over the place ...
+
+      obs_on_sigma :: REAL
+      n :: INT
+
+      do n = 1,.reflections.n_refl
+
+         obs_on_sigma = .reflections(n).obs/.reflections(n).sigma
+         .reflections(n).obs_on_sigma = obs_on_sigma
 
       end
 
@@ -423,8 +428,8 @@ contains
          case ("nka_t_sequence_no=            "); .read_NKA_T_seq_no
 
          case ("obs_on_sigma_cutoff=          "); .read_obs_on_sigma_cutoff
-         case ("optimise_extinction=          "); .read_optimise_extinction
-         case ("optimize_extinction=          "); .read_optimise_extinction
+         case ("use_Larsen_extinction=          "); .read_use_Larsen_extinction
+         case ("optimize_extinction=          "); .read_use_Larsen_extinction
 
          case ("partition_model=              "); .read_partition_model
          case ("prune_bad_reflections         "); .prune_bad_reflections
@@ -544,10 +549,10 @@ contains
       stdin.read_quantity(.wavelength)
    end
 
-   read_optimise_extinction ::: private
+   read_use_Larsen_extinction ::: private
    ! Read the switch whether to correct extinction or not, according to the
    ! Larson formula
-      stdin.read(.optimise_extinction)
+      stdin.read(.use_Larsen_extinction)
    end
 
    read_correct_dispersion ::: private
@@ -593,7 +598,7 @@ contains
       self :: PTR
 
    DIE_IF(NOT .reflections.created,"no reflection data")
-   DIE_IF(NOT .reflections.have_F_exp,"no experimental data")
+   DIE_IF(NOT .reflections.have_obs,"no experimental data")
 
       n_refl,i :: INT
       ref :: REFLECTION*
@@ -738,8 +743,8 @@ contains
       cif.find_looped_item("_diffrn_refln_index_h",there(1))
       cif.find_looped_item("_diffrn_refln_index_k",there(2))
       cif.find_looped_item("_diffrn_refln_index_l",there(3))
-      cif.find_looped_item("_diffrn_refln_F_meas" ,there(4))
-      cif.find_looped_item("_diffrn_refln_F_sigma",there(5))
+      cif.find_looped_item("_diffrn_refln_obs" ,there(4))
+      cif.find_looped_item("_diffrn_refln_sigma",there(5))
 
       ! Read reflections
       if (all(there)) then
@@ -748,16 +753,16 @@ contains
          cif.read_looped_item("_diffrn_refln_index_h",h)
          cif.read_looped_item("_diffrn_refln_index_h",k)
          cif.read_looped_item("_diffrn_refln_index_h",l)
-         cif.read_looped_item("_diffrn_refln_F_meas" ,Fm)
-         cif.read_looped_item("_diffrn_refln_F_sigma",Sg)
+         cif.read_looped_item("_diffrn_refln_obs" ,Fm)
+         cif.read_looped_item("_diffrn_refln_sigma",Sg)
 
          ! Create and assign
          .reflections.create(h.dim)
          .reflections.set_h(h)
          .reflections.set_k(k)
          .reflections.set_l(l)
-         .reflections.set_F_exp(Fm)
-         .reflections.set_F_sigma(Sg)
+         .reflections.set_obs_to(Fm)
+         .reflections.set_sigma_to(Sg)
 
          ! Clean
          Sg.destroy; Fm.destroy
@@ -921,6 +926,7 @@ contains
    make_xray_F_pred ::: leaky
    ! Make predicted X-ray F's by optimizing all requested experimental
    ! parameters.
+   self :: PTR
 
       ! Initialize (leaky)
       .init_xray_F
@@ -939,8 +945,8 @@ contains
 
    ENSURE(.data_kind=="xray-f","wrong data_kind, "//trim(.data_kind))
    ENSURE(.reflections.created,"no reflections")
-   DIE_IF(NOT .reflections.have_obs,"no F_obs")
-   DIE_IF(NOT .reflections.have_sigma,"no F_sigma")
+   DIE_IF(NOT .reflections.have_obs,"no obs")
+   DIE_IF(NOT .reflections.have_sigma,"no sigma")
 
       n_g,n_p,n_d,p :: INT
       X,Y0,sigma :: VEC{REAL}*
@@ -994,7 +1000,7 @@ contains
    set_xray_F_params_to(X) ::: selfless
    ! Set the non-pADP parameters for predicting x-ray F's to "X"
    ! This version for least-squares optimization.
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
       self :: DIFFRACTION_DATA*
 
@@ -1008,13 +1014,13 @@ contains
 
    set_xray_F_params(X)
    ! Set the non pADP parameters for predicting x-ray F's to "X"
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
    ENSURE(.data_kind=="xray-f","wrong data_kind, "//trim(.data_kind))
    ENSURE(.reflections.created,"no reflections")
    ENSURE(X.dim==.no_of_non_pADPs,"wrong size, X")
 
-      n_g,n_p :: INT
+      p,n_g,n_p :: INT
 
       ! Get no. of parameters
       n_g = .reflections.no_of_groups
@@ -1068,7 +1074,7 @@ contains
       .reflections.put_cal_to(F)
 
       ! Get experimental corrections
-      .put_scale_correction_to(C)
+      .put_scale_correction_to(C,.scale_factors)
       if (.use_Larsen_extinction) then
          ext.create(n_d)
          .put_Larsen_correction_to(ext,.Larsen_extinction_factor)
@@ -1091,7 +1097,7 @@ contains
    put_xray_dF_to(dY) ::: selfless
    ! Make and put the derivative of the *predicted* x-ray F's in "dY"
    ! This version for least-squares optimization.
-      dF_pred :: MAT{REAL}, OUT
+      dY :: MAT{REAL}, OUT
 
       self :: DIFFRACTION_DATA*
 
@@ -1135,7 +1141,7 @@ contains
       n_d :: INT
 
       ! No. of data
-      n_d = dF.dim1
+      n_d = dF.dim
 
       ! Get scale correction only
       s.create(n_d)
@@ -1146,7 +1152,7 @@ contains
       .put_dLarsen_correction_to(dL)
 
       ! Get derivatives
-      dF(:,1) = s(:) * dL(:)
+      dF(:) = s(:) * dL(:)
 
       ! Clean
       dL.destroy
@@ -1205,15 +1211,16 @@ contains
 
       F_abs2,F_abs,val,ang :: REAL
       angle_part :: VEC{REAL}*
-      g,n :: INT
+      n_refl,g,n :: INT
 
       if (.Larsen_extinction_factor.is_zero(TOL(9))) then
 
-         res = ZERO
+         dC = ZERO
 
       else
 
          ! Get the Larsen angle part
+         n_refl = .reflections.dim
          angle_part.create(n_refl)
          .put_Larsen_angle_part_to(angle_part)
 
@@ -1227,7 +1234,7 @@ contains
             val = ONE + .Larsen_extinction_factor*F_abs2*ang
             val = ONE/val
 
-            dC(n) = -HALF * extinction_correction * sqrt(F_abs2*sqrt(val)) * val * ang
+            dC(n) = -HALF * .Larsen_extinction_factor * sqrt(F_abs2*sqrt(val)) * val * ang
 
          end
 
@@ -1265,6 +1272,7 @@ contains
    make_xray_F2_pred ::: leaky
    ! Make predicted X-ray F2's by optimizing all requested experimental
    ! parameters.
+   self :: PTR
 
       ! Initialize (leaky)
       .init_xray_F2
@@ -1331,7 +1339,7 @@ contains
    set_xray_F2_params_to(X) ::: selfless
    ! Set the non-pADP parameters for predicting x-ray F2's to "X"
    ! This version for least-squares optimization.
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
       self :: DIFFRACTION_DATA*
 
@@ -1345,13 +1353,13 @@ contains
 
    set_xray_F2_params(X)
    ! Set the non pADP parameters for predicting x-ray F2's to "X"
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
    ENSURE(.data_kind=="xray-f2","wrong data_kind, "//trim(.data_kind))
    ENSURE(.reflections.created,"no reflections")
    ENSURE(X.dim==.no_of_non_pADPs,"wrong size, X")
 
-      n_g,n_p :: INT
+      p,n_g,n_p :: INT
 
       ! Get no. of parameters
       n_g = .reflections.no_of_groups
@@ -1400,7 +1408,7 @@ contains
       .reflections.put_cal_to(F2)
 
       ! Get experimental corrections
-      .put_scale_correction_to(C)
+      .put_scale_correction_to(C,.scale_factors)
 
       ! Apply corrections
       Y = C*F2
@@ -1417,7 +1425,7 @@ contains
    put_xray_dF2_to(dY) ::: selfless
    ! Make and put the derivative of the *predicted* x-ray F2's in "dY"
    ! This version for least-squares optimization.
-      dF2_pred :: MAT{REAL}, OUT
+      dY :: MAT{REAL}, OUT
 
       self :: DIFFRACTION_DATA*
 
@@ -1448,13 +1456,13 @@ contains
    put_dF_dscales(dF)
    ! Get derivative of structure factor magnitudes wrt scale factors
    ! in "dF(n_refl,n_group)"
-      dF :: VEC{REAL}, OUT
+      dF :: MAT{REAL}, OUT
 
    ENSURE(dF.dim1==.reflections.dim1,"wrong dim1, dF")
    ENSURE(dF.dim2==.reflections.no_of_groups,"wrong dim2, dF")
 
       ext :: VEC{REAL}*
-      n_p,n_d :: INT
+      g,n,n_p,n_d :: INT
 
       ! No. of parameters
       n_d = dF.dim1
@@ -1463,14 +1471,14 @@ contains
       ! Get extinction corrections only
       ext.create(n_d)
       ext = ONE
-      .put_Larsen_correction_to(ext,.extinction_factor)
+      .put_Larsen_correction_to(ext,.Larsen_extinction_factor)
 
       ! Get derivatives
       do g = 1,n_p
       do n = 1,n_d
 
          if (.reflections(n).group==g) then
-            dF(n,g) = ext(n) * .reflections(n).F_cal
+            dF(n,g) = ext(n) * .reflections(n).cal
          else
             dF(n,g) = ZERO
          end
@@ -1488,7 +1496,7 @@ contains
       C :: VEC{REAL}, OUT
       scale_factors :: VEC{REAL}, IN
 
-      n_group,n_refl :: INT
+      g,n,n_group,n_refl :: INT
 
       ! Sizes
       n_group = .reflections.no_of_groups
@@ -1511,12 +1519,12 @@ contains
    put_dF2_dscales(dF2)
    ! Get derivative of squared structure factor magnitudes wrt scale factors
    ! in "dF(n_refl,n_group)"
-      dF2 :: VEC{REAL}, OUT
+      dF2 :: MAT{REAL}, OUT
 
    ENSURE(dF2.dim1==.reflections.dim1,"wrong dim1, dF2")
    ENSURE(dF2.dim2==.reflections.no_of_groups,"wrong dim2, dF2")
 
-      n_p,n_d :: INT
+      g,n,n_p,n_d :: INT
 
       ! No. of parameters
       n_d = dF2.dim1
@@ -1544,7 +1552,7 @@ contains
    make_neutron_F2_pred ::: leaky
    ! Make predicted neutron F2's by optimizing all requested experimental
    ! parameters.
-
+   self :: PTR
       ! Initialize (leaky)
       .init_neutron_F2
 
@@ -1610,7 +1618,7 @@ contains
    set_neutron_F2_params_to(X) ::: selfless
    ! Set the non-pADP parameters for predicting neutron F2's to "X"
    ! This version for least-squares optimization.
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
       self :: DIFFRACTION_DATA*
 
@@ -1624,13 +1632,13 @@ contains
 
    set_neutron_F2_params(X)
    ! Set the non pADP parameters for predicting neutron F2's to "X"
-      X :: VEC{REAL}, OUT
+      X :: VEC{REAL}, IN
 
    ENSURE(.data_kind=="neutron-f2","wrong data_kind, "//trim(.data_kind))
    ENSURE(.reflections.created,"no reflections")
    ENSURE(X.dim==.no_of_non_pADPs,"wrong size, X")
 
-      n_g,n_p :: INT
+      p,n_g,n_p :: INT
 
       ! Get no. of parameters
       n_g = .reflections.no_of_groups
@@ -1679,7 +1687,7 @@ contains
       .reflections.put_cal_to(F2)
 
       ! Get experimental corrections
-      .put_scale_correction_to(C)
+      .put_scale_correction_to(C,.scale_factors)
 
       ! Apply corrections
       Y = C*F2
@@ -1696,7 +1704,7 @@ contains
    put_neutron_dF2_to(dY) ::: selfless
    ! Make and put the derivative of the *predicted* neutron F2's in "dY"
    ! This version for least-squares optimization.
-      dF2_pred :: MAT{REAL}, OUT
+      dY :: MAT{REAL}, OUT
 
       self :: DIFFRACTION_DATA*
 
@@ -1820,7 +1828,7 @@ contains
 
    ENSURE(.reflections.created,"no reflections")
 
-      if (.have_calc OR .have_pred) .put_correction_data
+      if (.reflections.have_calc OR .reflections.have_pred) .put_correction_data
 
       .reflections.put
 
@@ -1873,9 +1881,9 @@ contains
 
    end
 
-   put_F2_free_stats
+   put_free_statistics
    ! Output the F2 goodness of fit statistics
-      .reflections.put_F2_free_stats
+      .reflections.put_free_statistics
       .put_correction_data
    end
 
@@ -1883,14 +1891,14 @@ contains
    ! Output the correction data
 
       stdout.flush
-      stdout.show("Using extinction               =", .optimise_extinction)
+      stdout.show("Using extinction               =", .use_Larsen_extinction)
       stdout.show("Thermal smearing model         =", .thermal_smearing_model)
       stdout.show("Fragment partition model       =", .partition_model)
       stdout.show("Correct dispersion?            =", .correct_dispersion)
 
-      if (.optimise_extinction) then;
+      if (.use_Larsen_extinction) then;
       stdout.show("Optimize extinction            =", TRUE)
-      stdout.show("Secondary extinction factor    =", .extinction_factor)
+      stdout.show("Secondary extinction factor    =", .Larsen_extinction_factor)
       else
       stdout.show("Optimize extinction            =", FALSE)
       end
@@ -2030,42 +2038,40 @@ contains
 
       ext_refs.create(n_refl)
       ext.create(n_refl)
-      ext = .F_extinction_correction
-      ext_refs.set_F_exp(.reflections.F_pred)
-      ext_refs.set_F_pred(.reflections.F_pred * ext)
-      ext_refs.set_F_sigma(.reflections.F_sigma)
+      .put_Larsen_correction_to(ext,.Larsen_extinction_factor)
+      w = sum(abs(ext))/n_refl
+      ext_refs.set_obs_to(.reflections.pred)
+      ext_refs.set_pred_to(.reflections.pred * ext)
+      ext_refs.set_sigma_to(.reflections.sigma)
       ext.destroy
 
-      if (NOT .optimise_extinction) return
+      if (NOT .use_Larsen_extinction) return
 
       stdout.text("The effects of extinction.")
 
-      w = ZERO
       y = ZERO
       do n=1,n_refl
-       y = y + abs(ext_refs(n).F_z)
-       w = w + abs(ext_refs(n).F_r)
+       y = y + abs(ext_refs(n).z_statistic)
       end
       y = y / n_refl
-      w = w / n_refl
-      stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/F_sigma is ",y)
+      stdout.show("Average value of abs[Fcalc(with ext)-Fcalc(without ext)]/sigma is ",y)
       stdout.show("Average value of abs(extinction correction) is ",w)
       stdout.flush
 
       stdout.text("The effects of intensity on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs F_pred")
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/sigma vs pred")
       do n=1,n_refl
-       stdout.put(ext_refs(n).F_pred)
-       stdout.put(ext_refs(n).F_z)
+       stdout.put(ext_refs(n).pred)
+       stdout.put(ext_refs(n).z_statistic)
        stdout.flush
       end
       stdout.flush
 
       stdout.text("The effects of scattering angle on extinction.")
-      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/F_sigma vs sin(theta)/lambda")
+      stdout.text("Scatter plot of [Fcalc(with ext)-Fcalc(without ext)]/sigma vs sin(theta)/lambda")
       do n = 1,n_refl
          stdout.put(.reflections(n).sin_theta_on_lambda)
-         stdout.put(ext_refs(n).F_z)
+         stdout.put(ext_refs(n).z_statistic)
          stdout.flush
       end
       ext_refs.destroy
@@ -2172,9 +2178,9 @@ contains
       stdout.text("_refine_ls_number_parameters           "//trim(.LS_fit.n_parameters.to_str))
       stdout.text("_refine_ls_number_restraints            0")
       stdout.text("_refine_ls_number_constraints          "//trim(.LS_fit.n_near_0.to_str))
-      R = .F_r_factor
+      R = .reflections.r_factor
       stdout.text("_refine_ls_R_factor_all                 "//trim(R.to_str("f10.4")))
-      R = .F_weighted_r_factor
+      R = .reflections.weighted_r_factor
       stdout.text("_refine_ls_wR_factor_ref                "//trim(R.to_str("f10.4")))
       stdout.text("_refine_ls_goodness_of_fit_ref          "//trim(.LS_fit.chi2.to_str("f10.4")))
       stdout.text("_refine_ls_shift/su_max                 ?")
@@ -2198,15 +2204,15 @@ contains
       stdout.text("    _diffrn_refln_index_h")
       stdout.text("    _diffrn_refln_index_k")
       stdout.text("    _diffrn_refln_index_l")
-      stdout.text("    _diffrn_refln_F_meas")
-      stdout.text("    _diffrn_refln_F_sigma")
+      stdout.text("    _diffrn_refln_obs")
+      stdout.text("    _diffrn_refln_sigma")
 
       do i = 1,.reflections.dim
          stdout.put(.reflections(i).h)
          stdout.put(.reflections(i).k)
          stdout.put(.reflections(i).l)
-         stdout.put(.reflections(i).F_exp)
-         stdout.put(.reflections(i).F_sigma)
+         stdout.put(.reflections(i).obs)
+         stdout.put(.reflections(i).sigma)
          stdout.flush
       end
 
@@ -2224,55 +2230,55 @@ contains
       if (associated(.reflections)) res = any(.reflections.group>1)
    end
 
-   simulate_new_F_exp
+   simulate_new_obs
    ! Simulate a new experiment by adding normally distributed experimental
    ! errors the the F_exp.
 
    ENSURE(.reflections.created,"no reflection data")
-   ENSURE(.have_F_exp,"no experimental structure factors")
-   ENSURE(.have_F_sigma,"no experimental structure factor errors")
+   ENSURE(.have_obs,"no experimental structure factors")
+   ENSURE(.have_sigma,"no experimental structure factor errors")
 
-      F_exp :: VEC{REAL}*
+      obs :: VEC{REAL}*
       n_refl,n :: INT
       chi2,z :: REAL
 
       stdout.flush
-      stdout.text("Adding simulated errors to F_exp using F_sigma.")
+      stdout.text("Adding simulated errors to obs using sigma.")
 
       n_refl = .reflections.n_refl
-      F_exp.create(n_refl)
-      F_exp = .reflections.F_exp
+      obs.create(n_refl)
+      obs = .reflections.obs
 
-      .reflections.simulate_new_F_exp
+      .reflections.simulate_new_obs
 
       chi2 = ZERO
       do n = 1,n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
+         z = .reflections(n).z_statistic
          chi2 = chi2 + z*z
       end
       chi2 = chi2 / max(n_refl - 1,1)
 
-      stdout.text("chi^2 of old F_exp to new F_exp is " // trim(chi2.to_str))
+      stdout.text("chi^2 of old obs to new obs is " // trim(chi2.to_str))
       stdout.flush
       stdout.dash(real_fields=4)
-      stdout.put("F_exp (old)")
-      stdout.put("F_exp (new)")
-      stdout.put("F_sigma")
+      stdout.put("obs (old)")
+      stdout.put("obs (new)")
+      stdout.put("sigma")
       stdout.put("dF/sigma")
       stdout.flush
       stdout.dash(real_fields=4)
 
       do n=1,n_refl
-         z = (F_exp(n)-.reflections(n).F_exp)/.reflections(n).F_sigma
-         stdout.put(F_exp(n))
-         stdout.put(.reflections(n).F_exp)
-         stdout.put(.reflections(n).F_sigma)
+         z = .reflections(n).z_statistic
+         stdout.put(obs(n))
+         stdout.put(.reflections(n).obs)
+         stdout.put(.reflections(n).sigma)
          stdout.put(z)
          stdout.flush
       end
 
       stdout.dash(real_fields=4)
-      F_exp.destroy
+      obs.destroy
 
    end
 
