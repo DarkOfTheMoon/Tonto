@@ -233,7 +233,7 @@
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
       BIN           NOTA, NOTB
-      INT            I, INFO, J, L, NCOLA, NROWA, NROWB
+      INT            I, INFO, J, L, NROWA, NROWB
       REAL   TEMP
 !     ..
 !     .. Executable Statements ..
@@ -246,10 +246,10 @@
      NOTB  = scan(TRANSB,"Nn") > 0
       IF( NOTA )THEN
          NROWA = M
-         NCOLA = K
+       ! NCOLA = K
       ELSE
          NROWA = K
-         NCOLA = M
+       ! NCOLA = M
       END IF
       IF( NOTB )THEN
          NROWB = K
@@ -3457,7 +3457,7 @@
       EXTERNAL           XERBLA
 !     .. Local Scalars ..
       BIN            CONJA, CONJB, NOTA, NOTB
-      INT            I, INFO, J, L, NCOLA, NROWA, NROWB
+      INT            I, INFO, J, L, NROWA, NROWB
       CPX         TEMP
 !     ..
 !     .. Executable Statements ..
@@ -3474,10 +3474,10 @@
       CONJB =  scan( TRANSB, 'Cc' )>0
       IF( NOTA )THEN
          NROWA = M
-         NCOLA = K
+       ! NCOLA = K
       ELSE
          NROWA = K
-         NCOLA = M
+       ! NCOLA = M
       END IF
       IF( NOTB )THEN
          NROWB = K
