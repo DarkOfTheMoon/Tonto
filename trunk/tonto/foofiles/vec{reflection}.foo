@@ -30,9 +30,9 @@ module VEC{REFLECTION}
 
 contains
 
-!  ===========================
-!  Create and Destroy Routines
-!  ===========================
+!  ===================
+!  Allocation routines
+!  ===================
 
    create(dim) ::: get_from(VEC{OBJECT}), leaky
    ! Create space for object. This version does not nullify ptr parts.
@@ -57,6 +57,7 @@ contains
    destroyed result (res) ::: get_from(OBJECT), inlined_by_foo
    ! Returns true if self has *not* been created
    end
+
 
 !  ============
 !  Set routines
@@ -160,6 +161,7 @@ contains
       self(:).sigma = v
 
    end
+
 
 !  ===============
 !  Put-to routines
@@ -295,7 +297,7 @@ contains
       res = maxval(self(:).group)
    end
    
-   have_calc result (res) ::: pure
+   has_calc result (res) ::: pure
    ! Any non-zero (complex) calculated structure factors?
       self :: IN
       res :: BIN
@@ -313,7 +315,7 @@ contains
 
    end
 
-   have_pred result (res) ::: pure
+   has_pred result (res) ::: pure
    ! Any non-zero predicted structure factors?
       self :: IN
       res :: BIN
@@ -331,7 +333,7 @@ contains
 
    end
 
-   have_obs result (res) ::: pure
+   has_obs result (res) ::: pure
    ! Any non-zero observed structure factors
       self :: IN
       res :: BIN
@@ -349,7 +351,7 @@ contains
 
    end
 
-   have_sigma result (res) ::: pure
+   has_sigma result (res) ::: pure
    ! Any non-zero errors in the structure factors
       self :: IN
       res :: BIN
@@ -367,7 +369,7 @@ contains
 
    end
 
-   have_indices result (res) ::: pure
+   has_indices result (res) ::: pure
    ! Any non-zero Miller indices
       self :: IN
       res :: BIN
@@ -385,14 +387,6 @@ contains
 
    end
 
-!   hkl(n) result (res) ::: pure
-!   ! Return the miller indices of reflection n.
-!      self :: IN
-!      n :: INT, IN
-!      res :: VEC{INT}(3)
-!      res = [ self(n).h, self(n).k, self(n).l ]
-!   end
-
    miller_indices(n) result (res) ::: pure
    ! Return the Miller indices of reflection n.
       self :: IN
@@ -408,9 +402,240 @@ contains
    end
 
 
-!  ========================
-!  Pruning & simulated data
-!  ========================
+!  =======================
+!  Pruning & altering data
+!  =======================
+
+   prune(list,cutoff,show_stats,show_rejects) ::: template
+   ! This creates "self", which has all the reflections in "list" with
+   ! respect to a rejection test "cutoff" eliminated.
+      self :: PTR
+      list :: VEC{REFLECTION}*
+      cutoff :: REAL, IN
+      show_stats :: BIN, optional
+      show_rejects :: BIN, optional
+
+   DIE_IF(.created,     "Pruned reflections already exist!")
+   ENSURE(list.created, "No original list of reflection data")
+   ENSURE(list.have_obs,"No experimental observations in list")
+
+      data :: MAT{REAL}*
+      head :: VEC{STR}*
+      keep :: VEC{BIN}*
+      bad :: VEC{REFLECTION}*
+      k,b :: INT
+      title :: STR
+
+      ! Keep mask
+      keep.create(.dim)
+      keep = NOT REFLECTION:has_SIZE?_TEST?(list,cutoff)
+
+      k = count(keep)
+      b = .dim - k
+
+      ! Return if all kepts
+      if (k==.dim) then
+         keep.destroy
+         return
+      end
+
+      ! Copy the non-rejects
+      self.create(k)
+      self = pack(list,mask=keep)
+
+      if (present(show_stats)) then
+      if (show_stats) then
+
+      stdout.flush
+      title = "Reflections pruned"
+      stdout.text(repeat("=",len_trim(title)))
+      stdout.text(trim(title))
+      stdout.text(repeat("=",len_trim(title)))
+
+      stdout.flush
+      stdout.show("Rejection criteria      =","SIZE?_TEST?")
+      stdout.show("Cutoff                  =",cutoff)
+      stdout.flush
+      stdout.show("No. of reflections      =",.dim)
+      stdout.show("No. of rejects          =",b)
+      stdout.show("No. of kept reflections =",k)
+
+      if (present(show_rejects)) then
+      if (show_rejects) then
+
+
+      data.create(b,1)
+      head.create(1)
+
+      ! Copy the rejects
+      bad.create(b)
+      bad = pack(list,mask=NOT keep)
+
+      data(:,1) = REFLECTION:TEST?(bad)
+      head(1)   = "TEST?"
+
+      ! Destroy rejects
+      bad.destroy
+
+      .put_hkl_table(data,head)
+
+      head.destroy
+      data.destroy
+
+      end
+      end ! show-rejects
+
+      end
+      end ! show-stats
+
+      ! Clean
+      bad.destroy
+      keep.destroy
+
+   end
+
+   prune ::: template
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+      self :: PTR
+
+   ENSURE(.created,"No data")
+   ENSURE(.reflections.created,"No reflection data")
+
+      saved_reflections :: VEC{REFLECTION}*
+      good,bad, h,k,l :: VEC{INT}*
+      n_refl, n,i,g,b :: INT
+      cut :: VEC{REAL}*
+      table :: VEC{TABLE_COLUMN}*
+      title :: STR
+
+      ! Any rejects?
+      n = count(REFLECTION:TEST?(list,cutoff))
+
+      DIE_IF(n==.dim,"All reflections have been rejected!")
+
+      if (n==0) return
+
+      ! No. of old reflections
+      n_refl = .reflections.n_refl
+
+      ! Find out how many rejects "n" there are
+      n = 0
+      do i = 1,n_refl
+         if (.reflections(i).SIZE?_TEST?(.TEST?_cutoff)) n = n + 1
+      end
+
+      ! Are there any weak reflections?
+      if (n==0) return
+
+      ! Create the "good" and "bad" lists and how many of each
+      bad.create(n)
+      good.create(n_refl-n)
+      g = 0
+      b = 0
+      do i = 1,n_refl
+         if (.reflections(i).SIZE?_TEST?(.TEST?_cutoff)) then
+            b = b + 1
+            bad(b) = i
+         else
+            g = g + 1
+            good(g) = i
+         end
+      end
+
+      ! Copy the non-rejects
+      saved_reflections => .reflections
+      .reflections.create(g)
+      .reflections.copy(saved_reflections(good))
+
+      ! Print out
+      stdout.flush
+      title = "Reflections pruned"
+
+      stdout.text(repeat("=",len_trim(title)))
+      stdout.text(trim(title))
+      stdout.text(repeat("=",len_trim(title)))
+
+      ! Banner
+      stdout.flush
+      stdout.show("Rejection criteria      =","SIZE?_TEST?")
+      stdout.show("Cutoff                  =",.EPS?_cutoff)
+      stdout.flush
+      stdout.show("No. of reflections      =",n_refl)
+      stdout.show("No. of rejects          =",b)
+      stdout.show("No. of kept reflections =",g)
+
+      if (.show_rejects) then
+
+         stdout.flush
+         stdout.text("Table of rejected reflections:")
+         stdout.flush
+
+         ! Get table column data
+         h.create(b); h = saved_reflections(bad).h
+         k.create(b); k = saved_reflections(bad).k
+         l.create(b); l = saved_reflections(bad).l
+   
+         cut.create(b)
+         cut = REFLECTION:TEST?(saved_reflections(bad),.EPS?_cutoff)
+   
+         ! Table headings
+         table.create(4)
+         table(1).set_heading("h")
+         table(2).set_heading("k")
+         table(3).set_heading("l")
+         table(4).set_heading("TEST?")
+   
+         ! Set table column data
+         table(1).set_values(h)
+         table(2).set_values(k)
+         table(3).set_values(l)
+         table(4).set_values(cut)
+   
+         ! Make the table
+         table.put(label_rows=FALSE)
+   
+         ! Clean
+         table.nullify_ptr_part
+         table.destroy
+         cut.destroy
+         l.destroy
+         k.destroy
+         h.destroy
+
+      end
+
+      ! Clean
+      saved_reflections.destroy
+      bad.destroy
+      good.destroy
+
+   end
+
+   prune_bad_reflections ::: get_from(prune_reflections, SIZE?=>big, TEST?=>z_statistic), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_high_angle_reflections ::: get_from(prune_reflections, SIZE?=>big, TEST?=>stl), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_low_angle_reflections ::: get_from(prune_reflections, SIZE?=>low, TEST?=>stl), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_negative_reflections ::: get_from(prune_reflections, SIZE?=>negative, TEST?=>obs), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
+
+   prune_weak_reflections ::: get_from(prune_reflections, SIZE?=>low, TEST?=>obs_on_sigma), leaky
+   ! This routine eliminates all the reflections with respect to a
+   ! rejection test on the reflections
+   end
 
    set_free_reflections_from(data,free_percentage) ::: leaky
    ! Set the free reflections in "self" from "data" using a certain
@@ -476,107 +701,6 @@ contains
 
    end
 
-   prune(list,cutoff,show_stats,show_rejects) ::: template
-   ! This creates "self", which has all the reflections in "list" with
-   ! respect to a rejection test "cutoff" eliminated.
-      self :: PTR
-      list   :: VEC{REFLECTION}*
-      cutoff :: REAL, IN
-      show_stats :: BIN, optional
-      show_rejects :: BIN, optional
-
-   ENSURE(.destroyed,   "Pruned reflections already exist!")
-   ENSURE(list.created, "No original list of reflection data")
-   ENSURE(list.have_obs,"No experimental observations in list")
-
-      data :: MAT{REAL}*
-      head :: VEC{STR}*
-      good,bad :: VEC{INT}*
-      is_bad :: BIN
-      n,i,g,b :: INT
-      title :: STR
-
-      ! Any rejects?
-      n = count(REFLECTION:TEST?(list,cutoff))
-
-      DIE_IF(n==.dim,"All reflections have been rejected!")
-
-      if (n==0) return
-
-      ! Create "good" & "bad" lists
-      bad.create(n)
-      good.create(.dim-n)
-
-      ! Make "good" & "bad" lists
-      g = 0
-      b = 0
-      do i = 1,.dim
-
-         is_bad = list(i).TEST?(cutoff)
-
-         if (is_bad) then
-            b = b + 1
-            bad(b) = i
-         else
-            g = g + 1
-            good(g) = i
-         end
-
-      end
-
-      ! Copy the non-rejects
-      self.create(g)
-      self.copy(list(good))
-
-      if (present(show_stats)) then
-      if (show_stats) then
-
-      ! Print out
-      stdout.flush
-      title = "Reflections pruned"
-
-      stdout.text(repeat("=",len_trim(title)))
-      stdout.text(trim(title))
-      stdout.text(repeat("=",len_trim(title)))
-
-      ! Banner
-      stdout.flush
-      stdout.show("Rejection criteria      =","TEST?")
-      stdout.show("Cutoff                  =",cutoff)
-      stdout.flush
-      stdout.show("No. of reflections      =",.dim)
-      stdout.show("No. of rejects          =",b)
-      stdout.show("No. of kept reflections =",g)
-
-      if (present(show_rejects)) then
-      if (show_rejects) then
-
-      data.create(.dim,1)
-      head.create(1)
-
-      data(:,1) = list(bad).VAL?
-      head(1)   = HEAD?
-      .put_hkl_table(data,head)
-
-      head.destroy
-      data.destroy
-
-      end
-      end ! show-rejects
-
-      end
-      end ! show-stats
-
-      ! Clean
-      bad.destroy
-      good.destroy
-
-   end
-
-!  prune_bad(list,cutoff,show_stats,show_rejects) ::: get_from(VEC{REFLECTION}:prune, TEST?=>has_large_z_statistic, VAL?=>z_statistic, HEAD?=>"Z stat"), leaky
-!  ! This creates "self", which has all the reflections in "list" with
-!  ! respect to a rejection test "cutoff" eliminated.
-!  end
 
    prune_weak(list,cutoff,show_stats,show_rejects) ::: get_from(VEC{REFLECTION}:prune, TEST?=>is_weak_obs, VAL?=>obs_on_sigma, HEAD?=>"Obs/sigma"), leaky
    ! This creates "self", which has all the reflections in "list" with
@@ -816,288 +940,6 @@ contains
 
       ! Clean
       hkl_range.destroy
-
-   end
-
-
-!  ===============
-!  Output routines
-!  ===============
-
-   put
-   ! Output all the factor info
-      if (.use_multiple_scale_factors) then; .put_group_info
-      else;                                  .put_nogrp_info
-      end
-   end
-
-   put_group_data ::: private
-   ! Output the structure factor data with group index
-
-      table :: VEC{TABLE_COLUMN}*
-      h,k,l,g :: VEC{INT}*
-      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
-      n_refl :: INT
-
-      ! Constants
-      n_refl = .dim
-
-      ! Get data
-      h.create(n_refl);       h       = .h
-      k.create(n_refl);       k       = .k
-      l.create(n_refl);       l       = .l
-      g.create(n_refl);       g       = .group
-      F_cr.create(n_refl);    F_cr    = RE(.calc)
-      F_ci.create(n_refl);    F_ci    = IM(.calc)
-      F_pred.create(n_refl);  F_pred  = .pred
-      F_exp.create(n_refl);   F_exp   = .obs
-      F_sigma.create(n_refl); F_sigma = .sigma
-      F_z.create(n_refl);     F_z     = REFLECTION:z_statistic(self)
-
-      ! Make table
-      table.create(10)
-       table(1).set_heading("h");        table(1).set_values(h)
-       table(2).set_heading("k");        table(2).set_values(k)
-       table(3).set_heading("l");        table(3).set_values(l)
-       table(4).set_heading("Scale");    table(4).set_values(g)
-       table(5).set_heading("Calc");     table(5).set_values(F_cr)
-       table(6).set_heading("Calc");     table(6).set_values(F_ci)
-       table(7).set_heading("Pred");     table(7).set_values(F_pred)
-       table(8).set_heading("Obs.");     table(8).set_values(F_exp)
-       table(9).set_heading("Sigma");    table(9).set_values(F_sigma)
-      table(10).set_heading("Z stat");  table(10).set_values(F_z)
-      table.put
-
-      ! Subheadings
-      table(4).set_subhead("Group")
-      table(5).set_subhead("Real")
-      table(6).set_subhead("Imag")
-
-      ! Clean
-      table.clear_columns
-      table.destroy
-      F_z.destroy
-      F_sigma.destroy
-      F_exp.destroy
-      F_pred.destroy
-      F_ci.destroy
-      F_cr.destroy
-      g.destroy
-      l.destroy
-      k.destroy
-      h.destroy
-
-   end
-
-   put_nogrp_data ::: private
-   ! Output the structure factor data, single scale factor group
-
-      table :: VEC{TABLE_COLUMN}*
-      h,k,l :: VEC{INT}*
-      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
-      n_refl :: INT
-
-      ! Constants
-      n_refl = .dim
-
-      ! Get data
-      h.create(n_refl);       h       = .h
-      k.create(n_refl);       k       = .k
-      l.create(n_refl);       l       = .l
-      F_cr.create(n_refl);    F_cr    = RE(.calc)
-      F_ci.create(n_refl);    F_ci    = IM(.calc)
-      F_pred.create(n_refl);  F_pred  = .pred
-      F_exp.create(n_refl);   F_exp   = .obs
-      F_sigma.create(n_refl); F_sigma = .sigma
-      F_z.create(n_refl);     F_z     = REFLECTION:z_statistic(self)
-
-      ! Make table
-      table.create(9)
-      table(1).set_heading("h");        table(1).set_values(h)
-      table(2).set_heading("k");        table(2).set_values(k)
-      table(3).set_heading("l");        table(3).set_values(l)
-      table(4).set_heading("Calc");     table(4).set_values(F_cr)
-      table(5).set_heading("Calc");     table(5).set_values(F_ci)
-      table(6).set_heading("Pred");     table(6).set_values(F_pred)
-      table(7).set_heading("Obs.");     table(7).set_values(F_exp)
-      table(8).set_heading("Sigma");    table(8).set_values(F_sigma)
-      table(9).set_heading("Z stat");   table(9).set_values(F_z)
-      table.put
-
-      ! Subheadings
-      table(4).set_subhead("Real")
-      table(5).set_subhead("Imag")
-
-      ! Clean
-      table.clear_columns
-      table.destroy
-      F_z.destroy
-      F_sigma.destroy
-      F_exp.destroy
-      F_pred.destroy
-      F_ci.destroy
-      F_cr.destroy
-      l.destroy
-      k.destroy
-      h.destroy
-
-   end
-
-   put_observed
-   ! Output only the experimental structure factor data
-      if (.use_multiple_scale_factors) then; .put_obs_group
-      else;                                  .put_obs_nogrp
-      end
-   end
-
-   put_obs_nogrp ::: private
-   ! Output only the experimental structure factor data, where only
-   ! one scale factor (scale group) is used.
-
-      data :: MAT{REAL}*
-      head,subh :: VEC{STR}*
-
-      ! Set data, headings, subheadings
-      data.create(.dim,2)
-      head.create(2)
-      subh.create(2)
-
-      data(:,1) = .obs;   head(1) = "Obs. "
-      data(:,2) = .sigma; head(2) = "Sigma"
-
-      ! Clean
-      subh.destroy
-      head.destroy
-      data.destroy
-
-   end
-
-   put_obs_group ::: private
-   ! Output only the experimental structure factor data where multiple
-   ! scale factors (scale groups) are used.
-
-      table :: VEC{TABLE_COLUMN}*
-      h,k,l,g :: VEC{INT}*
-      obs,sigma :: VEC{REAL}*
-      n_refl :: INT
-
-      ! Constants
-      n_refl = .dim
-
-      ! Get data
-      h.create(n_refl);     h     = .h
-      k.create(n_refl);     k     = .k
-      l.create(n_refl);     l     = .l
-      g.create(n_refl);     g     = .group
-      obs.create(n_refl);   obs   = .obs
-      sigma.create(n_refl); sigma = .sigma
-
-      ! Make table
-      table.create(6)
-      table(1).set_heading("h");       table(1).set_values(h)
-      table(2).set_heading("k");       table(2).set_values(k)
-      table(3).set_heading("l");       table(3).set_values(l)
-      table(4).set_heading("Scale");   table(4).set_values(g)
-      table(5).set_heading("Obs.");    table(5).set_values(obs)
-      table(6).set_heading("Sigma");   table(6).set_values(sigma)
-      table.put
-
-      ! Subheadings
-      table(4).set_subhead("Group")
-
-      ! Clean
-      table.clear_columns
-      table.destroy
-      sigma.destroy
-      obs.destroy
-      g.destroy
-      l.destroy
-      k.destroy
-      h.destroy
-
-   end
-
-   put_predicted
-   ! Output only the predicted structure factor data
-
-      data :: MAT{REAL}*
-      head,subh :: VEC{STR}*
-
-      ! Set data, headings, subheadings
-      data.create(.dim,3)
-      head.create(3)
-      subh.create(3)
-
-      data(:,1) = RE(.calc); head(1) = "Calc"; subh(1) = "Real"
-      data(:,2) = IM(.calc); head(2) = "Calc"; subh(2) = "Imag"
-      data(:,3) = .pred;     head(3) = "Pred"; subh(3) = " "
-
-      ! Make table
-      .put_hkl_table(data,head,subh)
-
-      ! Clean
-      subh.destroy
-      head.destroy
-      data.destroy
-
-   end
-
-   put_hkl_table(data,heading,subhead)
-   ! Output column "data" along with in a table with indices.
-      data :: MAT{REAL}, IN
-      heading :: VEC{STR}, IN
-      subhead :: VEC{STR}, optional, IN
-
-   ENSURE(data.dim1==.dim,       "wrong number of rows in column data")
-   ENSURE(data.dim2==heading.dim,"wrong number headings")
-
-      table :: VEC{TABLE_COLUMN}*
-      h,k,l :: VEC{INT}*
-      n_refl,n_head,n_cols,n_data,i :: INT
-      subheading :: BIN
-
-      subheading = FALSE
-      if (present(subhead)) subheading = any(subhead/=" ")
-
-      ! Constants
-      n_refl = .dim
-      n_data = heading.dim
-      n_cols = n_refl + n_data + 3
-
-      ! Get data
-      h.create(n_refl); h = .h
-      k.create(n_refl); k = .k
-      l.create(n_refl); l = .l
-
-      ! Make table
-      table.create(n_cols)
-
-      table(1).set_heading("h1"); table(1).set_values(h)
-      table(2).set_heading("h2"); table(2).set_values(k)
-      table(3).set_heading("h3"); table(3).set_values(l)
-
-      do i = 1,n_data
-
-         table(i+3).set_heading(heading(i))
-         table(i+3).set_values(data(:,i))
-
-         if (subheading) then
-         if (subhead(i)/=" ") then
-         table(i+3).set_subhead(subhead(i))
-         end
-         end
-
-      end
-
-      ! Put table
-      table.put
-
-      ! Clean
-      table.clear_columns
-      table.destroy
-      l.destroy
-      k.destroy
-      h.destroy
 
    end
 
@@ -1414,6 +1256,288 @@ contains
          p = (TWO*(n_refl-j)+ONE)/(TWO*n_refl) ! cumulative probability
          e(n_refl-j+1) = p.z_stat_from_tail_probability
       end
+
+   end
+
+
+!  ===============
+!  Output routines
+!  ===============
+
+   put
+   ! Output all the factor info
+      if (.use_multiple_scale_factors) then; .put_group_info
+      else;                                  .put_nogrp_info
+      end
+   end
+
+   put_group_data ::: private
+   ! Output the structure factor data with group index
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l,g :: VEC{INT}*
+      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
+      n_refl :: INT
+
+      ! Constants
+      n_refl = .dim
+
+      ! Get data
+      h.create(n_refl);       h       = .h
+      k.create(n_refl);       k       = .k
+      l.create(n_refl);       l       = .l
+      g.create(n_refl);       g       = .group
+      F_cr.create(n_refl);    F_cr    = RE(.calc)
+      F_ci.create(n_refl);    F_ci    = IM(.calc)
+      F_pred.create(n_refl);  F_pred  = .pred
+      F_exp.create(n_refl);   F_exp   = .obs
+      F_sigma.create(n_refl); F_sigma = .sigma
+      F_z.create(n_refl);     F_z     = REFLECTION:z_statistic(self)
+
+      ! Make table
+      table.create(10)
+       table(1).set_heading("h");        table(1).set_values(h)
+       table(2).set_heading("k");        table(2).set_values(k)
+       table(3).set_heading("l");        table(3).set_values(l)
+       table(4).set_heading("Scale");    table(4).set_values(g)
+       table(5).set_heading("Calc");     table(5).set_values(F_cr)
+       table(6).set_heading("Calc");     table(6).set_values(F_ci)
+       table(7).set_heading("Pred");     table(7).set_values(F_pred)
+       table(8).set_heading("Obs.");     table(8).set_values(F_exp)
+       table(9).set_heading("Sigma");    table(9).set_values(F_sigma)
+      table(10).set_heading("Z stat");  table(10).set_values(F_z)
+      table.put
+
+      ! Subheadings
+      table(4).set_subhead("Group")
+      table(5).set_subhead("Real")
+      table(6).set_subhead("Imag")
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      F_z.destroy
+      F_sigma.destroy
+      F_exp.destroy
+      F_pred.destroy
+      F_ci.destroy
+      F_cr.destroy
+      g.destroy
+      l.destroy
+      k.destroy
+      h.destroy
+
+   end
+
+   put_nogrp_data ::: private
+   ! Output the structure factor data, single scale factor group
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l :: VEC{INT}*
+      F_cr,F_ci,F_pred,F_exp,F_sigma,F_z :: VEC{REAL}*
+      n_refl :: INT
+
+      ! Constants
+      n_refl = .dim
+
+      ! Get data
+      h.create(n_refl);       h       = .h
+      k.create(n_refl);       k       = .k
+      l.create(n_refl);       l       = .l
+      F_cr.create(n_refl);    F_cr    = RE(.calc)
+      F_ci.create(n_refl);    F_ci    = IM(.calc)
+      F_pred.create(n_refl);  F_pred  = .pred
+      F_exp.create(n_refl);   F_exp   = .obs
+      F_sigma.create(n_refl); F_sigma = .sigma
+      F_z.create(n_refl);     F_z     = REFLECTION:z_statistic(self)
+
+      ! Make table
+      table.create(9)
+      table(1).set_heading("h");        table(1).set_values(h)
+      table(2).set_heading("k");        table(2).set_values(k)
+      table(3).set_heading("l");        table(3).set_values(l)
+      table(4).set_heading("Calc");     table(4).set_values(F_cr)
+      table(5).set_heading("Calc");     table(5).set_values(F_ci)
+      table(6).set_heading("Pred");     table(6).set_values(F_pred)
+      table(7).set_heading("Obs.");     table(7).set_values(F_exp)
+      table(8).set_heading("Sigma");    table(8).set_values(F_sigma)
+      table(9).set_heading("Z stat");   table(9).set_values(F_z)
+      table.put
+
+      ! Subheadings
+      table(4).set_subhead("Real")
+      table(5).set_subhead("Imag")
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      F_z.destroy
+      F_sigma.destroy
+      F_exp.destroy
+      F_pred.destroy
+      F_ci.destroy
+      F_cr.destroy
+      l.destroy
+      k.destroy
+      h.destroy
+
+   end
+
+   put_observed
+   ! Output only the experimental structure factor data
+      if (.use_multiple_scale_factors) then; .put_obs_group
+      else;                                  .put_obs_nogrp
+      end
+   end
+
+   put_obs_nogrp ::: private
+   ! Output only the experimental structure factor data, where only
+   ! one scale factor (scale group) is used.
+
+      data :: MAT{REAL}*
+      head,subh :: VEC{STR}*
+
+      ! Set data, headings, subheadings
+      data.create(.dim,2)
+      head.create(2)
+      subh.create(2)
+
+      data(:,1) = .obs;   head(1) = "Obs. "
+      data(:,2) = .sigma; head(2) = "Sigma"
+
+      ! Clean
+      subh.destroy
+      head.destroy
+      data.destroy
+
+   end
+
+   put_obs_group ::: private
+   ! Output only the experimental structure factor data where multiple
+   ! scale factors (scale groups) are used.
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l,g :: VEC{INT}*
+      obs,sigma :: VEC{REAL}*
+      n_refl :: INT
+
+      ! Constants
+      n_refl = .dim
+
+      ! Get data
+      h.create(n_refl);     h     = .h
+      k.create(n_refl);     k     = .k
+      l.create(n_refl);     l     = .l
+      g.create(n_refl);     g     = .group
+      obs.create(n_refl);   obs   = .obs
+      sigma.create(n_refl); sigma = .sigma
+
+      ! Make table
+      table.create(6)
+      table(1).set_heading("h");       table(1).set_values(h)
+      table(2).set_heading("k");       table(2).set_values(k)
+      table(3).set_heading("l");       table(3).set_values(l)
+      table(4).set_heading("Scale");   table(4).set_values(g)
+      table(5).set_heading("Obs.");    table(5).set_values(obs)
+      table(6).set_heading("Sigma");   table(6).set_values(sigma)
+      table.put
+
+      ! Subheadings
+      table(4).set_subhead("Group")
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      sigma.destroy
+      obs.destroy
+      g.destroy
+      l.destroy
+      k.destroy
+      h.destroy
+
+   end
+
+   put_predicted
+   ! Output only the predicted structure factor data
+
+      data :: MAT{REAL}*
+      head,subh :: VEC{STR}*
+
+      ! Set data, headings, subheadings
+      data.create(.dim,3)
+      head.create(3)
+      subh.create(3)
+
+      data(:,1) = RE(.calc); head(1) = "Calc"; subh(1) = "Real"
+      data(:,2) = IM(.calc); head(2) = "Calc"; subh(2) = "Imag"
+      data(:,3) = .pred;     head(3) = "Pred"; subh(3) = " "
+
+      ! Make table
+      .put_hkl_table(data,head,subh)
+
+      ! Clean
+      subh.destroy
+      head.destroy
+      data.destroy
+
+   end
+
+   put_hkl_table(data,heading,subhead)
+   ! Output column "data" along with in a table with indices.
+      data :: MAT{REAL}, IN
+      heading :: VEC{STR}, IN
+      subhead :: VEC{STR}, optional, IN
+
+   ENSURE(data.dim1==.dim,       "wrong number of rows in column data")
+   ENSURE(data.dim2==heading.dim,"wrong number headings")
+
+      table :: VEC{TABLE_COLUMN}*
+      h,k,l :: VEC{INT}*
+      n_refl,n_head,n_cols,n_data,i :: INT
+      subheading :: BIN
+
+      subheading = FALSE
+      if (present(subhead)) subheading = any(subhead/=" ")
+
+      ! Constants
+      n_refl = .dim
+      n_data = heading.dim
+      n_cols = n_refl + n_data + 3
+
+      ! Get data
+      h.create(n_refl); h = .h
+      k.create(n_refl); k = .k
+      l.create(n_refl); l = .l
+
+      ! Make table
+      table.create(n_cols)
+
+      table(1).set_heading("h1"); table(1).set_values(h)
+      table(2).set_heading("h2"); table(2).set_values(k)
+      table(3).set_heading("h3"); table(3).set_values(l)
+
+      do i = 1,n_data
+
+         table(i+3).set_heading(heading(i))
+         table(i+3).set_values(data(:,i))
+
+         if (subheading) then
+         if (subhead(i)/=" ") then
+         table(i+3).set_subhead(subhead(i))
+         end
+         end
+
+      end
+
+      ! Put table
+      table.put
+
+      ! Clean
+      table.clear_columns
+      table.destroy
+      l.destroy
+      k.destroy
+      h.destroy
 
    end
 
