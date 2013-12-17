@@ -382,7 +382,7 @@ syn keyword fortranStructure PTR
 syn match   fortranConditional "end"
 
 syn keyword fortranType leaky recursive routinal functional get_from
-syn keyword fortranType pure always_pure elemental always_elemental
+syn keyword fortranType impure pure always_pure elemental always_elemental
 
 " Built-in and virtual types
 
@@ -415,6 +415,7 @@ syn keyword fortranType FILE
 syn keyword fortranType CIF
 syn keyword fortranType BUFFER 
 syn keyword fortranType UNIT_NUMBER
+syn keyword fortranType TABLE_COLUMN
 
 " Gaussians, basis functions and shells
 
@@ -461,8 +462,8 @@ syn keyword fortranType REFLECTION
 
 " Colours
 
-syn keyword fortranType COLOUR
-syn keyword fortranType COLOURFUNCTION 
+syn keyword fortranType COLOR
+syn keyword fortranType COLORFUNCTION 
 
 " Plots and isosurfaces
 
