@@ -6374,13 +6374,19 @@ sub analyse_routine_name {
            next
         }; 
 
-        # pure procedure, no side effects (depends on PURE macro)
+        # impure procedure, has side effects or DIE or WARN
+        /^impure/ && do { 
+           $routine{$name}{impure}=1; 
+           next
+        }; 
+
+        # pure procedure, no side effects except ENSURE (depends on PURE macro)
         /^pure/ && do { 
            $routine{$name}{pure}=1; 
            next
         }; 
 
-        # proceudre is *always* pure (no macro override)
+        # procedure is *always* pure (depends on ALWAYS_PURE macro)
         /^always_pure/ && do { 
            $routine{$name}{always_pure}=1; 
            $routine{$name}{pure}=1; 
@@ -6405,46 +6411,6 @@ sub analyse_routine_name {
            $routine{$name}{recursive}=1; 
            next
         }; 
-
-#        /^get_from/ && do { 
-#        
-#           # where inherited from
-#           /[(]\s*([^ ]*)/; 
-#           my $loc=$1;                                 
-#
-#           # inherited routine
-#           $routine{$name}{inherited}=1;               
-#
-#           # MOD:xxxx
-#           if ($loc =~ /([^ ]*):([^ ,]*)/ ) {             
-#              if ($1 ne '') { $routine{$name}{parent_module} =$1; } 
-#              else          { $routine{$name}{parent_module} = $module_full_name; }
-#              $routine{$name}{parent_routine}=$2;      # new routine name
-#           } 
-#           
-#           # MOD
-#           elsif ($loc =~ /([A-Z][\w{,}.]*[\w}])/ ) {        
-#              $routine{$name}{parent_module} =$1;      # full mod name
-#              $routine{parent_routine} =undef;         # no routine name
-#           } 
-#           
-#           # xxxx
-#           elsif ($loc =~ /([^ ,]+)/ ) {                
-#              $routine{$name}{parent_module} =$module_full_name;
-#              $routine{$name}{parent_routine}=$1;      # new routine name
-#           } 
-#           
-#           # ( ,
-#           else {                                    
-#              $routine{$name}{parent_module} =$module_full_name;
-#              $routine{parent_routine} =undef;         # no routine name
-#           }
-#
-#           # the inherit match string
-#           $inherit_string = ""; 
-#           
-#           next;
-#        }; 
 
         /^get_from/ && do { 
 
@@ -6534,6 +6500,16 @@ sub analyse_routine_name {
       }; # foreach
 
     }; # attr ne ''
+
+    # Specify purity always
+    if (defined $routine{$name}           &&
+        ! defined $routine{$name}{impure} &&
+        ! defined $routine{$name}{pure}    ) {
+        &report_error("specify one of: impure, pure, elemental, always_pure, always_elemental, \"$_\".");
+    }
+
+
+
 
     # Routines which are in interfaces are selfless.
     if ($#scope > 2) { $routine{$name}{selfless} = 1; }   
