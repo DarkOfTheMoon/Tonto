@@ -502,7 +502,7 @@ syn keyword fortranType MOLECULE.SCF
 syn keyword fortranType MOLECULE.TAD
 syn keyword fortranType MOLECULE.XTAL
 
-syn keyword fortranOperator AND OR NOT IN INOUT OUT
+syn keyword fortranOperator AND OR EQV NEQV NOT IN INOUT OUT
 
 hi! link fortranContinueMark NONE
 hi! Identifier term=underline ctermfg=Black guifg=Black
