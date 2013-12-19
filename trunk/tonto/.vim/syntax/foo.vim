@@ -481,6 +481,10 @@ syn keyword fortranType DIIS
 syn keyword fortranType INTERPOLATOR
 syn keyword fortranType ROBY
 
+" Geminals
+syn keyword fortranType GEMINAL_MF_SPECTRUM
+syn keyword fortranType GEMINAL_MF_SCHEME
+
 " Atoms, clusters and molecules
 
 syn keyword fortranType ATOM 
