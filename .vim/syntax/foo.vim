@@ -48,7 +48,7 @@ syn match fortranUnitHeader	"\<program\>"
 syn keyword fortranStatement	return stop
 syn keyword fortranConditional	else then
 syn match fortranConditional	"\<if\>"
-syn match fortranRepeat		"\<do\>"
+syn match fortranRepeat		"\(\<parallel\> \)\?\<do\>"
 
 syn keyword fortranTodo		contained todo fixme
 
