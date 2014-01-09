@@ -384,6 +384,7 @@ syn match   fortranConditional "end"
 
 syn keyword fortranType leaky recursive routinal functional get_from
 syn keyword fortranType impure pure always_pure elemental always_elemental
+syn keyword fortranType inlined_by_foo
 syn keyword fortranType template
 
 " Built-in and virtual types
