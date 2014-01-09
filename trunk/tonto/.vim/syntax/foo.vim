@@ -45,7 +45,7 @@ syn match fortranUnitHeader	"\<subroutine\>"
 syn keyword fortranCall		call
 syn match fortranUnitHeader	"\<function\>"
 syn match fortranUnitHeader	"\<program\>"
-syn keyword fortranStatement	ENSURE
+syn keyword fortranStatement	ENSURE DIE WARN
 syn keyword fortranStatement	return stop
 syn keyword fortranConditional	else then
 syn match fortranConditional	"\<if\>"
