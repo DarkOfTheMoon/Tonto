@@ -450,6 +450,7 @@ syn keyword fortranType RMS_INDICES RMS2_INDICES
 syn keyword fortranType BECKE_GRID
 syn keyword fortranType LEBEDEV 
 syn keyword fortranType QUADRATURE 
+syn keyword fortranType DFT_FUNCTIONAL
 
 " Symmetry
 
@@ -493,6 +494,7 @@ syn keyword fortranType GEMINAL_MF_SCHEME
 " Atoms, clusters and molecules
 
 syn keyword fortranType ATOM 
+syn keyword fortranType ATOM_GROUP
 syn keyword fortranType CLUSTER
 syn keyword fortranType MOLECULE 
 syn keyword fortranType MOLECULE.BASE 
