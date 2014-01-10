@@ -471,6 +471,7 @@ syn keyword fortranType COLORFUNCTION
 
 " Plots and isosurfaces
 
+syn keyword fortranType CAPPING_SQUARE
 syn keyword fortranType ISOSURFACE 
 syn keyword fortranType PLOTGRID 
 syn keyword fortranType MARCHINGCUBE
