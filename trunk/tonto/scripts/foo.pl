@@ -4247,25 +4247,32 @@ sub fortran_prepend_use_decl {
 
 ##########################
 # Prepend self declaration 
+# Get rid of this later ..
 ##########################
 
 sub fortran_prepend_self_decl {
 
    if (defined $routine{$current_rout_name}{first_noncomment_line} &&
                $routine{$current_rout_name}{first_noncomment_line}) {
+
       if ( ! (defined $routine{$current_rout_name}{functional} || 
-              defined $routine{$current_rout_name}{routinal} ||
+              defined $routine{$current_rout_name}{routinal}   ||
               defined $routine{$current_rout_name}{selfless})) {
+
         if ($skip_fortran_out) {
            $fortran_out = '';
            $skip_fortran_out = 0;
         }
+
         my ($pre);
         $pre = $routine{$current_rout_name}{indent};
-        $pre = "${pre}${module_self_decl} :: self";
+        $pre = "   ${pre}${module_self_decl} :: self";
+
         if ($fortran_out ne '') { $fortran_out = $pre . "\n" . $fortran_out; }
         else                    { $fortran_out = $pre; }
+
       }
+
       #  print "nam=",$current_rout_name;
       #  print "lin=",$fortran_out;
       #  print "fun=",$routine{$current_rout_name}{functional};
@@ -4829,10 +4836,8 @@ sub fortran_change_variable_declarations {
    
    # Get any assignment part in type declaration
    $assign = '';                        
-   if ($post =~/^\s*(DEFAULT.*)/) {
-      $assign = ' '.$1; $post = $POSTMATCH; }
-   if ($post =~/^\s*(=.*)/) {
-      $assign = ' '.$1; $post = $POSTMATCH; }
+   if ($post =~/^\s*(DEFAULT.*)/) { $assign = ' '.$1; $post = $POSTMATCH; }
+   if ($post =~/^\s*(=.*)/)       { $assign = ' '.$1; $post = $POSTMATCH; }
    
    # Get any appended commands
    $command = '';                       
@@ -4847,11 +4852,15 @@ sub fortran_change_variable_declarations {
        $type_name =~ m/^target$/i ||
        $type_name =~ m/^save$/i ||
        $type_name =~ m/^allocatable$/i)   {
+
       if ($var1 ne 'self') {
         &report_error("only \"self\" can be declared with first attribute \"$type_name\".");
       }
+
+      # Explicit self intent/ptr declaration
       $fortran_out = "$pre$type_name$attr :: $vars$assign$command"; 
       return;
+
    }
 
    # It's a local variable
@@ -5396,7 +5405,7 @@ sub convert_dots_to_fortran {
 
   # Loop over $i-position substring on the line $X
   $i = 0;
-  THIS : while ($i < length $X) {
+  CHAR : while ($i < length $X) {
 
       # Is this the dot character?
       if ((substr $X,$i,1) eq '.') {
@@ -5406,11 +5415,10 @@ sub convert_dots_to_fortran {
           $right = substr $X,$i+1;
 
           # If we are inside a string keep looking for dot
-          if (! &outside_of_string($left)) { next THIS; }
+          if (! &outside_of_string($left)) { next CHAR; }
     
           # Decode the right of the dot - or keep looking if not understandable
-          # Lower case a-z necessary below? --dylan
-          if ($right !~ /^([A-Z_]*::?)?([a-zA-Z_]\w*)(.*)/s) { next THIS; }
+          if ($right !~ /^([A-Z_]*::?)?([a-zA-Z_]\w*)(.*)/s) { next CHAR; }
 
           # Extract the explicit submodule name $1 if any
           # Remove its trailing colon(s)
