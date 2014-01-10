@@ -467,7 +467,7 @@ syn keyword fortranType REFLECTION
 " Colours
 
 syn keyword fortranType COLOR
-syn keyword fortranType COLORFUNCTION 
+syn keyword fortranType COLOR_FUNCTION 
 
 " Plots and isosurfaces
 
