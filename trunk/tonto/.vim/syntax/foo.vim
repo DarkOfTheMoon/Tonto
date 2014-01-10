@@ -480,7 +480,7 @@ syn keyword fortranType MARCHINGCUBE
 " SCF & wavefunctions
 
 syn keyword fortranType SCFDATA 
-syn keyword fortranType DIIS 
+syn keyword fortranType DIIS FOCK_DIIS
 
 " Properties and analysis
 
