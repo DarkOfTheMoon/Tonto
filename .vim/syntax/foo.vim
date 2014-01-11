@@ -487,6 +487,11 @@ syn keyword fortranType DIIS FOCK_DIIS
 syn keyword fortranType INTERPOLATOR
 syn keyword fortranType ROBY
 
+" Terms and polynomials
+syn keyword fortranType TERM_1D
+syn keyword fortranType TERM
+syn keyword fortranType POLYNOMIAL
+
 " Geminals
 syn keyword fortranType GEMINAL_MF_SPECTRUM
 syn keyword fortranType GEMINAL_MF_SCHEME
