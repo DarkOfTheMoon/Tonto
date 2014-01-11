@@ -474,7 +474,7 @@ syn keyword fortranType COLOR_FUNCTION
 
 syn keyword fortranType CAPPING_SQUARE
 syn keyword fortranType ISOSURFACE 
-syn keyword fortranType PLOTGRID 
+syn keyword fortranType PLOT_GRID 
 syn keyword fortranType MARCHINGCUBE
 
 " SCF & wavefunctions
