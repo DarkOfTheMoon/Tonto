@@ -464,6 +464,7 @@ syn keyword fortranType CRYSTAL
 syn keyword fortranType UNIT_CELL 
 syn keyword fortranType DIFFRACTION_DATA 
 syn keyword fortranType REFLECTION 
+syn keyword fortranType MULTI_T_ADP
 
 " Colours
 
