@@ -6510,11 +6510,11 @@ sub analyse_routine_name {
     }; # attr ne ''
 
     # Specify purity always
-    if (defined $routine{$name}           &&
-        ! defined $routine{$name}{impure} &&
-        ! defined $routine{$name}{pure}    ) {
-        &report_error("specify one of: impure, pure, elemental, always_pure, always_elemental, \"$_\".");
-    }
+#   if (defined $routine{$name}           &&
+#       ! defined $routine{$name}{impure} &&
+#       ! defined $routine{$name}{pure}    ) {
+#       &report_error("specify one of: impure, pure, elemental, always_pure, always_elemental, \"$_\".");
+#   }
 
 
 
